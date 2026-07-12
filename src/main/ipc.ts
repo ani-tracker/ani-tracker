@@ -9,12 +9,14 @@ import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
 import { PlayerLauncherService } from "./core/platform/player-launcher";
 import { DownloadMediaScanner } from "./core/media/download-media-scanner";
 import { FfprobeMediaProbeService } from "./core/media/ffprobe-media-probe-service";
+import { CompletedDownloadMediaAutoScanner } from "./core/media/completed-download-media-auto-scanner";
 import { EpisodeReleasePreviewService } from "./core/automation/episode-release-preview-service";
 import { AutomationScheduler } from "./core/automation/automation-scheduler";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
 
 export const repository = new AppRepository(new AppDataStore());
 export const automationScheduler = new AutomationScheduler(repository);
+const completedDownloadMediaAutoScanner = new CompletedDownloadMediaAutoScanner(repository);
 
 export function registerIpcHandlers(): void {
   ipcMain.handle("dashboard:get", () => repository.getDashboard());
@@ -57,7 +59,10 @@ export function registerIpcHandlers(): void {
     const settings = await repository.getSettings();
     const engine = createTorrentEngine(settings);
     const tasks = await engine.listTasks();
-    return repository.mergeDownloadTasksFromEngine(tasks);
+    const merged = await repository.mergeDownloadTasksFromEngine(tasks);
+    // Keep progress refresh responsive; completed media probing can take seconds per file.
+    void completedDownloadMediaAutoScanner.scanCompletedTasks(merged);
+    return merged;
   });
   ipcMain.handle("downloads:pause", async (_event, taskId: string) => {
     const task = await repository.getDownloadTask(taskId);

@@ -31,6 +31,12 @@ Last updated: 2026-07-12
 - Media extraction chain from release title and file name.
 - ffprobe-based media probing with fallback to filename/title parsing.
 - Download task media scan and MediaFile upsert.
+- Completed download media auto-scan:
+  - runs after download status refresh
+  - scans completed/seeding tasks in the background
+  - skips tasks already represented in media files
+  - logs scan results and failures
+  - keeps progress refresh responsive.
 - Settings for download paths, storage paths, players, qB, embedded engine placeholder, automation, and media probing.
 - My Anime CRUD:
   - title/original title
