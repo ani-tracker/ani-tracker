@@ -7,7 +7,7 @@ let mainWindow: BrowserWindow | null = null;
 
 const desktopIntegration = new DesktopIntegrationService({
   showMainWindow,
-  runAutomation: () => automationScheduler.runNow(),
+  runAutomation: () => automationScheduler.runNow({ trigger: "tray" }),
   quitApp: () => app.quit()
 });
 

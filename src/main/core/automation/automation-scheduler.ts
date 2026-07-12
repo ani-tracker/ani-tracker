@@ -6,6 +6,12 @@ import { DesktopNotificationService } from "../platform/desktop-notification-ser
 import { AutomationRunService } from "./automation-run-service";
 
 const MIN_INTERVAL_MINUTES = 5;
+const MANUAL_RUN_COOLDOWN_MS = 60_000;
+
+interface AutomationRunOptions {
+  trigger?: "manual" | "scheduled" | "tray";
+  ignoreCooldown?: boolean;
+}
 
 export class AutomationScheduler {
   private timer: NodeJS.Timeout | null = null;
@@ -13,6 +19,7 @@ export class AutomationScheduler {
   private enabled = false;
   private intervalMinutes = MIN_INTERVAL_MINUTES;
   private nextRunAt: string | undefined;
+  private lastManualRunAtMs: number | undefined;
   private lastRunAt: string | undefined;
   private lastResult: AutomationRunResult | undefined;
   private lastError: string | undefined;
@@ -53,16 +60,33 @@ export class AutomationScheduler {
     return this.getStatus();
   }
 
-  async runNow(): Promise<AutomationRunResult> {
+  async runNow(options: AutomationRunOptions = {}): Promise<AutomationRunResult> {
     if (this.inFlight) {
       throw new Error("自动扫描正在运行");
+    }
+
+    const trigger = options.trigger ?? "manual";
+    if (!options.ignoreCooldown && trigger !== "scheduled") {
+      const cooldownMs = this.getManualCooldownRemainingMs();
+      if (cooldownMs > 0) {
+        const seconds = Math.ceil(cooldownMs / 1000);
+        const message = `扫描过于频繁，请 ${seconds} 秒后再试`;
+        this.lastError = message;
+        logger.warn("Automation run skipped by manual cooldown", {
+          trigger,
+          cooldownUntil: this.getManualCooldownUntil()
+        });
+        throw new Error(message);
+      }
+
+      this.lastManualRunAtMs = Date.now();
     }
 
     this.inFlight = true;
     this.lastError = undefined;
 
     try {
-      logger.info("Automation run started");
+      logger.info("Automation run started", { trigger });
       const result = await new AutomationRunService(this.repository).runOnce();
       const settings = await this.repository.getSettings();
       this.lastRunAt = result.finishedAt;
@@ -70,6 +94,7 @@ export class AutomationScheduler {
       await this.repository.addNotifications(createAutomationNotifications(result));
       this.notificationService.notifyAutomationResult(result, settings);
       logger.info("Automation run finished", {
+        trigger,
         checkedEpisodes: result.checkedEpisodes,
         downloaded: result.downloaded.length,
         skipped: result.skipped.length,
@@ -98,6 +123,7 @@ export class AutomationScheduler {
       inFlight: this.inFlight,
       intervalMinutes: this.intervalMinutes,
       nextRunAt: this.nextRunAt,
+      manualCooldownUntil: this.getManualCooldownUntil(),
       lastRunAt: this.lastRunAt,
       lastResult: this.lastResult,
       lastError: this.lastError
@@ -118,8 +144,14 @@ export class AutomationScheduler {
   }
 
   private async runScheduled(): Promise<void> {
+    this.timer = null;
+    this.nextRunAt = undefined;
+
     try {
-      await this.runNow();
+      await this.runNow({
+        trigger: "scheduled",
+        ignoreCooldown: true
+      });
     } catch {
       if (this.enabled && !this.timer) {
         this.scheduleNext();
@@ -133,6 +165,23 @@ export class AutomationScheduler {
       this.timer = null;
     }
     this.nextRunAt = undefined;
+  }
+
+  private getManualCooldownRemainingMs(): number {
+    if (!this.lastManualRunAtMs) {
+      return 0;
+    }
+
+    return Math.max(0, this.lastManualRunAtMs + MANUAL_RUN_COOLDOWN_MS - Date.now());
+  }
+
+  private getManualCooldownUntil(): string | undefined {
+    const remainingMs = this.getManualCooldownRemainingMs();
+    if (!remainingMs || !this.lastManualRunAtMs) {
+      return undefined;
+    }
+
+    return new Date(this.lastManualRunAtMs + MANUAL_RUN_COOLDOWN_MS).toISOString();
   }
 }
 

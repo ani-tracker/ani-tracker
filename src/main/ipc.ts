@@ -55,7 +55,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   ipcMain.handle("automation:previewEpisodeReleases", (_event, animeId: string, episodeId: string) =>
     new EpisodeReleasePreviewService(repository).preview(animeId, episodeId)
   );
-  ipcMain.handle("automation:runOnce", () => automationScheduler.runNow());
+  ipcMain.handle("automation:runOnce", () => automationScheduler.runNow({ trigger: "manual" }));
   ipcMain.handle("automation:getSchedulerStatus", () => automationScheduler.getStatus());
   ipcMain.handle("automation:restartScheduler", () => automationScheduler.restart());
   ipcMain.handle("downloads:list", () => repository.listDownloads());

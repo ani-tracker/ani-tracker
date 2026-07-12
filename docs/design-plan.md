@@ -137,6 +137,7 @@ The current repository contains:
 - Manual and scheduled automation run with desktop notification support
 - In-app notification center with local notification history
 - Tray integration, close-to-background behavior, and launch-at-login settings
+- Manual and tray-triggered automation scan cooldown
 
 Detailed implementation status is maintained in `docs/progress.md`.
 

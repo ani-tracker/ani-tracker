@@ -154,6 +154,7 @@ export interface AutomationSchedulerStatus {
   inFlight: boolean;
   intervalMinutes: number;
   nextRunAt?: string;
+  manualCooldownUntil?: string;
   lastRunAt?: string;
   lastResult?: AutomationRunResult;
   lastError?: string;

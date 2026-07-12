@@ -60,6 +60,7 @@ Last updated: 2026-07-13
   - can add a candidate to the download queue.
 - Manual automation run:
   - scans followed anime with auto-download enabled
+  - applies a short cooldown to repeated manual or tray-triggered scans
   - respects global auto-download setting
   - respects per-anime auto-download setting
   - respects per-episode fansub override
@@ -121,8 +122,6 @@ Known non-blocking warning:
 
 ## Next Recommended Work
 
-1. Add an automation run service:
-   - avoid repeated manual scans within a short cooldown window.
-2. Add Bangumi and Mikan metadata providers for discovery fallback.
-3. Add daily reminder summary logic on top of notification history.
-4. Replace JSON repository with SQLite once the domain behavior stabilizes.
+1. Add Bangumi and Mikan metadata providers for discovery fallback.
+2. Add daily reminder summary logic on top of notification history.
+3. Replace JSON repository with SQLite once the domain behavior stabilizes.

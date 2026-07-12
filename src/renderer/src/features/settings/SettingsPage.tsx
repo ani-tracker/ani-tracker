@@ -501,10 +501,11 @@ export function SettingsPage() {
             }
           />
         </div>
-        <div className="mt-4 grid grid-cols-3 gap-3 text-sm">
+        <div className="mt-4 grid grid-cols-4 gap-3 text-sm">
           <SettingRow label="调度状态" value={formatSchedulerState(schedulerStatus)} />
           <SettingRow label="下次扫描" value={formatDateTime(schedulerStatus?.nextRunAt)} />
           <SettingRow label="上次扫描" value={formatDateTime(schedulerStatus?.lastRunAt)} />
+          <SettingRow label="手动冷却至" value={formatDateTime(schedulerStatus?.manualCooldownUntil)} />
         </div>
         {schedulerStatus?.lastResult && (
           <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
