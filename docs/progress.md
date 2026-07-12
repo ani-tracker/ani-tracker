@@ -1,6 +1,6 @@
 # Ani Tracker Progress
 
-Last updated: 2026-07-12
+Last updated: 2026-07-13
 
 ## Implemented
 
@@ -84,6 +84,11 @@ Last updated: 2026-07-12
   - supports unread state
   - supports marking one/all as read
   - supports clearing all records.
+- Desktop integration:
+  - adds tray menu actions for showing the main window, scanning updates, and quitting
+  - supports closing the main window to the tray while keeping background scans alive
+  - supports a launch-at-login setting for Windows/macOS
+  - applies desktop integration settings immediately after Settings is saved.
 - New anime discovery:
   - stores a local anime catalog separate from "My Anime"
   - collects monthly anime from AniList by season/year and filters by premiere month
@@ -113,12 +118,10 @@ Known non-blocking warning:
 - Bundled qBittorrent/qBittorrent-nox lifecycle for users who do not install qB manually.
 - SQLite repository implementation replacing JSON storage.
 - madVR playback pipeline or external renderer integration.
-- Tray/startup/background scheduling behavior.
 
 ## Next Recommended Work
 
 1. Add an automation run service:
-   - add tray behavior
    - avoid repeated manual scans within a short cooldown window.
 2. Add Bangumi and Mikan metadata providers for discovery fallback.
 3. Add daily reminder summary logic on top of notification history.

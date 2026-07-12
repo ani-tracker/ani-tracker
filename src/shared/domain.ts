@@ -229,6 +229,11 @@ export interface MediaSettings {
   videoExtensions: string[];
 }
 
+export interface DesktopSettings {
+  minimizeToTray: boolean;
+  launchAtLogin: boolean;
+}
+
 export interface AppSettings {
   download: DownloadSettings;
   storage: StorageSettings;
@@ -236,6 +241,7 @@ export interface AppSettings {
   defaultPlayerProfileId?: string;
   automation: AutomationSettings;
   media: MediaSettings;
+  desktop: DesktopSettings;
 }
 
 export interface DashboardData {

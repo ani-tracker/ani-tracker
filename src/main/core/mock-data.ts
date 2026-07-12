@@ -309,6 +309,10 @@ export const appSettings: AppSettings = {
     ffprobePath: "ffprobe",
     ffprobeTimeoutSeconds: 20,
     videoExtensions: [".mkv", ".mp4", ".avi"]
+  },
+  desktop: {
+    minimizeToTray: true,
+    launchAtLogin: false
   }
 };
 

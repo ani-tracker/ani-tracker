@@ -118,6 +118,10 @@ function mergeSettings(defaults: AppSettings, current?: AppSettings): AppSetting
       ...defaults.media,
       ...current.media
     },
+    desktop: {
+      ...defaults.desktop,
+      ...current.desktop
+    },
     players: current.players ?? defaults.players
   };
 }

@@ -136,6 +136,7 @@ The current repository contains:
 - Player launch and reveal-file integration
 - Manual and scheduled automation run with desktop notification support
 - In-app notification center with local notification history
+- Tray integration, close-to-background behavior, and launch-at-login settings
 
 Detailed implementation status is maintained in `docs/progress.md`.
 

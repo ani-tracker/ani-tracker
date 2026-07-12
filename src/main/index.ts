@@ -1,11 +1,18 @@
 import { app, BrowserWindow } from "electron";
 import { join } from "node:path";
-import { automationScheduler, registerIpcHandlers } from "./ipc";
+import { DesktopIntegrationService } from "./core/platform/desktop-integration-service";
+import { automationScheduler, registerIpcHandlers, repository } from "./ipc";
 
 let mainWindow: BrowserWindow | null = null;
 
+const desktopIntegration = new DesktopIntegrationService({
+  showMainWindow,
+  runAutomation: () => automationScheduler.runNow(),
+  quitApp: () => app.quit()
+});
+
 function createWindow(): void {
-  mainWindow = new BrowserWindow({
+  const window = new BrowserWindow({
     width: 1240,
     height: 820,
     minWidth: 1024,
@@ -19,40 +26,74 @@ function createWindow(): void {
       nodeIntegration: false
     }
   });
+  mainWindow = window;
+  desktopIntegration.bindWindow(window);
 
   if (!app.isPackaged) {
-    mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
+    window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
       console.error(`[renderer] failed to load ${validatedUrl}: ${errorCode} ${errorDescription}`);
     });
-    mainWindow.webContents.on("render-process-gone", (_event, details) => {
+    window.webContents.on("render-process-gone", (_event, details) => {
       console.error(`[renderer] process gone: ${details.reason}`);
     });
   }
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);
+    window.loadURL(process.env.ELECTRON_RENDERER_URL);
   } else {
-    mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+    window.loadFile(join(__dirname, "../renderer/index.html"));
   }
+
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = null;
+    }
+  });
 }
 
-app.whenReady().then(() => {
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow();
+  }
+
+  if (!mainWindow) {
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  mainWindow.show();
+  mainWindow.focus();
+}
+
+app.whenReady().then(async () => {
   if (process.platform === "win32") {
     app.setAppUserModelId("AniTracker");
   }
 
-  registerIpcHandlers();
+  registerIpcHandlers({
+    onSettingsUpdated: (settings) => desktopIntegration.applySettings(settings)
+  });
+  desktopIntegration.applySettings(await repository.getSettings());
   createWindow();
   void automationScheduler.start();
 
   app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
+    showMainWindow();
   });
 });
 
+app.on("before-quit", () => {
+  desktopIntegration.prepareToQuit();
+});
+
 app.on("window-all-closed", () => {
+  if (desktopIntegration.shouldKeepAppRunning()) {
+    return;
+  }
+
   if (process.platform !== "darwin") {
     app.quit();
   }

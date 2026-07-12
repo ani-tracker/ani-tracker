@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { FileSearch, FolderCog, HardDrive, PlayCircle, Save } from "lucide-react";
+import { FileSearch, FolderCog, HardDrive, Monitor, PlayCircle, Power, Save } from "lucide-react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -166,6 +166,41 @@ export function SettingsPage() {
           </div>
         </Panel>
       </div>
+
+      <Panel title="桌面集成" description="控制后台运行、系统登录启动等本地桌面行为。">
+        <div className="grid grid-cols-2 gap-4">
+          <ToggleSetting
+            icon={<Monitor className="h-4 w-4" />}
+            label="关闭到托盘"
+            description="关闭主窗口后继续保留后台扫描和提醒。"
+            checked={draft.desktop.minimizeToTray}
+            onChange={(value) =>
+              setDraft({
+                ...draft,
+                desktop: {
+                  ...draft.desktop,
+                  minimizeToTray: value
+                }
+              })
+            }
+          />
+          <ToggleSetting
+            icon={<Power className="h-4 w-4" />}
+            label="开机启动"
+            description="系统登录后自动启动 Ani Tracker。"
+            checked={draft.desktop.launchAtLogin}
+            onChange={(value) =>
+              setDraft({
+                ...draft,
+                desktop: {
+                  ...draft.desktop,
+                  launchAtLogin: value
+                }
+              })
+            }
+          />
+        </div>
+      </Panel>
 
       <Panel title="播放器配置">
         <div className="grid grid-cols-2 gap-4">
@@ -533,6 +568,38 @@ function TextSetting({
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function ToggleSetting({
+  icon,
+  label,
+  description,
+  checked,
+  onChange
+}: {
+  icon?: ReactNode;
+  label: string;
+  description: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label className="flex min-h-[104px] items-center justify-between gap-4 rounded-md border p-4">
+      <div className="min-w-0">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          {icon && <span className="text-primary">{icon}</span>}
+          {label}
+        </div>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
+      </div>
+      <input
+        className="h-5 w-5 shrink-0 accent-primary"
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
       />
     </label>
   );

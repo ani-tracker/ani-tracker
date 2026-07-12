@@ -426,6 +426,10 @@ function mergeSettings(current: AppSettings, patch: Partial<AppSettings>): AppSe
       ...current.media,
       ...patch.media
     },
+    desktop: {
+      ...current.desktop,
+      ...patch.desktop
+    },
     players: patch.players ?? current.players
   };
 }

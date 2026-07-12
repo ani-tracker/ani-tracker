@@ -18,7 +18,11 @@ export const repository = new AppRepository(new AppDataStore());
 export const automationScheduler = new AutomationScheduler(repository);
 const completedDownloadMediaAutoScanner = new CompletedDownloadMediaAutoScanner(repository);
 
-export function registerIpcHandlers(): void {
+interface RegisterIpcHandlersOptions {
+  onSettingsUpdated?: (settings: AppSettings) => void | Promise<void>;
+}
+
+export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): void {
   ipcMain.handle("dashboard:get", () => repository.getDashboard());
   ipcMain.handle("notifications:list", () => repository.listNotifications());
   ipcMain.handle("notifications:unreadCount", () => repository.getUnreadNotificationCount());
@@ -180,6 +184,7 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("settings:get", () => repository.getSettings());
   ipcMain.handle("settings:update", async (_event, patch: Partial<AppSettings>) => {
     const settings = await repository.updateSettings(patch);
+    await options.onSettingsUpdated?.(settings);
     await automationScheduler.restart();
     return settings;
   });
