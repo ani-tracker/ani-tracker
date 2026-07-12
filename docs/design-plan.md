@@ -135,6 +135,7 @@ The current repository contains:
 - Release title parser and automatic matching score
 - Player launch and reveal-file integration
 - Manual and scheduled automation run with desktop notification support
+- In-app notification center with local notification history
 
 Detailed implementation status is maintained in `docs/progress.md`.
 

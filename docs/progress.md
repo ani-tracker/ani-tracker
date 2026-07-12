@@ -72,6 +72,12 @@ Last updated: 2026-07-12
 - Desktop notifications:
   - sends a notification after scheduled/manual automation adds downloads or hits errors
   - respects the "new episode notification" setting.
+- Notification center:
+  - stores notification history in local JSON data
+  - shows automation/download/system reminders in the app
+  - supports unread state
+  - supports marking one/all as read
+  - supports clearing all records.
 - New anime discovery:
   - stores a local anime catalog separate from "My Anime"
   - collects monthly anime from AniList by season/year and filters by premiere month
@@ -109,5 +115,5 @@ Known non-blocking warning:
    - add tray behavior
    - avoid repeated manual scans within a short cooldown window.
 2. Add Bangumi and Mikan metadata providers for discovery fallback.
-3. Add a dedicated notification/reminder history view.
+3. Add daily reminder summary logic on top of notification history.
 4. Replace JSON repository with SQLite once the domain behavior stabilizes.
