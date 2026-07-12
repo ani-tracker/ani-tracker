@@ -1,4 +1,5 @@
 import type { AutomationRunResult, AutomationSchedulerStatus } from "@shared/contracts";
+import type { NotificationRecord } from "@shared/domain";
 import type { AppRepository } from "../repositories/app-repository";
 import { DesktopNotificationService } from "../platform/desktop-notification-service";
 import { AutomationRunService } from "./automation-run-service";
@@ -57,6 +58,7 @@ export class AutomationScheduler {
       const settings = await this.repository.getSettings();
       this.lastRunAt = result.finishedAt;
       this.lastResult = result;
+      await this.repository.addNotifications(createAutomationNotifications(result));
       this.notificationService.notifyAutomationResult(result, settings);
       return result;
     } catch (error) {
@@ -112,4 +114,49 @@ export class AutomationScheduler {
     }
     this.nextRunAt = undefined;
   }
+}
+
+function createAutomationNotifications(result: AutomationRunResult): NotificationRecord[] {
+  const createdAt = result.finishedAt;
+  const records: NotificationRecord[] = [];
+
+  for (const item of result.downloaded) {
+    records.push({
+      id: `notification-${createdAt}-${item.downloadTaskId}`,
+      kind: "automation",
+      title: `已添加下载：${item.animeTitle}`,
+      body: `第 ${item.episodeNo} 集已匹配资源「${item.releaseTitle}」。`,
+      severity: "success",
+      animeId: item.animeId,
+      episodeId: item.episodeId,
+      downloadTaskId: item.downloadTaskId,
+      createdAt
+    });
+  }
+
+  for (const item of result.errors) {
+    records.push({
+      id: `notification-${createdAt}-error-${item.episodeId ?? item.animeId ?? records.length}`,
+      kind: "automation",
+      title: item.animeTitle ? `扫描失败：${item.animeTitle}` : "自动扫描失败",
+      body: item.episodeNo ? `第 ${item.episodeNo} 集：${item.message}` : item.message,
+      severity: "error",
+      animeId: item.animeId,
+      episodeId: item.episodeId,
+      createdAt
+    });
+  }
+
+  if (!records.length && result.checkedEpisodes > 0) {
+    records.push({
+      id: `notification-${createdAt}-summary`,
+      kind: "automation",
+      title: "自动扫描完成",
+      body: `已检查 ${result.checkedEpisodes} 集，没有新增下载任务。`,
+      severity: "info",
+      createdAt
+    });
+  }
+
+  return records;
 }

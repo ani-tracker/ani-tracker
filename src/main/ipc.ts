@@ -18,6 +18,13 @@ export const automationScheduler = new AutomationScheduler(repository);
 
 export function registerIpcHandlers(): void {
   ipcMain.handle("dashboard:get", () => repository.getDashboard());
+  ipcMain.handle("notifications:list", () => repository.listNotifications());
+  ipcMain.handle("notifications:unreadCount", () => repository.getUnreadNotificationCount());
+  ipcMain.handle("notifications:markRead", (_event, notificationId: string) =>
+    repository.markNotificationRead(notificationId)
+  );
+  ipcMain.handle("notifications:markAllRead", () => repository.markAllNotificationsRead());
+  ipcMain.handle("notifications:clear", () => repository.clearNotifications());
   ipcMain.handle("myAnime:list", () => repository.listMyAnime());
   ipcMain.handle("myAnime:upsert", (_event, item: MyAnime) => repository.upsertMyAnime(item));
   ipcMain.handle("myAnime:remove", (_event, itemId: string) => repository.removeMyAnime(itemId));
