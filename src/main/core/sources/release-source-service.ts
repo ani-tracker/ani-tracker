@@ -1,5 +1,6 @@
 import type { ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
 import type { ReleaseSourceConfig } from "@shared/domain";
+import { DmhyReleaseSource } from "./dmhy-source";
 import { RssReleaseSource } from "./rss-source";
 import { TorznabReleaseSource } from "./torznab-source";
 
@@ -43,7 +44,16 @@ export function createReleaseSource(config: ReleaseSourceConfig): ReleaseSource 
     return new TorznabReleaseSource(config);
   }
 
+  if (config.kind === "site_adapter" && isDmhyConfig(config)) {
+    return new DmhyReleaseSource(config);
+  }
+
   return null;
+}
+
+function isDmhyConfig(config: ReleaseSourceConfig): boolean {
+  const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
+  return text.includes("dmhy") || text.includes("动漫花园") || text.includes("share.dmhy.org");
 }
 
 function dedupeReleases<T extends { infoHash?: string; magnetUrl?: string; torrentUrl?: string; title: string }>(releases: T[]): T[] {

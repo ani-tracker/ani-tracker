@@ -11,6 +11,10 @@ Last updated: 2026-07-12
 - Future SQLite schema.
 - Home, My Anime, Discovery, Release Search, Downloads, Sources, and Settings pages.
 - RSS and Torznab release source adapters.
+- DMHY / 动漫花园 site adapter:
+  - searches `share.dmhy.org/topics/list`
+  - parses title, magnet link, torrent link, publish time, and size from list HTML
+  - reuses release title enrichment for fansub, episode, resolution, subtitle, and codec.
 - Release title parsing for fansub, episode number, resolution, subtitle language, and codec.
 - Release ranking using anime aliases, episode number, default fansub, per-episode fansub override, resolution, codec, subtitle, and seeders.
 - qBittorrent Web API compatible adapter:
@@ -92,7 +96,7 @@ Known non-blocking warning:
 
 - Daily reminder summary view.
 - Additional metadata sources such as Bangumi and Mikan seasonal data.
-- Site-specific source adapters such as full DMHY scraping/adapter behavior.
+- More site-specific source adapters beyond DMHY.
 - Real embedded BT engine. `EmbeddedTorrentEngine` is still a placeholder.
 - Bundled qBittorrent/qBittorrent-nox lifecycle for users who do not install qB manually.
 - SQLite repository implementation replacing JSON storage.
