@@ -8,6 +8,7 @@ import type {
   FansubGroup,
   MediaFile,
   MyAnime,
+  NotificationRecord,
   ReleaseSourceConfig
 } from "@shared/domain";
 
@@ -209,6 +210,20 @@ export const recentCompleted: MediaFile[] = [
     durationSeconds: 1420,
     downloadedAt: "2026-07-11T09:00:00.000Z",
     probedAt: "2026-07-11T09:02:00.000Z"
+  }
+];
+
+export const notifications: NotificationRecord[] = [
+  {
+    id: "notification-1",
+    kind: "automation",
+    title: "自动扫描完成",
+    body: "已添加 1 个下载任务，0 个任务失败。",
+    severity: "success",
+    animeId: "anime-1",
+    episodeId: "episode-1",
+    downloadTaskId: "task-1",
+    createdAt: "2026-07-11T13:05:00.000Z"
   }
 ];
 

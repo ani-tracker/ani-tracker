@@ -9,6 +9,7 @@ import type {
   FansubGroup,
   MediaFile,
   MyAnime,
+  NotificationRecord,
   ReleaseSourceConfig
 } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
@@ -39,6 +40,62 @@ export class AppRepository {
 
   async listAnimeCatalog(): Promise<Anime[]> {
     return sortAnimeCatalog((await this.store.getData()).animeCatalog);
+  }
+
+  async listNotifications(): Promise<NotificationRecord[]> {
+    return sortNotifications((await this.store.getData()).notifications);
+  }
+
+  async getUnreadNotificationCount(): Promise<number> {
+    return (await this.store.getData()).notifications.filter((item) => !item.readAt).length;
+  }
+
+  async addNotifications(records: NotificationRecord[]): Promise<NotificationRecord[]> {
+    if (!records.length) {
+      return this.listNotifications();
+    }
+
+    const data = await this.store.update((draft) => {
+      draft.notifications.unshift(...records);
+      draft.notifications = sortNotifications(draft.notifications).slice(0, 200);
+    });
+
+    return sortNotifications(data.notifications);
+  }
+
+  async markNotificationRead(notificationId: string): Promise<NotificationRecord[]> {
+    const data = await this.store.update((draft) => {
+      draft.notifications = draft.notifications.map((item) =>
+        item.id === notificationId
+          ? {
+              ...item,
+              readAt: item.readAt ?? new Date().toISOString()
+            }
+          : item
+      );
+    });
+
+    return sortNotifications(data.notifications);
+  }
+
+  async markAllNotificationsRead(): Promise<NotificationRecord[]> {
+    const now = new Date().toISOString();
+    const data = await this.store.update((draft) => {
+      draft.notifications = draft.notifications.map((item) => ({
+        ...item,
+        readAt: item.readAt ?? now
+      }));
+    });
+
+    return sortNotifications(data.notifications);
+  }
+
+  async clearNotifications(): Promise<NotificationRecord[]> {
+    const data = await this.store.update((draft) => {
+      draft.notifications = [];
+    });
+
+    return data.notifications;
   }
 
   async searchAnimeCatalog(keyword: string): Promise<Anime[]> {
@@ -379,6 +436,10 @@ function sortMediaFiles(mediaFiles: MediaFile[]): MediaFile[] {
     const right = b.probedAt ?? b.downloadedAt ?? "";
     return right.localeCompare(left);
   });
+}
+
+function sortNotifications(notifications: NotificationRecord[]): NotificationRecord[] {
+  return [...notifications].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
 function sortAnimeCatalog(items: Anime[]): Anime[] {

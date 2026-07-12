@@ -8,6 +8,7 @@ import {
   episodes,
   fansubGroups,
   myAnime,
+  notifications,
   recentCompleted,
   sourceConfigs
 } from "../mock-data";
@@ -25,6 +26,7 @@ export function createSeedData(): AppDataFile {
     sources: sourceConfigs,
     downloads: downloadTasks,
     mediaFiles: recentCompleted,
+    notifications,
     dashboard,
     updatedAt: new Date().toISOString()
   };
