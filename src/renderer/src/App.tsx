@@ -1,5 +1,6 @@
 import {
   CalendarDays,
+  Bell,
   Download,
   Home,
   Library,
@@ -16,13 +17,14 @@ import { DiscoveryPage } from "@/features/discovery/DiscoveryPage";
 import { DownloadsPage } from "@/features/downloads/DownloadsPage";
 import { HomePage } from "@/features/home/HomePage";
 import { MyAnimePage } from "@/features/my-anime/MyAnimePage";
+import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { ReleaseSearchPage } from "@/features/release-search/ReleaseSearchPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { appApi } from "@/lib/api";
 import type { AutomationRunResult } from "@shared/contracts";
 
-type PageId = "home" | "myAnime" | "discovery" | "releaseSearch" | "downloads" | "sources" | "settings";
+type PageId = "home" | "myAnime" | "discovery" | "releaseSearch" | "downloads" | "notifications" | "sources" | "settings";
 
 const navItems = [
   { id: "home", label: "首页", icon: Home },
@@ -30,6 +32,7 @@ const navItems = [
   { id: "discovery", label: "新番发现", icon: Sparkles },
   { id: "releaseSearch", label: "资源搜索", icon: Search },
   { id: "downloads", label: "下载队列", icon: Download },
+  { id: "notifications", label: "提醒中心", icon: Bell },
   { id: "sources", label: "下载源", icon: Subtitles },
   { id: "settings", label: "设置", icon: Settings }
 ] satisfies Array<{ id: PageId; label: string; icon: typeof Home }>;
@@ -46,6 +49,8 @@ function renderPage(page: PageId) {
       return <ReleaseSearchPage />;
     case "downloads":
       return <DownloadsPage />;
+    case "notifications":
+      return <NotificationsPage />;
     case "sources":
       return <SourcesPage />;
     case "settings":
