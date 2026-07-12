@@ -1,6 +1,7 @@
 import type { AppDataFile } from "@shared/persistence/app-data";
 import {
   appSettings,
+  animeCatalog,
   dashboard,
   downloadTasks,
   episodePreferences,
@@ -16,6 +17,7 @@ export function createSeedData(): AppDataFile {
   return {
     version: APP_DATA_VERSION,
     settings: appSettings,
+    animeCatalog,
     myAnime,
     episodes,
     episodePreferences,

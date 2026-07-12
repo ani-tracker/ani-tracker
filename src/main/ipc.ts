@@ -4,13 +4,14 @@ import { AppRepository } from "./core/repositories/app-repository";
 import { AppDataStore } from "./core/storage/app-data-store";
 import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
 import { ReleaseSourceService } from "./core/sources/release-source-service";
-import type { ReleaseQuery } from "@shared/contracts";
+import type { AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
 import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
 import { PlayerLauncherService } from "./core/platform/player-launcher";
 import { DownloadMediaScanner } from "./core/media/download-media-scanner";
 import { FfprobeMediaProbeService } from "./core/media/ffprobe-media-probe-service";
 import { EpisodeReleasePreviewService } from "./core/automation/episode-release-preview-service";
 import { AutomationScheduler } from "./core/automation/automation-scheduler";
+import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
 
 export const repository = new AppRepository(new AppDataStore());
 export const automationScheduler = new AutomationScheduler(repository);
@@ -20,6 +21,15 @@ export function registerIpcHandlers(): void {
   ipcMain.handle("myAnime:list", () => repository.listMyAnime());
   ipcMain.handle("myAnime:upsert", (_event, item: MyAnime) => repository.upsertMyAnime(item));
   ipcMain.handle("myAnime:remove", (_event, itemId: string) => repository.removeMyAnime(itemId));
+  ipcMain.handle("animeCatalog:list", (_event, year?: number, month?: number) =>
+    new AnimeDiscoveryService(repository).listCatalog(year, month)
+  );
+  ipcMain.handle("animeCatalog:search", (_event, keyword: string) =>
+    new AnimeDiscoveryService(repository).searchCatalog(keyword)
+  );
+  ipcMain.handle("animeCatalog:collectMonth", (_event, query: AnimeDiscoveryQuery) =>
+    new AnimeDiscoveryService(repository).collectMonth(query)
+  );
   ipcMain.handle("episodes:list", (_event, animeId: string) => repository.listEpisodes(animeId));
   ipcMain.handle("episodes:upsert", (_event, episode: Episode) => repository.upsertEpisode(episode));
   ipcMain.handle("episodePreferences:list", (_event, animeId: string) => repository.listEpisodePreferences(animeId));

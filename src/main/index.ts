@@ -13,12 +13,21 @@ function createWindow(): void {
     title: "Ani Tracker",
     backgroundColor: "#f8fafc",
     webPreferences: {
-      preload: join(__dirname, "../preload/index.js"),
+      preload: join(__dirname, "../preload/index.mjs"),
       sandbox: false,
       contextIsolation: true,
       nodeIntegration: false
     }
   });
+
+  if (!app.isPackaged) {
+    mainWindow.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
+      console.error(`[renderer] failed to load ${validatedUrl}: ${errorCode} ${errorDescription}`);
+    });
+    mainWindow.webContents.on("render-process-gone", (_event, details) => {
+      console.error(`[renderer] process gone: ${details.reason}`);
+    });
+  }
 
   if (process.env.ELECTRON_RENDERER_URL) {
     mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL);

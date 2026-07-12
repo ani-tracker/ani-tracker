@@ -16,6 +16,21 @@ export interface AnimeSearchQuery {
   includeAliases?: boolean;
 }
 
+export interface AnimeDiscoveryQuery {
+  year: number;
+  month: number;
+  forceRefresh?: boolean;
+}
+
+export interface AnimeDiscoveryResult {
+  query: AnimeDiscoveryQuery;
+  items: Anime[];
+  addedCount: number;
+  existingCount: number;
+  source: string;
+  errors: string[];
+}
+
 export interface ReleaseQuery {
   keyword: string;
   animeId?: string;

@@ -1,4 +1,5 @@
 import type {
+  Anime,
   AppSettings,
   DashboardData,
   DownloadTask,
@@ -11,6 +12,8 @@ import type {
   ReleaseSourceConfig
 } from "@shared/domain";
 import type {
+  AnimeDiscoveryQuery,
+  AnimeDiscoveryResult,
   AutomationRunResult,
   AutomationSchedulerStatus,
   EpisodeReleasePreview,
@@ -33,6 +36,9 @@ export const appApi = {
   listMyAnime: (): Promise<MyAnime[]> => bridge().listMyAnime(),
   upsertMyAnime: (item: MyAnime): Promise<MyAnime[]> => bridge().upsertMyAnime(item),
   removeMyAnime: (itemId: string): Promise<MyAnime[]> => bridge().removeMyAnime(itemId),
+  listAnimeCatalog: (year?: number, month?: number): Promise<Anime[]> => bridge().listAnimeCatalog(year, month),
+  searchAnimeCatalog: (keyword: string): Promise<Anime[]> => bridge().searchAnimeCatalog(keyword),
+  collectAnimeMonth: (query: AnimeDiscoveryQuery): Promise<AnimeDiscoveryResult> => bridge().collectAnimeMonth(query),
   listEpisodes: (animeId: string): Promise<Episode[]> => bridge().listEpisodes(animeId),
   upsertEpisode: (episode: Episode): Promise<Episode[]> => bridge().upsertEpisode(episode),
   listEpisodePreferences: (animeId: string): Promise<EpisodePreference[]> =>

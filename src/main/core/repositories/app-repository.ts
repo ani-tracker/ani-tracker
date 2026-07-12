@@ -1,4 +1,5 @@
 import type {
+  Anime,
   AppSettings,
   DashboardData,
   DownloadStatus,
@@ -34,6 +35,64 @@ export class AppRepository {
 
   async listMyAnime(): Promise<MyAnime[]> {
     return sortMyAnime((await this.store.getData()).myAnime);
+  }
+
+  async listAnimeCatalog(): Promise<Anime[]> {
+    return sortAnimeCatalog((await this.store.getData()).animeCatalog);
+  }
+
+  async searchAnimeCatalog(keyword: string): Promise<Anime[]> {
+    const normalized = keyword.trim().toLowerCase();
+    const items = await this.listAnimeCatalog();
+    if (!normalized) {
+      return items;
+    }
+
+    return items.filter((anime) =>
+      [anime.title, anime.originalTitle, ...anime.aliases.map((alias) => alias.alias)]
+        .filter(Boolean)
+        .some((value) => value!.toLowerCase().includes(normalized))
+    );
+  }
+
+  async listAnimeCatalogByMonth(year: number, month: number): Promise<Anime[]> {
+    return sortAnimeCatalog(
+      (await this.store.getData()).animeCatalog.filter(
+        (anime) => anime.premiereYear === year && anime.premiereMonth === month
+      )
+    );
+  }
+
+  async upsertAnimeCatalog(items: Anime[]): Promise<{ items: Anime[]; addedCount: number; existingCount: number }> {
+    let addedCount = 0;
+    let existingCount = 0;
+    const data = await this.store.update((draft) => {
+      for (const item of items) {
+        const index = draft.animeCatalog.findIndex((anime) => isSameAnime(anime, item));
+        if (index >= 0) {
+          draft.animeCatalog[index] = {
+            ...draft.animeCatalog[index],
+            ...item,
+            aliases: mergeAliases(draft.animeCatalog[index].aliases, item.aliases),
+            externalIds: {
+              ...draft.animeCatalog[index].externalIds,
+              ...item.externalIds
+            }
+          };
+          existingCount += 1;
+          continue;
+        }
+
+        draft.animeCatalog.push(item);
+        addedCount += 1;
+      }
+    });
+
+    return {
+      items: sortAnimeCatalog(data.animeCatalog),
+      addedCount,
+      existingCount
+    };
   }
 
   async listDownloads(): Promise<DownloadTask[]> {
@@ -322,8 +381,46 @@ function sortMediaFiles(mediaFiles: MediaFile[]): MediaFile[] {
   });
 }
 
+function sortAnimeCatalog(items: Anime[]): Anime[] {
+  return [...items].sort((a, b) => {
+    if (a.premiereYear !== b.premiereYear) {
+      return b.premiereYear - a.premiereYear;
+    }
+    if (a.premiereMonth !== b.premiereMonth) {
+      return b.premiereMonth - a.premiereMonth;
+    }
+    return a.title.localeCompare(b.title);
+  });
+}
+
 function sortEpisodes(episodes: Episode[]): Episode[] {
   return [...episodes].sort((a, b) => a.episodeNo - b.episodeNo);
+}
+
+function isSameAnime(left: Anime, right: Anime): boolean {
+  if (left.id === right.id) {
+    return true;
+  }
+
+  const sharedExternalId = Object.entries(right.externalIds).some(([key, value]) => left.externalIds[key] === value);
+  if (sharedExternalId) {
+    return true;
+  }
+
+  return [left.title, left.originalTitle].filter(Boolean).some((leftTitle) =>
+    [right.title, right.originalTitle].filter(Boolean).some((rightTitle) => leftTitle === rightTitle)
+  );
+}
+
+function mergeAliases(left: Anime["aliases"], right: Anime["aliases"]): Anime["aliases"] {
+  const aliases = [...left];
+  for (const alias of right) {
+    if (!aliases.some((item) => item.alias.toLowerCase() === alias.alias.toLowerCase())) {
+      aliases.push(alias);
+    }
+  }
+
+  return aliases;
 }
 
 function sortMyAnime(items: MyAnime[]): MyAnime[] {

@@ -1,12 +1,16 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, Episode, EpisodePreference, MyAnime, Release, ReleaseSourceConfig } from "@shared/domain";
-import type { ReleaseQuery } from "@shared/contracts";
+import type { Anime, AppSettings, Episode, EpisodePreference, MyAnime, Release, ReleaseSourceConfig } from "@shared/domain";
+import type { AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
 
 const api = {
   getDashboard: () => ipcRenderer.invoke("dashboard:get"),
   listMyAnime: () => ipcRenderer.invoke("myAnime:list"),
   upsertMyAnime: (item: MyAnime) => ipcRenderer.invoke("myAnime:upsert", item),
   removeMyAnime: (itemId: string) => ipcRenderer.invoke("myAnime:remove", itemId),
+  listAnimeCatalog: (year?: number, month?: number): Promise<Anime[]> =>
+    ipcRenderer.invoke("animeCatalog:list", year, month),
+  searchAnimeCatalog: (keyword: string): Promise<Anime[]> => ipcRenderer.invoke("animeCatalog:search", keyword),
+  collectAnimeMonth: (query: AnimeDiscoveryQuery) => ipcRenderer.invoke("animeCatalog:collectMonth", query),
   listEpisodes: (animeId: string) => ipcRenderer.invoke("episodes:list", animeId),
   upsertEpisode: (episode: Episode) => ipcRenderer.invoke("episodes:upsert", episode),
   listEpisodePreferences: (animeId: string) => ipcRenderer.invoke("episodePreferences:list", animeId),

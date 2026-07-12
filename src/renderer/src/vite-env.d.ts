@@ -1,6 +1,7 @@
 /// <reference types="vite/client" />
 
 import type {
+  Anime,
   AppSettings,
   DashboardData,
   DownloadTask,
@@ -13,6 +14,8 @@ import type {
   ReleaseSourceConfig
 } from "@shared/domain";
 import type {
+  AnimeDiscoveryQuery,
+  AnimeDiscoveryResult,
   AutomationRunResult,
   AutomationSchedulerStatus,
   EpisodeReleasePreview,
@@ -29,6 +32,9 @@ declare global {
       listMyAnime: () => Promise<MyAnime[]>;
       upsertMyAnime: (item: MyAnime) => Promise<MyAnime[]>;
       removeMyAnime: (itemId: string) => Promise<MyAnime[]>;
+      listAnimeCatalog: (year?: number, month?: number) => Promise<Anime[]>;
+      searchAnimeCatalog: (keyword: string) => Promise<Anime[]>;
+      collectAnimeMonth: (query: AnimeDiscoveryQuery) => Promise<AnimeDiscoveryResult>;
       listEpisodes: (animeId: string) => Promise<Episode[]>;
       upsertEpisode: (episode: Episode) => Promise<Episode[]>;
       listEpisodePreferences: (animeId: string) => Promise<EpisodePreference[]>;

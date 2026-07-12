@@ -1,4 +1,5 @@
 import type {
+  Anime,
   AppSettings,
   DashboardData,
   DownloadTask,
@@ -110,6 +111,8 @@ export const myAnime: MyAnime[] = [
     updatedAt: "2026-07-10T12:00:00.000Z"
   }
 ];
+
+export const animeCatalog: Anime[] = myAnime.map((item) => item.anime);
 
 export const downloadTasks: DownloadTask[] = [
   {

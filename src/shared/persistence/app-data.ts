@@ -1,4 +1,5 @@
 import type {
+  Anime,
   AppSettings,
   DashboardData,
   DownloadTask,
@@ -10,11 +11,12 @@ import type {
   ReleaseSourceConfig
 } from "../domain";
 
-export const APP_DATA_VERSION = 4;
+export const APP_DATA_VERSION = 5;
 
 export interface AppDataFile {
   version: number;
   settings: AppSettings;
+  animeCatalog: Anime[];
   myAnime: MyAnime[];
   episodes: Episode[];
   episodePreferences: EpisodePreference[];
