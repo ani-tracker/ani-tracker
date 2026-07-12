@@ -125,6 +125,7 @@ The current repository contains:
 - Home, My Anime, Discovery, Downloads, Sources, and Settings pages
 - My Anime CRUD and per-episode fansub overrides
 - Episode release search and ranked candidate preview
+- AniList-backed monthly anime discovery and local anime catalog
 - Media extraction chain and ffprobe media probing
 - qBittorrent state mapping helper
 - qBittorrent Web API adapter with progress, speed, ETA, task actions, and file priority selection

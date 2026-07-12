@@ -2,6 +2,12 @@ node_modules
 dist
 out
 release
+*.tsbuildinfo
+electron.vite.config.js
+electron.vite.config.d.ts
+src/**/*.js
+src/**/*.d.ts
+!src/renderer/src/vite-env.d.ts
 *.log
 .env
 .DS_Store

@@ -68,6 +68,12 @@ Last updated: 2026-07-12
 - Desktop notifications:
   - sends a notification after scheduled/manual automation adds downloads or hits errors
   - respects the "new episode notification" setting.
+- New anime discovery:
+  - stores a local anime catalog separate from "My Anime"
+  - collects monthly anime from AniList by season/year and filters by premiere month
+  - supports local catalog search by title/original title/aliases
+  - supports month filtering
+  - can add catalog items to My Anime from the Discovery page.
 
 ## Verified
 
@@ -85,7 +91,7 @@ Known non-blocking warning:
 ## Not Implemented Yet
 
 - Daily reminder summary view.
-- New-season metadata collection from Bangumi/AniList/Mikan seasonal data.
+- Additional metadata sources such as Bangumi and Mikan seasonal data.
 - Site-specific source adapters such as full DMHY scraping/adapter behavior.
 - Real embedded BT engine. `EmbeddedTorrentEngine` is still a placeholder.
 - Bundled qBittorrent/qBittorrent-nox lifecycle for users who do not install qB manually.
@@ -98,6 +104,6 @@ Known non-blocking warning:
 1. Add an automation run service:
    - add tray behavior
    - avoid repeated manual scans within a short cooldown window.
-2. Implement metadata collection for new-season discovery.
+2. Add Bangumi and Mikan metadata providers for discovery fallback.
 3. Add a dedicated notification/reminder history view.
 4. Replace JSON repository with SQLite once the domain behavior stabilizes.

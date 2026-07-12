@@ -1,4 +1,4 @@
-import { CalendarPlus, LibraryPlus, RotateCcw, Search } from "lucide-react";
+import { CalendarPlus, Plus, RotateCcw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
@@ -129,7 +129,7 @@ export function DiscoveryPage() {
           </Button>
           <Button onClick={() => void collectMonth(false)} disabled={collecting}>
             <CalendarPlus className="h-4 w-4" />
-            {collecting ? "采集中" : "采集本月"}
+            {collecting ? "采集中" : "采集选中月份"}
           </Button>
         </div>
       </div>
@@ -223,7 +223,7 @@ export function DiscoveryPage() {
                     disabled={followed || addingAnimeId === anime.id}
                     onClick={() => void addToMyAnime(anime)}
                   >
-                    <LibraryPlus className="h-4 w-4" />
+                    <Plus className="h-4 w-4" />
                     {followed ? "已在我的追番" : addingAnimeId === anime.id ? "添加中" : "添加追番"}
                   </Button>
                 </div>
