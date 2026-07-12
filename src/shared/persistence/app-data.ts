@@ -8,10 +8,11 @@ import type {
   FansubGroup,
   MediaFile,
   MyAnime,
+  NotificationRecord,
   ReleaseSourceConfig
 } from "../domain";
 
-export const APP_DATA_VERSION = 5;
+export const APP_DATA_VERSION = 6;
 
 export interface AppDataFile {
   version: number;
@@ -24,6 +25,7 @@ export interface AppDataFile {
   sources: ReleaseSourceConfig[];
   downloads: DownloadTask[];
   mediaFiles: MediaFile[];
+  notifications: NotificationRecord[];
   dashboard: DashboardData;
   updatedAt: string;
 }

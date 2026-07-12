@@ -275,3 +275,18 @@ export interface SourceHealth {
   status: "ok" | "warning" | "offline";
   lastCheckedAt?: string;
 }
+
+export type NotificationKind = "automation" | "download" | "reminder" | "system";
+
+export interface NotificationRecord {
+  id: string;
+  kind: NotificationKind;
+  title: string;
+  body: string;
+  severity: "info" | "success" | "warning" | "error";
+  animeId?: string;
+  episodeId?: string;
+  downloadTaskId?: string;
+  createdAt: string;
+  readAt?: string;
+}
