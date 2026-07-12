@@ -1,5 +1,6 @@
 import type { AutomationRunResult, AutomationSchedulerStatus } from "@shared/contracts";
 import type { NotificationRecord } from "@shared/domain";
+import { logger } from "../logger";
 import type { AppRepository } from "../repositories/app-repository";
 import { DesktopNotificationService } from "../platform/desktop-notification-service";
 import { AutomationRunService } from "./automation-run-service";
@@ -31,6 +32,12 @@ export class AutomationScheduler {
       this.scheduleNext();
     }
 
+    logger.info("Automation scheduler started", {
+      enabled: this.enabled,
+      intervalMinutes: this.intervalMinutes,
+      nextRunAt: this.nextRunAt
+    });
+
     return this.getStatus();
   }
 
@@ -42,6 +49,7 @@ export class AutomationScheduler {
   stop(): AutomationSchedulerStatus {
     this.enabled = false;
     this.clearTimer();
+    logger.info("Automation scheduler stopped");
     return this.getStatus();
   }
 
@@ -54,18 +62,26 @@ export class AutomationScheduler {
     this.lastError = undefined;
 
     try {
+      logger.info("Automation run started");
       const result = await new AutomationRunService(this.repository).runOnce();
       const settings = await this.repository.getSettings();
       this.lastRunAt = result.finishedAt;
       this.lastResult = result;
       await this.repository.addNotifications(createAutomationNotifications(result));
       this.notificationService.notifyAutomationResult(result, settings);
+      logger.info("Automation run finished", {
+        checkedEpisodes: result.checkedEpisodes,
+        downloaded: result.downloaded.length,
+        skipped: result.skipped.length,
+        errors: result.errors.length
+      });
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : "自动扫描失败";
       const settings = await this.repository.getSettings();
       this.lastError = message;
       this.notificationService.notifySchedulerError(message, settings);
+      logger.error("Automation run failed", { message });
       throw error;
     } finally {
       this.inFlight = false;
@@ -92,6 +108,10 @@ export class AutomationScheduler {
     this.clearTimer();
     const delayMs = this.intervalMinutes * 60 * 1000;
     this.nextRunAt = new Date(Date.now() + delayMs).toISOString();
+    logger.info("Automation scheduler next run scheduled", {
+      nextRunAt: this.nextRunAt,
+      intervalMinutes: this.intervalMinutes
+    });
     this.timer = setTimeout(() => {
       void this.runScheduled();
     }, delayMs);

@@ -8,6 +8,7 @@ import type {
   FansubGroup,
   MediaFile,
   MyAnime,
+  NotificationRecord,
   Release,
   ReleaseSourceConfig
 } from "@shared/domain";
@@ -33,6 +34,12 @@ function bridge() {
 
 export const appApi = {
   getDashboard: (): Promise<DashboardData> => bridge().getDashboard(),
+  listNotifications: (): Promise<NotificationRecord[]> => bridge().listNotifications(),
+  getUnreadNotificationCount: (): Promise<number> => bridge().getUnreadNotificationCount(),
+  markNotificationRead: (notificationId: string): Promise<NotificationRecord[]> =>
+    bridge().markNotificationRead(notificationId),
+  markAllNotificationsRead: (): Promise<NotificationRecord[]> => bridge().markAllNotificationsRead(),
+  clearNotifications: (): Promise<NotificationRecord[]> => bridge().clearNotifications(),
   listMyAnime: (): Promise<MyAnime[]> => bridge().listMyAnime(),
   upsertMyAnime: (item: MyAnime): Promise<MyAnime[]> => bridge().upsertMyAnime(item),
   removeMyAnime: (itemId: string): Promise<MyAnime[]> => bridge().removeMyAnime(itemId),

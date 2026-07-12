@@ -1,9 +1,24 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { Anime, AppSettings, Episode, EpisodePreference, MyAnime, Release, ReleaseSourceConfig } from "@shared/domain";
+import type {
+  Anime,
+  AppSettings,
+  Episode,
+  EpisodePreference,
+  MyAnime,
+  NotificationRecord,
+  Release,
+  ReleaseSourceConfig
+} from "@shared/domain";
 import type { AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
 
 const api = {
   getDashboard: () => ipcRenderer.invoke("dashboard:get"),
+  listNotifications: (): Promise<NotificationRecord[]> => ipcRenderer.invoke("notifications:list"),
+  getUnreadNotificationCount: (): Promise<number> => ipcRenderer.invoke("notifications:unreadCount"),
+  markNotificationRead: (notificationId: string): Promise<NotificationRecord[]> =>
+    ipcRenderer.invoke("notifications:markRead", notificationId),
+  markAllNotificationsRead: (): Promise<NotificationRecord[]> => ipcRenderer.invoke("notifications:markAllRead"),
+  clearNotifications: (): Promise<NotificationRecord[]> => ipcRenderer.invoke("notifications:clear"),
   listMyAnime: () => ipcRenderer.invoke("myAnime:list"),
   upsertMyAnime: (item: MyAnime) => ipcRenderer.invoke("myAnime:upsert", item),
   removeMyAnime: (itemId: string) => ipcRenderer.invoke("myAnime:remove", itemId),

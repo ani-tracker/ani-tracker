@@ -4,43 +4,48 @@
 
 ## 当前进度
 
-已经完成第一版工程骨架：
+已经完成可运行的第一版核心闭环：
 
 - Electron + React + TypeScript + Vite
 - Tailwind + shadcn/ui 风格基础组件
 - Electron preload bridge
 - 首页、我的追番、新番发现、资源搜索、下载队列、下载源、设置页面
-- 追番、资源、下载、媒体文件、设置等核心类型
-- 服务接口设计
-- 媒体编码解析链骨架
-- qBittorrent 状态映射骨架
-- JSON 本地仓库和设置持久化骨架
+- 追番、单集、资源、下载、媒体文件、设置等核心类型
+- JSON 本地仓库和设置持久化
 - RSS / Torznab 下载源适配器
-- 资源标题解析和自动匹配评分骨架
-- qBittorrent 兼容引擎和连接测试入口
-- 详细设计文档：`docs/design-plan.md`
+- 资源标题解析和自动匹配评分
+- qBittorrent 兼容引擎、连接测试、进度刷新、文件选择
+- ffprobe 媒体扫描
+- 单集字幕组覆盖
+- 手动/定时自动扫描和通知
+- 播放器调用
+
+详细文档：
+
+- `docs/design-plan.md`
+- `docs/progress.md`
+- `AGENTS.md`
 
 ## 运行方式
 
 推荐使用 pnpm：
 
 ```powershell
-pnpm install
-pnpm dev
+pnpm.cmd install
+pnpm.cmd dev
 ```
 
-PowerShell 默认可能禁止直接运行 `npm.ps1`，如果改用 npm，建议使用：
+类型检查和构建：
 
 ```powershell
-npm.cmd install
-npm.cmd run dev
+pnpm.cmd run typecheck
+pnpm.cmd build
 ```
 
 ## 下一步
 
-1. 接入 SQLite，持久化设置和我的追番。
-2. 实现新番数据源适配。
-3. 用真实 RSS / Torznab 源验证资源搜索和添加下载流程。
-4. 接入 ffprobe / MediaInfo 扫描真实媒体编码。
-5. 接入播放器配置和 Windows 平台能力。
-6. 实现真正的内置 TorrentCore，让用户无需单独安装 qBittorrent。
+1. 实现真正的内置 TorrentCore，让用户无需单独安装 qBittorrent。
+2. 接入 SQLite，替换 JSON 仓库。
+3. 完善新番元数据源和新番采集。
+4. 增加动漫花园等站点专用适配器。
+5. 补托盘、后台运行和开机启动策略。

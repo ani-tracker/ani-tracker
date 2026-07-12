@@ -10,6 +10,7 @@ import type {
   FansubGroup,
   MediaFile,
   MyAnime,
+  NotificationRecord,
   Release,
   ReleaseSourceConfig
 } from "@shared/domain";
@@ -29,6 +30,11 @@ declare global {
   interface Window {
     aniBridge: {
       getDashboard: () => Promise<DashboardData>;
+      listNotifications: () => Promise<NotificationRecord[]>;
+      getUnreadNotificationCount: () => Promise<number>;
+      markNotificationRead: (notificationId: string) => Promise<NotificationRecord[]>;
+      markAllNotificationsRead: () => Promise<NotificationRecord[]>;
+      clearNotifications: () => Promise<NotificationRecord[]>;
       listMyAnime: () => Promise<MyAnime[]>;
       upsertMyAnime: (item: MyAnime) => Promise<MyAnime[]>;
       removeMyAnime: (itemId: string) => Promise<MyAnime[]>;
