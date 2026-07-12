@@ -26,21 +26,32 @@ export function HomePage() {
       </div>
 
       <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(320px,0.8fr)] gap-5">
-        <Panel title="今日更新">
+        <Panel title="今日提醒" description={formatReminderDate(data.dailyReminder.date)}>
           <div className="space-y-3">
-            {data.todayEpisodes.map((item) => (
+            <div className="grid grid-cols-5 gap-2">
+              <ReminderStat label="今日" value={data.dailyReminder.total} />
+              <ReminderStat label="未播" value={data.dailyReminder.upcoming} />
+              <ReminderStat label="待处理" value={data.dailyReminder.aired} />
+              <ReminderStat label="下载中" value={data.dailyReminder.downloading} />
+              <ReminderStat label="已完成" value={data.dailyReminder.downloaded} />
+            </div>
+
+            {data.dailyReminder.items.map((item) => (
               <div key={item.id} className="flex items-center justify-between rounded-md border p-3">
                 <div>
                   <div className="font-medium">{item.animeTitle}</div>
                   <div className="mt-1 text-sm text-muted-foreground">
-                    第 {item.episodeNo} 集 · {item.airTime ?? "未知时间"} · {item.fansubName ?? "未选字幕组"}
+                    第 {item.episodeNo} 集 · {formatAirTime(item.airTime)} · {item.fansubName ?? "未选字幕组"}
                   </div>
                 </div>
-                <Badge tone={item.status === "downloading" ? "blue" : "green"}>
-                  {item.status === "downloading" ? "下载中" : "已匹配"}
-                </Badge>
+                <Badge tone={getEpisodeStatusTone(item.status)}>{formatEpisodeStatus(item.status)}</Badge>
               </div>
             ))}
+            {!data.dailyReminder.items.length && (
+              <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                今天没有已登记的追番更新。
+              </div>
+            )}
           </div>
         </Panel>
 
@@ -159,4 +170,59 @@ export function HomePage() {
       </Panel>
     </div>
   );
+}
+
+function ReminderStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border bg-muted/40 px-3 py-2">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function formatReminderDate(value: string): string {
+  return `${value} 的更新摘要`;
+}
+
+function formatAirTime(value?: string): string {
+  if (!value) {
+    return "未知时间";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "未知时间";
+  }
+
+  return `${date.getHours().toString().padStart(2, "0")}:${date.getMinutes().toString().padStart(2, "0")}`;
+}
+
+function formatEpisodeStatus(status: string): string {
+  const labels: Record<string, string> = {
+    upcoming: "未播",
+    aired: "已播",
+    matched: "已匹配",
+    downloading: "下载中",
+    downloaded: "已下载",
+    watched: "已看"
+  };
+
+  return labels[status] ?? status;
+}
+
+function getEpisodeStatusTone(status: string): "neutral" | "green" | "amber" | "red" | "blue" {
+  if (status === "downloading") {
+    return "blue";
+  }
+
+  if (status === "downloaded" || status === "watched" || status === "matched") {
+    return "green";
+  }
+
+  if (status === "aired") {
+    return "amber";
+  }
+
+  return "neutral";
 }

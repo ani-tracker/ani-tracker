@@ -245,12 +245,35 @@ export interface AppSettings {
 }
 
 export interface DashboardData {
+  dailyReminder: DailyReminderSummary;
   todayEpisodes: EpisodeSummary[];
   pendingActions: PendingAction[];
   activeDownloads: DownloadTask[];
   recentCompleted: MediaFile[];
   weeklySchedule: WeeklyScheduleDay[];
   sourceHealth: SourceHealth[];
+}
+
+export interface DailyReminderSummary {
+  date: string;
+  total: number;
+  upcoming: number;
+  aired: number;
+  downloading: number;
+  downloaded: number;
+  items: DailyReminderItem[];
+}
+
+export interface DailyReminderItem {
+  id: string;
+  animeId: string;
+  animeTitle: string;
+  episodeId: string;
+  episodeNo: number;
+  airTime?: string;
+  status: EpisodeStatus;
+  fansubName?: string;
+  downloadTaskId?: string;
 }
 
 export interface EpisodeSummary {

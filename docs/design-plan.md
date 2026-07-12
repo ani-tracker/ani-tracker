@@ -138,6 +138,7 @@ The current repository contains:
 - In-app notification center with local notification history
 - Tray integration, close-to-background behavior, and launch-at-login settings
 - Manual and tray-triggered automation scan cooldown
+- Dynamic daily reminder summary on Home
 
 Detailed implementation status is maintained in `docs/progress.md`.
 

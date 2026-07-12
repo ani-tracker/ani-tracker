@@ -10,6 +10,10 @@ Last updated: 2026-07-13
 - JSON-backed local repository with migration support.
 - Future SQLite schema.
 - Home, My Anime, Discovery, Release Search, Downloads, Sources, and Settings pages.
+- Daily reminder summary on Home:
+  - computes today's followed episodes from My Anime and episode air times
+  - summarizes total, upcoming, actionable, downloading, and completed counts
+  - shows each episode's time, default fansub, status, and linked download task state.
 - RSS and Torznab release source adapters.
 - DMHY / 动漫花园 site adapter:
   - searches `share.dmhy.org/topics/list`
@@ -112,7 +116,6 @@ Known non-blocking warning:
 
 ## Not Implemented Yet
 
-- Daily reminder summary view.
 - Additional metadata sources such as Bangumi and Mikan seasonal data.
 - More site-specific source adapters beyond DMHY.
 - Real embedded BT engine. `EmbeddedTorrentEngine` is still a placeholder.
@@ -123,5 +126,5 @@ Known non-blocking warning:
 ## Next Recommended Work
 
 1. Add Bangumi and Mikan metadata providers for discovery fallback.
-2. Add daily reminder summary logic on top of notification history.
+2. Add daily reminder notification generation on top of the summary data.
 3. Replace JSON repository with SQLite once the domain behavior stabilizes.

@@ -1,6 +1,7 @@
 import type {
   Anime,
   AppSettings,
+  DailyReminderItem,
   DashboardData,
   DownloadStatus,
   DownloadTask,
@@ -20,8 +21,12 @@ export class AppRepository {
 
   async getDashboard(): Promise<DashboardData> {
     const data = await this.store.getData();
+    const dailyReminder = buildDailyReminderSummary(data);
+
     return {
       ...data.dashboard,
+      dailyReminder,
+      todayEpisodes: dailyReminder.items.map(toEpisodeSummary),
       activeDownloads: data.downloads,
       recentCompleted: sortMediaFiles(data.mediaFiles).slice(0, 10),
       sourceHealth: data.dashboard.sourceHealth.map((source) => {
@@ -432,6 +437,104 @@ function mergeSettings(current: AppSettings, patch: Partial<AppSettings>): AppSe
     },
     players: patch.players ?? current.players
   };
+}
+
+function buildDailyReminderSummary(data: AppDataFile): DashboardData["dailyReminder"] {
+  const todayKey = toLocalDateKey(new Date());
+  const followedByAnimeId = new Map(data.myAnime.map((item) => [item.anime.id, item]));
+  const fansubById = new Map(data.fansubGroups.map((item) => [item.id, item]));
+  const items: DailyReminderItem[] = [];
+
+  for (const episode of data.episodes) {
+    if (!episode.airTime || toLocalDateKey(new Date(episode.airTime)) !== todayKey) {
+      continue;
+    }
+
+    const followed = followedByAnimeId.get(episode.animeId);
+    if (!followed) {
+      continue;
+    }
+
+    const download = data.downloads.find((task) => task.animeId === episode.animeId && task.episodeId === episode.id);
+    const fansub = followed.defaultFansubGroupId ? fansubById.get(followed.defaultFansubGroupId) : undefined;
+
+    items.push({
+      id: `daily-${episode.id}`,
+      animeId: episode.animeId,
+      animeTitle: followed.anime.title,
+      episodeId: episode.id,
+      episodeNo: episode.episodeNo,
+      airTime: episode.airTime,
+      status: resolveReminderStatus(episode, download),
+      fansubName: fansub?.name,
+      downloadTaskId: download?.id
+    });
+  }
+
+  items.sort((left, right) => (left.airTime ?? "").localeCompare(right.airTime ?? ""));
+
+  return {
+    date: todayKey,
+    total: items.length,
+    upcoming: items.filter((item) => item.status === "upcoming").length,
+    aired: items.filter((item) => item.status === "aired" || item.status === "matched").length,
+    downloading: items.filter((item) => item.status === "downloading").length,
+    downloaded: items.filter((item) => item.status === "downloaded" || item.status === "watched").length,
+    items
+  };
+}
+
+function resolveReminderStatus(episode: Episode, download?: DownloadTask): DailyReminderItem["status"] {
+  if (!download) {
+    return episode.status;
+  }
+
+  if (download.status === "completed" || download.status === "seeding") {
+    return "downloaded";
+  }
+
+  if (["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(download.status)) {
+    return "downloading";
+  }
+
+  return episode.status;
+}
+
+function toEpisodeSummary(item: DailyReminderItem): DashboardData["todayEpisodes"][number] {
+  return {
+    id: item.id,
+    animeTitle: item.animeTitle,
+    episodeNo: item.episodeNo,
+    airTime: formatLocalTime(item.airTime),
+    status: item.status,
+    fansubName: item.fansubName,
+    downloadTaskId: item.downloadTaskId
+  };
+}
+
+function toLocalDateKey(date: Date): string {
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return [date.getFullYear(), padDatePart(date.getMonth() + 1), padDatePart(date.getDate())].join("-");
+}
+
+function formatLocalTime(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+
+  return `${padDatePart(date.getHours())}:${padDatePart(date.getMinutes())}`;
+}
+
+function padDatePart(value: number): string {
+  return value.toString().padStart(2, "0");
 }
 
 function sortMediaFiles(mediaFiles: MediaFile[]): MediaFile[] {

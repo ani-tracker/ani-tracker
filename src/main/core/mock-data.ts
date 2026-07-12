@@ -317,6 +317,15 @@ export const appSettings: AppSettings = {
 };
 
 export const dashboard: DashboardData = {
+  dailyReminder: {
+    date: "2026-07-13",
+    total: 0,
+    upcoming: 0,
+    aired: 0,
+    downloading: 0,
+    downloaded: 0,
+    items: []
+  },
   todayEpisodes: [
     {
       id: "today-1",
