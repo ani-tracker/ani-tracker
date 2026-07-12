@@ -1,0 +1,277 @@
+export type AnimeStatus = "watching" | "planned" | "completed" | "paused" | "dropped";
+
+export type EpisodeStatus =
+  | "upcoming"
+  | "aired"
+  | "matched"
+  | "downloading"
+  | "downloaded"
+  | "watched";
+
+export type DownloadStatus =
+  | "queued"
+  | "fetching_metadata"
+  | "downloading"
+  | "stalled"
+  | "paused"
+  | "checking"
+  | "moving"
+  | "completed"
+  | "seeding"
+  | "error"
+  | "missing_files";
+
+export type Season = "winter" | "spring" | "summer" | "fall";
+
+export type SubtitlePreference = "chs" | "cht" | "multi" | "jpn" | "eng";
+
+export type NormalizedVideoCodec = "H.264/AVC" | "H.265/HEVC" | "AV1" | "VP9" | "Unknown";
+
+export type SourceKind = "rss" | "torznab" | "site_adapter" | "manual";
+
+export type TorrentEngineKind = "embedded" | "qbittorrent";
+
+export interface Anime {
+  id: string;
+  title: string;
+  originalTitle?: string;
+  aliases: AnimeAlias[];
+  premiereDate?: string;
+  premiereYear: number;
+  premiereMonth: number;
+  season?: Season;
+  summary?: string;
+  coverUrl?: string;
+  externalIds: Record<string, string>;
+}
+
+export interface AnimeAlias {
+  id: string;
+  animeId: string;
+  alias: string;
+  language: "zh" | "ja" | "en" | "romaji" | "custom";
+  priority: number;
+}
+
+export interface MyAnime {
+  id: string;
+  anime: Anime;
+  status: AnimeStatus;
+  defaultFansubGroupId?: string;
+  autoDownload: boolean;
+  downloadDir?: string;
+  preferredResolution?: "720p" | "1080p" | "2160p";
+  preferredCodec?: NormalizedVideoCodec;
+  preferredSubtitle?: SubtitlePreference;
+  addedAt: string;
+  updatedAt: string;
+}
+
+export interface Episode {
+  id: string;
+  animeId: string;
+  episodeNo: number;
+  title?: string;
+  airTime?: string;
+  status: EpisodeStatus;
+}
+
+export interface EpisodePreference {
+  id: string;
+  animeId: string;
+  episodeId: string;
+  fansubGroupId?: string;
+  releaseId?: string;
+  isManualOverride: boolean;
+}
+
+export interface FansubGroup {
+  id: string;
+  name: string;
+  aliases: string[];
+  sourceIds: string[];
+}
+
+export interface ReleaseSourceConfig {
+  id: string;
+  name: string;
+  kind: SourceKind;
+  enabled: boolean;
+  baseUrl?: string;
+  apiKey?: string;
+  rssUrl?: string;
+  tags?: string[];
+}
+
+export interface Release {
+  id: string;
+  title: string;
+  animeId?: string;
+  episodeNo?: number;
+  fansubGroupId?: string;
+  sourceId: string;
+  sourceName: string;
+  magnetUrl?: string;
+  torrentUrl?: string;
+  infoHash?: string;
+  size?: number;
+  resolution?: "720p" | "1080p" | "2160p";
+  declaredVideoCodec?: string;
+  normalizedVideoCodec?: NormalizedVideoCodec;
+  subtitle?: SubtitlePreference;
+  publishedAt: string;
+  seeders?: number;
+}
+
+export interface TorrentFile {
+  id: string;
+  index: number;
+  name: string;
+  size: number;
+  progress: number;
+  priority: number;
+  selected: boolean;
+}
+
+export interface DownloadTask {
+  id: string;
+  releaseId?: string;
+  animeId?: string;
+  episodeId?: string;
+  engine: TorrentEngineKind;
+  torrentHash?: string;
+  name: string;
+  status: DownloadStatus;
+  progress: number;
+  downloadSpeed: number;
+  uploadSpeed: number;
+  etaSeconds?: number;
+  savePath: string;
+  files: TorrentFile[];
+  createdAt: string;
+  completedAt?: string;
+}
+
+export interface MediaFile {
+  id: string;
+  animeId: string;
+  episodeId?: string;
+  downloadTaskId?: string;
+  filePath: string;
+  fileName: string;
+  size: number;
+  container?: "mkv" | "mp4" | "avi" | "unknown";
+  declaredVideoCodec?: string;
+  detectedVideoCodec?: string;
+  normalizedVideoCodec: NormalizedVideoCodec;
+  resolution?: string;
+  bitDepth?: number;
+  audioCodecs: string[];
+  subtitleTracks: string[];
+  durationSeconds?: number;
+  downloadedAt?: string;
+  probedAt?: string;
+}
+
+export interface PlayerProfile {
+  id: string;
+  name: string;
+  executablePath: string;
+  argumentTemplate: string;
+  supportsMadVr?: boolean;
+  platform: "windows" | "macos" | "linux" | "any";
+}
+
+export interface DownloadSettings {
+  defaultDownloadDir: string;
+  createAnimeFolder: boolean;
+  animeFolderPattern: string;
+  temporaryDownloadDir?: string;
+  defaultTorrentEngine: TorrentEngineKind;
+  embedded: EmbeddedTorrentSettings;
+  qbittorrent: QbittorrentSettings;
+}
+
+export interface EmbeddedTorrentSettings {
+  enabled: boolean;
+  listenPort?: number;
+  maxActiveDownloads?: number;
+  maxDownloadSpeed?: number;
+  maxUploadSpeed?: number;
+}
+
+export interface QbittorrentSettings {
+  baseUrl: string;
+  username: string;
+  password?: string;
+  autoConnect: boolean;
+}
+
+export interface StorageSettings {
+  userDataDir: string;
+  databasePath: string;
+  cacheDir: string;
+  logDir: string;
+  backupDir?: string;
+}
+
+export interface AutomationSettings {
+  scheduledCheckEnabled: boolean;
+  checkIntervalMinutes: number;
+  notifyOnNewEpisode: boolean;
+  autoDownloadEnabledGlobally: boolean;
+  fallbackWhenDefaultFansubMissing: "wait" | "candidate" | "notify_only";
+}
+
+export interface MediaSettings {
+  ffprobePath: string;
+  ffprobeTimeoutSeconds: number;
+  videoExtensions: string[];
+}
+
+export interface AppSettings {
+  download: DownloadSettings;
+  storage: StorageSettings;
+  players: PlayerProfile[];
+  defaultPlayerProfileId?: string;
+  automation: AutomationSettings;
+  media: MediaSettings;
+}
+
+export interface DashboardData {
+  todayEpisodes: EpisodeSummary[];
+  pendingActions: PendingAction[];
+  activeDownloads: DownloadTask[];
+  recentCompleted: MediaFile[];
+  weeklySchedule: WeeklyScheduleDay[];
+  sourceHealth: SourceHealth[];
+}
+
+export interface EpisodeSummary {
+  id: string;
+  animeTitle: string;
+  episodeNo: number;
+  airTime?: string;
+  status: EpisodeStatus;
+  fansubName?: string;
+  downloadTaskId?: string;
+}
+
+export interface PendingAction {
+  id: string;
+  title: string;
+  description: string;
+  severity: "info" | "warning" | "error";
+}
+
+export interface WeeklyScheduleDay {
+  day: string;
+  items: EpisodeSummary[];
+}
+
+export interface SourceHealth {
+  sourceId: string;
+  name: string;
+  status: "ok" | "warning" | "offline";
+  lastCheckedAt?: string;
+}

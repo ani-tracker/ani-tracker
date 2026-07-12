@@ -1,0 +1,46 @@
+import { contextBridge, ipcRenderer } from "electron";
+import type { AppSettings, Episode, EpisodePreference, MyAnime, Release, ReleaseSourceConfig } from "@shared/domain";
+import type { ReleaseQuery } from "@shared/contracts";
+
+const api = {
+  getDashboard: () => ipcRenderer.invoke("dashboard:get"),
+  listMyAnime: () => ipcRenderer.invoke("myAnime:list"),
+  upsertMyAnime: (item: MyAnime) => ipcRenderer.invoke("myAnime:upsert", item),
+  removeMyAnime: (itemId: string) => ipcRenderer.invoke("myAnime:remove", itemId),
+  listEpisodes: (animeId: string) => ipcRenderer.invoke("episodes:list", animeId),
+  upsertEpisode: (episode: Episode) => ipcRenderer.invoke("episodes:upsert", episode),
+  listEpisodePreferences: (animeId: string) => ipcRenderer.invoke("episodePreferences:list", animeId),
+  upsertEpisodePreference: (preference: EpisodePreference) =>
+    ipcRenderer.invoke("episodePreferences:upsert", preference),
+  removeEpisodePreference: (episodeId: string) => ipcRenderer.invoke("episodePreferences:remove", episodeId),
+  previewEpisodeReleases: (animeId: string, episodeId: string) =>
+    ipcRenderer.invoke("automation:previewEpisodeReleases", animeId, episodeId),
+  runAutomationOnce: () => ipcRenderer.invoke("automation:runOnce"),
+  getAutomationSchedulerStatus: () => ipcRenderer.invoke("automation:getSchedulerStatus"),
+  restartAutomationScheduler: () => ipcRenderer.invoke("automation:restartScheduler"),
+  listDownloads: () => ipcRenderer.invoke("downloads:list"),
+  refreshDownloads: () => ipcRenderer.invoke("downloads:refresh"),
+  pauseDownload: (taskId: string) => ipcRenderer.invoke("downloads:pause", taskId),
+  resumeDownload: (taskId: string) => ipcRenderer.invoke("downloads:resume", taskId),
+  removeDownload: (taskId: string, deleteFiles: boolean) => ipcRenderer.invoke("downloads:remove", taskId, deleteFiles),
+  setDownloadFilePriority: (taskId: string, fileIndexes: number[], priority: number) =>
+    ipcRenderer.invoke("downloads:setFilePriority", taskId, fileIndexes, priority),
+  addReleaseDownload: (release: Release) => ipcRenderer.invoke("downloads:addRelease", release),
+  listFansubs: () => ipcRenderer.invoke("fansubs:list"),
+  listSources: () => ipcRenderer.invoke("sources:list"),
+  setSourceEnabled: (sourceId: string, enabled: boolean) => ipcRenderer.invoke("sources:setEnabled", sourceId, enabled),
+  upsertSource: (source: ReleaseSourceConfig) => ipcRenderer.invoke("sources:upsert", source),
+  searchReleases: (query: ReleaseQuery) => ipcRenderer.invoke("releases:search", query),
+  getSettings: () => ipcRenderer.invoke("settings:get"),
+  updateSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings:update", patch),
+  testQbittorrent: () => ipcRenderer.invoke("downloads:testQbittorrent"),
+  listMediaFiles: () => ipcRenderer.invoke("media:list"),
+  scanDownloadMedia: (taskId: string) => ipcRenderer.invoke("media:scanDownload", taskId),
+  playMedia: (filePath: string, profileId?: string) => ipcRenderer.invoke("media:play", filePath, profileId),
+  revealMedia: (filePath: string) => ipcRenderer.invoke("media:reveal", filePath),
+  openExternal: (url: string) => ipcRenderer.invoke("platform:openExternal", url)
+};
+
+contextBridge.exposeInMainWorld("aniBridge", api);
+
+export type AniBridge = typeof api;

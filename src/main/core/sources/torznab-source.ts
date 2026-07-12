@@ -1,0 +1,98 @@
+import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
+import type { Release, ReleaseSourceConfig } from "@shared/domain";
+import { enrichReleaseFromTitle } from "../releases/release-title-parser";
+import { parseXml, textValue, toArray } from "./xml";
+
+interface TorznabDocument {
+  rss?: {
+    channel?: {
+      item?: TorznabItem | TorznabItem[];
+    };
+  };
+}
+
+interface TorznabItem {
+  title?: unknown;
+  link?: unknown;
+  guid?: unknown;
+  pubDate?: unknown;
+  enclosure?: {
+    "@url"?: string;
+    "@length"?: string;
+  };
+  "torznab:attr"?: TorznabAttr | TorznabAttr[];
+}
+
+interface TorznabAttr {
+  "@name"?: string;
+  "@value"?: string;
+}
+
+export class TorznabReleaseSource implements ReleaseSource {
+  constructor(public readonly config: ReleaseSourceConfig) {}
+
+  async searchReleases(query: ReleaseQuery): Promise<Release[]> {
+    if (!this.config.baseUrl) {
+      return [];
+    }
+
+    const url = new URL("/api", this.config.baseUrl);
+    url.searchParams.set("t", "search");
+    url.searchParams.set("q", query.keyword);
+    if (this.config.apiKey) {
+      url.searchParams.set("apikey", this.config.apiKey);
+    }
+
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Torznab source failed: ${response.status} ${response.statusText}`);
+    }
+
+    const parsed = parseXml<TorznabDocument>(await response.text());
+    return toArray(parsed.rss?.channel?.item)
+      .map((item, index) => enrichReleaseFromTitle(this.mapItem(item, index)))
+      .slice(0, query.limit ?? 50);
+  }
+
+  async listLatestByFansub(groupId: string): Promise<Release[]> {
+    return this.searchReleases({ keyword: groupId });
+  }
+
+  async listLatestByAnime(animeId: string): Promise<Release[]> {
+    return this.searchReleases({ keyword: animeId });
+  }
+
+  private mapItem(item: TorznabItem, index: number): Release {
+    const title = textValue(item.title) ?? `Torznab Item ${index + 1}`;
+    const attrs = toArray(item["torznab:attr"]);
+    const seeders = getAttrNumber(attrs, "seeders");
+    const size = parseOptionalNumber(item.enclosure?.["@length"]) ?? getAttrNumber(attrs, "size");
+    const link = textValue(item.link) ?? item.enclosure?.["@url"];
+
+    return {
+      id: `${this.config.id}:${textValue(item.guid) ?? link ?? title}`,
+      title,
+      sourceId: this.config.id,
+      sourceName: this.config.name,
+      magnetUrl: link?.startsWith("magnet:") ? link : undefined,
+      torrentUrl: link && !link.startsWith("magnet:") ? link : undefined,
+      size,
+      seeders,
+      publishedAt: textValue(item.pubDate) ?? new Date().toISOString()
+    };
+  }
+}
+
+function getAttrNumber(attrs: TorznabAttr[], name: string): number | undefined {
+  const value = attrs.find((attr) => attr["@name"] === name)?.["@value"];
+  return parseOptionalNumber(value);
+}
+
+function parseOptionalNumber(value?: string): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
