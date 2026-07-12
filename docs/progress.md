@@ -14,6 +14,10 @@ Last updated: 2026-07-13
   - computes today's followed episodes from My Anime and episode air times
   - summarizes total, upcoming, actionable, downloading, and completed counts
   - shows each episode's time, default fansub, status, and linked download task state.
+- Daily reminder notifications:
+  - creates one reminder notification per local date when followed episodes air today
+  - skips duplicate daily reminder records
+  - uses the existing desktop notification preference.
 - RSS and Torznab release source adapters.
 - DMHY / 动漫花园 site adapter:
   - searches `share.dmhy.org/topics/list`
@@ -126,5 +130,4 @@ Known non-blocking warning:
 ## Next Recommended Work
 
 1. Add Bangumi and Mikan metadata providers for discovery fallback.
-2. Add daily reminder notification generation on top of the summary data.
-3. Replace JSON repository with SQLite once the domain behavior stabilizes.
+2. Replace JSON repository with SQLite once the domain behavior stabilizes.

@@ -1,6 +1,6 @@
 import { Notification } from "electron";
 import type { AutomationRunResult } from "@shared/contracts";
-import type { AppSettings } from "@shared/domain";
+import type { AppSettings, NotificationRecord } from "@shared/domain";
 
 export class DesktopNotificationService {
   notifyAutomationResult(result: AutomationRunResult, settings: AppSettings): void {
@@ -36,6 +36,17 @@ export class DesktopNotificationService {
     new Notification({
       title: "追番更新扫描失败",
       body: message
+    }).show();
+  }
+
+  notifyReminder(record: NotificationRecord, settings: AppSettings): void {
+    if (!settings.automation.notifyOnNewEpisode || !Notification.isSupported()) {
+      return;
+    }
+
+    new Notification({
+      title: record.title,
+      body: record.body
     }).show();
   }
 }

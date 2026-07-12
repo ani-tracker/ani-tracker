@@ -1,5 +1,7 @@
 import { app, BrowserWindow } from "electron";
 import { join } from "node:path";
+import { DailyReminderService } from "./core/automation/daily-reminder-service";
+import { logger } from "./core/logger";
 import { DesktopIntegrationService } from "./core/platform/desktop-integration-service";
 import { automationScheduler, registerIpcHandlers, repository } from "./ipc";
 
@@ -10,6 +12,7 @@ const desktopIntegration = new DesktopIntegrationService({
   runAutomation: () => automationScheduler.runNow({ trigger: "tray" }),
   quitApp: () => app.quit()
 });
+const dailyReminderService = new DailyReminderService(repository);
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -79,6 +82,11 @@ app.whenReady().then(async () => {
   desktopIntegration.applySettings(await repository.getSettings());
   createWindow();
   void automationScheduler.start();
+  void dailyReminderService.runOnce().catch((error: unknown) => {
+    logger.error("Daily reminder failed", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  });
 
   app.on("activate", () => {
     showMainWindow();

@@ -139,6 +139,7 @@ The current repository contains:
 - Tray integration, close-to-background behavior, and launch-at-login settings
 - Manual and tray-triggered automation scan cooldown
 - Dynamic daily reminder summary on Home
+- Daily reminder notification generation
 
 Detailed implementation status is maintained in `docs/progress.md`.
 
