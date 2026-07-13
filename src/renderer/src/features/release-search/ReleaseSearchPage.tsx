@@ -118,7 +118,7 @@ export function ReleaseSearchPage() {
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-semibold tracking-normal">资源搜索</h1>
-        <p className="mt-1 text-sm text-muted-foreground">统一搜索已启用的 RSS / Torznab 下载源，结果会自动解析字幕组、集数、编码和清晰度。</p>
+        <p className="mt-1 text-sm text-muted-foreground">统一搜索已启用的 RSS、Torznab 和站点适配器，结果会自动解析字幕组、集数、编码和清晰度。</p>
       </div>
 
       <Panel>

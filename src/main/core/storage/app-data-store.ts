@@ -1,7 +1,7 @@
 import { app } from "electron";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { AppSettings } from "@shared/domain";
+import type { AppSettings, ReleaseSourceConfig } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import { createSeedData } from "./seed-data";
@@ -78,12 +78,28 @@ function migrateAppData(data: AppDataFile): AppDataFile {
     ...data,
     version: APP_DATA_VERSION,
     settings: mergeSettings(defaults.settings, data.settings),
+    sources: mergeDefaultSources(defaults.sources, data.sources),
     dashboard: {
       ...defaults.dashboard,
       ...data.dashboard
     },
     updatedAt: data.version === APP_DATA_VERSION ? data.updatedAt : new Date().toISOString()
   };
+}
+
+function mergeDefaultSources(defaults: ReleaseSourceConfig[], current?: ReleaseSourceConfig[]): ReleaseSourceConfig[] {
+  if (!current) {
+    return defaults;
+  }
+
+  const sources = [...current];
+  for (const source of defaults) {
+    if (!sources.some((item) => item.id === source.id)) {
+      sources.push(source);
+    }
+  }
+
+  return sources;
 }
 
 function mergeSettings(defaults: AppSettings, current?: AppSettings): AppSettings {

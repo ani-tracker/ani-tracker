@@ -63,6 +63,12 @@
   - 搜索 `share.dmhy.org/topics/list`。
   - 解析标题、magnet、torrent、发布时间和体积。
   - 复用 release title enrichment。
+- 已实现 Mikan / 蜜柑计划 site adapter：
+  - 搜索 `mikanani.me/Home/Search`。
+  - 解析 Episode 链接、Download torrent 地址、magnet、发布时间和体积。
+  - 没有直接 torrent 链接时按 Episode id 兜底生成下载地址。
+  - 对请求设置超时，避免站点不可达时长期阻塞。
+  - 新增默认禁用来源 `mikan-site`，并通过数据版本迁移补进已有 JSON 数据。
 - 已实现资源标题解析：
   - 字幕组。
   - 集数。
@@ -164,7 +170,7 @@
 
 ## 尚未完成
 
-- 更多站点专用 source adapter，例如 Mikan 资源页的专用下载源适配。
+- 更多站点专用 source adapter，例如 Nyaa、ACG.RIP 等。
 - 真实内置 BT 核心；当前 `EmbeddedTorrentEngine` 仍是占位实现。
 - qBittorrent/qBittorrent-nox 随应用托管启动。
 - SQLite repository 替换 JSON repository。
@@ -173,6 +179,6 @@
 
 ## 下一步建议
 
-1. 为 Mikan 资源页实现专用 release source adapter，补齐 RSS 之外的搜索能力。
-2. 在 Discovery 页面展示元数据来源和 external id，方便排查匹配问题。
+1. 在 Discovery 页面展示元数据来源和 external id，方便排查匹配问题。
+2. 为 Mikan/DMHY 适配器补解析样例测试，固定 HTML 结构变化带来的回归风险。
 3. 在领域行为继续稳定后，开始 SQLite repository 替换 JSON repository。

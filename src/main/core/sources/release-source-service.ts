@@ -1,6 +1,7 @@
 import type { ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
 import type { ReleaseSourceConfig } from "@shared/domain";
 import { DmhyReleaseSource } from "./dmhy-source";
+import { MikanReleaseSource } from "./mikan-source";
 import { RssReleaseSource } from "./rss-source";
 import { TorznabReleaseSource } from "./torznab-source";
 
@@ -48,12 +49,21 @@ export function createReleaseSource(config: ReleaseSourceConfig): ReleaseSource 
     return new DmhyReleaseSource(config);
   }
 
+  if (config.kind === "site_adapter" && isMikanConfig(config)) {
+    return new MikanReleaseSource(config);
+  }
+
   return null;
 }
 
 function isDmhyConfig(config: ReleaseSourceConfig): boolean {
   const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
   return text.includes("dmhy") || text.includes("动漫花园") || text.includes("share.dmhy.org");
+}
+
+function isMikanConfig(config: ReleaseSourceConfig): boolean {
+  const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
+  return text.includes("mikan") || text.includes("蜜柑") || text.includes("mikanani.me");
 }
 
 function dedupeReleases<T extends { infoHash?: string; magnetUrl?: string; torrentUrl?: string; title: string }>(releases: T[]): T[] {

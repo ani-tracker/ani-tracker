@@ -245,6 +245,14 @@ export const sourceConfigs: ReleaseSourceConfig[] = [
     tags: ["anime", "bt"]
   },
   {
+    id: "mikan-site",
+    name: "蜜柑计划站点",
+    kind: "site_adapter",
+    enabled: false,
+    baseUrl: "https://mikanani.me/",
+    tags: ["anime", "bt", "mikan"]
+  },
+  {
     id: "prowlarr",
     name: "Prowlarr Torznab",
     kind: "torznab",
