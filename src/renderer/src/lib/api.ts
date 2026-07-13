@@ -80,5 +80,6 @@ export const appApi = {
   listMediaFiles: (): Promise<MediaFile[]> => bridge().listMediaFiles(),
   scanDownloadMedia: (taskId: string): Promise<MediaScanResult> => bridge().scanDownloadMedia(taskId),
   playMedia: (filePath: string, profileId?: string): Promise<void> => bridge().playMedia(filePath, profileId),
-  revealMedia: (filePath: string): Promise<void> => bridge().revealMedia(filePath)
+  revealMedia: (filePath: string): Promise<void> => bridge().revealMedia(filePath),
+  openExternal: (url: string): Promise<void> => bridge().openExternal(url)
 };

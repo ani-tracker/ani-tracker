@@ -1,4 +1,4 @@
-import { CalendarPlus, Plus, RotateCcw, Search } from "lucide-react";
+import { CalendarPlus, ExternalLink, Plus, RotateCcw, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
@@ -115,6 +115,21 @@ export function DiscoveryPage() {
     }
   }
 
+  async function openExternalId(externalId: ExternalIdBadge) {
+    if (!externalId.url) {
+      return;
+    }
+
+    try {
+      await appApi.openExternal(externalId.url);
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "打开外部页面失败"
+      });
+    }
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex items-end justify-between gap-4">
@@ -221,13 +236,27 @@ export function DiscoveryPage() {
                   {externalIds.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-2">
                       {externalIds.map((externalId) => (
-                        <Badge
-                          key={externalId.key}
-                          tone={externalId.tone}
-                          title={`${externalId.label}: ${externalId.value}`}
-                        >
-                          {externalId.label} {externalId.value}
-                        </Badge>
+                        externalId.url ? (
+                          <button
+                            key={externalId.key}
+                            className={externalId.className}
+                            title={`${externalId.label}: ${externalId.value}`}
+                            type="button"
+                            onClick={() => void openExternalId(externalId)}
+                          >
+                            <span className="truncate">
+                              {externalId.label} {externalId.value}
+                            </span>
+                            <ExternalLink className="h-3 w-3 flex-none" />
+                          </button>
+                        ) : (
+                          <Badge
+                            key={externalId.key}
+                            title={`${externalId.label}: ${externalId.value}`}
+                          >
+                            {externalId.label} {externalId.value}
+                          </Badge>
+                        )
                       ))}
                     </div>
                   )}
@@ -263,11 +292,23 @@ const seasonText = {
   fall: "秋季"
 };
 
-const externalIdText: Record<string, { label: string; tone: "blue" | "green" | "amber" | "neutral" }> = {
-  bangumi: { label: "Bangumi", tone: "blue" },
-  anilist: { label: "AniList", tone: "green" },
-  mikan: { label: "Mikan", tone: "amber" },
-  mal: { label: "MAL", tone: "neutral" }
+const externalIdText: Record<string, { label: string; className: string }> = {
+  bangumi: {
+    label: "Bangumi",
+    className: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:border-cyan-400"
+  },
+  anilist: {
+    label: "AniList",
+    className: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-400"
+  },
+  mikan: {
+    label: "Mikan",
+    className: "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-400"
+  },
+  mal: {
+    label: "MAL",
+    className: "border-border bg-muted text-muted-foreground hover:border-primary"
+  }
 };
 
 const externalIdOrder = ["bangumi", "anilist", "mikan", "mal"];
@@ -292,12 +333,15 @@ function buildMonthOptions(): Array<{ year: number; month: number }> {
   });
 }
 
-function buildExternalIdBadges(anime: Anime): Array<{
+interface ExternalIdBadge {
   key: string;
   label: string;
   value: string;
-  tone: "blue" | "green" | "amber" | "neutral";
-}> {
+  className: string;
+  url?: string;
+}
+
+function buildExternalIdBadges(anime: Anime): ExternalIdBadge[] {
   return Object.entries(anime.externalIds)
     .filter(([, value]) => Boolean(value))
     .sort(([left], [right]) => getExternalIdRank(left) - getExternalIdRank(right))
@@ -305,11 +349,35 @@ function buildExternalIdBadges(anime: Anime): Array<{
       key,
       label: externalIdText[key]?.label ?? key,
       value,
-      tone: externalIdText[key]?.tone ?? "neutral"
+      className: [
+        "inline-flex h-6 max-w-full items-center gap-1 rounded-md border px-2 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-primary/30",
+        externalIdText[key]?.className ?? "border-border bg-muted text-muted-foreground"
+      ].join(" "),
+      url: buildExternalIdUrl(key, value)
     }));
 }
 
 function getExternalIdRank(key: string): number {
   const index = externalIdOrder.indexOf(key);
   return index >= 0 ? index : externalIdOrder.length;
+}
+
+function buildExternalIdUrl(key: string, value: string): string | undefined {
+  if (key === "bangumi") {
+    return `https://bgm.tv/subject/${encodeURIComponent(value)}`;
+  }
+
+  if (key === "anilist") {
+    return `https://anilist.co/anime/${encodeURIComponent(value)}`;
+  }
+
+  if (key === "mikan") {
+    return `https://mikanani.me/Home/Bangumi/${encodeURIComponent(value)}`;
+  }
+
+  if (key === "mal") {
+    return `https://myanimelist.net/anime/${encodeURIComponent(value)}`;
+  }
+
+  return undefined;
 }
