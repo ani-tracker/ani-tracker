@@ -15,6 +15,7 @@ import type {
   ReleaseSourceConfig
 } from "@shared/domain";
 import type {
+  AddDownloadUrlInput,
   AnimeDiscoveryQuery,
   AnimeDiscoveryResult,
   AutomationRunResult,
@@ -57,6 +58,7 @@ declare global {
       resumeDownload: (taskId: string) => Promise<DownloadTask[]>;
       removeDownload: (taskId: string, deleteFiles: boolean) => Promise<DownloadTask[]>;
       setDownloadFilePriority: (taskId: string, fileIndexes: number[], priority: number) => Promise<DownloadTask[]>;
+      addDownloadUrl: (input: AddDownloadUrlInput) => Promise<DownloadTask[]>;
       addReleaseDownload: (release: Release) => Promise<DownloadTask[]>;
       listFansubs: () => Promise<FansubGroup[]>;
       listSources: () => Promise<ReleaseSourceConfig[]>;

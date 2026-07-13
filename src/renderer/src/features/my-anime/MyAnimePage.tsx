@@ -806,6 +806,7 @@ function EpisodeRulesPanel({
                             disabled={addingReleaseId === candidate.release.id}
                           >
                             <Download className="h-4 w-4" />
+                            {addingReleaseId === candidate.release.id ? "添加中" : "添加下载"}
                           </Button>
                         </div>
                       </div>

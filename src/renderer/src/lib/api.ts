@@ -13,6 +13,7 @@ import type {
   ReleaseSourceConfig
 } from "@shared/domain";
 import type {
+  AddDownloadUrlInput,
   AnimeDiscoveryQuery,
   AnimeDiscoveryResult,
   AutomationRunResult,
@@ -68,6 +69,7 @@ export const appApi = {
     bridge().removeDownload(taskId, deleteFiles),
   setDownloadFilePriority: (taskId: string, fileIndexes: number[], priority: number): Promise<DownloadTask[]> =>
     bridge().setDownloadFilePriority(taskId, fileIndexes, priority),
+  addDownloadUrl: (input: AddDownloadUrlInput): Promise<DownloadTask[]> => bridge().addDownloadUrl(input),
   addReleaseDownload: (release: Release): Promise<DownloadTask[]> => bridge().addReleaseDownload(release),
   listFansubs: (): Promise<FansubGroup[]> => bridge().listFansubs(),
   listSources: (): Promise<ReleaseSourceConfig[]> => bridge().listSources(),

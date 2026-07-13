@@ -1,5 +1,6 @@
-import { FileSearch, Pause, Play, RotateCcw, Trash2 } from "lucide-react";
+import { Download as DownloadIcon, FileSearch, Pause, Play, RotateCcw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,8 @@ export function DownloadsPage() {
   const [mutatingTaskId, setMutatingTaskId] = useState<string | null>(null);
   const [mutatingFileId, setMutatingFileId] = useState<string | null>(null);
   const [scanningTaskId, setScanningTaskId] = useState<string | null>(null);
+  const [downloadUrl, setDownloadUrl] = useState("");
+  const [addingDownload, setAddingDownload] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
@@ -49,6 +52,28 @@ export function DownloadsPage() {
       setError(caught instanceof Error ? caught.message : "下载任务操作失败");
     } finally {
       setMutatingTaskId(null);
+    }
+  }
+
+  async function addDownload(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const url = downloadUrl.trim();
+    if (!url) {
+      setError("请输入 magnet 或 torrent 地址");
+      return;
+    }
+
+    setAddingDownload(true);
+    try {
+      const updated = await appApi.addDownloadUrl({ url });
+      setTasks(updated);
+      setDownloadUrl("");
+      setError(null);
+      setScanMessage("已添加到下载队列");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "添加下载失败");
+    } finally {
+      setAddingDownload(false);
     }
   }
 
@@ -130,6 +155,21 @@ export function DownloadsPage() {
         <span>最后刷新：{updatedAt ?? "尚未刷新"}</span>
         <span className={error ? "text-rose-600" : ""}>{error ?? scanMessage}</span>
       </div>
+
+      <Panel title="添加下载">
+        <form className="flex flex-col gap-3 md:flex-row" onSubmit={(event) => void addDownload(event)}>
+          <input
+            className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+            placeholder="magnet 或 torrent 地址"
+            value={downloadUrl}
+            onChange={(event) => setDownloadUrl(event.target.value)}
+          />
+          <Button className="shrink-0" type="submit" disabled={addingDownload}>
+            <DownloadIcon className="h-4 w-4" />
+            {addingDownload ? "添加中" : "添加下载"}
+          </Button>
+        </form>
+      </Panel>
 
       <Panel>
         <div className="space-y-4">

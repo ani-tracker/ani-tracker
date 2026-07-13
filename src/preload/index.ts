@@ -9,7 +9,7 @@ import type {
   Release,
   ReleaseSourceConfig
 } from "@shared/domain";
-import type { AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
+import type { AddDownloadUrlInput, AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
 
 const api = {
   getDashboard: () => ipcRenderer.invoke("dashboard:get"),
@@ -44,6 +44,7 @@ const api = {
   removeDownload: (taskId: string, deleteFiles: boolean) => ipcRenderer.invoke("downloads:remove", taskId, deleteFiles),
   setDownloadFilePriority: (taskId: string, fileIndexes: number[], priority: number) =>
     ipcRenderer.invoke("downloads:setFilePriority", taskId, fileIndexes, priority),
+  addDownloadUrl: (input: AddDownloadUrlInput) => ipcRenderer.invoke("downloads:addUrl", input),
   addReleaseDownload: (release: Release) => ipcRenderer.invoke("downloads:addRelease", release),
   listFansubs: () => ipcRenderer.invoke("fansubs:list"),
   listSources: () => ipcRenderer.invoke("sources:list"),

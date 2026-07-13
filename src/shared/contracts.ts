@@ -50,6 +50,13 @@ export interface ReleaseSearchResult {
   }>;
 }
 
+export interface AddDownloadUrlInput {
+  url: string;
+  name?: string;
+  savePath?: string;
+  paused?: boolean;
+}
+
 export interface AddTorrentOptions {
   savePath: string;
   selectedFileIndexes?: number[];

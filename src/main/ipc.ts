@@ -4,7 +4,7 @@ import { AppRepository } from "./core/repositories/app-repository";
 import { AppDataStore } from "./core/storage/app-data-store";
 import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
 import { ReleaseSourceService } from "./core/sources/release-source-service";
-import type { AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
+import type { AddDownloadUrlInput, AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
 import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
 import { PlayerLauncherService } from "./core/platform/player-launcher";
 import { DownloadMediaScanner } from "./core/media/download-media-scanner";
@@ -14,6 +14,7 @@ import { EpisodeReleasePreviewService } from "./core/automation/episode-release-
 import { AutomationScheduler } from "./core/automation/automation-scheduler";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
 import { QbittorrentManagedService } from "./core/downloads/qbittorrent-managed-service";
+import { logger } from "./core/logger";
 
 export const repository = new AppRepository(new AppDataStore());
 export const qbittorrentManagedService = new QbittorrentManagedService();
@@ -153,8 +154,33 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
               priority,
               selected: priority > 0
             }
-          : file
+        : file
       )
+    });
+  });
+  ipcMain.handle("downloads:addUrl", async (_event, input: AddDownloadUrlInput) => {
+    const settings = await repository.getSettings();
+    const url = input.url.trim();
+    if (!url) {
+      throw new Error("请输入 magnet 或 torrent 地址");
+    }
+
+    logger.info("Manual download add requested", {
+      engine: settings.download.defaultTorrentEngine,
+      hasCustomSavePath: Boolean(input.savePath?.trim())
+    });
+    const engine = createTorrentEngine(settings, {
+      qbittorrentBaseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings)
+    });
+    const savePath = input.savePath?.trim() || settings.download.defaultDownloadDir;
+    const task = await engine.addMagnet(url, {
+      savePath,
+      paused: input.paused
+    });
+
+    return repository.upsertDownloadTask({
+      ...task,
+      name: input.name?.trim() || getManualDownloadName(url)
     });
   });
   ipcMain.handle("downloads:addRelease", async (_event, release: Release) => {
@@ -261,4 +287,22 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     PlayerLauncherService.reveal(filePath);
   });
   ipcMain.handle("platform:openExternal", (_event, url: string) => shell.openExternal(url));
+}
+
+function getManualDownloadName(url: string): string {
+  if (url.startsWith("magnet:")) {
+    try {
+      return new URL(url).searchParams.get("dn") || "手动添加下载";
+    } catch {
+      return "手动添加下载";
+    }
+  }
+
+  try {
+    const pathname = new URL(url).pathname;
+    const filename = pathname.split("/").filter(Boolean).at(-1);
+    return filename || "手动添加下载";
+  } catch {
+    return "手动添加下载";
+  }
 }
