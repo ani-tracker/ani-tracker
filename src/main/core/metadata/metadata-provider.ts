@@ -1,4 +1,5 @@
 import type { Anime, AnimeAlias, Season } from "@shared/domain";
+import { inferAnimeAliasLanguage, isLikelyChineseTitle, isLikelyJapaneseTitle } from "../../../shared/anime-title";
 
 export interface MonthlyAnimeMetadataProvider {
   readonly id: string;
@@ -13,6 +14,14 @@ export interface MonthSeasonInfo {
 export interface AnimeMetadataBatch {
   source: string;
   items: Anime[];
+}
+
+interface MetadataTitleCandidate {
+  value: string;
+  language: AnimeAlias["language"];
+  priority: number;
+  explicitLanguage: boolean;
+  kind: "title" | "originalTitle" | "alias";
 }
 
 export const seasonByMonth: Record<number, MonthSeasonInfo> = {
@@ -125,11 +134,14 @@ function hasSharedExternalId(left: Anime, right: Anime): boolean {
 function mergeAnimeMetadata(primary: Anime, secondary: Anime): Anime {
   const premiereDate = pickPremiereDate(primary, secondary);
   const parsedDate = parseDateParts(premiereDate);
+  const title = pickPreferredTitle(primary, secondary);
+  const originalTitle = pickOriginalTitle(title, primary, secondary);
 
   return {
     ...primary,
-    originalTitle: primary.originalTitle ?? secondary.originalTitle,
-    aliases: normalizeAliases(primary.id, mergeAliases(primary.aliases, secondary.aliases)),
+    title,
+    originalTitle,
+    aliases: normalizeAliases(primary.id, buildMergedAliases(primary, secondary, title, originalTitle)),
     premiereDate,
     premiereYear: parsedDate?.year ?? primary.premiereYear,
     premiereMonth: parsedDate?.month ?? primary.premiereMonth,
@@ -171,6 +183,104 @@ function normalizeAliases(animeId: string, aliases: AnimeAlias[]): AnimeAlias[] 
     id: `${animeId}-alias-${index + 1}`,
     animeId
   }));
+}
+
+function pickPreferredTitle(primary: Anime, secondary: Anime): string {
+  const candidates = [...collectTitleCandidates(primary), ...collectTitleCandidates(secondary)];
+  const titleCandidates = candidates.filter((candidate) => candidate.kind === "title");
+
+  return (
+    titleCandidates.find((candidate) => candidate.language === "zh")?.value ??
+    titleCandidates.find((candidate) => isLikelyChineseTitle(candidate.value))?.value ??
+    candidates.find((candidate) => candidate.kind === "alias" && candidate.language === "zh" && candidate.explicitLanguage)
+      ?.value ??
+    candidates.find((candidate) => candidate.language === "zh")?.value ??
+    candidates.find((candidate) => isLikelyChineseTitle(candidate.value))?.value ??
+    primary.title
+  );
+}
+
+function pickOriginalTitle(title: string, primary: Anime, secondary: Anime): string | undefined {
+  const normalizedTitle = normalizeTitle(title);
+  const candidates = [...collectTitleCandidates(primary), ...collectTitleCandidates(secondary)].filter(
+    (candidate) => normalizeTitle(candidate.value) !== normalizedTitle
+  );
+
+  return (
+    candidates.find((candidate) => candidate.language === "ja")?.value ??
+    candidates.find((candidate) => isLikelyJapaneseTitle(candidate.value))?.value ??
+    undefined
+  );
+}
+
+function buildMergedAliases(
+  primary: Anime,
+  secondary: Anime,
+  title: string,
+  originalTitle: string | undefined
+): AnimeAlias[] {
+  const ignored = new Set([normalizeTitle(title), normalizeTitle(originalTitle)].filter(Boolean));
+  const aliases = [
+    ...primary.aliases,
+    ...secondary.aliases,
+    createAliasCandidate(primary.id, primary.title, inferAnimeAliasLanguage(primary.title), 100),
+    createAliasCandidate(primary.id, primary.originalTitle, inferAnimeAliasLanguage(primary.originalTitle, "ja"), 95),
+    createAliasCandidate(secondary.id, secondary.title, inferAnimeAliasLanguage(secondary.title), 90),
+    createAliasCandidate(secondary.id, secondary.originalTitle, inferAnimeAliasLanguage(secondary.originalTitle, "ja"), 85)
+  ].filter((alias): alias is AnimeAlias => Boolean(alias && !ignored.has(normalizeTitle(alias.alias))));
+
+  return mergeAliases([], aliases);
+}
+
+function collectTitleCandidates(anime: Anime): MetadataTitleCandidate[] {
+  return [
+    createTitleCandidate(anime.title, inferAnimeAliasLanguage(anime.title), 100, false, "title"),
+    createTitleCandidate(anime.originalTitle, inferAnimeAliasLanguage(anime.originalTitle, "ja"), 95, false, "originalTitle"),
+    ...anime.aliases.map((alias) => createTitleCandidate(alias.alias, alias.language, alias.priority, true, "alias"))
+  ]
+    .filter((candidate): candidate is MetadataTitleCandidate => Boolean(candidate))
+    .sort((left, right) => right.priority - left.priority);
+}
+
+function createTitleCandidate(
+  value: string | undefined,
+  language: AnimeAlias["language"],
+  priority: number,
+  explicitLanguage = false,
+  kind: MetadataTitleCandidate["kind"] = "alias"
+): MetadataTitleCandidate | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return {
+    value: trimmed,
+    language,
+    priority,
+    explicitLanguage,
+    kind
+  };
+}
+
+function createAliasCandidate(
+  animeId: string,
+  alias: string | undefined,
+  language: AnimeAlias["language"],
+  priority: number
+): AnimeAlias | null {
+  const trimmed = alias?.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  return {
+    id: `${animeId}-alias-preserved-${priority}`,
+    animeId,
+    alias: trimmed,
+    language,
+    priority
+  };
 }
 
 function hasSharedTitle(

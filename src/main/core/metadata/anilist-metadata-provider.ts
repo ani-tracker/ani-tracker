@@ -105,14 +105,19 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider {
 
 function mapAniListMedia(item: AniListMedia, season: Season): Anime {
   const title = item.title?.native ?? item.title?.romaji ?? item.title?.english ?? `AniList ${item.id}`;
-  const aliases = [item.title?.romaji, item.title?.english]
-    .filter((alias): alias is string => Boolean(alias && alias !== title))
+  const aliases = [
+    { alias: item.title?.romaji, language: "romaji" as const, priority: 90 },
+    { alias: item.title?.english, language: "en" as const, priority: 80 }
+  ]
+    .filter((candidate): candidate is { alias: string; language: "romaji" | "en"; priority: number } =>
+      Boolean(candidate.alias && candidate.alias !== title)
+    )
     .map((alias, index) => ({
       id: `anilist-${item.id}-alias-${index + 1}`,
       animeId: `anilist-${item.id}`,
-      alias,
-      language: index === 0 ? ("romaji" as const) : ("en" as const),
-      priority: 90 - index
+      alias: alias.alias,
+      language: alias.language,
+      priority: alias.priority
     }));
   const year = item.startDate?.year ?? new Date().getFullYear();
   const month = item.startDate?.month ?? 1;

@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { appApi } from "@/lib/api";
 import { formatMonth } from "@/lib/format";
+import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { Anime, MyAnime } from "@shared/domain";
 
 export function DiscoveryPage() {
@@ -104,7 +105,7 @@ export function DiscoveryPage() {
         updatedAt: now
       });
       setMyAnime(updated);
-      setMessage({ tone: "success", text: `已添加「${anime.title}」到我的追番` });
+      setMessage({ tone: "success", text: `已添加「${resolveAnimeTitleDisplay(anime).title}」到我的追番` });
     } catch (error) {
       setMessage({
         tone: "error",
@@ -205,11 +206,12 @@ export function DiscoveryPage() {
           {items.map((anime) => {
             const followed = followedIds.has(anime.id);
             const externalIds = buildExternalIdBadges(anime);
+            const titleDisplay = resolveAnimeTitleDisplay(anime);
             return (
               <Panel key={anime.id} className="p-0">
                 {anime.coverUrl && (
                   <img
-                    alt={anime.title}
+                    alt={titleDisplay.title}
                     className="h-48 w-full rounded-t-lg object-cover"
                     src={anime.coverUrl}
                   />
@@ -217,9 +219,9 @@ export function DiscoveryPage() {
                 <div className="p-4">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="truncate font-medium">{anime.title}</div>
+                      <div className="truncate font-medium">{titleDisplay.title}</div>
                       <div className="mt-1 truncate text-xs text-muted-foreground">
-                        {anime.originalTitle ?? anime.aliases[0]?.alias ?? "无别名"}
+                        {titleDisplay.subtitle ?? "无别名"}
                       </div>
                     </div>
                     <Badge tone={followed ? "green" : "blue"}>{followed ? "已追番" : formatMonth(anime.premiereYear, anime.premiereMonth)}</Badge>
@@ -229,7 +231,7 @@ export function DiscoveryPage() {
                   </p>
                   <div className="mt-3 flex flex-wrap gap-2">
                     {anime.season && <Badge>{seasonText[anime.season]}</Badge>}
-                    {anime.aliases.slice(0, 2).map((alias) => (
+                    {titleDisplay.aliases.slice(0, 2).map((alias) => (
                       <Badge key={alias.id}>{alias.alias}</Badge>
                     ))}
                   </div>

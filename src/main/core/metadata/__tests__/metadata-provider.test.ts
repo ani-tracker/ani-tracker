@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { Anime } from "@shared/domain";
+import { resolveAnimeTitleDisplay } from "../../../../shared/anime-title";
 import {
   mergeAnimeMetadataBatches,
   normalizeTitle,
@@ -73,9 +74,70 @@ test("mergeAnimeMetadataBatches 通过 external id 合并并用更具体的首�
   assert.deepEqual(merged.externalIds, { bangumi: "1", mikan: "100" });
   assert.deepEqual(
     merged.aliases.map((alias) => alias.alias),
-    ["测试番"]
+    ["Test Anime"]
   );
   assert.ok(merged.aliases.every((alias) => alias.animeId === "bangumi-1"));
+});
+
+test("mergeAnimeMetadataBatches 优先使用中文标题并保留多语言标题变体", () => {
+  const [merged] = mergeAnimeMetadataBatches([
+    {
+      source: "anilist",
+      items: [
+        createAnime({
+          id: "anilist-30",
+          title: "テストアニメ",
+          originalTitle: "テストアニメ",
+          aliases: [
+            createAlias("anilist-30", "Test Anime", "romaji", 90),
+            createAlias("anilist-30", "Test Animation", "en", 80)
+          ],
+          externalIds: { anilist: "30" }
+        })
+      ]
+    },
+    {
+      source: "mikan",
+      items: [
+        createAnime({
+          id: "mikan-300",
+          title: "测试动画",
+          originalTitle: "テストアニメ",
+          aliases: [createAlias("mikan-300", "测试番", "zh", 85)],
+          externalIds: { mikan: "300" }
+        })
+      ]
+    }
+  ]);
+
+  assert.equal(merged.title, "测试动画");
+  assert.equal(merged.originalTitle, "テストアニメ");
+  assert.deepEqual(
+    merged.aliases.map((alias) => alias.alias),
+    ["Test Anime", "Test Animation", "测试番"]
+  );
+  assert.ok(merged.aliases.every((alias) => alias.animeId === "anilist-30"));
+});
+
+test("resolveAnimeTitleDisplay 展示时中文优先并用原名做副标题", () => {
+  const display = resolveAnimeTitleDisplay(
+    createAnime({
+      id: "anilist-40",
+      title: "テストアニメ",
+      originalTitle: "テストアニメ",
+      aliases: [
+        createAlias("anilist-40", "Test Anime", "romaji", 90),
+        createAlias("anilist-40", "测试动画", "zh", 80)
+      ]
+    })
+  );
+
+  assert.equal(display.title, "测试动画");
+  assert.equal(display.subtitle, "テストアニメ");
+  assert.deepEqual(
+    display.aliases.map((alias) => alias.alias),
+    ["Test Anime"]
+  );
 });
 
 test("mergeAnimeMetadataBatches 不用次来源覆盖主来源已有字段", () => {

@@ -1,4 +1,5 @@
 import type { Anime, AnimeAlias, Season } from "@shared/domain";
+import { inferAnimeAliasLanguage } from "../../../shared/anime-title";
 import {
   formatMonthStartDate,
   getSeasonInfo,
@@ -164,14 +165,21 @@ function mapMikanCandidate(
 }
 
 function buildMikanAliases(candidate: MikanCandidate, detail: MikanDetail, title: string): AnimeAlias[] {
-  return [candidate.title, detail.originalTitle]
-    .filter((alias): alias is string => Boolean(alias && alias !== title))
-    .map((alias, index) => ({
+  const candidates: Array<{ alias?: string; fallbackLanguage: AnimeAlias["language"]; priority: number }> = [
+    { alias: candidate.title, fallbackLanguage: "zh" as const, priority: 90 },
+    { alias: detail.originalTitle, fallbackLanguage: "ja" as const, priority: 85 }
+  ];
+
+  return candidates
+    .filter((item): item is { alias: string; fallbackLanguage: AnimeAlias["language"]; priority: number } =>
+      Boolean(item.alias && item.alias !== title)
+    )
+    .map((item, index) => ({
       id: `mikan-${candidate.id}-alias-${index + 1}`,
       animeId: `mikan-${candidate.id}`,
-      alias,
-      language: index === 0 ? "zh" : "ja",
-      priority: 90 - index
+      alias: item.alias,
+      language: inferAnimeAliasLanguage(item.alias, item.fallbackLanguage),
+      priority: item.priority
     }));
 }
 
