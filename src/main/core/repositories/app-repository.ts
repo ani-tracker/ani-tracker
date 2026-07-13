@@ -14,6 +14,8 @@ import type {
   ReleaseSourceConfig
 } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
+import { logger } from "../logger";
+import { createDefaultSettingsProvider } from "../platform/default-settings-provider";
 import type { AppDataStore } from "../storage/app-data-store";
 
 export class AppRepository {
@@ -316,6 +318,20 @@ export class AppRepository {
   async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
     const data = await this.store.update((draft) => {
       draft.settings = mergeSettings(draft.settings, patch);
+    });
+
+    return data.settings;
+  }
+
+  async resetSettingsToDefaults(): Promise<AppSettings> {
+    const settings = createDefaultSettingsProvider().getSettings();
+    const data = await this.store.update((draft) => {
+      draft.settings = settings;
+    });
+
+    logger.info("App settings reset to current platform defaults", {
+      defaultDownloadDir: settings.download.defaultDownloadDir,
+      userDataDir: settings.storage.userDataDir
     });
 
     return data.settings;

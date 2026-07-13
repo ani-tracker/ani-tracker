@@ -214,6 +214,7 @@ export interface NotificationService {
 export interface SettingsService {
   getSettings(): Promise<AppSettings>;
   updateSettings(settings: Partial<AppSettings>): Promise<AppSettings>;
+  resetSettingsToDefaults(): Promise<AppSettings>;
 }
 
 export interface FansubService {

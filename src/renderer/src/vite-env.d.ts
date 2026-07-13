@@ -64,6 +64,7 @@ declare global {
       searchReleases: (query: ReleaseQuery) => Promise<ReleaseSearchResult>;
       getSettings: () => Promise<AppSettings>;
       updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
+      resetSettingsToDefaults: () => Promise<AppSettings>;
       testQbittorrent: () => Promise<TorrentConnectionTestResult>;
       listMediaFiles: () => Promise<MediaFile[]>;
       scanDownloadMedia: (taskId: string) => Promise<MediaScanResult>;

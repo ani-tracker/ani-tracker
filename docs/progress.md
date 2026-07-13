@@ -15,6 +15,7 @@
   - macOS 默认下载目录为系统 Downloads 下的 `Ani Tracker`，用户数据使用 Electron `userData`，缓存使用 `~/Library/Caches/<app>`，日志使用 Electron `logs`。
   - Windows 默认下载目录为系统 Downloads 下的 `Ani Tracker`，用户数据使用 Electron `userData`，缓存优先使用 `%LOCALAPPDATA%\<app>\Cache`，日志使用 Electron `logs`。
   - 已新增 provider 单元测试，覆盖 macOS、Windows、通用模板和工厂分发。
+  - 设置页已支持一键恢复当前平台默认配置模板，恢复后会重新应用桌面集成设置并重启自动化调度。
   - 数据版本已升到 10，旧版本加载时直接切到新的平台默认设置模板。
 - 已预留未来 SQLite schema：`src/main/core/storage/schema.sql`。
 - 已完成 Home、我的追番、新番发现、资源搜索、下载、来源、设置、通知中心等页面。
@@ -207,6 +208,6 @@ git diff --check
 
 ## 下一步建议
 
-1. 给平台默认配置增加设置页“一键恢复默认模板”能力。
+1. 新番元数据采用中文优先显示策略，同时保留日文、罗马音、英文等多语言别名用于展示和资源搜索。
 2. 补自动化扫描通知的策略分支测试，尤其是 `notify_only` 和错误通知。
 3. 在领域行为继续稳定后，开始 SQLite repository 替换 JSON repository。

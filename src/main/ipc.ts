@@ -188,6 +188,12 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     await automationScheduler.restart();
     return settings;
   });
+  ipcMain.handle("settings:resetDefaults", async () => {
+    const settings = await repository.resetSettingsToDefaults();
+    await options.onSettingsUpdated?.(settings);
+    await automationScheduler.restart();
+    return settings;
+  });
   ipcMain.handle("media:list", () => repository.listMediaFiles());
   ipcMain.handle("media:scanDownload", async (_event, taskId: string) => {
     const task = await repository.getDownloadTask(taskId);

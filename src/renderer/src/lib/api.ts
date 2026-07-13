@@ -76,6 +76,7 @@ export const appApi = {
   searchReleases: (query: ReleaseQuery): Promise<ReleaseSearchResult> => bridge().searchReleases(query),
   getSettings: (): Promise<AppSettings> => bridge().getSettings(),
   updateSettings: (patch: Partial<AppSettings>): Promise<AppSettings> => bridge().updateSettings(patch),
+  resetSettingsToDefaults: (): Promise<AppSettings> => bridge().resetSettingsToDefaults(),
   testQbittorrent: (): Promise<TorrentConnectionTestResult> => bridge().testQbittorrent(),
   listMediaFiles: (): Promise<MediaFile[]> => bridge().listMediaFiles(),
   scanDownloadMedia: (taskId: string): Promise<MediaScanResult> => bridge().scanDownloadMedia(taskId),

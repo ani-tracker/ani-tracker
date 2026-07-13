@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { FileSearch, FolderCog, HardDrive, Monitor, PlayCircle, Power, Save } from "lucide-react";
+import { FileSearch, FolderCog, HardDrive, Monitor, PlayCircle, Power, RotateCcw, Save } from "lucide-react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ export function SettingsPage() {
   const { data, loading } = useAsyncData(appApi.getSettings, []);
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
+  const [resetState, setResetState] = useState<"idle" | "resetting" | "reset">("idle");
   const [schedulerStatus, setSchedulerStatus] = useState<AutomationSchedulerStatus | null>(null);
   const [qbTest, setQbTest] = useState<{ state: "idle" | "testing" | "success" | "error"; message?: string }>({
     state: "idle"
@@ -53,6 +54,21 @@ export function SettingsPage() {
     window.setTimeout(() => setSaveState("idle"), 1200);
   }
 
+  async function resetSettingsToDefaults() {
+    const confirmed = window.confirm("确认恢复平台默认配置模板？当前设置会被覆盖。");
+    if (!confirmed) {
+      return;
+    }
+
+    setResetState("resetting");
+    const saved = await appApi.resetSettingsToDefaults();
+    setDraft(saved);
+    setQbTest({ state: "idle" });
+    await refreshSchedulerStatus();
+    setResetState("reset");
+    window.setTimeout(() => setResetState("idle"), 1200);
+  }
+
   async function testQbittorrent() {
     if (!draft) {
       return;
@@ -70,15 +86,25 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-5">
-      <div className="flex items-end justify-between gap-4">
+      <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-normal">设置</h1>
           <p className="mt-1 text-sm text-muted-foreground">目录、下载引擎、播放器和提醒规则集中管理。</p>
         </div>
-        <Button onClick={saveSettings} disabled={saveState === "saving"}>
-          <Save className="h-4 w-4" />
-          {saveState === "saving" ? "保存中" : saveState === "saved" ? "已保存" : "保存"}
-        </Button>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button
+            variant="outline"
+            onClick={() => void resetSettingsToDefaults()}
+            disabled={resetState === "resetting" || saveState === "saving"}
+          >
+            <RotateCcw className="h-4 w-4" />
+            {resetState === "resetting" ? "恢复中" : resetState === "reset" ? "已恢复" : "恢复默认"}
+          </Button>
+          <Button onClick={saveSettings} disabled={saveState === "saving" || resetState === "resetting"}>
+            <Save className="h-4 w-4" />
+            {saveState === "saving" ? "保存中" : saveState === "saved" ? "已保存" : "保存"}
+          </Button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 gap-5">

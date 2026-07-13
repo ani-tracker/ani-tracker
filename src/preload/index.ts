@@ -52,6 +52,7 @@ const api = {
   searchReleases: (query: ReleaseQuery) => ipcRenderer.invoke("releases:search", query),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings:update", patch),
+  resetSettingsToDefaults: () => ipcRenderer.invoke("settings:resetDefaults"),
   testQbittorrent: () => ipcRenderer.invoke("downloads:testQbittorrent"),
   listMediaFiles: () => ipcRenderer.invoke("media:list"),
   scanDownloadMedia: (taskId: string) => ipcRenderer.invoke("media:scanDownload", taskId),
