@@ -63,8 +63,8 @@ export class QbittorrentManagedService {
     const plan = await buildLaunchPlan(settings);
 
     if (!plan.binaryPath) {
-      this.lastError = "未找到项目内置的 qBittorrent/qBittorrent-nox 二进制";
-      logger.warn("Bundled qBittorrent binary missing", {
+      this.lastError = "未找到项目内置的 qBittorrent-nox 无头二进制";
+      logger.warn("Bundled qBittorrent-nox binary missing", {
         platform: process.platform,
         arch: process.arch
       });
@@ -258,6 +258,7 @@ function getDefaultQbittorrentResourceRoots(): string[] {
   return unique(
     [
       processWithResourcesPath.resourcesPath ? join(processWithResourcesPath.resourcesPath, "qbittorrent") : undefined,
+      join(process.cwd(), "out", "qbittorrent"),
       join(process.cwd(), "resources", "qbittorrent")
     ].filter((item): item is string => Boolean(item))
   );
@@ -265,20 +266,18 @@ function getDefaultQbittorrentResourceRoots(): string[] {
 
 function getQbittorrentBinaryNames(platform: NodeJS.Platform): string[] {
   if (platform === "win32") {
-    return ["qbittorrent-nox.exe", "qbittorrent.exe"];
+    return ["qbittorrent-nox.exe"];
   }
 
   if (platform === "darwin") {
     return [
       "qbittorrent-nox",
       "qbittorrent-nox.app/Contents/MacOS/qbittorrent-nox",
-      "qBittorrent-nox.app/Contents/MacOS/qbittorrent-nox",
-      "qBittorrent.app/Contents/MacOS/qbittorrent",
-      "qbittorrent"
+      "qBittorrent-nox.app/Contents/MacOS/qbittorrent-nox"
     ];
   }
 
-  return ["qbittorrent-nox", "qbittorrent"];
+  return ["qbittorrent-nox"];
 }
 
 function normalizeBaseUrl(value: string): URL {

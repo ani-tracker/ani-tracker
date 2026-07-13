@@ -30,6 +30,22 @@ test("resolveBundledQbittorrentBinary 按平台和架构查找项目内置二进
   );
 });
 
+test("resolveBundledQbittorrentBinary 不把 GUI 版 qBittorrent 当成托管核心", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ani-qbittorrent-gui-"));
+  const binaryDir = join(root, "win32-x64");
+  await mkdir(binaryDir, { recursive: true });
+  await writeFile(join(binaryDir, "qbittorrent.exe"), "", "utf8");
+
+  assert.equal(
+    resolveBundledQbittorrentBinary({
+      platform: "win32",
+      arch: "x64",
+      resourceRoots: [root]
+    }),
+    undefined
+  );
+});
+
 test("QbittorrentManagedService 对托管启动避开 10000 以下 WebUI 端口", async () => {
   const service = new QbittorrentManagedService();
   const status = await service.start({

@@ -427,7 +427,7 @@ export function SettingsPage() {
             <div>
               <div className="font-medium">qBittorrent 兼容模式</div>
               <p className="mt-1 text-sm text-muted-foreground">
-                用于接入已有 qB WebUI，也可随应用启动项目内置 qBittorrent。托管模式会使用 10000 以上的可用端口。
+                用于接入已有 qB WebUI，也可随应用启动项目内置 qBittorrent-nox。托管模式只使用无头版本，并使用 10000 以上的可用端口。
               </p>
             </div>
             <TextSetting
@@ -481,7 +481,7 @@ export function SettingsPage() {
             />
             <div className="grid grid-cols-2 gap-3">
               <SelectSetting
-                label="托管内置 qBittorrent"
+                label="托管内置 qBittorrent-nox"
                 value={draft.download.qbittorrent.managed.enabled ? "on" : "off"}
                 options={[
                   { label: "开启", value: "on" },
@@ -532,7 +532,7 @@ export function SettingsPage() {
                     {formatQbittorrentManagedSummary(qbManagedStatus)}
                   </div>
                   <div className="mt-1 break-all text-xs text-muted-foreground">
-                    二进制：{qbManagedStatus?.binaryPath ?? "未找到项目内置二进制"}
+                    二进制：{qbManagedStatus?.binaryPath ?? "未找到项目内置 qBittorrent-nox"}
                   </div>
                   {qbManagedStatus?.lastError && (
                     <div className="mt-2 text-xs text-rose-600">{qbManagedStatus.lastError}</div>

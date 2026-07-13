@@ -7,8 +7,10 @@
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build && npm run prepare:qbittorrent",
     "preview": "electron-vite preview",
+    "prepare:qbittorrent": "node scripts/prepare-qbittorrent-resources.mjs",
+    "verify:qbittorrent": "node scripts/prepare-qbittorrent-resources.mjs --required",
     "typecheck": "tsc -p tsconfig.typecheck.node.json --pretty false && tsc -p tsconfig.typecheck.web.json --pretty false",
     "test:parsers": "tsc -p tsconfig.test.node.json --pretty false && node -e \"require('node:fs').writeFileSync('out/test-node/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\n')\" && node --test out/test-node/main/core/*/__tests__/*.js"
   },

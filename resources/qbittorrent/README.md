@@ -1,6 +1,6 @@
-# qBittorrent bundled binaries
+# qBittorrent-nox bundled binaries
 
-Place platform-specific qBittorrent or qBittorrent-nox binaries here so the Electron main process can launch them as a managed child process.
+Place platform-specific qBittorrent-nox binaries here so the Electron main process can launch a managed headless child process. GUI qBittorrent binaries are intentionally not accepted for managed startup.
 
 Expected layout:
 
@@ -16,12 +16,22 @@ resources/qbittorrent/
     qbittorrent-nox
 ```
 
-Fallback executable names are also supported:
+Accepted executable names:
 
-- macOS: `qbittorrent-nox`, `qbittorrent-nox.app/Contents/MacOS/qbittorrent-nox`, `qBittorrent-nox.app/Contents/MacOS/qbittorrent-nox`, `qBittorrent.app/Contents/MacOS/qbittorrent`, `qbittorrent`
-- Windows: `qbittorrent-nox.exe`, `qbittorrent.exe`
-- Linux: `qbittorrent-nox`, `qbittorrent`
+- macOS: `qbittorrent-nox`, `qbittorrent-nox.app/Contents/MacOS/qbittorrent-nox`, `qBittorrent-nox.app/Contents/MacOS/qbittorrent-nox`
+- Windows: `qbittorrent-nox.exe`
+- Linux: `qbittorrent-nox`
 
 Packaged builds should copy the same `qbittorrent/<platform>-<arch>/...` tree into Electron `process.resourcesPath`.
 
-Managed startup uses qBittorrent WebUI on a high local port. The default is `127.0.0.1:18080`; if the configured port is below `10000` or already occupied, Ani Tracker picks an available port above `10000` for that process and reports the actual WebUI URL in Settings.
+Managed startup uses qBittorrent-nox WebUI on a high local port. The default is `127.0.0.1:18080`; if the configured port is below `10000` or already occupied, Ani Tracker picks an available port above `10000` for that process and reports the actual WebUI URL in Settings.
+
+Resource preparation:
+
+```bash
+npm run prepare:qbittorrent
+npm run verify:qbittorrent
+```
+
+- `prepare:qbittorrent` copies all available bundled nox binaries into `out/qbittorrent` after `electron-vite build`; missing binaries only produce a warning for development builds.
+- `verify:qbittorrent` requires the current platform and architecture nox binary to exist and exits with a non-zero code when it is missing.
