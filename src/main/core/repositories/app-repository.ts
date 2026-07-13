@@ -15,6 +15,7 @@ import type {
 } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { logger } from "../logger";
+import { sourceConfigs } from "../mock-data";
 import { createDefaultSettingsProvider } from "../platform/default-settings-provider";
 import type { AppDataStore } from "../storage/app-data-store";
 
@@ -308,7 +309,7 @@ export class AppRepository {
   }
 
   async listSources(): Promise<ReleaseSourceConfig[]> {
-    return (await this.store.getData()).sources;
+    return this.ensureDefaultSources();
   }
 
   async getSettings(): Promise<AppSettings> {
@@ -338,6 +339,7 @@ export class AppRepository {
   }
 
   async updateSourceEnabled(sourceId: string, enabled: boolean): Promise<ReleaseSourceConfig[]> {
+    await this.ensureDefaultSources();
     const data = await this.store.update((draft) => {
       draft.sources = draft.sources.map((source) => (source.id === sourceId ? { ...source, enabled } : source));
     });
@@ -346,6 +348,7 @@ export class AppRepository {
   }
 
   async upsertSource(source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]> {
+    await this.ensureDefaultSources();
     const data = await this.store.update((draft) => {
       const index = draft.sources.findIndex((item) => item.id === source.id);
       if (index >= 0) {
@@ -357,6 +360,24 @@ export class AppRepository {
     });
 
     return data.sources;
+  }
+
+  private async ensureDefaultSources(): Promise<ReleaseSourceConfig[]> {
+    const data = await this.store.getData();
+    const missingSources = sourceConfigs.filter((source) => !data.sources.some((item) => item.id === source.id));
+    if (!missingSources.length) {
+      return data.sources;
+    }
+
+    const updated = await this.store.update((draft) => {
+      draft.sources.push(...missingSources);
+    });
+
+    logger.info("Default release sources added to existing app data", {
+      sourceIds: missingSources.map((source) => source.id)
+    });
+
+    return updated.sources;
   }
 
   async upsertMyAnime(item: MyAnime): Promise<MyAnime[]> {

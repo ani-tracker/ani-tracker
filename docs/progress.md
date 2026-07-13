@@ -245,6 +245,7 @@ git diff --check
 - 真实内置 BT 核心；当前 `EmbeddedTorrentEngine` 仍是占位实现。
 - qBittorrent-nox 平台二进制还缺 macOS arm64、Windows x64 和 Linux x64；当前已内置 macOS x64。
 - SQLite repository 替换 JSON repository。
+- 目前是json保存，可以优先接入SQLite，来保存数据。下载源目前只接入了部分。
 - 更完整的新番元数据聚合策略，例如冲突消解、增量刷新、字段来源展示。
 - madVR 播放链路或外部 renderer 集成。
 

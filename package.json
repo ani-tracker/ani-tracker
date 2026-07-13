@@ -42,6 +42,9 @@
   "pnpm": {
     "onlyBuiltDependencies": [
       "electron"
+    ],
+    "ignoredBuiltDependencies": [
+      "esbuild"
     ]
   }
 }
