@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { appApi } from "@/lib/api";
 import { formatBytes, formatMonth } from "@/lib/format";
+import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { EpisodeReleasePreview } from "@shared/contracts";
 import type {
   AnimeStatus,
@@ -167,7 +168,8 @@ export function MyAnimePage() {
   }
 
   async function removeItem(item: MyAnime) {
-    const confirmed = window.confirm(`确认从我的追番移除「${item.anime.title}」？`);
+    const titleDisplay = resolveAnimeTitleDisplay(item.anime);
+    const confirmed = window.confirm(`确认从我的追番移除「${titleDisplay.title}」？`);
     if (!confirmed) {
       return;
     }
@@ -338,39 +340,43 @@ export function MyAnimePage() {
                 </tr>
               </thead>
               <tbody>
-                {items.map((item) => (
-                  <tr key={item.id} className="border-t">
-                    <td className="px-4 py-4">
-                      <div className="font-medium">{item.anime.title}</div>
-                      <div className="mt-1 text-xs text-muted-foreground">{item.anime.originalTitle ?? "无原名"}</div>
-                    </td>
-                    <td className="px-4 py-4">{formatMonth(item.anime.premiereYear, item.anime.premiereMonth)}</td>
-                    <td className="px-4 py-4">{fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}</td>
-                    <td className="px-4 py-4">
-                      <Badge tone={item.autoDownload ? "green" : "neutral"}>
-                        {item.autoDownload ? "已开启" : "未开启"}
-                      </Badge>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex flex-wrap gap-2">
-                        {item.status && <Badge>{statusText[item.status]}</Badge>}
-                        {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
-                        {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
-                      </div>
-                    </td>
-                    <td className="px-4 py-4">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="outline" onClick={() => setDraft(cloneMyAnime(item))}>
-                          <SlidersHorizontal className="h-4 w-4" />
-                          规则
-                        </Button>
-                        <Button variant="outline" onClick={() => void removeItem(item)}>
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {items.map((item) => {
+                  const titleDisplay = resolveAnimeTitleDisplay(item.anime);
+
+                  return (
+                    <tr key={item.id} className="border-t">
+                      <td className="px-4 py-4">
+                        <div className="font-medium">{titleDisplay.title}</div>
+                        <div className="mt-1 text-xs text-muted-foreground">{titleDisplay.subtitle ?? "无原名"}</div>
+                      </td>
+                      <td className="px-4 py-4">{formatMonth(item.anime.premiereYear, item.anime.premiereMonth)}</td>
+                      <td className="px-4 py-4">{fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}</td>
+                      <td className="px-4 py-4">
+                        <Badge tone={item.autoDownload ? "green" : "neutral"}>
+                          {item.autoDownload ? "已开启" : "未开启"}
+                        </Badge>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex flex-wrap gap-2">
+                          {item.status && <Badge>{statusText[item.status]}</Badge>}
+                          {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
+                          {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
+                        </div>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="flex justify-end gap-2">
+                          <Button variant="outline" onClick={() => setDraft(cloneMyAnime(item))}>
+                            <SlidersHorizontal className="h-4 w-4" />
+                            规则
+                          </Button>
+                          <Button variant="outline" onClick={() => void removeItem(item)}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

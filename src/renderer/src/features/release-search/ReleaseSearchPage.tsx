@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { appApi } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
+import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { ReleaseSearchResult } from "@shared/contracts";
 import type { MyAnime, Release } from "@shared/domain";
 
@@ -129,11 +130,18 @@ export function ReleaseSearchPage() {
             onChange={(event) => setSelectedAnimeId(event.target.value)}
           >
             <option value="">手动关键词</option>
-            {myAnime.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.anime.title}
-              </option>
-            ))}
+            {myAnime.map((item) => {
+              const titleDisplay = resolveAnimeTitleDisplay(item.anime);
+              const optionLabel = titleDisplay.subtitle
+                ? `${titleDisplay.title} / ${titleDisplay.subtitle}`
+                : titleDisplay.title;
+
+              return (
+                <option key={item.id} value={item.id}>
+                  {optionLabel}
+                </option>
+              );
+            })}
           </select>
           <input
             className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
