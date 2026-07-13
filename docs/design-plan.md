@@ -129,7 +129,7 @@ The current repository contains:
 - Media extraction chain and ffprobe media probing
 - qBittorrent state mapping helper
 - qBittorrent Web API adapter with progress, speed, ETA, task actions, and file priority selection
-- DMHY / 动漫花园 site adapter
+- DMHY / 动漫花园, Mikan / 蜜柑计划, AniBT, and ACGNX site adapters
 - Future SQLite schema at `src/main/core/storage/schema.sql`
 - Download engine adapters and monitor service
 - Release title parser and automatic matching score

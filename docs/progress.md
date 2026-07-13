@@ -87,9 +87,22 @@
   - 没有直接 torrent 链接时按 Episode id 兜底生成下载地址。
   - 对请求设置超时，避免站点不可达时长期阻塞。
   - 新增默认禁用来源 `mikan-site`，并通过数据版本迁移补进已有 JSON 数据。
-- 已新增 Mikan/DMHY 解析样例测试：
+- 已实现 AniBT site adapter：
+  - 使用 `anibt.net/api/bgm/search` 将关键词匹配到番剧条目。
+  - 优先读取 `anibt.net/rss/anime.xml` 的番剧 RSS，必要时回退到 `anibt.net/rss/magnets.xml` 最新资源 RSS。
+  - 解析 AniBT RSS 扩展字段、内嵌 torrent 元数据、magnet、torrent、infoHash、发布时间、体积、集数、分辨率、字幕语言和编码标签。
+  - 对请求设置超时并打印关键搜索日志。
+- 已实现 ACGNX / 末日动漫资源库 site adapter：
+  - 优先尝试公开 API 风格响应，兼容 `data/items/results/list/torrents/resources` 等常见返回结构。
+  - API 返回 HTML 或不可用时使用站点搜索 HTML 解析兜底。
+  - 解析标题、magnet、torrent、infoHash、发布时间、体积和 seeders。
+  - 默认来源地址可配置，便于 ACGNX 域名或 API 路径变化后直接调整。
+- 已新增默认禁用来源 `anibt` 和 `acgnx`，数据版本已升到 12，旧 JSON 数据加载时会自动补齐这两个来源。
+- 已新增 Mikan/DMHY/AniBT/ACGNX 解析样例测试：
   - 覆盖 DMHY 资源行中的标题、magnet、torrent、发布时间、体积和媒体字段解析。
   - 覆盖 Mikan 搜索结果中的 Episode、Download torrent、magnet、体积和兜底 torrent 地址生成。
+  - 覆盖 AniBT RSS 扩展字段、内嵌 torrent 元数据、magnet、torrent、infoHash 和媒体字段解析。
+  - 覆盖 ACGNX JSON/API 风格响应和 HTML 搜索行兜底解析。
   - 覆盖 RSS item/enclosure 中的下载地址、发布时间、体积和标题媒体字段解析。
   - 覆盖 Torznab 查询参数、enclosure、seeders/size attr 和标题媒体字段解析。
   - 覆盖 XML helper 对文本节点、数组节点和空值的基础归一化。
@@ -214,17 +227,16 @@
 本次通过以下检查：
 
 ```powershell
-./node_modules/.bin/tsc -p tsconfig.typecheck.node.json --pretty false
-./node_modules/.bin/tsc -p tsconfig.typecheck.web.json --pretty false
-npm run test:parsers
+pnpm.cmd run typecheck
+pnpm.cmd run test:parsers
 git diff --check
 ```
 
 说明：
 
-- `pnpm run typecheck` 在当前环境下先触发了 pnpm 11 的依赖状态检查，并尝试重建 `node_modules`；恢复依赖后，本次改用本地 `tsc` 直接验证。
-- `pnpm run test:parsers` 在当前环境下同样会先触发 pnpm 依赖状态检查；本次使用 `npm run test:parsers` 验证脚本本身。
-- `npm run test:parsers` 仍会输出现有 `electron_mirror` npm 配置警告，但测试通过。
+- `pnpm.cmd run test:parsers` 当前会编译测试到 `out/test-node`，该目录已在 `.gitignore` 中。
+- 本次顺手修正了一个自动化测试中的跨平台路径断言，改为使用默认设置里的下载目录，避免 Windows 路径分隔符导致误报。
+- `git diff --check` 通过；命令输出中仍有 Git 对 CRLF 转换和用户级 ignore 权限的环境警告，不影响代码检查结果。
 - 本次没有重新执行生产 build。
 
 ## 尚未完成

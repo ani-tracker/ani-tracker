@@ -75,7 +75,7 @@ export function SourcesPage() {
         </div>
       </div>
 
-      <Panel title="添加下载源" description="支持通用 RSS / Torznab；站点适配器已内置动漫花园和蜜柑计划解析。">
+      <Panel title="添加下载源" description="支持通用 RSS / Torznab；站点适配器已内置动漫花园、蜜柑计划、AniBT 和 ACGNX 解析。">
         <div className="grid grid-cols-[1fr_160px_1.4fr_1fr_auto] gap-3">
           <input
             className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"

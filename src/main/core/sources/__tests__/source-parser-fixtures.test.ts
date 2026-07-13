@@ -1,8 +1,12 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { ReleaseSourceConfig } from "@shared/domain";
+import { sourceConfigs } from "../../mock-data";
+import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
+import { parseAniBtRss } from "../anibt-source";
 import { parseDmhyList } from "../dmhy-source";
 import { parseMikanReleaseList } from "../mikan-source";
+import { createReleaseSource } from "../release-source-service";
 import { RssReleaseSource } from "../rss-source";
 import { TorznabReleaseSource } from "../torznab-source";
 import { parseXml, textValue, toArray } from "../xml";
@@ -23,6 +27,22 @@ const mikanConfig: ReleaseSourceConfig = {
   baseUrl: "https://mikanani.me/"
 };
 
+const anibtConfig: ReleaseSourceConfig = {
+  id: "anibt",
+  name: "AniBT",
+  kind: "site_adapter",
+  enabled: true,
+  baseUrl: "https://anibt.net/"
+};
+
+const acgnxConfig: ReleaseSourceConfig = {
+  id: "acgnx",
+  name: "末日动漫资源库 ACGNX",
+  kind: "site_adapter",
+  enabled: true,
+  baseUrl: "https://share.acgnx.se/"
+};
+
 const rssConfig: ReleaseSourceConfig = {
   id: "rss-test",
   name: "RSS 测试源",
@@ -39,6 +59,18 @@ const torznabConfig: ReleaseSourceConfig = {
   baseUrl: "https://indexer.example.test/",
   apiKey: "test-api-key"
 };
+
+test("默认下载源包含 AniBT 和 ACGNX 且可创建站点适配器", () => {
+  const anibt = sourceConfigs.find((source) => source.id === "anibt");
+  const acgnx = sourceConfigs.find((source) => source.id === "acgnx");
+
+  assert.ok(anibt);
+  assert.ok(acgnx);
+  assert.equal(anibt.enabled, false);
+  assert.equal(acgnx.enabled, false);
+  assert.equal(createReleaseSource(anibt)?.config.id, "anibt");
+  assert.equal(createReleaseSource(acgnx)?.config.id, "acgnx");
+});
 
 test("parseDmhyList 解析资源行中的标题、下载地址和媒体字段", () => {
   const releases = parseDmhyList(
@@ -112,6 +144,112 @@ test("parseMikanReleaseList 在只有 Episode 链接时兜底生成 torrent 地�
   assert.equal(releases[0].torrentUrl, "https://mikanani.me/Download/789.torrent");
   assert.equal(releases[0].episodeNo, 3);
   assert.equal(releases[0].resolution, "720p");
+});
+
+test("parseAniBtRss 解析 AniBT RSS 扩展字段和内嵌 torrent 元数据", () => {
+  const releases = parseAniBtRss(
+    `
+      <rss version="2.0" xmlns:anibt="https://anibt.net/xmlns/rss/1.0/">
+        <channel>
+          <item>
+            <title>[Nix-Raws] 骸骨骑士大人异世界冒险中Ⅱ / Gaikotsu Kishi-sama Tadaima Isekai e Odekakechuu S02E02 [CR WEB-DL 1080p AVC AAC][简繁内封]</title>
+            <link>https://anibt.net/release/rel_test</link>
+            <guid isPermaLink="false">rel_test</guid>
+            <pubDate>Mon, 13 Jul 2026 21:04:04 +0800</pubDate>
+            <anibt:releaseId>rel_test</anibt:releaseId>
+            <anibt:torrentUrl>https://anibt.net/api/torrent/rel_test.torrent</anibt:torrentUrl>
+            <anibt:releaseTitle>[Nix-Raws] 骸骨骑士大人异世界冒险中Ⅱ / Gaikotsu Kishi-sama Tadaima Isekai e Odekakechuu S02E02 [CR WEB-DL 1080p AVC AAC][简繁内封]</anibt:releaseTitle>
+            <anibt:episode>2</anibt:episode>
+            <anibt:resolution>1080p</anibt:resolution>
+            <anibt:language>CHS/CHT</anibt:language>
+            <anibt:fileSize>1461298734</anibt:fileSize>
+            <anibt:customTag>AVC</anibt:customTag>
+            <torrent xmlns="https://anibt.moe/xmlns/0.1/">
+              <contentLength>1461298734</contentLength>
+              <infohash>A307AE8DBE4B93226197A7D560651457AC9A28D4</infohash>
+              <magneturi>magnet:?xt=urn:btih:a307ae8dbe4b93226197a7d560651457ac9a28d4&amp;dn=test</magneturi>
+            </torrent>
+            <enclosure url="https://anibt.net/api/torrent/rel_test.torrent" length="1461298734" />
+          </item>
+        </channel>
+      </rss>
+    `,
+    anibtConfig
+  );
+
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0].id, "anibt:rel_test");
+  assert.equal(releases[0].torrentUrl, "https://anibt.net/api/torrent/rel_test.torrent");
+  assert.equal(releases[0].magnetUrl, "magnet:?xt=urn:btih:a307ae8dbe4b93226197a7d560651457ac9a28d4&dn=test");
+  assert.equal(releases[0].infoHash, "a307ae8dbe4b93226197a7d560651457ac9a28d4");
+  assert.equal(releases[0].size, 1461298734);
+  assert.equal(releases[0].episodeNo, 2);
+  assert.equal(releases[0].resolution, "1080p");
+  assert.equal(releases[0].declaredVideoCodec, "AVC");
+  assert.equal(releases[0].normalizedVideoCodec, "H.264/AVC");
+  assert.equal(releases[0].subtitle, "multi");
+});
+
+test("parseAcgnxApiResponse 兼容 ACGNX JSON/API 风格响应", () => {
+  const releases = parseAcgnxApiResponse(
+    {
+      ok: true,
+      data: {
+        items: [
+          {
+            id: "acgnx-100",
+            title: "[LoliHouse] 测试番 - 03 [1080p][HEVC][简日]",
+            magnet: "magnet:?xt=urn:btih:FACEB00C1234&dn=test",
+            torrent_url: "https://share.acgnx.se/down/acgnx-100.torrent",
+            size: "1.50 GiB",
+            seeders: "18",
+            published_at: "2026-07-13T14:00:00+08:00"
+          }
+        ]
+      }
+    },
+    acgnxConfig
+  );
+
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0].id, "acgnx:acgnx-100");
+  assert.equal(releases[0].torrentUrl, "https://share.acgnx.se/down/acgnx-100.torrent");
+  assert.equal(releases[0].magnetUrl, "magnet:?xt=urn:btih:FACEB00C1234&dn=test");
+  assert.equal(releases[0].infoHash, "faceb00c1234");
+  assert.equal(releases[0].size, 1610612736);
+  assert.equal(releases[0].seeders, 18);
+  assert.equal(releases[0].episodeNo, 3);
+  assert.equal(releases[0].resolution, "1080p");
+  assert.equal(releases[0].normalizedVideoCodec, "H.265/HEVC");
+});
+
+test("parseAcgnxHtml 解析 ACGNX HTML 搜索行中的下载地址和做种数", () => {
+  const releases = parseAcgnxHtml(
+    `
+      <table>
+        <tr>
+          <td>2026-07-13 15:20</td>
+          <td><a href="/show-42.html">[Sakurato] 测试番 - 04 [720p][AVC][简体]</a></td>
+          <td><a href="magnet:?xt=urn:btih:ABC123DEF456&dn=test">磁力</a></td>
+          <td><a href="/download/42.torrent">下载种子</a></td>
+          <td>850 MB</td>
+          <td>seeders 9</td>
+        </tr>
+      </table>
+    `,
+    acgnxConfig
+  );
+
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0].id, "acgnx:abc123def456");
+  assert.equal(releases[0].torrentUrl, "https://share.acgnx.se/download/42.torrent");
+  assert.equal(releases[0].magnetUrl, "magnet:?xt=urn:btih:ABC123DEF456&dn=test");
+  assert.equal(releases[0].infoHash, "abc123def456");
+  assert.equal(releases[0].size, 850000000);
+  assert.equal(releases[0].seeders, 9);
+  assert.equal(releases[0].episodeNo, 4);
+  assert.equal(releases[0].resolution, "720p");
+  assert.equal(releases[0].normalizedVideoCodec, "H.264/AVC");
 });
 
 test("RssReleaseSource 解析 RSS item 的下载地址、体积和媒体字段", async (t) => {

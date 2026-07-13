@@ -53,7 +53,7 @@ test("AutomationRunService 使用单集字幕组覆盖选择最佳资源并写�
   assert.equal(result.downloaded[0].releaseTitle, "[覆盖字幕组] 测试番 - 01 [1080p][HEVC][简体]");
   assert.equal(repository.downloads.length, 1);
   assert.equal(repository.downloads[0].releaseId, "rss-test:release-override");
-  assert.equal(repository.downloads[0].savePath, "/test/Downloads/Ani Tracker");
+  assert.equal(repository.downloads[0].savePath, defaultSettings.download.defaultDownloadDir);
   assert.equal(repository.episodes[0].status, "downloading");
 });
 

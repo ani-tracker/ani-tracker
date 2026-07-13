@@ -252,6 +252,22 @@ export const sourceConfigs: ReleaseSourceConfig[] = [
     tags: ["anime", "bt", "mikan"]
   },
   {
+    id: "anibt",
+    name: "AniBT",
+    kind: "site_adapter",
+    enabled: false,
+    baseUrl: "https://anibt.net/",
+    tags: ["anime", "bt", "anibt", "rss"]
+  },
+  {
+    id: "acgnx",
+    name: "末日动漫资源库 ACGNX",
+    kind: "site_adapter",
+    enabled: false,
+    baseUrl: "https://share.acgnx.se/",
+    tags: ["anime", "bt", "acgnx"]
+  },
+  {
     id: "prowlarr",
     name: "Prowlarr Torznab",
     kind: "torznab",

@@ -1,6 +1,8 @@
 import type { ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
 import type { FansubGroup, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
+import { AcgnxReleaseSource } from "./acgnx-source";
+import { AniBtReleaseSource } from "./anibt-source";
 import { DmhyReleaseSource } from "./dmhy-source";
 import { MikanReleaseSource } from "./mikan-source";
 import { RssReleaseSource } from "./rss-source";
@@ -59,6 +61,14 @@ export function createReleaseSource(config: ReleaseSourceConfig): ReleaseSource 
     return new MikanReleaseSource(config);
   }
 
+  if (config.kind === "site_adapter" && isAniBtConfig(config)) {
+    return new AniBtReleaseSource(config);
+  }
+
+  if (config.kind === "site_adapter" && isAcgnxConfig(config)) {
+    return new AcgnxReleaseSource(config);
+  }
+
   return null;
 }
 
@@ -70,6 +80,16 @@ function isDmhyConfig(config: ReleaseSourceConfig): boolean {
 function isMikanConfig(config: ReleaseSourceConfig): boolean {
   const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
   return text.includes("mikan") || text.includes("蜜柑") || text.includes("mikanani.me");
+}
+
+function isAniBtConfig(config: ReleaseSourceConfig): boolean {
+  const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
+  return text.includes("anibt") || text.includes("anibt.net");
+}
+
+function isAcgnxConfig(config: ReleaseSourceConfig): boolean {
+  const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
+  return text.includes("acgnx") || text.includes("share.acgnx");
 }
 
 function dedupeReleases<T extends { infoHash?: string; magnetUrl?: string; torrentUrl?: string; title: string }>(releases: T[]): T[] {

@@ -1,0 +1,309 @@
+import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
+import type { Release, ReleaseSourceConfig, SubtitlePreference } from "@shared/domain";
+import { enrichReleaseFromTitle } from "../releases/release-title-parser";
+import { logger } from "../logger";
+import { parseXml, textValue, toArray } from "./xml";
+
+const DEFAULT_ANIBT_BASE_URL = "https://anibt.net/";
+const ANIBT_FETCH_TIMEOUT_MS = 10_000;
+const MAX_BGM_FEEDS_PER_SEARCH = 3;
+
+interface AniBtBgmSearchResponse {
+  ok?: boolean;
+  data?: AniBtBgmSearchItem[];
+}
+
+interface AniBtBgmSearchItem {
+  bgmId?: number | string;
+}
+
+interface AniBtRssDocument {
+  rss?: {
+    channel?: {
+      item?: AniBtRssItem | AniBtRssItem[];
+    };
+  };
+}
+
+interface AniBtRssItem {
+  title?: unknown;
+  link?: unknown;
+  guid?: unknown;
+  pubDate?: unknown;
+  enclosure?: {
+    "@url"?: string;
+    "@length"?: string;
+  };
+  description?: unknown;
+  "anibt:releaseId"?: unknown;
+  "anibt:torrentUrl"?: unknown;
+  "anibt:releaseTitle"?: unknown;
+  "anibt:episode"?: unknown;
+  "anibt:resolution"?: unknown;
+  "anibt:language"?: unknown;
+  "anibt:fileSize"?: unknown;
+  "anibt:customTag"?: unknown | unknown[];
+  torrent?: {
+    contentLength?: unknown;
+    infohash?: unknown;
+    magneturi?: unknown;
+    pubDate?: unknown;
+    filename?: unknown;
+  };
+}
+
+export class AniBtReleaseSource implements ReleaseSource {
+  constructor(public readonly config: ReleaseSourceConfig) {}
+
+  async searchReleases(query: ReleaseQuery): Promise<Release[]> {
+    const keyword = query.keyword.trim();
+    const limit = query.limit ?? 50;
+    const releases: Release[] = [];
+
+    logger.info("AniBT source search started", {
+      sourceId: this.config.id,
+      keyword,
+      limit
+    });
+
+    if (keyword) {
+      try {
+        const bgmIds = await this.searchBgmIds(keyword);
+        for (const bgmId of bgmIds.slice(0, MAX_BGM_FEEDS_PER_SEARCH)) {
+          releases.push(...(await this.readAnimeFeed(bgmId, limit)));
+        }
+      } catch (error) {
+        logger.warn("AniBT BGM search failed; falling back to latest RSS", {
+          sourceId: this.config.id,
+          keyword,
+          message: getErrorMessage(error)
+        });
+      }
+    }
+
+    if (!keyword || releases.length < limit) {
+      const latest = await this.readLatestFeed(Math.max(limit, 50));
+      releases.push(...(keyword ? latest.filter((release) => matchesKeyword(release, keyword)) : latest));
+    }
+
+    const result = dedupeReleases(releases).slice(0, limit);
+    logger.info("AniBT source search finished", {
+      sourceId: this.config.id,
+      keyword,
+      count: result.length
+    });
+
+    return result;
+  }
+
+  async listLatestByFansub(groupId: string): Promise<Release[]> {
+    return this.searchReleases({ keyword: groupId });
+  }
+
+  async listLatestByAnime(animeId: string): Promise<Release[]> {
+    return this.searchReleases({ keyword: animeId });
+  }
+
+  private async searchBgmIds(keyword: string): Promise<string[]> {
+    const url = new URL("/api/bgm/search", this.config.baseUrl ?? DEFAULT_ANIBT_BASE_URL);
+    url.searchParams.set("q", keyword);
+
+    const response = await fetchWithTimeout(url.toString(), {
+      headers: {
+        Accept: "application/json",
+        "User-Agent": "AniTracker/0.1"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`AniBT BGM search failed: ${response.status} ${response.statusText}`);
+    }
+
+    const payload = (await response.json()) as AniBtBgmSearchResponse;
+    if (payload.ok === false) {
+      throw new Error("AniBT BGM search returned an error");
+    }
+
+    return toArray(payload.data)
+      .map((item) => item.bgmId)
+      .filter((bgmId): bgmId is number | string => bgmId !== undefined && bgmId !== null)
+      .map(String);
+  }
+
+  private async readAnimeFeed(bgmId: string, limit: number): Promise<Release[]> {
+    const url = new URL("/rss/anime.xml", this.config.baseUrl ?? DEFAULT_ANIBT_BASE_URL);
+    url.searchParams.set("bgmId", bgmId);
+    url.searchParams.set("limit", String(limit));
+    return this.readFeed(url.toString());
+  }
+
+  private async readLatestFeed(limit: number): Promise<Release[]> {
+    const url = new URL("/rss/magnets.xml", this.config.baseUrl ?? DEFAULT_ANIBT_BASE_URL);
+    url.searchParams.set("limit", String(limit));
+    return this.readFeed(url.toString());
+  }
+
+  private async readFeed(url: string): Promise<Release[]> {
+    const response = await fetchWithTimeout(url, {
+      headers: {
+        Accept: "application/rss+xml,application/xml,text/xml",
+        "User-Agent": "AniTracker/0.1"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`AniBT RSS source failed: ${response.status} ${response.statusText}`);
+    }
+
+    return parseAniBtRss(await response.text(), this.config);
+  }
+}
+
+export function parseAniBtRss(xml: string, config: ReleaseSourceConfig): Release[] {
+  const parsed = parseXml<AniBtRssDocument>(xml);
+  return toArray(parsed.rss?.channel?.item)
+    .map((item, index) => mapAniBtItem(item, config, index))
+    .map((release) => enrichReleaseFromTitle(release));
+}
+
+function mapAniBtItem(item: AniBtRssItem, config: ReleaseSourceConfig, index: number): Release {
+  const title =
+    textValue(item["anibt:releaseTitle"]) ??
+    textValue(item.torrent?.filename) ??
+    textValue(item.title) ??
+    `AniBT Item ${index + 1}`;
+  const releaseId = textValue(item["anibt:releaseId"]) ?? textValue(item.guid);
+  const magnetUrl = textValue(item.torrent?.magneturi) ?? findMagnet(textValue(item.description));
+  const torrentUrl = textValue(item["anibt:torrentUrl"]) ?? item.enclosure?.["@url"];
+  const infoHash = textValue(item.torrent?.infohash)?.toLowerCase() ?? extractInfoHash(magnetUrl);
+  const size =
+    parseOptionalNumber(textValue(item["anibt:fileSize"])) ??
+    parseOptionalNumber(textValue(item.torrent?.contentLength)) ??
+    parseOptionalNumber(item.enclosure?.["@length"]);
+
+  return {
+    id: `${config.id}:${releaseId ?? infoHash ?? torrentUrl ?? title}`,
+    title,
+    sourceId: config.id,
+    sourceName: config.name,
+    magnetUrl,
+    torrentUrl,
+    infoHash,
+    size,
+    episodeNo: parseOptionalNumber(textValue(item["anibt:episode"])),
+    resolution: normalizeResolution(textValue(item["anibt:resolution"])),
+    declaredVideoCodec: findCodecTag(
+      toArray(item["anibt:customTag"])
+        .map((tag) => textValue(tag))
+        .filter((tag): tag is string => Boolean(tag))
+    ),
+    subtitle: normalizeSubtitle(textValue(item["anibt:language"])),
+    publishedAt: textValue(item.pubDate) ?? textValue(item.torrent?.pubDate) ?? new Date().toISOString()
+  };
+}
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ANIBT_FETCH_TIMEOUT_MS);
+
+  try {
+    return await fetch(url, {
+      ...init,
+      signal: controller.signal
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function normalizeResolution(value?: string): Release["resolution"] {
+  if (/2160p|4k/i.test(value ?? "")) {
+    return "2160p";
+  }
+  if (/1080p/i.test(value ?? "")) {
+    return "1080p";
+  }
+  if (/720p/i.test(value ?? "")) {
+    return "720p";
+  }
+  return undefined;
+}
+
+function normalizeSubtitle(value?: string): SubtitlePreference | undefined {
+  const normalized = value?.toLowerCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.includes("chs") && normalized.includes("cht")) {
+    return "multi";
+  }
+  if (normalized.includes("chs") || normalized.includes("sc")) {
+    return "chs";
+  }
+  if (normalized.includes("cht") || normalized.includes("tc")) {
+    return "cht";
+  }
+  if (normalized.includes("jpn") || normalized.includes("jp")) {
+    return "jpn";
+  }
+  if (normalized.includes("eng") || normalized.includes("en")) {
+    return "eng";
+  }
+  return undefined;
+}
+
+function findCodecTag(tags: string[]): string | undefined {
+  return tags.find((tag) => /\b(?:avc|h\.?264|x264|hevc|h\.?265|x265|av1|vp9)\b/i.test(tag));
+}
+
+function findMagnet(value?: string): string | undefined {
+  const match = value?.match(/magnet:\?[^"' <]+/i);
+  return match ? decodeHtml(match[0]) : undefined;
+}
+
+function extractInfoHash(magnetUrl?: string): string | undefined {
+  const match = magnetUrl?.match(/xt=urn:btih:([a-z0-9]+)/i);
+  return match?.[1]?.toLowerCase();
+}
+
+function parseOptionalNumber(value?: string): number | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function matchesKeyword(release: Release, keyword: string): boolean {
+  return release.title.toLowerCase().includes(keyword.toLowerCase());
+}
+
+function dedupeReleases(releases: Release[]): Release[] {
+  const seen = new Set<string>();
+
+  return releases.filter((release) => {
+    const key = release.infoHash ?? release.magnetUrl ?? release.torrentUrl ?? release.title;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function decodeHtml(value: string): string {
+  return value
+    .replace(/&#x([0-9a-f]+);/gi, (_, code: string) => String.fromCodePoint(Number.parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, "\"")
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">");
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
