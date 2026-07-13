@@ -4,6 +4,7 @@ import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { appApi } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { formatBytes, formatMonth, formatPercent } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { EpisodeReleasePreview, ReleaseSearchResult } from "@shared/contracts";
@@ -118,6 +119,21 @@ export function MyAnimePage() {
 
   const fansubNames = useMemo(() => new Map(fansubs.map((group) => [group.id, group.name])), [fansubs]);
   const draftPersisted = Boolean(draft && items.some((item) => item.id === draft.id));
+
+  useEffect(() => {
+    if (!downloadTarget) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeAnimeDownloads();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [downloadTarget]);
 
   useEffect(() => {
     let active = true;
@@ -560,13 +576,59 @@ export function MyAnimePage() {
         </Panel>
 
         <div className="space-y-5">
-          {downloadTarget ? (
+          <RulesPanel
+            draft={draft}
+            fansubs={fansubs}
+            saving={saving}
+            onChange={setDraft}
+            onCancel={() => setDraft(null)}
+            onSave={() => void saveDraft()}
+          />
+          <EpisodeRulesPanel
+            draft={draft}
+            persisted={draftPersisted}
+            episodes={episodes}
+            episodePreferences={episodePreferences}
+            downloadTasks={downloadTasks}
+            releasePreviews={releasePreviews}
+            fansubs={fansubs}
+            fansubNames={fansubNames}
+            loading={episodeLoading}
+            previewingEpisodeId={previewingEpisodeId}
+            addingReleaseId={addingReleaseId}
+            onAddEpisode={() => void addNextEpisode()}
+            onStatusChange={(episode, status) => void updateEpisodeStatus(episode, status)}
+            onFansubChange={(episode, fansubGroupId) => void updateEpisodeFansub(episode, fansubGroupId)}
+            onPreviewReleases={(episode) => void previewEpisodeReleases(episode)}
+            onAddRelease={(episode, release) => void addEpisodeReleaseDownload(episode, release)}
+          />
+        </div>
+      </div>
+
+      {downloadTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/35 p-6"
+          role="presentation"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              closeAnimeDownloads();
+            }
+          }}
+        >
+          <div
+            aria-label="资源下载"
+            aria-modal="true"
+            className="w-full max-w-5xl"
+            role="dialog"
+          >
             <AnimeDownloadPanel
               addingReleaseId={addingReleaseId}
               errors={animeReleaseErrors}
               fansubNames={fansubNames}
               fansubs={fansubs}
+              listClassName="max-h-[52vh] overflow-y-auto pr-1"
               loading={animeReleaseLoading}
+              panelClassName="max-h-[calc(100vh-4rem)] overflow-hidden shadow-xl"
               releases={animeReleases}
               selectedFansubId={animeReleaseFansubId}
               target={downloadTarget}
@@ -575,38 +637,9 @@ export function MyAnimePage() {
               onFansubChange={setAnimeReleaseFansubId}
               onRefresh={() => void searchAnimeReleases()}
             />
-          ) : (
-            <>
-              <RulesPanel
-                draft={draft}
-                fansubs={fansubs}
-                saving={saving}
-                onChange={setDraft}
-                onCancel={() => setDraft(null)}
-                onSave={() => void saveDraft()}
-              />
-              <EpisodeRulesPanel
-                draft={draft}
-                persisted={draftPersisted}
-                episodes={episodes}
-                episodePreferences={episodePreferences}
-                downloadTasks={downloadTasks}
-                releasePreviews={releasePreviews}
-                fansubs={fansubs}
-                fansubNames={fansubNames}
-                loading={episodeLoading}
-                previewingEpisodeId={previewingEpisodeId}
-                addingReleaseId={addingReleaseId}
-                onAddEpisode={() => void addNextEpisode()}
-                onStatusChange={(episode, status) => void updateEpisodeStatus(episode, status)}
-                onFansubChange={(episode, fansubGroupId) => void updateEpisodeFansub(episode, fansubGroupId)}
-                onPreviewReleases={(episode) => void previewEpisodeReleases(episode)}
-                onAddRelease={(episode, release) => void addEpisodeReleaseDownload(episode, release)}
-              />
-            </>
-          )}
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="grid grid-cols-4 gap-4">
         {statusOptions.map(([status, label]) => {
@@ -852,6 +885,8 @@ function AnimeDownloadPanel({
   selectedFansubId,
   loading,
   addingReleaseId,
+  panelClassName,
+  listClassName,
   onFansubChange,
   onRefresh,
   onAddRelease,
@@ -865,6 +900,8 @@ function AnimeDownloadPanel({
   selectedFansubId: string;
   loading: boolean;
   addingReleaseId: string | null;
+  panelClassName?: string;
+  listClassName?: string;
   onFansubChange: (fansubGroupId: string) => void;
   onRefresh: () => void;
   onAddRelease: (release: Release) => void;
@@ -878,6 +915,7 @@ function AnimeDownloadPanel({
 
   return (
     <Panel
+      className={cn("flex flex-col", panelClassName)}
       title="资源下载"
       action={
         <Button variant="ghost" onClick={onClose} aria-label="关闭下载" title="关闭下载">
@@ -936,7 +974,7 @@ function AnimeDownloadPanel({
         {loading ? (
           <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">正在查询发布资源...</div>
         ) : (
-          <div className="space-y-2">
+          <div className={cn("space-y-2", listClassName)}>
             {visibleReleases.map((release) => {
               const canDownload = Boolean(release.magnetUrl ?? release.torrentUrl);
               return (

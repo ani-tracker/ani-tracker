@@ -12,7 +12,19 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/cn";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider
+} from "@/components/ui/sidebar";
 import { DiscoveryPage } from "@/features/discovery/DiscoveryPage";
 import { DownloadsPage } from "@/features/downloads/DownloadsPage";
 import { HomePage } from "@/features/home/HomePage";
@@ -79,48 +91,49 @@ export function App() {
   }
 
   return (
-    <div className="flex min-h-screen bg-background">
-      <aside className="flex w-64 shrink-0 flex-col border-r bg-card">
-        <div className="flex h-16 items-center gap-3 border-b px-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-md bg-primary text-primary-foreground">
-            <PlayCircle className="h-5 w-5" />
+    <SidebarProvider>
+      <Sidebar>
+        <SidebarHeader className="flex h-16 items-center justify-center px-5">
+          <div className="flex items-center gap-3">
+            <div className="flex h-9 w-9 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
+              <PlayCircle className="h-5 w-5" />
+            </div>
+            <div>
+              <div className="text-sm font-semibold">Ani Tracker</div>
+              <div className="text-xs text-sidebar-foreground/60">追番与下载管理</div>
+            </div>
           </div>
-          <div>
-            <div className="text-sm font-semibold">Ani Tracker</div>
-            <div className="text-xs text-muted-foreground">追番与下载管理</div>
-          </div>
-        </div>
+        </SidebarHeader>
 
-        <nav className="flex-1 space-y-1 p-3">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const selected = activePage === item.id;
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {navItems.map((item) => {
+                  const Icon = item.icon;
+                  const selected = activePage === item.id;
 
-            return (
-              <button
-                key={item.id}
-                className={cn(
-                  "flex h-10 w-full items-center gap-3 rounded-md px-3 text-left text-sm transition-colors",
-                  selected
-                    ? "bg-accent font-medium text-accent-foreground"
-                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                )}
-                onClick={() => setActivePage(item.id)}
-              >
-                <Icon className="h-4 w-4" />
-                {item.label}
-              </button>
-            );
-          })}
-        </nav>
+                  return (
+                    <SidebarMenuItem key={item.id}>
+                      <SidebarMenuButton isActive={selected} onClick={() => setActivePage(item.id)}>
+                        <Icon />
+                        <span>{item.label}</span>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
 
-        <div className="border-t p-4 text-xs text-muted-foreground">
-          <div className="font-medium text-foreground">内置下载核心</div>
+        <SidebarFooter className="text-xs text-sidebar-foreground/60">
+          <div className="font-medium text-sidebar-foreground">内置下载核心</div>
           <div className="mt-1">qBittorrent 兼容模式预留</div>
-        </div>
-      </aside>
+        </SidebarFooter>
+      </Sidebar>
 
-      <main className="min-w-0 flex-1">
+      <SidebarInset>
         <header className="flex h-16 items-center gap-3 border-b bg-card px-6">
           <div className="relative min-w-[360px] flex-1">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -154,7 +167,7 @@ export function App() {
         </header>
 
         <div className="p-6">{renderPage(activePage)}</div>
-      </main>
-    </div>
+      </SidebarInset>
+    </SidebarProvider>
   );
 }
