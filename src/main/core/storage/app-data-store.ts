@@ -4,7 +4,10 @@ import { dirname, join } from "node:path";
 import type { AppSettings, ReleaseSourceConfig } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
+import { logger } from "../logger";
 import { createSeedData } from "./seed-data";
+
+const PLATFORM_DEFAULT_SETTINGS_VERSION = 10;
 
 export class AppDataStore {
   private data: AppDataFile | null = null;
@@ -18,12 +21,27 @@ export class AppDataStore {
 
     await ensureDir(dirname(this.filePath));
 
+    let parsed: AppDataFile;
     try {
       const raw = await readFile(this.filePath, "utf8");
-      const parsed = JSON.parse(raw) as AppDataFile;
-      this.data = migrateAppData(parsed);
-    } catch {
+      parsed = JSON.parse(raw) as AppDataFile;
+    } catch (error) {
+      logger.warn("App data file unavailable; creating seed data", {
+        path: this.filePath,
+        message: getErrorMessage(error)
+      });
       this.data = createSeedData();
+      await this.save();
+      return this.data;
+    }
+
+    this.data = migrateAppData(parsed);
+    if (parsed.version !== this.data.version) {
+      logger.info("App data migrated", {
+        path: this.filePath,
+        fromVersion: parsed.version,
+        toVersion: this.data.version
+      });
       await this.save();
     }
 
@@ -72,12 +90,20 @@ async function ensureDir(path: string): Promise<void> {
 
 function migrateAppData(data: AppDataFile): AppDataFile {
   const defaults = createSeedData();
+  const shouldResetSettingsToPlatformDefaults = (data.version ?? 0) < PLATFORM_DEFAULT_SETTINGS_VERSION;
+
+  if (shouldResetSettingsToPlatformDefaults) {
+    logger.info("App settings reset to platform defaults", {
+      fromVersion: data.version ?? 0,
+      toVersion: APP_DATA_VERSION
+    });
+  }
 
   return {
     ...defaults,
     ...data,
     version: APP_DATA_VERSION,
-    settings: mergeSettings(defaults.settings, data.settings),
+    settings: shouldResetSettingsToPlatformDefaults ? defaults.settings : mergeSettings(defaults.settings, data.settings),
     sources: mergeDefaultSources(defaults.sources, data.sources),
     dashboard: {
       ...defaults.dashboard,
@@ -140,4 +166,8 @@ function mergeSettings(defaults: AppSettings, current?: AppSettings): AppSetting
     },
     players: current.players ?? defaults.players
   };
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

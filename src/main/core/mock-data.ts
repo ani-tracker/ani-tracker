@@ -1,6 +1,5 @@
 import type {
   Anime,
-  AppSettings,
   DashboardData,
   DownloadTask,
   Episode,
@@ -261,68 +260,6 @@ export const sourceConfigs: ReleaseSourceConfig[] = [
     tags: ["torznab"]
   }
 ];
-
-export const appSettings: AppSettings = {
-  download: {
-    defaultDownloadDir: "D:\\Anime",
-    createAnimeFolder: true,
-    animeFolderPattern: "{year}-{month}/{title}",
-    temporaryDownloadDir: "D:\\Anime\\.downloading",
-    defaultTorrentEngine: "embedded",
-    embedded: {
-      enabled: true,
-      listenPort: 51413,
-      maxActiveDownloads: 3
-    },
-    qbittorrent: {
-      baseUrl: "http://127.0.0.1:8080",
-      username: "admin",
-      autoConnect: false
-    }
-  },
-  storage: {
-    userDataDir: "%APPDATA%\\AniTracker",
-    databasePath: "%APPDATA%\\AniTracker\\ani-tracker.sqlite",
-    cacheDir: "%APPDATA%\\AniTracker\\cache",
-    logDir: "%APPDATA%\\AniTracker\\logs",
-    backupDir: "%APPDATA%\\AniTracker\\backups"
-  },
-  players: [
-    {
-      id: "potplayer",
-      name: "PotPlayer",
-      executablePath: "C:\\Program Files\\DAUM\\PotPlayer\\PotPlayerMini64.exe",
-      argumentTemplate: "\"{file}\"",
-      supportsMadVr: true,
-      platform: "windows"
-    },
-    {
-      id: "mpv",
-      name: "mpv",
-      executablePath: "mpv",
-      argumentTemplate: "--force-window=yes \"{file}\"",
-      supportsMadVr: false,
-      platform: "any"
-    }
-  ],
-  defaultPlayerProfileId: "potplayer",
-  automation: {
-    scheduledCheckEnabled: true,
-    checkIntervalMinutes: 30,
-    notifyOnNewEpisode: true,
-    autoDownloadEnabledGlobally: true,
-    fallbackWhenDefaultFansubMissing: "wait"
-  },
-  media: {
-    ffprobePath: "ffprobe",
-    ffprobeTimeoutSeconds: 20,
-    videoExtensions: [".mkv", ".mp4", ".avi"]
-  },
-  desktop: {
-    minimizeToTray: true,
-    launchAtLogin: false
-  }
-};
 
 export const dashboard: DashboardData = {
   dailyReminder: {

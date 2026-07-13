@@ -1,6 +1,5 @@
 import type { AppDataFile } from "@shared/persistence/app-data";
 import {
-  appSettings,
   animeCatalog,
   dashboard,
   downloadTasks,
@@ -13,11 +12,12 @@ import {
   sourceConfigs
 } from "../mock-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
+import { createDefaultSettingsProvider, type DefaultSettingsProvider } from "../platform/default-settings-provider";
 
-export function createSeedData(): AppDataFile {
+export function createSeedData(settingsProvider: DefaultSettingsProvider = createDefaultSettingsProvider()): AppDataFile {
   return {
     version: APP_DATA_VERSION,
-    settings: appSettings,
+    settings: settingsProvider.getSettings(),
     animeCatalog,
     myAnime,
     episodes,

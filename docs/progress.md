@@ -10,6 +10,11 @@
 - 已接通主进程、preload、renderer 的 IPC bridge。
 - 已定义共享 domain model 和 IPC/service contracts。
 - 已实现 JSON 本地持久化和数据迁移框架。
+- 已新增平台默认配置模板：
+  - 通过 `DefaultSettingsProvider` 抽象类生成默认配置，由 macOS、Windows 和通用子类提供平台差异。
+  - macOS 默认下载目录为系统 Downloads 下的 `Ani Tracker`，用户数据使用 Electron `userData`，缓存使用 `~/Library/Caches/<app>`，日志使用 Electron `logs`。
+  - Windows 默认下载目录为系统 Downloads 下的 `Ani Tracker`，用户数据使用 Electron `userData`，缓存优先使用 `%LOCALAPPDATA%\<app>\Cache`，日志使用 Electron `logs`。
+  - 数据版本已升到 10，旧版本加载时直接切到新的平台默认设置模板。
 - 已预留未来 SQLite schema：`src/main/core/storage/schema.sql`。
 - 已完成 Home、我的追番、新番发现、资源搜索、下载、来源、设置、通知中心等页面。
 
@@ -18,6 +23,7 @@
 - 新番发现页使用独立的本地 anime catalog，不直接污染“我的追番”。
 - 支持按首播年月读取本地目录、搜索中文名/日文名/别名、添加到我的追番。
 - 支持在新番卡片展示 Bangumi、AniList、Mikan、MAL 等 external id，方便排查多来源合并结果。
+- 支持点击已知 external id 打开外部站点页面。
 - 已接入 AniList 月度采集，按季度查询后过滤到目标月份。
 - 已新增 Bangumi 元数据来源：
   - 使用 Bangumi v0 subjects API 按动画类型、年份、月份采集。
@@ -165,15 +171,17 @@
 本次通过以下检查：
 
 ```powershell
-npm run test:parsers
 ./node_modules/.bin/tsc -p tsconfig.typecheck.node.json --pretty false
 ./node_modules/.bin/tsc -p tsconfig.typecheck.web.json --pretty false
+npm run test:parsers
+git diff --check
 ```
 
 说明：
 
 - `pnpm run typecheck` 在当前环境下先触发了 pnpm 11 的依赖状态检查，并尝试重建 `node_modules`；恢复依赖后，本次改用本地 `tsc` 直接验证。
 - `pnpm run test:parsers` 在当前环境下同样会先触发 pnpm 依赖状态检查；本次使用 `npm run test:parsers` 验证脚本本身。
+- `npm run test:parsers` 仍会输出现有 `electron_mirror` npm 配置警告，但测试通过。
 - 本次没有重新执行生产 build。
 
 ## 尚未完成
@@ -187,6 +195,6 @@ npm run test:parsers
 
 ## 下一步建议
 
-1. 为 Discovery 的 external id 增加跳转到外部站点的打开能力。
-2. 继续补 RSS/Torznab/XML 解析样例测试。
+1. 继续补 RSS/Torznab/XML 解析样例测试。
+2. 给 Metadata/Release 解析逻辑补更多边界样例，例如多季标题、总集篇、合集资源。
 3. 在领域行为继续稳定后，开始 SQLite repository 替换 JSON repository。
