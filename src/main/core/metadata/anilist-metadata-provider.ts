@@ -1,4 +1,5 @@
 import type { Anime, Season } from "@shared/domain";
+import { getSeasonInfo, type MonthlyAnimeMetadataProvider } from "./metadata-provider";
 
 const ANILIST_GRAPHQL_ENDPOINT = "https://graphql.anilist.co";
 
@@ -31,27 +32,18 @@ interface AniListMedia {
   };
 }
 
-const seasonByMonth: Record<number, { season: "WINTER" | "SPRING" | "SUMMER" | "FALL"; localSeason: Season }> = {
-  1: { season: "WINTER", localSeason: "winter" },
-  2: { season: "WINTER", localSeason: "winter" },
-  3: { season: "WINTER", localSeason: "winter" },
-  4: { season: "SPRING", localSeason: "spring" },
-  5: { season: "SPRING", localSeason: "spring" },
-  6: { season: "SPRING", localSeason: "spring" },
-  7: { season: "SUMMER", localSeason: "summer" },
-  8: { season: "SUMMER", localSeason: "summer" },
-  9: { season: "SUMMER", localSeason: "summer" },
-  10: { season: "FALL", localSeason: "fall" },
-  11: { season: "FALL", localSeason: "fall" },
-  12: { season: "FALL", localSeason: "fall" }
+const anilistSeasonByLocalSeason: Record<Season, "WINTER" | "SPRING" | "SUMMER" | "FALL"> = {
+  winter: "WINTER",
+  spring: "SPRING",
+  summer: "SUMMER",
+  fall: "FALL"
 };
 
-export class AniListMetadataProvider {
+export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider {
+  readonly id = "anilist";
+
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {
-    const seasonInfo = seasonByMonth[month];
-    if (!seasonInfo) {
-      throw new Error(`Invalid month: ${month}`);
-    }
+    const seasonInfo = getSeasonInfo(month);
 
     const query = `
       query SeasonalAnime($season: MediaSeason!, $seasonYear: Int!, $page: Int!, $perPage: Int!) {
@@ -88,7 +80,7 @@ export class AniListMetadataProvider {
       body: JSON.stringify({
         query,
         variables: {
-          season: seasonInfo.season,
+          season: anilistSeasonByLocalSeason[seasonInfo.season],
           seasonYear: year,
           page: 1,
           perPage: 50
@@ -107,7 +99,7 @@ export class AniListMetadataProvider {
 
     return (json.data?.Page?.media ?? [])
       .filter((item) => item.startDate?.year === year && item.startDate?.month === month)
-      .map((item) => mapAniListMedia(item, seasonInfo.localSeason));
+      .map((item) => mapAniListMedia(item, seasonInfo.season));
   }
 }
 
