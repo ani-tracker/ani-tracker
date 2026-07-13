@@ -1,0 +1,14 @@
+{
+  "extends": "./tsconfig.node.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "rootDir": "src",
+    "outDir": "out/test-node"
+  },
+  "include": [
+    "src/main/core/sources/__tests__/**/*.test.ts"
+  ]
+}

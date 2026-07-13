@@ -70,12 +70,17 @@
   - 没有直接 torrent 链接时按 Episode id 兜底生成下载地址。
   - 对请求设置超时，避免站点不可达时长期阻塞。
   - 新增默认禁用来源 `mikan-site`，并通过数据版本迁移补进已有 JSON 数据。
+- 已新增 Mikan/DMHY 解析样例测试：
+  - 覆盖 DMHY 资源行中的标题、magnet、torrent、发布时间、体积和媒体字段解析。
+  - 覆盖 Mikan 搜索结果中的 Episode、Download torrent、magnet、体积和兜底 torrent 地址生成。
+  - 使用 Node 内置 `node:test`，不引入额外测试依赖。
 - 已实现资源标题解析：
   - 字幕组。
   - 集数。
   - 分辨率。
   - 字幕语言。
   - 视频编码。
+  - 已修正中文字幕标签识别，支持 `简体`、`简日`、`繁体`、`繁日` 等无英文单词边界的标签。
 - 已实现资源评分：
   - 番剧标题和别名命中。
   - 集数命中。
@@ -160,6 +165,7 @@
 本次通过以下检查：
 
 ```powershell
+npm run test:parsers
 ./node_modules/.bin/tsc -p tsconfig.typecheck.node.json --pretty false
 ./node_modules/.bin/tsc -p tsconfig.typecheck.web.json --pretty false
 ```
@@ -167,6 +173,7 @@
 说明：
 
 - `pnpm run typecheck` 在当前环境下先触发了 pnpm 11 的依赖状态检查，并尝试重建 `node_modules`；恢复依赖后，本次改用本地 `tsc` 直接验证。
+- `pnpm run test:parsers` 在当前环境下同样会先触发 pnpm 依赖状态检查；本次使用 `npm run test:parsers` 验证脚本本身。
 - 本次没有重新执行生产 build。
 
 ## 尚未完成
@@ -180,6 +187,6 @@
 
 ## 下一步建议
 
-1. 为 Mikan/DMHY 适配器补解析样例测试，固定 HTML 结构变化带来的回归风险。
-2. 为 Discovery 的 external id 增加跳转到外部站点的打开能力。
+1. 为 Discovery 的 external id 增加跳转到外部站点的打开能力。
+2. 继续补 RSS/Torznab/XML 解析样例测试。
 3. 在领域行为继续稳定后，开始 SQLite repository 替换 JSON repository。

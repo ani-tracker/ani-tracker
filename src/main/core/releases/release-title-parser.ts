@@ -17,11 +17,11 @@ const resolutionPatterns: Array<{ pattern: RegExp; value: "720p" | "1080p" | "21
 ];
 
 const subtitlePatterns: Array<{ pattern: RegExp; value: SubtitlePreference }> = [
-  { pattern: /\b(?:chs|gb|简体|简日)\b/i, value: "chs" },
-  { pattern: /\b(?:cht|big5|繁体|繁日)\b/i, value: "cht" },
-  { pattern: /\b(?:简繁|繁简|multi)\b/i, value: "multi" },
-  { pattern: /\b(?:jpn|jp|日文)\b/i, value: "jpn" },
-  { pattern: /\b(?:eng|英文)\b/i, value: "eng" }
+  { pattern: /(?:\b(?:chs|gb)\b|简体|简日)/i, value: "chs" },
+  { pattern: /(?:\b(?:cht|big5)\b|繁体|繁日)/i, value: "cht" },
+  { pattern: /(?:\bmulti\b|简繁|繁简)/i, value: "multi" },
+  { pattern: /(?:\b(?:jpn|jp)\b|日文)/i, value: "jpn" },
+  { pattern: /(?:\beng\b|英文)/i, value: "eng" }
 ];
 
 const episodePatterns = [
