@@ -8,6 +8,7 @@ import { logger } from "../logger";
 import { createSeedData } from "./seed-data";
 
 const PLATFORM_DEFAULT_SETTINGS_VERSION = 11;
+const QBITTORRENT_NOX_DEFAULT_SETTINGS_VERSION = 13;
 
 export class AppDataStore {
   private data: AppDataFile | null = null;
@@ -99,6 +100,7 @@ interface AppDataMigrationResult {
 function migrateAppData(data: AppDataFile): AppDataMigrationResult {
   const defaults = createSeedData();
   const shouldResetSettingsToPlatformDefaults = (data.version ?? 0) < PLATFORM_DEFAULT_SETTINGS_VERSION;
+  const shouldApplyQbittorrentNoxDefaults = (data.version ?? 0) < QBITTORRENT_NOX_DEFAULT_SETTINGS_VERSION;
   const addedDefaultSourceIds = getMissingDefaultSourceIds(defaults.sources, data.sources);
 
   if (shouldResetSettingsToPlatformDefaults) {
@@ -108,11 +110,21 @@ function migrateAppData(data: AppDataFile): AppDataMigrationResult {
     });
   }
 
+  if (shouldApplyQbittorrentNoxDefaults) {
+    logger.info("App download defaults migrated to bundled qBittorrent-nox", {
+      fromVersion: data.version ?? 0,
+      toVersion: APP_DATA_VERSION
+    });
+  }
+
+  const settings = shouldResetSettingsToPlatformDefaults ? defaults.settings : mergeSettings(defaults.settings, data.settings);
   const migrated: AppDataFile = {
     ...defaults,
     ...data,
     version: APP_DATA_VERSION,
-    settings: shouldResetSettingsToPlatformDefaults ? defaults.settings : mergeSettings(defaults.settings, data.settings),
+    settings: shouldApplyQbittorrentNoxDefaults
+      ? applyQbittorrentNoxDefaults(settings, defaults.settings, data.settings)
+      : settings,
     sources: mergeDefaultSources(defaults.sources, data.sources),
     dashboard: {
       ...defaults.dashboard,
@@ -123,9 +135,74 @@ function migrateAppData(data: AppDataFile): AppDataMigrationResult {
 
   return {
     data: migrated,
-    shouldSave: data.version !== APP_DATA_VERSION || addedDefaultSourceIds.length > 0,
+    shouldSave:
+      data.version !== APP_DATA_VERSION || shouldApplyQbittorrentNoxDefaults || addedDefaultSourceIds.length > 0,
     addedDefaultSourceIds
   };
+}
+
+function applyQbittorrentNoxDefaults(
+  settings: AppSettings,
+  defaults: AppSettings,
+  current?: AppSettings
+): AppSettings {
+  const usedLegacyEmbeddedDefault =
+    !current ||
+    (current.download.defaultTorrentEngine === "embedded" &&
+      current.download.embedded?.enabled !== false &&
+      isDefaultQbittorrentEndpoint(current.download.qbittorrent));
+  const usedManagedWithoutAutoStart =
+    current?.download.defaultTorrentEngine === "qbittorrent" &&
+    current.download.qbittorrent.managed?.enabled === true &&
+    current.download.qbittorrent.autoConnect === false &&
+    isDefaultQbittorrentEndpoint(current.download.qbittorrent);
+
+  if (!usedLegacyEmbeddedDefault && !usedManagedWithoutAutoStart) {
+    return settings;
+  }
+
+  return {
+    ...settings,
+    download: {
+      ...settings.download,
+      defaultTorrentEngine: defaults.download.defaultTorrentEngine,
+      embedded: {
+        ...settings.download.embedded,
+        enabled: false
+      },
+      qbittorrent: {
+        ...settings.download.qbittorrent,
+        baseUrl: settings.download.qbittorrent.baseUrl || defaults.download.qbittorrent.baseUrl,
+        username: settings.download.qbittorrent.username || defaults.download.qbittorrent.username,
+        password: settings.download.qbittorrent.password || defaults.download.qbittorrent.password,
+        autoConnect: true,
+        managed: {
+          ...settings.download.qbittorrent.managed,
+          enabled: true
+        }
+      }
+    }
+  };
+}
+
+function isDefaultQbittorrentEndpoint(settings: AppSettings["download"]["qbittorrent"] | undefined): boolean {
+  if (!settings) {
+    return true;
+  }
+
+  return (
+    normalizeBaseUrl(settings.baseUrl) === "http://127.0.0.1:18080/" &&
+    settings.username === "admin" &&
+    !settings.password
+  );
+}
+
+function normalizeBaseUrl(value: string | undefined): string {
+  try {
+    return new URL(value || "http://127.0.0.1:18080").href;
+  } catch {
+    return value ?? "";
+  }
 }
 
 function mergeDefaultSources(defaults: ReleaseSourceConfig[], current?: ReleaseSourceConfig[]): ReleaseSourceConfig[] {

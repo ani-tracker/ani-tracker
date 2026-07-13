@@ -45,7 +45,7 @@ pnpm.cmd build
 
 ## 下一步
 
-1. 实现真正的内置 TorrentCore，让用户无需单独安装 qBittorrent。
+1. 完善内置 qBittorrent-nox 托管体验和外部 WebUI 切换细节。
 2. 接入 SQLite，替换 JSON 仓库。
 3. 完善新番元数据源和新番采集。
 4. 增加动漫花园等站点专用适配器。

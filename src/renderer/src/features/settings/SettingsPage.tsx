@@ -101,8 +101,14 @@ export function SettingsPage() {
   }
 
   async function startQbittorrentManaged() {
+    if (!draft) {
+      return;
+    }
+
     setQbManagedAction("starting");
     try {
+      const saved = await appApi.updateSettings(draft);
+      setDraft(saved);
       const status = await appApi.startQbittorrentManaged();
       setQbManagedStatus(status);
       setQbTest({
@@ -197,23 +203,6 @@ export function SettingsPage() {
                   download: {
                     ...draft.download,
                     animeFolderPattern: value
-                  }
-                })
-              }
-            />
-            <SelectSetting
-              label="默认下载引擎"
-              value={draft.download.defaultTorrentEngine}
-              options={[
-                { label: "内置引擎", value: "embedded" },
-                { label: "qBittorrent 兼容模式", value: "qbittorrent" }
-              ]}
-              onChange={(value) =>
-                setDraft({
-                  ...draft,
-                  download: {
-                    ...draft.download,
-                    defaultTorrentEngine: value as AppSettings["download"]["defaultTorrentEngine"]
                   }
                 })
               }
@@ -361,73 +350,16 @@ export function SettingsPage() {
       </Panel>
 
       <Panel title="下载核心配置">
-        <div className="grid grid-cols-2 gap-5">
+        <div className="space-y-4">
           <div className="space-y-4 rounded-md border p-4">
             <div>
-              <div className="font-medium">内置 TorrentCore</div>
-              <p className="mt-1 text-sm text-muted-foreground">默认模式，目标是让用户无需单独安装 qBittorrent。</p>
-            </div>
-            <SelectSetting
-              label="启用内置引擎"
-              value={draft.download.embedded.enabled ? "on" : "off"}
-              options={[
-                { label: "开启", value: "on" },
-                { label: "关闭", value: "off" }
-              ]}
-              onChange={(value) =>
-                setDraft({
-                  ...draft,
-                  download: {
-                    ...draft.download,
-                    embedded: {
-                      ...draft.download.embedded,
-                      enabled: value === "on"
-                    }
-                  }
-                })
-              }
-            />
-            <NumberSetting
-              label="监听端口"
-              value={draft.download.embedded.listenPort ?? 51413}
-              min={1}
-              onChange={(value) =>
-                setDraft({
-                  ...draft,
-                  download: {
-                    ...draft.download,
-                    embedded: {
-                      ...draft.download.embedded,
-                      listenPort: value
-                    }
-                  }
-                })
-              }
-            />
-            <NumberSetting
-              label="最大并发下载"
-              value={draft.download.embedded.maxActiveDownloads ?? 3}
-              min={1}
-              onChange={(value) =>
-                setDraft({
-                  ...draft,
-                  download: {
-                    ...draft.download,
-                    embedded: {
-                      ...draft.download.embedded,
-                      maxActiveDownloads: value
-                    }
-                  }
-                })
-              }
-            />
-          </div>
-
-          <div className="space-y-4 rounded-md border p-4">
-            <div>
-              <div className="font-medium">qBittorrent 兼容模式</div>
+              <div className="font-medium">
+                {draft.download.qbittorrent.managed.enabled ? "内置 qBittorrent-nox" : "外部 qBittorrent WebUI"}
+              </div>
               <p className="mt-1 text-sm text-muted-foreground">
-                用于接入已有 qB WebUI，也可随应用启动项目内置 qBittorrent-nox。托管模式只使用无头版本，并使用 10000 以上的可用端口。
+                {draft.download.qbittorrent.managed.enabled
+                  ? "默认随应用启动无界面的 qBittorrent-nox，并自动选择 10000 以上的可用 WebUI 端口。"
+                  : "用于接入你已经单独运行的 qBittorrent WebUI，应用不会托管启动或关闭外部进程。"}
               </p>
             </div>
             <TextSetting
@@ -481,22 +413,28 @@ export function SettingsPage() {
             />
             <div className="grid grid-cols-2 gap-3">
               <SelectSetting
-                label="托管内置 qBittorrent-nox"
-                value={draft.download.qbittorrent.managed.enabled ? "on" : "off"}
+                label="运行模式"
+                value={draft.download.qbittorrent.managed.enabled ? "managed" : "external"}
                 options={[
-                  { label: "开启", value: "on" },
-                  { label: "关闭", value: "off" }
+                  { label: "内置 qBittorrent-nox", value: "managed" },
+                  { label: "外部 WebUI", value: "external" }
                 ]}
                 onChange={(value) =>
                   setDraft({
                     ...draft,
                     download: {
                       ...draft.download,
+                      defaultTorrentEngine: "qbittorrent",
+                      embedded: {
+                        ...draft.download.embedded,
+                        enabled: false
+                      },
                       qbittorrent: {
                         ...draft.download.qbittorrent,
+                        autoConnect: value === "managed",
                         managed: {
                           ...draft.download.qbittorrent.managed,
-                          enabled: value === "on"
+                          enabled: value === "managed"
                         }
                       }
                     }
@@ -505,11 +443,14 @@ export function SettingsPage() {
               />
               <SelectSetting
                 label="随应用启动"
-                value={draft.download.qbittorrent.autoConnect ? "on" : "off"}
+                value={
+                  draft.download.qbittorrent.managed.enabled && draft.download.qbittorrent.autoConnect ? "on" : "off"
+                }
                 options={[
                   { label: "开启", value: "on" },
                   { label: "关闭", value: "off" }
                 ]}
+                disabled={!draft.download.qbittorrent.managed.enabled}
                 onChange={(value) =>
                   setDraft({
                     ...draft,
@@ -524,41 +465,43 @@ export function SettingsPage() {
                 }
               />
             </div>
-            <div className="rounded-md border p-3 text-sm">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="font-medium">托管状态</div>
-                  <div className="mt-1 break-all text-muted-foreground">
-                    {formatQbittorrentManagedSummary(qbManagedStatus)}
+            {draft.download.qbittorrent.managed.enabled ? (
+              <div className="rounded-md border p-3 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="font-medium">内置进程状态</div>
+                    <div className="mt-1 break-all text-muted-foreground">
+                      {formatQbittorrentManagedSummary(qbManagedStatus)}
+                    </div>
+                    <div className="mt-1 break-all text-xs text-muted-foreground">
+                      二进制：{qbManagedStatus?.binaryPath ?? "未找到项目内置 qBittorrent-nox"}
+                    </div>
+                    {qbManagedStatus?.lastError && (
+                      <div className="mt-2 text-xs text-rose-600">{qbManagedStatus.lastError}</div>
+                    )}
                   </div>
-                  <div className="mt-1 break-all text-xs text-muted-foreground">
-                    二进制：{qbManagedStatus?.binaryPath ?? "未找到项目内置 qBittorrent-nox"}
-                  </div>
-                  {qbManagedStatus?.lastError && (
-                    <div className="mt-2 text-xs text-rose-600">{qbManagedStatus.lastError}</div>
-                  )}
+                  <Badge tone={qbManagedStatus?.running ? "green" : "neutral"}>
+                    {qbManagedStatus?.running ? "运行中" : "未运行"}
+                  </Badge>
                 </div>
-                <Badge tone={qbManagedStatus?.running ? "green" : "neutral"}>
-                  {qbManagedStatus?.running ? "运行中" : "未运行"}
-                </Badge>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => void startQbittorrentManaged()}
+                    disabled={qbManagedAction !== "idle"}
+                  >
+                    {qbManagedAction === "starting" ? "启动中" : "启动内置"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => void stopQbittorrentManaged()}
+                    disabled={!qbManagedStatus?.running || qbManagedAction !== "idle"}
+                  >
+                    {qbManagedAction === "stopping" ? "停止中" : "停止内置"}
+                  </Button>
+                </div>
               </div>
-              <div className="mt-3 flex flex-wrap gap-2">
-                <Button
-                  variant="outline"
-                  onClick={() => void startQbittorrentManaged()}
-                  disabled={!qbManagedStatus?.enabled || qbManagedAction !== "idle"}
-                >
-                  {qbManagedAction === "starting" ? "启动中" : "启动托管"}
-                </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => void stopQbittorrentManaged()}
-                  disabled={!qbManagedStatus?.running || qbManagedAction !== "idle"}
-                >
-                  {qbManagedAction === "stopping" ? "停止中" : "停止托管"}
-                </Button>
-              </div>
-            </div>
+            ) : null}
             <div className="flex items-center gap-3">
               <Button variant="outline" onClick={testQbittorrent} disabled={qbTest.state === "testing"}>
                 {qbTest.state === "testing" ? "测试中" : "测试连接"}
@@ -816,18 +759,21 @@ function SelectSetting({
   label,
   value,
   options,
+  disabled = false,
   onChange
 }: {
   label: string;
   value: string;
   options: Array<{ label: string; value: string }>;
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   return (
     <label className="block rounded-md border p-4">
       <div className="text-sm text-muted-foreground">{label}</div>
       <select
-        className="mt-2 h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+        className="mt-2 h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+        disabled={disabled}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       >

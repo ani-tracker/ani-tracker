@@ -81,18 +81,19 @@ test("createDefaultSettingsProvider 根据 process.platform 兼容值选择子�
 function assertSharedDefaults(settings: AppSettings): void {
   assert.equal(settings.download.defaultDownloadDir, join(paths.downloads, "Ani Tracker"));
   assert.equal(settings.download.temporaryDownloadDir, join(paths.userData, "incomplete"));
-  assert.equal(settings.download.defaultTorrentEngine, "embedded");
+  assert.equal(settings.download.defaultTorrentEngine, "qbittorrent");
   assert.deepEqual(settings.download.embedded, {
-    enabled: true,
+    enabled: false,
     listenPort: 51413,
     maxActiveDownloads: 3
   });
   assert.deepEqual(settings.download.qbittorrent, {
     baseUrl: "http://127.0.0.1:18080",
     username: "admin",
-    autoConnect: false,
+    password: "ani-tracker",
+    autoConnect: true,
     managed: {
-      enabled: false,
+      enabled: true,
       profileDir: join(paths.userData, "qbittorrent"),
       startupTimeoutMs: 15_000
     }

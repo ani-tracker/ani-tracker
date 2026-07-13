@@ -22,18 +22,19 @@ export abstract class DefaultSettingsProvider {
         createAnimeFolder: true,
         animeFolderPattern: "{year}-{month}/{title}",
         temporaryDownloadDir: join(userDataDir, "incomplete"),
-        defaultTorrentEngine: "embedded",
+        defaultTorrentEngine: "qbittorrent",
         embedded: {
-          enabled: true,
+          enabled: false,
           listenPort: 51413,
           maxActiveDownloads: 3
         },
         qbittorrent: {
           baseUrl: "http://127.0.0.1:18080",
           username: "admin",
-          autoConnect: false,
+          password: "ani-tracker",
+          autoConnect: true,
           managed: {
-            enabled: false,
+            enabled: true,
             profileDir: join(userDataDir, "qbittorrent"),
             startupTimeoutMs: 15_000
           }

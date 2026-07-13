@@ -6,6 +6,7 @@ import { DesktopIntegrationService } from "./core/platform/desktop-integration-s
 import { automationScheduler, qbittorrentManagedService, registerIpcHandlers, repository } from "./ipc";
 
 let mainWindow: BrowserWindow | null = null;
+let quitAfterManagedQbittorrentStops = false;
 
 const desktopIntegration = new DesktopIntegrationService({
   showMainWindow,
@@ -98,9 +99,14 @@ app.whenReady().then(async () => {
   });
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
   desktopIntegration.prepareToQuit();
-  void qbittorrentManagedService.stop();
+  if (quitAfterManagedQbittorrentStops) {
+    return;
+  }
+
+  event.preventDefault();
+  void stopManagedQbittorrentThenQuit();
 });
 
 app.on("window-all-closed", () => {
@@ -112,3 +118,16 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
+
+async function stopManagedQbittorrentThenQuit(): Promise<void> {
+  try {
+    await qbittorrentManagedService.stop();
+  } catch (error) {
+    logger.error("Managed qBittorrent stop failed before quit", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  } finally {
+    quitAfterManagedQbittorrentStops = true;
+    app.quit();
+  }
+}

@@ -4,8 +4,10 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
+import { QbittorrentClient } from "../qbittorrent-client";
 import {
   buildQbittorrentLaunchEnvironment,
+  extractManagedTemporaryPassword,
   QbittorrentManagedService,
   resolveBundledQbittorrentBinary
 } from "../qbittorrent-managed-service";
@@ -87,6 +89,33 @@ test("buildQbittorrentLaunchEnvironment injects sibling plugin paths for Windows
 
   assert.equal(env.QT_PLUGIN_PATH, `${binaryDir}${delimiter}/existing/plugins`);
   assert.equal(env.OPENSSL_MODULES, opensslModulesPath);
+});
+
+test("extractManagedTemporaryPassword parses localized and fallback startup output", () => {
+  assert.equal(extractManagedTemporaryPassword("临时密码：HzjbaPR58\n你应该在程序首选项中设置密码"), "HzjbaPR58");
+  assert.equal(
+    extractManagedTemporaryPassword("WebUI http://localhost:18185 admin 未设置 WebUI 管理员密码 XyZ123abc"),
+    "XyZ123abc"
+  );
+});
+
+test("QbittorrentClient accepts qBittorrent 5 no-content login success", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "set-cookie": "SID=test-session; HttpOnly"
+      }
+    });
+  });
+
+  const client = new QbittorrentClient({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin",
+    password: "ani-tracker"
+  });
+
+  await client.login();
 });
 
 test("QbittorrentManagedService 对托管启动避开 10000 以下 WebUI 端口", async () => {

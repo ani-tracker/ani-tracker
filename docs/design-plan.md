@@ -11,8 +11,8 @@ The first platform target is Windows. macOS should remain compatible at the inte
 - Desktop shell: Electron
 - UI: React, TypeScript, Vite, shadcn/ui-style components, Tailwind CSS
 - Local data: SQLite in a later implementation phase
-- Download engine: internal TorrentCore by default
-- Compatibility: optional qBittorrent Web API adapter
+- Download engine: bundled qBittorrent-nox by default
+- Compatibility: optional external qBittorrent Web API adapter
 - Media probing: ffprobe or MediaInfo
 - Player launch: platform-specific player profiles
 
@@ -48,8 +48,8 @@ The application should not require users to install qBittorrent manually.
 
 The preferred model is:
 
-- Default: EmbeddedTorrentEngine.
-- Optional: QbittorrentEngine for users who already run qBittorrent.
+- Default: managed bundled qBittorrent-nox.
+- Optional: external QbittorrentEngine for users who already run qBittorrent.
 - UI: always talks to the unified TorrentEngine interface.
 
 The qB-compatible state model must include:

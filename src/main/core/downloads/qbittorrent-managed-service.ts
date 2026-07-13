@@ -9,6 +9,9 @@ import { logger } from "../logger";
 
 const MIN_MANAGED_WEBUI_PORT = 10_000;
 const DEFAULT_MANAGED_WEBUI_PORT = 18_080;
+const DEFAULT_MANAGED_WEBUI_USERNAME = "admin";
+const DEFAULT_MANAGED_WEBUI_PASSWORD = "ani-tracker";
+const TEMP_PASSWORD_PATTERN = /(?:临时密码|temporary password|password)[^\w]{0,32}([A-Za-z0-9]{8,32})/i;
 
 interface QbittorrentLaunchPlan {
   binaryPath?: string;
@@ -90,8 +93,10 @@ export class QbittorrentManagedService {
     this.lastStartedAt = new Date().toISOString();
     this.lastStoppedAt = undefined;
     this.lastError = undefined;
+    let startupOutput = "";
 
     child.stdout.on("data", (chunk: Buffer) => {
+      startupOutput = `${startupOutput}${chunk.toString("utf8")}`.slice(-4_000);
       logger.info("Managed qBittorrent stdout", { message: formatProcessOutput(chunk) });
     });
     child.stderr.on("data", (chunk: Buffer) => {
@@ -128,6 +133,13 @@ export class QbittorrentManagedService {
       });
     }
 
+    if (ready) {
+      const configured = await configureManagedWebUiCredentials(plan.webUiUrl, settings, startupOutput);
+      if (!configured) {
+        this.lastError = "qBittorrent WebUI 已启动，但项目账号密码同步失败";
+      }
+    }
+
     return this.getStatus(settings);
   }
 
@@ -139,7 +151,7 @@ export class QbittorrentManagedService {
 
     this.stoppingPid = child.pid ?? 0;
     logger.info("Stopping managed qBittorrent", { pid: child.pid });
-    child.kill();
+    await shutdownManagedWebUi(this.activePlan?.webUiUrl, this.lastSettings);
 
     const exited = await Promise.race([
       onceExit(child).then(() => true),
@@ -147,9 +159,18 @@ export class QbittorrentManagedService {
     ]);
 
     if (!exited) {
-      logger.warn("Managed qBittorrent did not exit after SIGTERM; sending SIGKILL", { pid: child.pid });
-      child.kill("SIGKILL");
-      await Promise.race([onceExit(child), sleep(2_000)]);
+      logger.warn("Managed qBittorrent did not exit after WebUI shutdown; sending SIGTERM", { pid: child.pid });
+      child.kill();
+      const terminated = await Promise.race([
+        onceExit(child).then(() => true),
+        sleep(3_000).then(() => false)
+      ]);
+
+      if (!terminated) {
+        logger.warn("Managed qBittorrent did not exit after SIGTERM; sending SIGKILL", { pid: child.pid });
+        child.kill("SIGKILL");
+        await Promise.race([onceExit(child), sleep(2_000)]);
+      }
     }
 
     if (this.child === child) {
@@ -271,6 +292,168 @@ function buildQbittorrentArgs(plan: QbittorrentLaunchPlan): string[] {
     `--profile=${plan.profileDir}`,
     "--confirm-legal-notice"
   ];
+}
+
+async function configureManagedWebUiCredentials(
+  webUiUrl: string,
+  settings: AppSettings,
+  startupOutput: string
+): Promise<boolean> {
+  const { username, password } = getManagedWebUiCredentials(settings);
+  const login = await loginManagedWebUi(webUiUrl, username, password);
+  if (login.ok) {
+    return setManagedWebUiPreferences(webUiUrl, login.cookie, username, password);
+  }
+
+  const temporaryPassword = extractManagedTemporaryPassword(startupOutput);
+  if (!temporaryPassword) {
+    logger.warn("Managed qBittorrent login failed and no temporary password was found", {
+      webUiUrl,
+      username,
+      status: login.status
+    });
+    return false;
+  }
+
+  const temporaryLogin = await loginManagedWebUi(webUiUrl, "admin", temporaryPassword);
+  if (!temporaryLogin.ok) {
+    logger.warn("Managed qBittorrent temporary password login failed", {
+      webUiUrl,
+      status: temporaryLogin.status
+    });
+    return false;
+  }
+
+  return setManagedWebUiPreferences(webUiUrl, temporaryLogin.cookie, username, password);
+}
+
+function getManagedWebUiCredentials(settings: AppSettings): { username: string; password: string } {
+  return {
+    username: settings.download.qbittorrent.username || DEFAULT_MANAGED_WEBUI_USERNAME,
+    password: settings.download.qbittorrent.password || DEFAULT_MANAGED_WEBUI_PASSWORD
+  };
+}
+
+export function extractManagedTemporaryPassword(output: string): string | undefined {
+  const matched = TEMP_PASSWORD_PATTERN.exec(output)?.[1];
+  if (matched) {
+    return matched;
+  }
+
+  const ignored = new Set(["localhost", "qBittorrent", "WebUI", "admin"]);
+  const candidates = Array.from(output.matchAll(/\b[A-Za-z0-9]{8,32}\b/g))
+    .map((match) => match[0])
+    .filter((value) => !ignored.has(value));
+
+  return candidates.at(-1);
+}
+
+async function loginManagedWebUi(
+  webUiUrl: string,
+  username: string,
+  password: string
+): Promise<{ ok: boolean; status: number; cookie?: string }> {
+  try {
+    const response = await fetch(new URL("/api/v2/auth/login", webUiUrl), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      },
+      body: new URLSearchParams({ username, password })
+    });
+    const text = response.status === 204 ? "Ok." : await response.text();
+    return {
+      ok: response.ok && text.toLowerCase().includes("ok"),
+      status: response.status,
+      cookie: response.headers.get("set-cookie")?.split(";")[0]
+    };
+  } catch (error) {
+    logger.warn("Managed qBittorrent login request failed", {
+      webUiUrl,
+      message: getErrorMessage(error)
+    });
+    return { ok: false, status: 0 };
+  }
+}
+
+async function setManagedWebUiPreferences(
+  webUiUrl: string,
+  cookie: string | undefined,
+  username: string,
+  password: string
+): Promise<boolean> {
+  if (!cookie) {
+    logger.warn("Managed qBittorrent credential sync skipped because login cookie is missing", { webUiUrl });
+    return false;
+  }
+
+  try {
+    const response = await fetch(new URL("/api/v2/app/setPreferences", webUiUrl), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Cookie: cookie
+      },
+      body: new URLSearchParams({
+        json: JSON.stringify({
+          web_ui_username: username,
+          web_ui_password: password,
+          web_ui_upnp: false
+        })
+      })
+    });
+
+    if (!response.ok) {
+      logger.warn("Managed qBittorrent credential sync failed", {
+        webUiUrl,
+        status: response.status,
+        statusText: response.statusText
+      });
+      return false;
+    }
+
+    logger.info("Managed qBittorrent WebUI credentials synced", { webUiUrl, username });
+    return true;
+  } catch (error) {
+    logger.warn("Managed qBittorrent credential sync request failed", {
+      webUiUrl,
+      message: getErrorMessage(error)
+    });
+    return false;
+  }
+}
+
+async function shutdownManagedWebUi(webUiUrl: string | undefined, settings: AppSettings | null): Promise<void> {
+  if (!webUiUrl) {
+    return;
+  }
+
+  try {
+    const credentials = settings ? getManagedWebUiCredentials(settings) : undefined;
+    const login = credentials
+      ? await loginManagedWebUi(webUiUrl, credentials.username, credentials.password)
+      : { ok: false as const, cookie: undefined };
+    const response = await fetch(new URL("/api/v2/app/shutdown", webUiUrl), {
+      method: "POST",
+      headers: login.cookie
+        ? {
+            Cookie: login.cookie
+          }
+        : undefined
+    });
+    if (!response.ok) {
+      logger.warn("Managed qBittorrent WebUI shutdown request failed", {
+        webUiUrl,
+        status: response.status,
+        statusText: response.statusText
+      });
+    }
+  } catch (error) {
+    logger.warn("Managed qBittorrent WebUI shutdown request errored", {
+      webUiUrl,
+      message: getErrorMessage(error)
+    });
+  }
 }
 
 function getDefaultQbittorrentResourceRoots(): string[] {
@@ -458,4 +641,8 @@ function formatProcessOutput(chunk: Buffer): string {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

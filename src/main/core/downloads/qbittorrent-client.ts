@@ -53,6 +53,14 @@ export class QbittorrentClient {
       throw new Error(`qBittorrent login failed: ${response.status} ${response.statusText}`);
     }
 
+    if (response.status === 204) {
+      const cookie = response.headers.get("set-cookie");
+      if (cookie) {
+        this.cookie = cookie.split(";")[0];
+      }
+      return;
+    }
+
     const text = await response.text();
     if (!text.toLowerCase().includes("ok")) {
       throw new Error("qBittorrent login failed: invalid username or password");
