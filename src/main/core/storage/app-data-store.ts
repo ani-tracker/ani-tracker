@@ -35,12 +35,14 @@ export class AppDataStore {
       return this.data;
     }
 
-    this.data = migrateAppData(parsed);
-    if (parsed.version !== this.data.version) {
+    const migration = migrateAppData(parsed);
+    this.data = migration.data;
+    if (migration.shouldSave) {
       logger.info("App data migrated", {
         path: this.filePath,
         fromVersion: parsed.version,
-        toVersion: this.data.version
+        toVersion: this.data.version,
+        addedDefaultSourceIds: migration.addedDefaultSourceIds
       });
       await this.save();
     }
@@ -88,9 +90,16 @@ async function ensureDir(path: string): Promise<void> {
   await mkdir(path, { recursive: true });
 }
 
-function migrateAppData(data: AppDataFile): AppDataFile {
+interface AppDataMigrationResult {
+  data: AppDataFile;
+  shouldSave: boolean;
+  addedDefaultSourceIds: string[];
+}
+
+function migrateAppData(data: AppDataFile): AppDataMigrationResult {
   const defaults = createSeedData();
   const shouldResetSettingsToPlatformDefaults = (data.version ?? 0) < PLATFORM_DEFAULT_SETTINGS_VERSION;
+  const addedDefaultSourceIds = getMissingDefaultSourceIds(defaults.sources, data.sources);
 
   if (shouldResetSettingsToPlatformDefaults) {
     logger.info("App settings reset to platform defaults", {
@@ -99,7 +108,7 @@ function migrateAppData(data: AppDataFile): AppDataFile {
     });
   }
 
-  return {
+  const migrated: AppDataFile = {
     ...defaults,
     ...data,
     version: APP_DATA_VERSION,
@@ -110,6 +119,12 @@ function migrateAppData(data: AppDataFile): AppDataFile {
       ...data.dashboard
     },
     updatedAt: data.version === APP_DATA_VERSION ? data.updatedAt : new Date().toISOString()
+  };
+
+  return {
+    data: migrated,
+    shouldSave: data.version !== APP_DATA_VERSION || addedDefaultSourceIds.length > 0,
+    addedDefaultSourceIds
   };
 }
 
@@ -126,6 +141,14 @@ function mergeDefaultSources(defaults: ReleaseSourceConfig[], current?: ReleaseS
   }
 
   return sources;
+}
+
+function getMissingDefaultSourceIds(defaults: ReleaseSourceConfig[], current?: ReleaseSourceConfig[]): string[] {
+  if (!current) {
+    return defaults.map((source) => source.id);
+  }
+
+  return defaults.filter((source) => !current.some((item) => item.id === source.id)).map((source) => source.id);
 }
 
 function mergeSettings(defaults: AppSettings, current?: AppSettings): AppSettings {
