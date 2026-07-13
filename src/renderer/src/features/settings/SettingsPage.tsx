@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { FileSearch, FolderCog, HardDrive, Monitor, PlayCircle, Power, RotateCcw, Save } from "lucide-react";
+import { FileSearch, FolderCog, HardDrive, Languages, Monitor, PlayCircle, Power, RotateCcw, Save } from "lucide-react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -192,6 +192,14 @@ export function SettingsPage() {
           </div>
         </Panel>
       </div>
+
+      <Panel title="语言与标题" description="界面语言保持固定，番剧元数据按当前标题策略展示和检索。">
+        <div className="grid grid-cols-3 gap-4">
+          <SettingRow icon={<Languages className="h-4 w-4" />} label="界面语言" value="简体中文" />
+          <SettingRow label="标题显示" value="中文优先，副标题显示原名" />
+          <SettingRow label="搜索名称" value="标题、原名、罗马音、英文名和自定义别名" />
+        </div>
+      </Panel>
 
       <Panel title="桌面集成" description="控制后台运行、系统登录启动等本地桌面行为。">
         <div className="grid grid-cols-2 gap-4">
