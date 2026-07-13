@@ -1261,10 +1261,10 @@ function countReleasesByFansub(releases: Release[], fansubGroupId: string): numb
 
 function getReleaseFansubName(release: Release, fansubNames: Map<string, string>): string {
   if (!release.fansubGroupId) {
-    return "未识别字幕组";
+    return release.fansubName ?? "未识别字幕组";
   }
 
-  return fansubNames.get(release.fansubGroupId) ?? release.fansubGroupId;
+  return fansubNames.get(release.fansubGroupId) ?? release.fansubName ?? release.fansubGroupId;
 }
 
 function releaseKey(release: Release): string {

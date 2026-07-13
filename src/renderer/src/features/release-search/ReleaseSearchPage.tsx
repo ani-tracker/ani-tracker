@@ -235,6 +235,9 @@ export function ReleaseSearchPage() {
                       <div className="truncate font-medium">{release.title}</div>
                       <div className="mt-2 flex flex-wrap gap-2">
                         <Badge tone="blue">{release.sourceName}</Badge>
+                        {(release.fansubName ?? release.fansubGroupId) && (
+                          <Badge>{release.fansubName ?? release.fansubGroupId}</Badge>
+                        )}
                         {release.episodeNo && <Badge>第 {release.episodeNo} 集</Badge>}
                         {release.resolution && <Badge>{release.resolution}</Badge>}
                         {release.normalizedVideoCodec && <Badge tone="green">{release.normalizedVideoCodec}</Badge>}

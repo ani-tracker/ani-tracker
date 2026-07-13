@@ -38,6 +38,8 @@ interface AniBtRssItem {
   "anibt:releaseId"?: unknown;
   "anibt:torrentUrl"?: unknown;
   "anibt:releaseTitle"?: unknown;
+  "anibt:groupName"?: unknown;
+  "anibt:groupSlug"?: unknown;
   "anibt:episode"?: unknown;
   "anibt:resolution"?: unknown;
   "anibt:language"?: unknown;
@@ -109,10 +111,7 @@ export class AniBtReleaseSource implements ReleaseSource {
     url.searchParams.set("q", keyword);
 
     const response = await fetchWithTimeout(url.toString(), {
-      headers: {
-        Accept: "application/json",
-        "User-Agent": "AniTracker/0.1"
-      }
+      headers: createAniBtHeaders(this.config, "application/json")
     });
 
     if (!response.ok) {
@@ -145,10 +144,7 @@ export class AniBtReleaseSource implements ReleaseSource {
 
   private async readFeed(url: string): Promise<Release[]> {
     const response = await fetchWithTimeout(url, {
-      headers: {
-        Accept: "application/rss+xml,application/xml,text/xml",
-        "User-Agent": "AniTracker/0.1"
-      }
+      headers: createAniBtHeaders(this.config, "application/rss+xml,application/xml,text/xml")
     });
 
     if (!response.ok) {
@@ -157,6 +153,42 @@ export class AniBtReleaseSource implements ReleaseSource {
 
     return parseAniBtRss(await response.text(), this.config);
   }
+}
+
+export function createAniBtHeaders(config: ReleaseSourceConfig, accept: string): Record<string, string> {
+  const headers: Record<string, string> = {
+    Accept: accept,
+    "User-Agent": "AniTracker/0.1"
+  };
+
+  const credential = config.apiKey?.trim();
+  if (!credential) {
+    return headers;
+  }
+
+  if (/^cookie\s*:/i.test(credential)) {
+    headers.Cookie = credential.replace(/^cookie\s*:\s*/i, "");
+    return headers;
+  }
+
+  if (/^authorization\s*:/i.test(credential)) {
+    headers.Authorization = credential.replace(/^authorization\s*:\s*/i, "");
+    return headers;
+  }
+
+  if (/^x-api-key\s*:/i.test(credential)) {
+    headers["X-API-Key"] = credential.replace(/^x-api-key\s*:\s*/i, "");
+    return headers;
+  }
+
+  if (/^[^=\s]+=[^;]+(?:;\s*[^=\s]+=[^;]+)*$/.test(credential)) {
+    headers.Cookie = credential;
+    return headers;
+  }
+
+  headers.Authorization = /^bearer\s+/i.test(credential) ? credential : `Bearer ${credential}`;
+  headers["X-API-Key"] = credential.replace(/^bearer\s+/i, "");
+  return headers;
 }
 
 export function parseAniBtRss(xml: string, config: ReleaseSourceConfig): Release[] {
@@ -186,6 +218,7 @@ function mapAniBtItem(item: AniBtRssItem, config: ReleaseSourceConfig, index: nu
     title,
     sourceId: config.id,
     sourceName: config.name,
+    fansubName: textValue(item["anibt:groupName"]),
     magnetUrl,
     torrentUrl,
     infoHash,

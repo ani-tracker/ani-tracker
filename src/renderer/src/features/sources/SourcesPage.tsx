@@ -1,4 +1,4 @@
-import { PlugZap, Plus } from "lucide-react";
+import { KeyRound, PlugZap, Plus, Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
@@ -17,6 +17,7 @@ const kindText = {
 export function SourcesPage() {
   const { data, loading } = useAsyncData(appApi.listSources, []);
   const [sources, setSources] = useState<ReleaseSourceConfig[]>([]);
+  const [credentials, setCredentials] = useState<Record<string, string>>({});
   const [draft, setDraft] = useState({
     name: "",
     kind: "rss" as SourceKind,
@@ -27,11 +28,20 @@ export function SourcesPage() {
   useEffect(() => {
     if (data) {
       setSources(data);
+      setCredentials(Object.fromEntries(data.map((source) => [source.id, source.apiKey ?? ""])));
     }
   }, [data]);
 
   async function toggleSource(source: ReleaseSourceConfig) {
     const updated = await appApi.setSourceEnabled(source.id, !source.enabled);
+    setSources(updated);
+  }
+
+  async function saveCredential(source: ReleaseSourceConfig) {
+    const updated = await appApi.upsertSource({
+      ...source,
+      apiKey: credentials[source.id]?.trim() || undefined
+    });
     setSources(updated);
   }
 
@@ -49,7 +59,7 @@ export function SourcesPage() {
       enabled: true,
       rssUrl: draft.kind === "rss" ? url : undefined,
       baseUrl: draft.kind !== "rss" ? url : undefined,
-      apiKey: draft.kind === "torznab" ? draft.apiKey.trim() || undefined : undefined,
+      apiKey: draft.kind !== "rss" ? draft.apiKey.trim() || undefined : undefined,
       tags: [draft.kind]
     };
 
@@ -100,8 +110,8 @@ export function SourcesPage() {
           />
           <input
             className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-            placeholder="API Key"
-            disabled={draft.kind !== "torznab"}
+            placeholder={draft.kind === "site_adapter" ? "Token / Cookie" : "API Key"}
+            disabled={draft.kind === "rss"}
             value={draft.apiKey}
             onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
           />
@@ -129,6 +139,24 @@ export function SourcesPage() {
               <Badge tone="blue">{kindText[source.kind]}</Badge>
               {source.tags?.map((tag) => <Badge key={tag}>{tag}</Badge>)}
             </div>
+            {canUseCredential(source) ? (
+              <div className="mt-4 flex gap-2">
+                <div className="relative flex-1">
+                  <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    className="h-10 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary"
+                    placeholder={source.kind === "site_adapter" ? "Token / Cookie" : "API Key"}
+                    type="password"
+                    value={credentials[source.id] ?? ""}
+                    onChange={(event) => setCredentials({ ...credentials, [source.id]: event.target.value })}
+                  />
+                </div>
+                <Button variant="outline" onClick={() => saveCredential(source)}>
+                  <Save className="h-4 w-4" />
+                  保存
+                </Button>
+              </div>
+            ) : null}
             <div className="mt-4">
               <Button variant="outline" onClick={() => toggleSource(source)}>
                 {source.enabled ? "停用" : "启用"}
@@ -139,6 +167,10 @@ export function SourcesPage() {
       </div>
     </div>
   );
+}
+
+function canUseCredential(source: ReleaseSourceConfig): boolean {
+  return source.kind === "torznab" || source.kind === "site_adapter";
 }
 
 function createSourceId(name: string): string {

@@ -109,6 +109,7 @@ export interface Release {
   animeId?: string;
   episodeNo?: number;
   fansubGroupId?: string;
+  fansubName?: string;
   sourceId: string;
   sourceName: string;
   magnetUrl?: string;

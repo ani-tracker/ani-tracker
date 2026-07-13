@@ -23,6 +23,19 @@ test("parseReleaseTitle 解析多季 SxxExx 标题中的集数和媒体字段", 
   assert.equal(parsed.subtitle, "multi");
 });
 
+test("parseReleaseTitle 解析 AniBT 常见前缀字幕组标题", () => {
+  const parsed = parseReleaseTitle(
+    "[Nix-Raws] 骸骨骑士大人异世界冒险中Ⅱ / Gaikotsu Kishi-sama Tadaima Isekai e Odekakechuu S02E02 [CR WEB-DL 1080p AVC AAC][简繁内封]"
+  );
+
+  assert.equal(parsed.fansubName, "Nix-Raws");
+  assert.equal(parsed.episodeNo, 2);
+  assert.equal(parsed.resolution, "1080p");
+  assert.equal(parsed.declaredVideoCodec, "AVC");
+  assert.equal(parsed.normalizedVideoCodec, "H.264/AVC");
+  assert.equal(parsed.subtitle, "multi");
+});
+
 test("parseReleaseTitle 解析中文第 N 话和小数集数", () => {
   const parsed = parseReleaseTitle("[字幕组] 测试番 第12.5话 [1920x1080][AVC][简日]");
 
@@ -66,6 +79,7 @@ test("enrichReleaseFromTitle 保留已有字段并补充字幕组匹配", () => 
   assert.equal(enriched.episodeNo, 99);
   assert.equal(enriched.resolution, "720p");
   assert.equal(enriched.fansubGroupId, "fansub-lolihouse");
+  assert.equal(enriched.fansubName, "Loli House");
   assert.equal(enriched.normalizedVideoCodec, "AV1");
   assert.equal(enriched.subtitle, "eng");
 });

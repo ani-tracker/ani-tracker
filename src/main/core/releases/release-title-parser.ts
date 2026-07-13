@@ -46,9 +46,10 @@ export function parseReleaseTitle(title: string, groups: FansubGroup[] = []): Pa
 
 export function enrichReleaseFromTitle(release: Release, groups: FansubGroup[] = []): Release {
   const parsed = parseReleaseTitle(release.title, groups);
-  const fansubGroup = parsed.fansubName
+  const fansubName = release.fansubName ?? parsed.fansubName;
+  const fansubGroup = fansubName
     ? groups.find((group) =>
-        [group.name, ...group.aliases].some((alias) => alias.toLowerCase() === parsed.fansubName?.toLowerCase())
+        [group.name, ...group.aliases].some((alias) => alias.toLowerCase() === fansubName.toLowerCase())
       )
     : undefined;
 
@@ -56,6 +57,7 @@ export function enrichReleaseFromTitle(release: Release, groups: FansubGroup[] =
     ...release,
     episodeNo: release.episodeNo ?? parsed.episodeNo,
     fansubGroupId: release.fansubGroupId ?? fansubGroup?.id,
+    fansubName,
     resolution: release.resolution ?? parsed.resolution,
     declaredVideoCodec: release.declaredVideoCodec ?? parsed.declaredVideoCodec,
     normalizedVideoCodec:

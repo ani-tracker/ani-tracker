@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { ReleaseSourceConfig } from "@shared/domain";
 import { sourceConfigs } from "../../mock-data";
 import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
-import { parseAniBtRss } from "../anibt-source";
+import { AniBtReleaseSource, createAniBtHeaders, parseAniBtRss } from "../anibt-source";
 import { parseDmhyList } from "../dmhy-source";
 import { parseMikanReleaseList } from "../mikan-source";
 import { createReleaseSource } from "../release-source-service";
@@ -159,6 +159,7 @@ test("parseAniBtRss 解析 AniBT RSS 扩展字段和内嵌 torrent 元数据", (
             <anibt:releaseId>rel_test</anibt:releaseId>
             <anibt:torrentUrl>https://anibt.net/api/torrent/rel_test.torrent</anibt:torrentUrl>
             <anibt:releaseTitle>[Nix-Raws] 骸骨骑士大人异世界冒险中Ⅱ / Gaikotsu Kishi-sama Tadaima Isekai e Odekakechuu S02E02 [CR WEB-DL 1080p AVC AAC][简繁内封]</anibt:releaseTitle>
+            <anibt:groupName>Nix-Raws</anibt:groupName>
             <anibt:episode>2</anibt:episode>
             <anibt:resolution>1080p</anibt:resolution>
             <anibt:language>CHS/CHT</anibt:language>
@@ -184,10 +185,54 @@ test("parseAniBtRss 解析 AniBT RSS 扩展字段和内嵌 torrent 元数据", (
   assert.equal(releases[0].infoHash, "a307ae8dbe4b93226197a7d560651457ac9a28d4");
   assert.equal(releases[0].size, 1461298734);
   assert.equal(releases[0].episodeNo, 2);
+  assert.equal(releases[0].fansubName, "Nix-Raws");
   assert.equal(releases[0].resolution, "1080p");
   assert.equal(releases[0].declaredVideoCodec, "AVC");
   assert.equal(releases[0].normalizedVideoCodec, "H.264/AVC");
   assert.equal(releases[0].subtitle, "multi");
+});
+
+test("AniBT source uses configured token headers", async (t) => {
+  const inputs: string[] = [];
+  const requestHeaders: Record<string, string>[] = [];
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+    inputs.push(String(input));
+    requestHeaders.push(init?.headers as Record<string, string>);
+
+    return new Response(
+      `
+        <rss>
+          <channel>
+            <item>
+              <title>[AniBT] 测试番 - 01 [1080p]</title>
+              <guid>rel_auth_test</guid>
+              <pubDate>Mon, 13 Jul 2026 13:30:00 GMT</pubDate>
+            </item>
+          </channel>
+        </rss>
+      `,
+      { status: 200, statusText: "OK" }
+    );
+  });
+
+  const source = new AniBtReleaseSource({
+    ...anibtConfig,
+    apiKey: "test-token"
+  });
+  const releases = await source.searchReleases({ keyword: "", limit: 1 });
+
+  assert.equal(inputs[0], "https://anibt.net/rss/magnets.xml?limit=50");
+  assert.equal(requestHeaders[0].Authorization, "Bearer test-token");
+  assert.equal(requestHeaders[0]["X-API-Key"], "test-token");
+  assert.equal(releases.length, 1);
+});
+
+test("createAniBtHeaders accepts copied Cookie credentials", () => {
+  const headers = createAniBtHeaders({ ...anibtConfig, apiKey: "Cookie: anibt.sid=session-value" }, "application/json");
+
+  assert.equal(headers.Cookie, "anibt.sid=session-value");
+  assert.equal(headers.Authorization, undefined);
+  assert.equal(headers["X-API-Key"], undefined);
 });
 
 test("parseAcgnxApiResponse 兼容 ACGNX JSON/API 风格响应", () => {
