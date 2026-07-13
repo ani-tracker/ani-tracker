@@ -223,18 +223,12 @@ export function buildQbittorrentLaunchEnvironment(
   baseEnv: NodeJS.ProcessEnv = process.env
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...baseEnv };
-  const contentsDir = resolveMacAppContentsDir(binaryPath);
-
-  if (!contentsDir) {
-    return env;
-  }
-
-  const pluginPath = join(contentsDir, "PlugIns");
+  const pluginPath = resolveBundledQtPluginPath(binaryPath);
   if (existsSync(pluginPath)) {
     env.QT_PLUGIN_PATH = prependEnvPath(pluginPath, env.QT_PLUGIN_PATH);
   }
 
-  const opensslModulesPath = join(contentsDir, "Frameworks", "ossl-modules");
+  const opensslModulesPath = resolveBundledOpenSslModulesPath(binaryPath);
   if (existsSync(opensslModulesPath)) {
     env.OPENSSL_MODULES = opensslModulesPath;
   }
@@ -323,6 +317,24 @@ function resolveMacAppContentsDir(binaryPath: string): string | undefined {
   }
 
   return contentsDir;
+}
+
+function resolveBundledQtPluginPath(binaryPath: string): string {
+  const contentsDir = resolveMacAppContentsDir(binaryPath);
+  if (contentsDir) {
+    return join(contentsDir, "PlugIns");
+  }
+
+  return dirname(binaryPath);
+}
+
+function resolveBundledOpenSslModulesPath(binaryPath: string): string {
+  const contentsDir = resolveMacAppContentsDir(binaryPath);
+  if (contentsDir) {
+    return join(contentsDir, "Frameworks", "ossl-modules");
+  }
+
+  return join(dirname(binaryPath), "ossl-modules");
 }
 
 function prependEnvPath(path: string, currentValue: string | undefined): string {

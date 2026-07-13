@@ -71,6 +71,24 @@ test("buildQbittorrentLaunchEnvironment 为 macOS app bundle 注入插件和 Ope
   assert.equal(env.OPENSSL_MODULES, opensslModulesPath);
 });
 
+test("buildQbittorrentLaunchEnvironment injects sibling plugin paths for Windows bundles", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ani-qbittorrent-win-env-"));
+  const binaryDir = join(root, "win32-x64");
+  const opensslModulesPath = join(binaryDir, "ossl-modules");
+  const binaryPath = join(binaryDir, "qbittorrent-nox.exe");
+  await mkdir(join(binaryDir, "sqldrivers"), { recursive: true });
+  await mkdir(opensslModulesPath, { recursive: true });
+  await writeFile(binaryPath, "", "utf8");
+
+  const env = buildQbittorrentLaunchEnvironment(binaryPath, {
+    QT_PLUGIN_PATH: "/existing/plugins",
+    OPENSSL_MODULES: "/existing/openssl-modules"
+  });
+
+  assert.equal(env.QT_PLUGIN_PATH, `${binaryDir}${delimiter}/existing/plugins`);
+  assert.equal(env.OPENSSL_MODULES, opensslModulesPath);
+});
+
 test("QbittorrentManagedService 对托管启动避开 10000 以下 WebUI 端口", async () => {
   const service = new QbittorrentManagedService();
   const status = await service.start({
