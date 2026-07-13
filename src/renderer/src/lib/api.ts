@@ -19,6 +19,7 @@ import type {
   AutomationSchedulerStatus,
   EpisodeReleasePreview,
   MediaScanResult,
+  QbittorrentManagedStatus,
   ReleaseQuery,
   ReleaseSearchResult,
   TorrentConnectionTestResult
@@ -78,6 +79,9 @@ export const appApi = {
   updateSettings: (patch: Partial<AppSettings>): Promise<AppSettings> => bridge().updateSettings(patch),
   resetSettingsToDefaults: (): Promise<AppSettings> => bridge().resetSettingsToDefaults(),
   testQbittorrent: (): Promise<TorrentConnectionTestResult> => bridge().testQbittorrent(),
+  getQbittorrentManagedStatus: (): Promise<QbittorrentManagedStatus> => bridge().getQbittorrentManagedStatus(),
+  startQbittorrentManaged: (): Promise<QbittorrentManagedStatus> => bridge().startQbittorrentManaged(),
+  stopQbittorrentManaged: (): Promise<QbittorrentManagedStatus> => bridge().stopQbittorrentManaged(),
   listMediaFiles: (): Promise<MediaFile[]> => bridge().listMediaFiles(),
   scanDownloadMedia: (taskId: string): Promise<MediaScanResult> => bridge().scanDownloadMedia(taskId),
   playMedia: (filePath: string, profileId?: string): Promise<void> => bridge().playMedia(filePath, profileId),

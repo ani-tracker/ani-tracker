@@ -21,6 +21,7 @@ import type {
   AutomationSchedulerStatus,
   EpisodeReleasePreview,
   MediaScanResult,
+  QbittorrentManagedStatus,
   ReleaseQuery,
   ReleaseSearchResult,
   TorrentConnectionTestResult
@@ -66,6 +67,9 @@ declare global {
       updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
       resetSettingsToDefaults: () => Promise<AppSettings>;
       testQbittorrent: () => Promise<TorrentConnectionTestResult>;
+      getQbittorrentManagedStatus: () => Promise<QbittorrentManagedStatus>;
+      startQbittorrentManaged: () => Promise<QbittorrentManagedStatus>;
+      stopQbittorrentManaged: () => Promise<QbittorrentManagedStatus>;
       listMediaFiles: () => Promise<MediaFile[]>;
       scanDownloadMedia: (taskId: string) => Promise<MediaScanResult>;
       playMedia: (filePath: string, profileId?: string) => Promise<void>;

@@ -3,10 +3,14 @@ import type { AppSettings } from "@shared/domain";
 import { EmbeddedTorrentEngine } from "./embedded-torrent-engine";
 import { QbittorrentEngine } from "./qbittorrent-engine";
 
-export function createTorrentEngine(settings: AppSettings): TorrentEngine {
+export interface TorrentEngineFactoryOptions {
+  qbittorrentBaseUrl?: string;
+}
+
+export function createTorrentEngine(settings: AppSettings, options: TorrentEngineFactoryOptions = {}): TorrentEngine {
   if (settings.download.defaultTorrentEngine === "qbittorrent") {
     return new QbittorrentEngine({
-      baseUrl: settings.download.qbittorrent.baseUrl,
+      baseUrl: options.qbittorrentBaseUrl ?? settings.download.qbittorrent.baseUrl,
       username: settings.download.qbittorrent.username,
       password: settings.download.qbittorrent.password
     });

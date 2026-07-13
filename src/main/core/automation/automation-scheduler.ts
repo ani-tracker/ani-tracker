@@ -3,7 +3,7 @@ import type { NotificationRecord } from "@shared/domain";
 import { logger } from "../logger";
 import type { AppRepository } from "../repositories/app-repository";
 import { DesktopNotificationService } from "../platform/desktop-notification-service";
-import { AutomationRunService } from "./automation-run-service";
+import { AutomationRunService, type AutomationRunServiceOptions } from "./automation-run-service";
 
 const MIN_INTERVAL_MINUTES = 5;
 const MANUAL_RUN_COOLDOWN_MS = 60_000;
@@ -26,7 +26,8 @@ export class AutomationScheduler {
 
   constructor(
     private readonly repository: AppRepository,
-    private readonly notificationService = new DesktopNotificationService()
+    private readonly notificationService = new DesktopNotificationService(),
+    private readonly runServiceOptions: AutomationRunServiceOptions = {}
   ) {}
 
   async start(): Promise<AutomationSchedulerStatus> {
@@ -87,7 +88,7 @@ export class AutomationScheduler {
 
     try {
       logger.info("Automation run started", { trigger });
-      const result = await new AutomationRunService(this.repository).runOnce();
+      const result = await new AutomationRunService(this.repository, this.runServiceOptions).runOnce();
       const settings = await this.repository.getSettings();
       this.lastRunAt = result.finishedAt;
       this.lastResult = result;

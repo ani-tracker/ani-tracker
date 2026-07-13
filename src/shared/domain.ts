@@ -205,6 +205,14 @@ export interface QbittorrentSettings {
   username: string;
   password?: string;
   autoConnect: boolean;
+  managed: QbittorrentManagedSettings;
+}
+
+export interface QbittorrentManagedSettings {
+  enabled: boolean;
+  binaryPath?: string;
+  profileDir?: string;
+  startupTimeoutMs: number;
 }
 
 export interface StorageSettings {

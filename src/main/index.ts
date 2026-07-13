@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { DailyReminderService } from "./core/automation/daily-reminder-service";
 import { logger } from "./core/logger";
 import { DesktopIntegrationService } from "./core/platform/desktop-integration-service";
-import { automationScheduler, registerIpcHandlers, repository } from "./ipc";
+import { automationScheduler, qbittorrentManagedService, registerIpcHandlers, repository } from "./ipc";
 
 let mainWindow: BrowserWindow | null = null;
 
@@ -77,9 +77,14 @@ app.whenReady().then(async () => {
   }
 
   registerIpcHandlers({
-    onSettingsUpdated: (settings) => desktopIntegration.applySettings(settings)
+    onSettingsUpdated: async (settings) => {
+      desktopIntegration.applySettings(settings);
+      await qbittorrentManagedService.applySettings(settings);
+    }
   });
-  desktopIntegration.applySettings(await repository.getSettings());
+  const settings = await repository.getSettings();
+  desktopIntegration.applySettings(settings);
+  void qbittorrentManagedService.applySettings(settings);
   createWindow();
   void automationScheduler.start();
   void dailyReminderService.runOnce().catch((error: unknown) => {
@@ -95,6 +100,7 @@ app.whenReady().then(async () => {
 
 app.on("before-quit", () => {
   desktopIntegration.prepareToQuit();
+  void qbittorrentManagedService.stop();
 });
 
 app.on("window-all-closed", () => {

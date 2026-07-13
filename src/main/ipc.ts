@@ -13,9 +13,13 @@ import { CompletedDownloadMediaAutoScanner } from "./core/media/completed-downlo
 import { EpisodeReleasePreviewService } from "./core/automation/episode-release-preview-service";
 import { AutomationScheduler } from "./core/automation/automation-scheduler";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
+import { QbittorrentManagedService } from "./core/downloads/qbittorrent-managed-service";
 
 export const repository = new AppRepository(new AppDataStore());
-export const automationScheduler = new AutomationScheduler(repository);
+export const qbittorrentManagedService = new QbittorrentManagedService();
+export const automationScheduler = new AutomationScheduler(repository, undefined, {
+  getQbittorrentBaseUrl: (settings) => qbittorrentManagedService.getRuntimeBaseUrl(settings)
+});
 const completedDownloadMediaAutoScanner = new CompletedDownloadMediaAutoScanner(repository);
 
 interface RegisterIpcHandlersOptions {
@@ -61,7 +65,9 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   ipcMain.handle("downloads:list", () => repository.listDownloads());
   ipcMain.handle("downloads:refresh", async () => {
     const settings = await repository.getSettings();
-    const engine = createTorrentEngine(settings);
+    const engine = createTorrentEngine(settings, {
+      qbittorrentBaseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings)
+    });
     const tasks = await engine.listTasks();
     const merged = await repository.mergeDownloadTasksFromEngine(tasks);
     // Keep progress refresh responsive; completed media probing can take seconds per file.
@@ -77,7 +83,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     if (task.engine === "qbittorrent") {
       const settings = await repository.getSettings();
       const engine = new QbittorrentEngine({
-        baseUrl: settings.download.qbittorrent.baseUrl,
+        baseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
         username: settings.download.qbittorrent.username,
         password: settings.download.qbittorrent.password
       });
@@ -95,7 +101,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     if (task.engine === "qbittorrent") {
       const settings = await repository.getSettings();
       const engine = new QbittorrentEngine({
-        baseUrl: settings.download.qbittorrent.baseUrl,
+        baseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
         username: settings.download.qbittorrent.username,
         password: settings.download.qbittorrent.password
       });
@@ -113,7 +119,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     if (task.engine === "qbittorrent") {
       const settings = await repository.getSettings();
       const engine = new QbittorrentEngine({
-        baseUrl: settings.download.qbittorrent.baseUrl,
+        baseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
         username: settings.download.qbittorrent.username,
         password: settings.download.qbittorrent.password
       });
@@ -131,7 +137,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     if (task.engine === "qbittorrent") {
       const settings = await repository.getSettings();
       const engine = new QbittorrentEngine({
-        baseUrl: settings.download.qbittorrent.baseUrl,
+        baseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
         username: settings.download.qbittorrent.username,
         password: settings.download.qbittorrent.password
       });
@@ -158,7 +164,9 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       throw new Error("资源没有 magnet 或 torrent 地址，无法添加下载");
     }
 
-    const engine = createTorrentEngine(settings);
+    const engine = createTorrentEngine(settings, {
+      qbittorrentBaseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings)
+    });
     const task = await engine.addMagnet(url, {
       savePath: settings.download.defaultDownloadDir
     });
@@ -194,6 +202,15 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     await automationScheduler.restart();
     return settings;
   });
+  ipcMain.handle("downloads:getQbittorrentManagedStatus", async () => {
+    const settings = await repository.getSettings();
+    return qbittorrentManagedService.getStatus(settings);
+  });
+  ipcMain.handle("downloads:startQbittorrentManaged", async () => {
+    const settings = await repository.getSettings();
+    return qbittorrentManagedService.start(settings);
+  });
+  ipcMain.handle("downloads:stopQbittorrentManaged", () => qbittorrentManagedService.stop());
   ipcMain.handle("media:list", () => repository.listMediaFiles());
   ipcMain.handle("media:scanDownload", async (_event, taskId: string) => {
     const task = await repository.getDownloadTask(taskId);
@@ -217,7 +234,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     try {
       const settings = await repository.getSettings();
       const engine = new QbittorrentEngine({
-        baseUrl: settings.download.qbittorrent.baseUrl,
+        baseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
         username: settings.download.qbittorrent.username,
         password: settings.download.qbittorrent.password
       });

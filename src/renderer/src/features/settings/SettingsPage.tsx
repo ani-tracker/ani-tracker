@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { appApi } from "@/lib/api";
 import { useAsyncData } from "@/lib/use-async-data";
-import type { AutomationSchedulerStatus } from "@shared/contracts";
+import type { AutomationSchedulerStatus, QbittorrentManagedStatus } from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
 
 export function SettingsPage() {
@@ -15,6 +15,8 @@ export function SettingsPage() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [resetState, setResetState] = useState<"idle" | "resetting" | "reset">("idle");
   const [schedulerStatus, setSchedulerStatus] = useState<AutomationSchedulerStatus | null>(null);
+  const [qbManagedStatus, setQbManagedStatus] = useState<QbittorrentManagedStatus | null>(null);
+  const [qbManagedAction, setQbManagedAction] = useState<"idle" | "starting" | "stopping">("idle");
   const [qbTest, setQbTest] = useState<{ state: "idle" | "testing" | "success" | "error"; message?: string }>({
     state: "idle"
   });
@@ -27,10 +29,22 @@ export function SettingsPage() {
 
   useEffect(() => {
     void refreshSchedulerStatus();
+    void refreshQbittorrentManagedStatus();
   }, []);
 
   async function refreshSchedulerStatus() {
     setSchedulerStatus(await appApi.getAutomationSchedulerStatus());
+  }
+
+  async function refreshQbittorrentManagedStatus() {
+    try {
+      setQbManagedStatus(await appApi.getQbittorrentManagedStatus());
+    } catch (error) {
+      setQbTest({
+        state: "error",
+        message: error instanceof Error ? error.message : "读取 qBittorrent 托管状态失败"
+      });
+    }
   }
 
   if (loading) {
@@ -50,6 +64,7 @@ export function SettingsPage() {
     const saved = await appApi.updateSettings(draft);
     setDraft(saved);
     await refreshSchedulerStatus();
+    await refreshQbittorrentManagedStatus();
     setSaveState("saved");
     window.setTimeout(() => setSaveState("idle"), 1200);
   }
@@ -65,6 +80,7 @@ export function SettingsPage() {
     setDraft(saved);
     setQbTest({ state: "idle" });
     await refreshSchedulerStatus();
+    await refreshQbittorrentManagedStatus();
     setResetState("reset");
     window.setTimeout(() => setResetState("idle"), 1200);
   }
@@ -82,6 +98,41 @@ export function SettingsPage() {
       state: result.ok ? "success" : "error",
       message: result.ok ? `${result.message}，当前任务 ${result.taskCount ?? 0} 个` : result.message
     });
+  }
+
+  async function startQbittorrentManaged() {
+    setQbManagedAction("starting");
+    try {
+      const status = await appApi.startQbittorrentManaged();
+      setQbManagedStatus(status);
+      setQbTest({
+        state: status.lastError ? "error" : "success",
+        message: status.lastError ?? "托管 qBittorrent 已启动"
+      });
+    } catch (error) {
+      setQbTest({
+        state: "error",
+        message: error instanceof Error ? error.message : "托管 qBittorrent 启动失败"
+      });
+    } finally {
+      setQbManagedAction("idle");
+    }
+  }
+
+  async function stopQbittorrentManaged() {
+    setQbManagedAction("stopping");
+    try {
+      const status = await appApi.stopQbittorrentManaged();
+      setQbManagedStatus(status);
+      setQbTest({ state: "idle", message: "托管 qBittorrent 已停止" });
+    } catch (error) {
+      setQbTest({
+        state: "error",
+        message: error instanceof Error ? error.message : "托管 qBittorrent 停止失败"
+      });
+    } finally {
+      setQbManagedAction("idle");
+    }
   }
 
   return (
@@ -375,7 +426,9 @@ export function SettingsPage() {
           <div className="space-y-4 rounded-md border p-4">
             <div>
               <div className="font-medium">qBittorrent 兼容模式</div>
-              <p className="mt-1 text-sm text-muted-foreground">用于接入用户已有的 qB WebUI，验证下载流程也会先走这里。</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                用于接入已有 qB WebUI，也可随应用启动项目内置 qBittorrent。托管模式会使用 10000 以上的可用端口。
+              </p>
             </div>
             <TextSetting
               label="WebUI 地址"
@@ -426,6 +479,86 @@ export function SettingsPage() {
                 })
               }
             />
+            <div className="grid grid-cols-2 gap-3">
+              <SelectSetting
+                label="托管内置 qBittorrent"
+                value={draft.download.qbittorrent.managed.enabled ? "on" : "off"}
+                options={[
+                  { label: "开启", value: "on" },
+                  { label: "关闭", value: "off" }
+                ]}
+                onChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    download: {
+                      ...draft.download,
+                      qbittorrent: {
+                        ...draft.download.qbittorrent,
+                        managed: {
+                          ...draft.download.qbittorrent.managed,
+                          enabled: value === "on"
+                        }
+                      }
+                    }
+                  })
+                }
+              />
+              <SelectSetting
+                label="随应用启动"
+                value={draft.download.qbittorrent.autoConnect ? "on" : "off"}
+                options={[
+                  { label: "开启", value: "on" },
+                  { label: "关闭", value: "off" }
+                ]}
+                onChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    download: {
+                      ...draft.download,
+                      qbittorrent: {
+                        ...draft.download.qbittorrent,
+                        autoConnect: value === "on"
+                      }
+                    }
+                  })
+                }
+              />
+            </div>
+            <div className="rounded-md border p-3 text-sm">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-medium">托管状态</div>
+                  <div className="mt-1 break-all text-muted-foreground">
+                    {formatQbittorrentManagedSummary(qbManagedStatus)}
+                  </div>
+                  <div className="mt-1 break-all text-xs text-muted-foreground">
+                    二进制：{qbManagedStatus?.binaryPath ?? "未找到项目内置二进制"}
+                  </div>
+                  {qbManagedStatus?.lastError && (
+                    <div className="mt-2 text-xs text-rose-600">{qbManagedStatus.lastError}</div>
+                  )}
+                </div>
+                <Badge tone={qbManagedStatus?.running ? "green" : "neutral"}>
+                  {qbManagedStatus?.running ? "运行中" : "未运行"}
+                </Badge>
+              </div>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button
+                  variant="outline"
+                  onClick={() => void startQbittorrentManaged()}
+                  disabled={!qbManagedStatus?.enabled || qbManagedAction !== "idle"}
+                >
+                  {qbManagedAction === "starting" ? "启动中" : "启动托管"}
+                </Button>
+                <Button
+                  variant="outline"
+                  onClick={() => void stopQbittorrentManaged()}
+                  disabled={!qbManagedStatus?.running || qbManagedAction !== "idle"}
+                >
+                  {qbManagedAction === "stopping" ? "停止中" : "停止托管"}
+                </Button>
+              </div>
+            </div>
             <div className="flex items-center gap-3">
               <Button variant="outline" onClick={testQbittorrent} disabled={qbTest.state === "testing"}>
                 {qbTest.state === "testing" ? "测试中" : "测试连接"}
@@ -577,6 +710,15 @@ function formatSchedulerState(status: AutomationSchedulerStatus | null): string 
 
 function formatDateTime(value?: string): string {
   return value ? new Date(value).toLocaleString() : "--";
+}
+
+function formatQbittorrentManagedSummary(status: QbittorrentManagedStatus | null): string {
+  if (!status) {
+    return "状态读取中";
+  }
+
+  const state = status.running ? `运行中，PID ${status.pid ?? "--"}` : "未运行";
+  return `${state}，${status.platform}/${status.arch}，WebUI ${status.webUiUrl}`;
 }
 
 function TextSetting({

@@ -88,9 +88,14 @@ function assertSharedDefaults(settings: AppSettings): void {
     maxActiveDownloads: 3
   });
   assert.deepEqual(settings.download.qbittorrent, {
-    baseUrl: "http://127.0.0.1:8080",
+    baseUrl: "http://127.0.0.1:18080",
     username: "admin",
-    autoConnect: false
+    autoConnect: false,
+    managed: {
+      enabled: false,
+      profileDir: join(paths.userData, "qbittorrent"),
+      startupTimeoutMs: 15_000
+    }
   });
 
   assert.equal(settings.storage.userDataDir, paths.userData);

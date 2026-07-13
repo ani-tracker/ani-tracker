@@ -29,9 +29,14 @@ export abstract class DefaultSettingsProvider {
           maxActiveDownloads: 3
         },
         qbittorrent: {
-          baseUrl: "http://127.0.0.1:8080",
+          baseUrl: "http://127.0.0.1:18080",
           username: "admin",
-          autoConnect: false
+          autoConnect: false,
+          managed: {
+            enabled: false,
+            profileDir: join(userDataDir, "qbittorrent"),
+            startupTimeoutMs: 15_000
+          }
         }
       },
       storage: {

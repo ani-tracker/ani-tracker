@@ -125,6 +125,15 @@
   - 文件列表。
   - 暂停、恢复、删除。
   - 单文件优先级选择。
+- 已实现 qBittorrent/qBittorrent-nox 托管启动框架：
+  - 新增项目内置二进制目录约定：`resources/qbittorrent/<platform>-<arch>/`。
+  - macOS 支持 `qbittorrent-nox`、`qbittorrent-nox.app`、`qBittorrent.app` 内部可执行文件查找。
+  - Windows 支持 `qbittorrent-nox.exe` 和 `qbittorrent.exe` 查找。
+  - Linux 支持 `qbittorrent-nox` 和 `qbittorrent` 查找。
+  - 设置页可开启“托管内置 qBittorrent”和“随应用启动”，并可手动启动/停止。
+  - 托管模式默认使用 `127.0.0.1:18080`，如果配置端口低于 `10000` 或已被占用，会动态选择 `10000` 以上的可用端口。
+  - 下载刷新、手动添加下载和自动化扫描会优先连接托管进程的实际 WebUI 地址。
+  - 数据版本已升到 11，旧设置会切到新的高位端口默认模板。
 - 已实现下载队列自动刷新和文件选择 UI。
 - 已保留 EmbeddedTorrentEngine 占位实现。
 - 已实现播放器调用和 reveal file IPC。
@@ -216,13 +225,13 @@ git diff --check
 
 - 更多站点专用 source adapter，例如 Nyaa、ACG.RIP 等。
 - 真实内置 BT 核心；当前 `EmbeddedTorrentEngine` 仍是占位实现。
-- qBittorrent/qBittorrent-nox 随应用托管启动。
+- 实际 qBittorrent/qBittorrent-nox 平台二进制尚未放入 `resources/qbittorrent/<platform>-<arch>/`，打包复制规则也尚未接入。
 - SQLite repository 替换 JSON repository。
 - 更完整的新番元数据聚合策略，例如冲突消解、增量刷新、字段来源展示。
 - madVR 播放链路或外部 renderer 集成。
 
 ## 下一步建议
 
-1. 实现 qBittorrent/qBittorrent-nox 随应用托管启动，并按 macOS、Windows 等平台处理项目内置二进制。
+1. 补齐 qBittorrent/qBittorrent-nox 各平台实际二进制和打包复制规则。
 2. 实现真实内置 BT 核心，替换当前 `EmbeddedTorrentEngine` 占位逻辑。
 3. 使用 SQLite repository 替换 JSON repository，并保留现有数据迁移路径。

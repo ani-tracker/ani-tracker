@@ -1,13 +1,20 @@
 import type { AutomationRunResult, ReleaseSearchResult } from "@shared/contracts";
-import type { AutomationSettings, Episode, MyAnime, Release } from "@shared/domain";
+import type { AppSettings, AutomationSettings, Episode, MyAnime, Release } from "@shared/domain";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
 import { logger } from "../logger";
 import type { AppRepository } from "../repositories/app-repository";
 import { rankReleases, type ReleaseMatchResult } from "../releases/release-matcher";
 import { ReleaseSourceService } from "../sources/release-source-service";
 
+export interface AutomationRunServiceOptions {
+  getQbittorrentBaseUrl?: (settings: AppSettings) => string;
+}
+
 export class AutomationRunService {
-  constructor(private readonly repository: AppRepository) {}
+  constructor(
+    private readonly repository: AppRepository,
+    private readonly options: AutomationRunServiceOptions = {}
+  ) {}
 
   async runOnce(): Promise<AutomationRunResult> {
     const startedAt = new Date().toISOString();
@@ -39,7 +46,9 @@ export class AutomationRunService {
       this.repository.listSources()
     ]);
     const sourceService = new ReleaseSourceService(sources);
-    const engine = createTorrentEngine(settings);
+    const engine = createTorrentEngine(settings, {
+      qbittorrentBaseUrl: this.options.getQbittorrentBaseUrl?.(settings)
+    });
 
     for (const anime of myAnimeItems) {
       if (!anime.autoDownload) {

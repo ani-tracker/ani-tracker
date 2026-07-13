@@ -7,7 +7,7 @@ import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import { logger } from "../logger";
 import { createSeedData } from "./seed-data";
 
-const PLATFORM_DEFAULT_SETTINGS_VERSION = 10;
+const PLATFORM_DEFAULT_SETTINGS_VERSION = 11;
 
 export class AppDataStore {
   private data: AppDataFile | null = null;
@@ -145,7 +145,11 @@ function mergeSettings(defaults: AppSettings, current?: AppSettings): AppSetting
       },
       qbittorrent: {
         ...defaults.download.qbittorrent,
-        ...current.download?.qbittorrent
+        ...current.download?.qbittorrent,
+        managed: {
+          ...defaults.download.qbittorrent.managed,
+          ...current.download?.qbittorrent?.managed
+        }
       }
     },
     storage: {

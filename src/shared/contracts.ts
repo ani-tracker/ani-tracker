@@ -63,6 +63,21 @@ export interface TorrentConnectionTestResult {
   taskCount?: number;
 }
 
+export interface QbittorrentManagedStatus {
+  enabled: boolean;
+  autoStart: boolean;
+  running: boolean;
+  webUiUrl: string;
+  platform: string;
+  arch: string;
+  binaryPath?: string;
+  profileDir?: string;
+  pid?: number;
+  lastStartedAt?: string;
+  lastStoppedAt?: string;
+  lastError?: string;
+}
+
 export interface MediaExtractInput {
   release?: Release;
   filePath?: string;
