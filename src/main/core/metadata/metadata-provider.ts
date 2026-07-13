@@ -70,7 +70,7 @@ export function normalizeTitle(value: string | undefined): string {
   return (value ?? "")
     .trim()
     .toLowerCase()
-    .replace(/[\s\u3000()[\]【】「」『』,，.!！?？:：;；_-]+/g, "");
+    .replace(/[\s\u3000()[\]（）【】「」『』,，.!！?？:：;；_-]+/g, "");
 }
 
 export function uniqueByNormalizedTitle<

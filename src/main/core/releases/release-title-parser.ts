@@ -25,6 +25,7 @@ const subtitlePatterns: Array<{ pattern: RegExp; value: SubtitlePreference }> = 
 ];
 
 const episodePatterns = [
+  /(?:^|[\s_-])s\d{1,2}e(\d{1,3}(?:\.\d)?)(?:[\s_.\-[\]]|$)/i,
   /\[\s*(\d{1,3}(?:\.\d)?)\s*]/,
   /(?:^|[\s_-])(?:ep|episode|第)?\s*(\d{1,3}(?:\.\d)?)(?:\s*话|\s*集)?(?:[\s_.-]|$)/i,
   /-\s*(\d{1,3}(?:\.\d)?)\s*(?:v\d)?(?:\s|\[|$)/i

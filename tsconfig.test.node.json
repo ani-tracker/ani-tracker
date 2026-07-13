@@ -9,6 +9,6 @@
     "outDir": "out/test-node"
   },
   "include": [
-    "src/main/core/sources/__tests__/**/*.test.ts"
+    "src/main/core/**/__tests__/**/*.test.ts"
   ]
 }
