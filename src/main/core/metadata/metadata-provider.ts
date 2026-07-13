@@ -1,4 +1,4 @@
-import type { Anime, Season } from "@shared/domain";
+import type { Anime, AnimeAlias, Season } from "@shared/domain";
 
 export interface MonthlyAnimeMetadataProvider {
   readonly id: string;
@@ -8,6 +8,11 @@ export interface MonthlyAnimeMetadataProvider {
 export interface MonthSeasonInfo {
   season: Season;
   mikanSeason: "冬" | "春" | "夏" | "秋";
+}
+
+export interface AnimeMetadataBatch {
+  source: string;
+  items: Anime[];
 }
 
 export const seasonByMonth: Record<number, MonthSeasonInfo> = {
@@ -89,6 +94,83 @@ export function uniqueByNormalizedTitle<
   }
 
   return merged;
+}
+
+export function mergeAnimeMetadataBatches(batches: AnimeMetadataBatch[]): Anime[] {
+  const merged: Anime[] = [];
+
+  for (const batch of batches) {
+    for (const item of batch.items) {
+      const index = merged.findIndex((existing) => isSameAnimeMetadata(existing, item));
+      if (index < 0) {
+        merged.push(item);
+        continue;
+      }
+
+      merged[index] = mergeAnimeMetadata(merged[index], item);
+    }
+  }
+
+  return merged;
+}
+
+function isSameAnimeMetadata(left: Anime, right: Anime): boolean {
+  return hasSharedExternalId(left, right) || hasSharedTitle(left, right);
+}
+
+function hasSharedExternalId(left: Anime, right: Anime): boolean {
+  return Object.entries(right.externalIds).some(([key, value]) => Boolean(value && left.externalIds[key] === value));
+}
+
+function mergeAnimeMetadata(primary: Anime, secondary: Anime): Anime {
+  const premiereDate = pickPremiereDate(primary, secondary);
+  const parsedDate = parseDateParts(premiereDate);
+
+  return {
+    ...primary,
+    originalTitle: primary.originalTitle ?? secondary.originalTitle,
+    aliases: normalizeAliases(primary.id, mergeAliases(primary.aliases, secondary.aliases)),
+    premiereDate,
+    premiereYear: parsedDate?.year ?? primary.premiereYear,
+    premiereMonth: parsedDate?.month ?? primary.premiereMonth,
+    season: primary.season ?? secondary.season,
+    summary: primary.summary ?? secondary.summary,
+    coverUrl: primary.coverUrl ?? secondary.coverUrl,
+    externalIds: {
+      ...primary.externalIds,
+      ...secondary.externalIds
+    }
+  };
+}
+
+function pickPremiereDate(primary: Anime, secondary: Anime): string | undefined {
+  if (!primary.premiereDate) {
+    return secondary.premiereDate;
+  }
+
+  if (!secondary.premiereDate) {
+    return primary.premiereDate;
+  }
+
+  const primaryDate = parseDateParts(primary.premiereDate);
+  const secondaryDate = parseDateParts(secondary.premiereDate);
+  if (!primaryDate || !secondaryDate) {
+    return primary.premiereDate;
+  }
+
+  if (primaryDate.day === 1 && secondaryDate.day > 1 && primaryDate.year === secondaryDate.year && primaryDate.month === secondaryDate.month) {
+    return secondary.premiereDate;
+  }
+
+  return primary.premiereDate;
+}
+
+function normalizeAliases(animeId: string, aliases: AnimeAlias[]): AnimeAlias[] {
+  return aliases.map((alias, index) => ({
+    ...alias,
+    id: `${animeId}-alias-${index + 1}`,
+    animeId
+  }));
 }
 
 function hasSharedTitle(

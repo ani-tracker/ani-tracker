@@ -8,6 +8,8 @@ import {
 
 const DEFAULT_MIKAN_BASE_URL = "https://mikanani.me/";
 const MIKAN_FETCH_TIMEOUT_MS = 10_000;
+const MIKAN_DETAIL_LIMIT = 60;
+const MIKAN_DETAIL_CONCURRENCY = 6;
 
 interface MikanCandidate {
   id: string;
@@ -33,19 +35,21 @@ export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider {
     const seasonInfo = getSeasonInfo(month);
     const html = await this.fetchSeasonHtml(year, seasonInfo.mikanSeason);
     const candidates = parseMikanSeasonHtml(html, this.baseUrl);
-    const anime: Anime[] = [];
+    const detailedCandidates = await mapWithConcurrency(
+      candidates.slice(0, MIKAN_DETAIL_LIMIT),
+      MIKAN_DETAIL_CONCURRENCY,
+      async (candidate) => ({
+        candidate,
+        detail: await this.fetchDetail(candidate.detailUrl)
+      })
+    );
 
-    for (const candidate of candidates.slice(0, 60)) {
-      const detail = await this.fetchDetail(candidate.detailUrl);
-      const item = mapMikanCandidate(candidate, detail, year, month, seasonInfo.season);
-
-      // Mikan 只暴露季度列表；没有明确首播日期时只归入该季度第一个月。
-      if (detail.premiereDate ? isDateInMonth(detail.premiereDate, year, month) : isSeasonStartMonth(month)) {
-        anime.push(item);
-      }
-    }
-
-    return anime;
+    return detailedCandidates
+      .filter(({ detail }) =>
+        // Mikan 只暴露季度列表；没有明确首播日期时只归入该季度第一个月。
+        detail.premiereDate ? isDateInMonth(detail.premiereDate, year, month) : isSeasonStartMonth(month)
+      )
+      .map(({ candidate, detail }) => mapMikanCandidate(candidate, detail, year, month, seasonInfo.season));
   }
 
   private async fetchSeasonHtml(year: number, season: string): Promise<string> {
@@ -192,6 +196,26 @@ async function fetchText(url: string): Promise<string> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  const results: R[] = [];
+  let nextIndex = 0;
+
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      results[currentIndex] = await mapper(items[currentIndex]);
+    }
+  }
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
+  return results;
 }
 
 function parsePremiereDate(html: string): string | undefined {

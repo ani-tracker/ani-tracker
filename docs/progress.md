@@ -25,10 +25,13 @@
   - 解析季度番组页中的 `/Home/Bangumi/{id}` 条目。
   - 尝试读取详情页中的标题、原名、简介、封面、首播日期和 Bangumi 外链。
   - 对请求设置超时，避免站点不可达时长期阻塞。
-- 新番采集已改为多来源兜底流程：
-  - 优先 Bangumi。
-  - Bangumi 无结果或失败时回退 AniList。
-  - AniList 无结果或失败时回退 Mikan。
+- 新番采集已改为多来源合并流程：
+  - Bangumi 作为主记录来源。
+  - AniList 补充别名、封面、简介、AniList/MAL external id。
+  - Mikan 补充 Mikan external id 和可解析到的 Bangumi external id。
+  - 优先使用 external id 匹配，同步使用规范化标题、原名、别名辅助去重。
+  - 合并时保留主来源标题和日期，补齐缺失的原名、简介、封面、别名和 external id。
+  - Mikan 详情页使用限并发抓取，避免批量采集线性阻塞。
   - 每个来源的开始、完成、失败都会打印关键日志。
   - 单个来源失败不会导致已有缓存丢失。
 
@@ -165,11 +168,11 @@
 - 真实内置 BT 核心；当前 `EmbeddedTorrentEngine` 仍是占位实现。
 - qBittorrent/qBittorrent-nox 随应用托管启动。
 - SQLite repository 替换 JSON repository。
-- 更完整的新番元数据聚合策略，例如多来源合并详情、冲突消解、增量刷新。
+- 更完整的新番元数据聚合策略，例如冲突消解、增量刷新、字段来源展示。
 - madVR 播放链路或外部 renderer 集成。
 
 ## 下一步建议
 
-1. 完善新番元数据多来源合并策略，让 Bangumi、AniList、Mikan 可以互相补字段，而不是只做顺序兜底。
-2. 为 Mikan 资源页实现专用 release source adapter，补齐 RSS 之外的搜索能力。
+1. 为 Mikan 资源页实现专用 release source adapter，补齐 RSS 之外的搜索能力。
+2. 在 Discovery 页面展示元数据来源和 external id，方便排查匹配问题。
 3. 在领域行为继续稳定后，开始 SQLite repository 替换 JSON repository。

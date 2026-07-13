@@ -5,7 +5,11 @@ import type { AppRepository } from "../repositories/app-repository";
 import { AniListMetadataProvider } from "./anilist-metadata-provider";
 import { BangumiMetadataProvider } from "./bangumi-metadata-provider";
 import { MikanMetadataProvider } from "./mikan-metadata-provider";
-import { type MonthlyAnimeMetadataProvider, uniqueByNormalizedTitle } from "./metadata-provider";
+import {
+  mergeAnimeMetadataBatches,
+  type MonthlyAnimeMetadataProvider,
+  uniqueByNormalizedTitle
+} from "./metadata-provider";
 
 export class AnimeDiscoveryService {
   constructor(
@@ -73,6 +77,7 @@ export class AnimeDiscoveryService {
     month: number
   ): Promise<{ items: Anime[]; source: string; errors: string[] }> {
     const errors: string[] = [];
+    const batches: Array<{ source: string; items: Anime[] }> = [];
 
     for (const provider of this.providers) {
       logger.info("开始采集新番元数据", { source: provider.id, year, month });
@@ -82,11 +87,8 @@ export class AnimeDiscoveryService {
         logger.info("新番元数据采集完成", { source: provider.id, year, month, count: items.length });
 
         if (items.length) {
-          return {
-            items,
-            source: provider.id,
-            errors
-          };
+          batches.push({ source: provider.id, items });
+          continue;
         }
 
         errors.push(`${provider.id}: 未返回新番数据`);
@@ -95,6 +97,24 @@ export class AnimeDiscoveryService {
         logger.warn("新番元数据来源采集失败", { source: provider.id, year, month, error: message });
         errors.push(`${provider.id}: ${message}`);
       }
+    }
+
+    if (batches.length) {
+      const items = mergeAnimeMetadataBatches(batches);
+      const source = batches.map((batch) => batch.source).join("+");
+      logger.info("新番元数据合并完成", {
+        source,
+        year,
+        month,
+        inputCount: batches.reduce((total, batch) => total + batch.items.length, 0),
+        mergedCount: items.length
+      });
+
+      return {
+        items,
+        source,
+        errors
+      };
     }
 
     return {
