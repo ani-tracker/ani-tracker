@@ -1,8 +1,9 @@
 import type { AutomationRunResult, ReleaseSearchResult } from "@shared/contracts";
-import type { Episode, MyAnime, Release } from "@shared/domain";
+import type { AutomationSettings, Episode, MyAnime, Release } from "@shared/domain";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
+import { logger } from "../logger";
 import type { AppRepository } from "../repositories/app-repository";
-import { rankReleases } from "../releases/release-matcher";
+import { rankReleases, type ReleaseMatchResult } from "../releases/release-matcher";
 import { ReleaseSourceService } from "../sources/release-source-service";
 
 export class AutomationRunService {
@@ -82,6 +83,7 @@ export class AutomationRunService {
         try {
           const preference = preferences.find((item) => item.episodeId === episode.id);
           const searchResults = await searchEpisodeReleases(sourceService, anime, episode, preference?.fansubGroupId);
+          const preferredFansubGroupId = preference?.fansubGroupId ?? anime.defaultFansubGroupId;
           const ranked = rankReleases(
             dedupeReleases(searchResults.flatMap((item) => item.releases)),
             {
@@ -91,7 +93,22 @@ export class AutomationRunService {
             },
             fansubs
           );
-          const best = ranked[0]?.release;
+          const candidates = applyFansubFallbackPolicy(
+            ranked,
+            preferredFansubGroupId,
+            settings.automation.fallbackWhenDefaultFansubMissing
+          );
+          const best = candidates[0]?.release;
+
+          if (ranked.length && !candidates.length && preferredFansubGroupId) {
+            logger.info("Automation run waiting for preferred fansub release", {
+              animeId: anime.anime.id,
+              episodeId: episode.id,
+              episodeNo: episode.episodeNo,
+              preferredFansubGroupId,
+              fallbackPolicy: settings.automation.fallbackWhenDefaultFansubMissing
+            });
+          }
 
           if (!best) {
             result.skipped.push({
@@ -218,6 +235,27 @@ function dedupeReleases(releases: Release[]): Release[] {
     seen.add(key);
     return true;
   });
+}
+
+function applyFansubFallbackPolicy(
+  ranked: ReleaseMatchResult[],
+  preferredFansubGroupId: string | undefined,
+  policy: AutomationSettings["fallbackWhenDefaultFansubMissing"]
+): ReleaseMatchResult[] {
+  if (!preferredFansubGroupId) {
+    return ranked;
+  }
+
+  const preferredMatches = ranked.filter((result) => result.release.fansubGroupId === preferredFansubGroupId);
+  if (preferredMatches.length) {
+    return preferredMatches;
+  }
+
+  if (policy === "candidate") {
+    return ranked;
+  }
+
+  return [];
 }
 
 function unique(values: string[]): string[] {
