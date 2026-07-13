@@ -233,8 +233,8 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   );
   ipcMain.handle("sources:upsert", (_event, source: ReleaseSourceConfig) => repository.upsertSource(source));
   ipcMain.handle("releases:search", async (_event, query: ReleaseQuery) => {
-    const sources = await repository.listSources();
-    return new ReleaseSourceService(sources).search(query);
+    const [sources, fansubs] = await Promise.all([repository.listSources(), repository.listFansubs()]);
+    return new ReleaseSourceService(sources, fansubs).search(query);
   });
   ipcMain.handle("settings:get", () => repository.getSettings());
   ipcMain.handle("settings:update", async (_event, patch: Partial<AppSettings>) => {

@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { appApi } from "@/lib/api";
 import { formatBytes, formatMonth, formatPercent } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
-import type { EpisodeReleasePreview } from "@shared/contracts";
+import type { EpisodeReleasePreview, ReleaseSearchResult } from "@shared/contracts";
 import type {
   AnimeStatus,
   DownloadTask,
@@ -62,15 +62,21 @@ const subtitleText: Record<SubtitlePreference, string> = {
   jpn: "日语",
   eng: "英语"
 };
+const unknownFansubFilter = "__unknown__";
 
 export function MyAnimePage() {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
   const [draft, setDraft] = useState<MyAnime | null>(null);
+  const [downloadTarget, setDownloadTarget] = useState<MyAnime | null>(null);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [episodePreferences, setEpisodePreferences] = useState<EpisodePreference[]>([]);
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [releasePreviews, setReleasePreviews] = useState<Record<string, EpisodeReleasePreview>>({});
+  const [animeReleases, setAnimeReleases] = useState<Release[]>([]);
+  const [animeReleaseErrors, setAnimeReleaseErrors] = useState<ReleaseSearchResult["errors"]>([]);
+  const [animeReleaseFansubId, setAnimeReleaseFansubId] = useState("");
+  const [animeReleaseLoading, setAnimeReleaseLoading] = useState(false);
   const [loading, setLoading] = useState(true);
   const [episodeLoading, setEpisodeLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -204,6 +210,9 @@ export function MyAnimePage() {
       if (draft?.id === item.id) {
         setDraft(null);
       }
+      if (downloadTarget?.id === item.id) {
+        closeAnimeDownloads();
+      }
       setMessage({ tone: "success", text: "已移除追番" });
     } catch (error) {
       setMessage({
@@ -313,6 +322,73 @@ export function MyAnimePage() {
     });
   }
 
+  async function openAnimeDownloads(item: MyAnime) {
+    const target = cloneMyAnime(item);
+    setDraft(null);
+    setDownloadTarget(target);
+    setAnimeReleaseFansubId(target.defaultFansubGroupId ?? "");
+    await searchAnimeReleases(target);
+  }
+
+  function closeAnimeDownloads() {
+    setDownloadTarget(null);
+    setAnimeReleases([]);
+    setAnimeReleaseErrors([]);
+    setAnimeReleaseFansubId("");
+  }
+
+  async function searchAnimeReleases(target = downloadTarget) {
+    if (!target) {
+      return;
+    }
+
+    const terms = buildSearchTerms(target);
+    if (terms.length === 0) {
+      setAnimeReleases([]);
+      setAnimeReleaseErrors([]);
+      return;
+    }
+
+    setAnimeReleaseLoading(true);
+    try {
+      const results = await Promise.all(
+        terms.map((keyword) =>
+          appApi.searchReleases({
+            keyword,
+            animeId: target.anime.id,
+            preferredResolution: target.preferredResolution,
+            limit: 80
+          })
+        )
+      );
+      const releases = sortReleases(
+        dedupeReleases(results.flatMap((result) => result.releases)).map((release) => ({
+          ...release,
+          animeId: target.anime.id
+        }))
+      );
+      const errors = dedupeReleaseErrors(results.flatMap((result) => result.errors));
+      setAnimeReleases(releases);
+      setAnimeReleaseErrors(errors);
+      setMessage({
+        tone: releases.length === 0 && errors.length > 0 ? "error" : "success",
+        text:
+          releases.length === 0 && errors.length > 0
+            ? "下载源请求失败，未获取到可用资源"
+            : `已找到 ${releases.length} 个资源`
+      });
+    } catch (error) {
+      setAnimeReleases([]);
+      setAnimeReleaseErrors([]);
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "查询发布资源失败"
+      });
+    } finally {
+      setAnimeReleaseLoading(false);
+    }
+  }
+
   async function addEpisodeReleaseDownload(episode: Episode, release: Release) {
     setAddingReleaseId(release.id);
     try {
@@ -342,6 +418,38 @@ export function MyAnimePage() {
     }
   }
 
+  async function addAnimeReleaseDownload(release: Release) {
+    if (!downloadTarget) {
+      return;
+    }
+
+    setAddingReleaseId(release.id);
+    try {
+      const updatedDownloads = await appApi.addReleaseDownload({
+        release: {
+          ...release,
+          animeId: downloadTarget.anime.id
+        },
+        animeId: downloadTarget.anime.id,
+        episodeNo: release.episodeNo,
+        fansubGroupId:
+          release.fansubGroupId ??
+          (animeReleaseFansubId && animeReleaseFansubId !== unknownFansubFilter ? animeReleaseFansubId : undefined) ??
+          downloadTarget.defaultFansubGroupId,
+        savePath: downloadTarget.downloadDir
+      });
+      setDownloadTasks(updatedDownloads);
+      setMessage({ tone: "success", text: "已添加到下载队列" });
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "添加下载失败"
+      });
+    } finally {
+      setAddingReleaseId(null);
+    }
+  }
+
   if (loading) {
     return <div className="text-sm text-muted-foreground">正在加载追番列表...</div>;
   }
@@ -353,7 +461,12 @@ export function MyAnimePage() {
           <h1 className="text-2xl font-semibold tracking-normal">我的追番</h1>
           <p className="mt-1 text-sm text-muted-foreground">按首播年月管理，默认字幕组会用于自动下载。</p>
         </div>
-        <Button onClick={() => setDraft(createEmptyDraft())}>
+        <Button
+          onClick={() => {
+            closeAnimeDownloads();
+            setDraft(createEmptyDraft());
+          }}
+        >
           <Plus className="h-4 w-4" />
           添加追番
         </Button>
@@ -403,15 +516,27 @@ export function MyAnimePage() {
                         </Badge>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="flex flex-wrap gap-2">
-                          {item.status && <Badge>{statusText[item.status]}</Badge>}
-                          {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
-                          {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
+                        <div className="flex items-center justify-between gap-3">
+                          <div className="flex flex-wrap gap-2">
+                            {item.status && <Badge>{statusText[item.status]}</Badge>}
+                            {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
+                            {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
+                          </div>
+                          <Button className="shrink-0" variant="outline" onClick={() => void openAnimeDownloads(item)}>
+                            <Download className="h-4 w-4" />
+                            下载
+                          </Button>
                         </div>
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex justify-end gap-2">
-                          <Button variant="outline" onClick={() => setDraft(cloneMyAnime(item))}>
+                          <Button
+                            variant="outline"
+                            onClick={() => {
+                              closeAnimeDownloads();
+                              setDraft(cloneMyAnime(item));
+                            }}
+                          >
                             <SlidersHorizontal className="h-4 w-4" />
                             规则
                           </Button>
@@ -435,32 +560,51 @@ export function MyAnimePage() {
         </Panel>
 
         <div className="space-y-5">
-          <RulesPanel
-            draft={draft}
-            fansubs={fansubs}
-            saving={saving}
-            onChange={setDraft}
-            onCancel={() => setDraft(null)}
-            onSave={() => void saveDraft()}
-          />
-          <EpisodeRulesPanel
-            draft={draft}
-            persisted={draftPersisted}
-            episodes={episodes}
-            episodePreferences={episodePreferences}
-            downloadTasks={downloadTasks}
-            releasePreviews={releasePreviews}
-            fansubs={fansubs}
-            fansubNames={fansubNames}
-            loading={episodeLoading}
-            previewingEpisodeId={previewingEpisodeId}
-            addingReleaseId={addingReleaseId}
-            onAddEpisode={() => void addNextEpisode()}
-            onStatusChange={(episode, status) => void updateEpisodeStatus(episode, status)}
-            onFansubChange={(episode, fansubGroupId) => void updateEpisodeFansub(episode, fansubGroupId)}
-            onPreviewReleases={(episode) => void previewEpisodeReleases(episode)}
-            onAddRelease={(episode, release) => void addEpisodeReleaseDownload(episode, release)}
-          />
+          {downloadTarget ? (
+            <AnimeDownloadPanel
+              addingReleaseId={addingReleaseId}
+              errors={animeReleaseErrors}
+              fansubNames={fansubNames}
+              fansubs={fansubs}
+              loading={animeReleaseLoading}
+              releases={animeReleases}
+              selectedFansubId={animeReleaseFansubId}
+              target={downloadTarget}
+              onAddRelease={(release) => void addAnimeReleaseDownload(release)}
+              onClose={closeAnimeDownloads}
+              onFansubChange={setAnimeReleaseFansubId}
+              onRefresh={() => void searchAnimeReleases()}
+            />
+          ) : (
+            <>
+              <RulesPanel
+                draft={draft}
+                fansubs={fansubs}
+                saving={saving}
+                onChange={setDraft}
+                onCancel={() => setDraft(null)}
+                onSave={() => void saveDraft()}
+              />
+              <EpisodeRulesPanel
+                draft={draft}
+                persisted={draftPersisted}
+                episodes={episodes}
+                episodePreferences={episodePreferences}
+                downloadTasks={downloadTasks}
+                releasePreviews={releasePreviews}
+                fansubs={fansubs}
+                fansubNames={fansubNames}
+                loading={episodeLoading}
+                previewingEpisodeId={previewingEpisodeId}
+                addingReleaseId={addingReleaseId}
+                onAddEpisode={() => void addNextEpisode()}
+                onStatusChange={(episode, status) => void updateEpisodeStatus(episode, status)}
+                onFansubChange={(episode, fansubGroupId) => void updateEpisodeFansub(episode, fansubGroupId)}
+                onPreviewReleases={(episode) => void previewEpisodeReleases(episode)}
+                onAddRelease={(episode, release) => void addEpisodeReleaseDownload(episode, release)}
+              />
+            </>
+          )}
         </div>
       </div>
 
@@ -699,6 +843,151 @@ function RulesPanel({
   );
 }
 
+function AnimeDownloadPanel({
+  target,
+  releases,
+  errors,
+  fansubs,
+  fansubNames,
+  selectedFansubId,
+  loading,
+  addingReleaseId,
+  onFansubChange,
+  onRefresh,
+  onAddRelease,
+  onClose
+}: {
+  target: MyAnime;
+  releases: Release[];
+  errors: ReleaseSearchResult["errors"];
+  fansubs: FansubGroup[];
+  fansubNames: Map<string, string>;
+  selectedFansubId: string;
+  loading: boolean;
+  addingReleaseId: string | null;
+  onFansubChange: (fansubGroupId: string) => void;
+  onRefresh: () => void;
+  onAddRelease: (release: Release) => void;
+  onClose: () => void;
+}) {
+  const titleDisplay = resolveAnimeTitleDisplay(target.anime);
+  const visibleReleases = filterReleasesByFansub(releases, selectedFansubId);
+  const visibleErrors = dedupeReleaseErrors(errors);
+  const unknownFansubCount = releases.filter((release) => !release.fansubGroupId).length;
+  const sourceFailed = releases.length === 0 && visibleErrors.length > 0;
+
+  return (
+    <Panel
+      title="资源下载"
+      action={
+        <Button variant="ghost" onClick={onClose} aria-label="关闭下载" title="关闭下载">
+          <X className="h-4 w-4" />
+        </Button>
+      }
+    >
+      <div className="space-y-4">
+        <div>
+          <div className="truncate text-sm font-medium">{titleDisplay.title}</div>
+          {titleDisplay.subtitle && <div className="mt-1 truncate text-xs text-muted-foreground">{titleDisplay.subtitle}</div>}
+        </div>
+
+        <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
+          <select
+            className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+            value={selectedFansubId}
+            onChange={(event) => onFansubChange(event.target.value)}
+          >
+            <option value="">全部字幕组（{releases.length}）</option>
+            {fansubs.map((group) => {
+              const count = countReleasesByFansub(releases, group.id);
+              return (
+                <option key={group.id} value={group.id}>
+                  {group.name}
+                  {count > 0 ? `（${count}）` : ""}
+                </option>
+              );
+            })}
+            {unknownFansubCount > 0 && <option value={unknownFansubFilter}>未识别字幕组（{unknownFansubCount}）</option>}
+          </select>
+          <Button variant="outline" onClick={onRefresh} disabled={loading}>
+            <Search className="h-4 w-4" />
+            {loading ? "查询中" : "刷新"}
+          </Button>
+        </div>
+
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>显示 {visibleReleases.length} 条</span>
+          <span>共 {releases.length} 条</span>
+        </div>
+
+        {visibleErrors.length > 0 && (
+          <div className="space-y-2">
+            {visibleErrors.slice(0, 3).map((error, index) => (
+              <div
+                key={`${error.sourceId}-${index}`}
+                className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
+              >
+                {error.sourceId}: {error.message}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">正在查询发布资源...</div>
+        ) : (
+          <div className="space-y-2">
+            {visibleReleases.map((release) => {
+              const canDownload = Boolean(release.magnetUrl ?? release.torrentUrl);
+              return (
+                <div key={releaseKey(release)} className="rounded-md border p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-medium">{release.title}</div>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Badge tone="blue">{release.sourceName}</Badge>
+                        <Badge>{getReleaseFansubName(release, fansubNames)}</Badge>
+                        {release.episodeNo && <Badge>第 {release.episodeNo} 集</Badge>}
+                        {release.resolution && <Badge>{release.resolution}</Badge>}
+                        {release.normalizedVideoCodec && <Badge tone="green">{release.normalizedVideoCodec}</Badge>}
+                        {release.subtitle && <Badge>{subtitleText[release.subtitle]}</Badge>}
+                        {release.size && <Badge>{formatBytes(release.size)}</Badge>}
+                        {typeof release.seeders === "number" && (
+                          <Badge tone={release.seeders > 0 ? "green" : "neutral"}>{release.seeders} 做种</Badge>
+                        )}
+                      </div>
+                      <div className="mt-2 text-xs text-muted-foreground">{formatReleaseDate(release.publishedAt)}</div>
+                    </div>
+                    <Button
+                      className="shrink-0"
+                      variant="outline"
+                      onClick={() => onAddRelease(release)}
+                      disabled={!canDownload || addingReleaseId === release.id}
+                    >
+                      <Download className="h-4 w-4" />
+                      {addingReleaseId === release.id ? "添加中" : "添加下载"}
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+
+            {visibleReleases.length === 0 && (
+              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
+                {sourceFailed
+                  ? "下载源请求失败，暂时无法获取发布资源和字幕组文件信息。"
+                  : selectedFansubId
+                    ? "当前字幕组没有可下载资源。"
+                    : "没有找到可下载资源。"}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Panel>
+  );
+}
+
 function EpisodeRulesPanel({
   draft,
   persisted,
@@ -902,12 +1191,97 @@ function findEpisodeDownloadTask(downloadTasks: DownloadTask[], episode: Episode
   return downloadTasks.find((task) => task.episodeId === episode.id);
 }
 
+function buildSearchTerms(item: MyAnime): string[] {
+  return unique(
+    [
+      item.anime.title,
+      item.anime.originalTitle ?? "",
+      ...item.anime.aliases.map((alias) => alias.alias)
+    ]
+      .map((term) => term.trim())
+      .filter(Boolean)
+  ).slice(0, 8);
+}
+
+function dedupeReleases(releases: Release[]): Release[] {
+  const seen = new Set<string>();
+
+  return releases.filter((release) => {
+    const key = releaseKey(release);
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function dedupeReleaseErrors(errors: ReleaseSearchResult["errors"]): ReleaseSearchResult["errors"] {
+  const seen = new Set<string>();
+
+  return errors.filter((error) => {
+    const key = `${error.sourceId}:${error.message}`;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function sortReleases(releases: Release[]): Release[] {
+  return [...releases].sort((left, right) => {
+    const leftEpisode = left.episodeNo ?? -1;
+    const rightEpisode = right.episodeNo ?? -1;
+    if (leftEpisode !== rightEpisode) {
+      return rightEpisode - leftEpisode;
+    }
+
+    return (right.publishedAt ?? "").localeCompare(left.publishedAt ?? "");
+  });
+}
+
+function filterReleasesByFansub(releases: Release[], fansubGroupId: string): Release[] {
+  if (!fansubGroupId) {
+    return releases;
+  }
+
+  if (fansubGroupId === unknownFansubFilter) {
+    return releases.filter((release) => !release.fansubGroupId);
+  }
+
+  return releases.filter((release) => release.fansubGroupId === fansubGroupId);
+}
+
+function countReleasesByFansub(releases: Release[], fansubGroupId: string): number {
+  return releases.filter((release) => release.fansubGroupId === fansubGroupId).length;
+}
+
 function getReleaseFansubName(release: Release, fansubNames: Map<string, string>): string {
   if (!release.fansubGroupId) {
     return "未识别字幕组";
   }
 
   return fansubNames.get(release.fansubGroupId) ?? release.fansubGroupId;
+}
+
+function releaseKey(release: Release): string {
+  return release.infoHash ?? release.magnetUrl ?? release.torrentUrl ?? `${release.sourceId}:${release.title}`;
+}
+
+function formatReleaseDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values)];
 }
 
 function TextField({

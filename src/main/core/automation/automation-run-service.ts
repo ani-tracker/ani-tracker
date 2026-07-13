@@ -45,7 +45,7 @@ export class AutomationRunService {
       this.repository.listFansubs(),
       this.repository.listSources()
     ]);
-    const sourceService = new ReleaseSourceService(sources);
+    const sourceService = new ReleaseSourceService(sources, fansubs);
     const engine = createTorrentEngine(settings, {
       qbittorrentBaseUrl: this.options.getQbittorrentBaseUrl?.(settings)
     });

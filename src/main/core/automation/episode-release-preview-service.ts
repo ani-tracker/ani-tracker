@@ -28,7 +28,7 @@ export class EpisodeReleasePreviewService {
     const preference = preferences.find((item) => item.episodeId === episodeId);
     const preferredFansubGroupId = preference?.fansubGroupId ?? anime.defaultFansubGroupId;
     const terms = buildSearchTerms(anime);
-    const sourceService = new ReleaseSourceService(sources);
+    const sourceService = new ReleaseSourceService(sources, fansubs);
     const searchResults = await Promise.all(
       terms.map((term) =>
         sourceService.search({

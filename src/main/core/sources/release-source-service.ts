@@ -1,12 +1,16 @@
 import type { ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
-import type { ReleaseSourceConfig } from "@shared/domain";
+import type { FansubGroup, ReleaseSourceConfig } from "@shared/domain";
+import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { DmhyReleaseSource } from "./dmhy-source";
 import { MikanReleaseSource } from "./mikan-source";
 import { RssReleaseSource } from "./rss-source";
 import { TorznabReleaseSource } from "./torznab-source";
 
 export class ReleaseSourceService {
-  constructor(private readonly configs: ReleaseSourceConfig[]) {}
+  constructor(
+    private readonly configs: ReleaseSourceConfig[],
+    private readonly fansubs: FansubGroup[] = []
+  ) {}
 
   async search(query: ReleaseQuery): Promise<ReleaseSearchResult> {
     const sources = this.configs.filter((config) => config.enabled).map(createReleaseSource).filter(Boolean) as ReleaseSource[];
@@ -19,13 +23,15 @@ export class ReleaseSourceService {
           } catch (error) {
             errors.push({
               sourceId: source.config.id,
-              message: error instanceof Error ? error.message : "下载源搜索失败"
+              message: formatReleaseSourceError(error)
             });
             return [];
           }
         })
       )
-    ).flat();
+    )
+      .flat()
+      .map((release) => enrichReleaseFromTitle(release, this.fansubs));
 
     return {
       query,
@@ -78,4 +84,22 @@ function dedupeReleases<T extends { infoHash?: string; magnetUrl?: string; torre
     seen.add(key);
     return true;
   });
+}
+
+function formatReleaseSourceError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "下载源搜索失败";
+  }
+
+  const cause = error.cause instanceof Error ? error.cause.message : undefined;
+  const message = cause ? `${error.message}: ${cause}` : error.message;
+  if (/fetch failed/i.test(message)) {
+    return "下载源网络请求失败，请检查网络、代理或下载源地址";
+  }
+
+  if (/aborted|timeout/i.test(message)) {
+    return "下载源请求超时，请稍后重试";
+  }
+
+  return message;
 }
