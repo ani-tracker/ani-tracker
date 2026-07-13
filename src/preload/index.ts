@@ -6,10 +6,9 @@ import type {
   EpisodePreference,
   MyAnime,
   NotificationRecord,
-  Release,
   ReleaseSourceConfig
 } from "@shared/domain";
-import type { AddDownloadUrlInput, AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
+import type { AddDownloadUrlInput, AddReleaseDownloadInput, AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
 
 const api = {
   getDashboard: () => ipcRenderer.invoke("dashboard:get"),
@@ -45,7 +44,7 @@ const api = {
   setDownloadFilePriority: (taskId: string, fileIndexes: number[], priority: number) =>
     ipcRenderer.invoke("downloads:setFilePriority", taskId, fileIndexes, priority),
   addDownloadUrl: (input: AddDownloadUrlInput) => ipcRenderer.invoke("downloads:addUrl", input),
-  addReleaseDownload: (release: Release) => ipcRenderer.invoke("downloads:addRelease", release),
+  addReleaseDownload: (input: AddReleaseDownloadInput) => ipcRenderer.invoke("downloads:addRelease", input),
   listFansubs: () => ipcRenderer.invoke("fansubs:list"),
   listSources: () => ipcRenderer.invoke("sources:list"),
   setSourceEnabled: (sourceId: string, enabled: boolean) => ipcRenderer.invoke("sources:setEnabled", sourceId, enabled),

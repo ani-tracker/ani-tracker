@@ -103,7 +103,12 @@ export function ReleaseSearchPage() {
     setAddingId(releaseId);
     setMessage(null);
     try {
-      await appApi.addReleaseDownload(releaseForDownload);
+      await appApi.addReleaseDownload({
+        release: releaseForDownload,
+        animeId: releaseForDownload.animeId,
+        episodeNo: releaseForDownload.episodeNo,
+        fansubGroupId: releaseForDownload.fansubGroupId
+      });
       setMessage({ tone: "success", text: "已添加到下载队列" });
     } catch (error) {
       setMessage({

@@ -9,11 +9,11 @@ import type {
   MediaFile,
   MyAnime,
   NotificationRecord,
-  Release,
   ReleaseSourceConfig
 } from "@shared/domain";
 import type {
   AddDownloadUrlInput,
+  AddReleaseDownloadInput,
   AnimeDiscoveryQuery,
   AnimeDiscoveryResult,
   AutomationRunResult,
@@ -70,7 +70,7 @@ export const appApi = {
   setDownloadFilePriority: (taskId: string, fileIndexes: number[], priority: number): Promise<DownloadTask[]> =>
     bridge().setDownloadFilePriority(taskId, fileIndexes, priority),
   addDownloadUrl: (input: AddDownloadUrlInput): Promise<DownloadTask[]> => bridge().addDownloadUrl(input),
-  addReleaseDownload: (release: Release): Promise<DownloadTask[]> => bridge().addReleaseDownload(release),
+  addReleaseDownload: (input: AddReleaseDownloadInput): Promise<DownloadTask[]> => bridge().addReleaseDownload(input),
   listFansubs: (): Promise<FansubGroup[]> => bridge().listFansubs(),
   listSources: (): Promise<ReleaseSourceConfig[]> => bridge().listSources(),
   setSourceEnabled: (sourceId: string, enabled: boolean): Promise<ReleaseSourceConfig[]> =>

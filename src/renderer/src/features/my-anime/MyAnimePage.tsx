@@ -4,11 +4,12 @@ import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { appApi } from "@/lib/api";
-import { formatBytes, formatMonth } from "@/lib/format";
+import { formatBytes, formatMonth, formatPercent } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { EpisodeReleasePreview } from "@shared/contracts";
 import type {
   AnimeStatus,
+  DownloadTask,
   Episode,
   EpisodePreference,
   EpisodeStatus,
@@ -36,11 +37,31 @@ const episodeStatusText: Record<EpisodeStatus, string> = {
   downloaded: "已下载",
   watched: "已观看"
 };
+const downloadStatusText: Record<DownloadTask["status"], string> = {
+  queued: "排队中",
+  fetching_metadata: "获取元数据",
+  downloading: "下载中",
+  stalled: "等待连接",
+  paused: "已暂停",
+  checking: "校验中",
+  moving: "移动文件",
+  completed: "已完成",
+  seeding: "做种中",
+  error: "错误",
+  missing_files: "文件缺失"
+};
 
 const episodeStatusOptions = Object.entries(episodeStatusText) as Array<[EpisodeStatus, string]>;
 const resolutionOptions = ["", "720p", "1080p", "2160p"];
 const codecOptions: Array<"" | NormalizedVideoCodec> = ["", "H.264/AVC", "H.265/HEVC", "AV1", "VP9", "Unknown"];
 const subtitleOptions: Array<"" | SubtitlePreference> = ["", "chs", "cht", "multi", "jpn", "eng"];
+const subtitleText: Record<SubtitlePreference, string> = {
+  chs: "简体",
+  cht: "繁体",
+  multi: "多语",
+  jpn: "日语",
+  eng: "英语"
+};
 
 export function MyAnimePage() {
   const [items, setItems] = useState<MyAnime[]>([]);
@@ -48,6 +69,7 @@ export function MyAnimePage() {
   const [draft, setDraft] = useState<MyAnime | null>(null);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [episodePreferences, setEpisodePreferences] = useState<EpisodePreference[]>([]);
+  const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [releasePreviews, setReleasePreviews] = useState<Record<string, EpisodeReleasePreview>>({});
   const [loading, setLoading] = useState(true);
   const [episodeLoading, setEpisodeLoading] = useState(false);
@@ -59,14 +81,15 @@ export function MyAnimePage() {
   useEffect(() => {
     let active = true;
 
-    Promise.all([appApi.listMyAnime(), appApi.listFansubs()])
-      .then(([animeItems, groups]) => {
+    Promise.all([appApi.listMyAnime(), appApi.listFansubs(), appApi.listDownloads()])
+      .then(([animeItems, groups, downloads]) => {
         if (!active) {
           return;
         }
 
         setItems(animeItems);
         setFansubs(groups);
+        setDownloadTasks(downloads);
       })
       .catch((error) => {
         if (active) {
@@ -100,14 +123,15 @@ export function MyAnimePage() {
     }
 
     setEpisodeLoading(true);
-    Promise.all([appApi.listEpisodes(draft.anime.id), appApi.listEpisodePreferences(draft.anime.id)])
-      .then(([loadedEpisodes, loadedPreferences]) => {
+    Promise.all([appApi.listEpisodes(draft.anime.id), appApi.listEpisodePreferences(draft.anime.id), appApi.listDownloads()])
+      .then(([loadedEpisodes, loadedPreferences, downloads]) => {
         if (!active) {
           return;
         }
 
         setEpisodes(loadedEpisodes);
         setEpisodePreferences(loadedPreferences);
+        setDownloadTasks(downloads);
       })
       .catch((error) => {
         if (active) {
@@ -236,6 +260,8 @@ export function MyAnimePage() {
     try {
       if (!fansubGroupId) {
         setEpisodePreferences(await appApi.removeEpisodePreference(episode.id));
+        clearEpisodePreview(episode.id);
+        setMessage({ tone: "success", text: "已恢复跟随默认字幕组" });
         return;
       }
 
@@ -250,6 +276,8 @@ export function MyAnimePage() {
           isManualOverride: true
         })
       );
+      clearEpisodePreview(episode.id);
+      setMessage({ tone: "success", text: "已切换单集字幕组，重新查看发布后会按新字幕组匹配" });
     } catch (error) {
       setMessage({
         tone: "error",
@@ -277,14 +305,32 @@ export function MyAnimePage() {
     }
   }
 
+  function clearEpisodePreview(episodeId: string) {
+    setReleasePreviews((current) => {
+      const next = { ...current };
+      delete next[episodeId];
+      return next;
+    });
+  }
+
   async function addEpisodeReleaseDownload(episode: Episode, release: Release) {
     setAddingReleaseId(release.id);
     try {
-      await appApi.addReleaseDownload({
-        ...release,
+      const preference = episodePreferences.find((item) => item.episodeId === episode.id);
+      const updatedDownloads = await appApi.addReleaseDownload({
+        release,
         animeId: episode.animeId,
-        episodeNo: episode.episodeNo
+        episodeId: episode.id,
+        episodeNo: episode.episodeNo,
+        fansubGroupId: preference?.fansubGroupId ?? release.fansubGroupId ?? draft?.defaultFansubGroupId
       });
+      const [updatedEpisodes, updatedPreferences] = await Promise.all([
+        appApi.listEpisodes(episode.animeId),
+        appApi.listEpisodePreferences(episode.animeId)
+      ]);
+      setDownloadTasks(updatedDownloads);
+      setEpisodes(updatedEpisodes);
+      setEpisodePreferences(updatedPreferences);
       setMessage({ tone: "success", text: "已添加到下载队列" });
     } catch (error) {
       setMessage({
@@ -402,6 +448,7 @@ export function MyAnimePage() {
             persisted={draftPersisted}
             episodes={episodes}
             episodePreferences={episodePreferences}
+            downloadTasks={downloadTasks}
             releasePreviews={releasePreviews}
             fansubs={fansubs}
             fansubNames={fansubNames}
@@ -657,6 +704,7 @@ function EpisodeRulesPanel({
   persisted,
   episodes,
   episodePreferences,
+  downloadTasks,
   releasePreviews,
   fansubs,
   fansubNames,
@@ -673,6 +721,7 @@ function EpisodeRulesPanel({
   persisted: boolean;
   episodes: Episode[];
   episodePreferences: EpisodePreference[];
+  downloadTasks: DownloadTask[];
   releasePreviews: Record<string, EpisodeReleasePreview>;
   fansubs: FansubGroup[];
   fansubNames: Map<string, string>;
@@ -723,9 +772,13 @@ function EpisodeRulesPanel({
           {episodes.map((episode) => {
             const preference = episodePreferences.find((item) => item.episodeId === episode.id);
             const preview = releasePreviews[episode.id];
+            const linkedDownload = findEpisodeDownloadTask(downloadTasks, episode);
             const inheritedFansub = draft.defaultFansubGroupId
               ? (fansubNames.get(draft.defaultFansubGroupId) ?? "默认字幕组")
               : "未设置默认字幕组";
+            const effectiveFansub = preference?.fansubGroupId
+              ? (fansubNames.get(preference.fansubGroupId) ?? preference.fansubGroupId)
+              : inheritedFansub;
 
             return (
               <div key={episode.id} className="rounded-md border p-3">
@@ -733,6 +786,14 @@ function EpisodeRulesPanel({
                   <div className="min-w-0">
                     <div className="font-medium">第 {episode.episodeNo} 集</div>
                     <div className="mt-1 truncate text-xs text-muted-foreground">{episode.title ?? "未命名单集"}</div>
+                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
+                      <span>当前字幕组：{effectiveFansub}</span>
+                      {linkedDownload && (
+                        <span>
+                          下载任务：{downloadStatusText[linkedDownload.status]} · {formatPercent(linkedDownload.progress)}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <Badge tone={episode.status === "downloaded" || episode.status === "watched" ? "green" : "neutral"}>
                     {episodeStatusText[episode.status]}
@@ -773,7 +834,7 @@ function EpisodeRulesPanel({
                     disabled={previewingEpisodeId === episode.id}
                   >
                     <Search className="h-4 w-4" />
-                    {previewingEpisodeId === episode.id ? "匹配中" : "匹配资源"}
+                    {previewingEpisodeId === episode.id ? "查询中" : "查看发布"}
                   </Button>
                 </div>
                 {preference?.fansubGroupId && (
@@ -783,18 +844,27 @@ function EpisodeRulesPanel({
                 )}
                 {preview && (
                   <div className="mt-3 space-y-2">
-                    {preview.candidates.slice(0, 3).map((candidate) => (
+                    {preview.candidates.slice(0, 6).map((candidate) => (
                       <div key={candidate.release.id} className="rounded-md bg-muted p-3">
                         <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
+                          <div className="min-w-0 flex-1">
                             <div className="truncate text-sm font-medium">{candidate.release.title}</div>
                             <div className="mt-2 flex flex-wrap gap-2">
                               <Badge tone="blue">{candidate.score} 分</Badge>
+                              <Badge>{candidate.release.sourceName}</Badge>
+                              <Badge>第 {candidate.release.episodeNo ?? episode.episodeNo} 集</Badge>
+                              <Badge>{getReleaseFansubName(candidate.release, fansubNames)}</Badge>
                               {candidate.release.resolution && <Badge>{candidate.release.resolution}</Badge>}
                               {candidate.release.normalizedVideoCodec && (
                                 <Badge tone="green">{candidate.release.normalizedVideoCodec}</Badge>
                               )}
+                              {candidate.release.subtitle && <Badge>{subtitleText[candidate.release.subtitle]}</Badge>}
                               {candidate.release.size && <Badge>{formatBytes(candidate.release.size)}</Badge>}
+                              {typeof candidate.release.seeders === "number" && (
+                                <Badge tone={candidate.release.seeders > 0 ? "green" : "neutral"}>
+                                  {candidate.release.seeders} 做种
+                                </Badge>
+                              )}
                             </div>
                             <div className="mt-2 text-xs text-muted-foreground">
                               {candidate.reasons.join("，") || "规则匹配"}
@@ -826,6 +896,18 @@ function EpisodeRulesPanel({
       )}
     </Panel>
   );
+}
+
+function findEpisodeDownloadTask(downloadTasks: DownloadTask[], episode: Episode): DownloadTask | undefined {
+  return downloadTasks.find((task) => task.episodeId === episode.id);
+}
+
+function getReleaseFansubName(release: Release, fansubNames: Map<string, string>): string {
+  if (!release.fansubGroupId) {
+    return "未识别字幕组";
+  }
+
+  return fansubNames.get(release.fansubGroupId) ?? release.fansubGroupId;
 }
 
 function TextField({

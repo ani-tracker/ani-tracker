@@ -1,10 +1,10 @@
 import { ipcMain, shell } from "electron";
-import type { AppSettings, Episode, EpisodePreference, MyAnime, Release, ReleaseSourceConfig } from "@shared/domain";
+import type { AppSettings, Episode, EpisodePreference, MyAnime, ReleaseSourceConfig } from "@shared/domain";
 import { AppRepository } from "./core/repositories/app-repository";
 import { AppDataStore } from "./core/storage/app-data-store";
 import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
 import { ReleaseSourceService } from "./core/sources/release-source-service";
-import type { AddDownloadUrlInput, AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
+import type { AddDownloadUrlInput, AddReleaseDownloadInput, AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
 import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
 import { PlayerLauncherService } from "./core/platform/player-launcher";
 import { DownloadMediaScanner } from "./core/media/download-media-scanner";
@@ -183,24 +183,45 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       name: input.name?.trim() || getManualDownloadName(url)
     });
   });
-  ipcMain.handle("downloads:addRelease", async (_event, release: Release) => {
+  ipcMain.handle("downloads:addRelease", async (_event, input: AddReleaseDownloadInput) => {
     const settings = await repository.getSettings();
+    const release = input.release;
     const url = release.magnetUrl ?? release.torrentUrl;
     if (!url) {
       throw new Error("资源没有 magnet 或 torrent 地址，无法添加下载");
     }
 
+    const animeId = input.animeId ?? release.animeId;
+    const episodeId = input.episodeId;
+    const episodeNo = input.episodeNo ?? release.episodeNo;
+    const fansubGroupId = input.fansubGroupId ?? release.fansubGroupId;
+    const savePath = input.savePath?.trim() || (await getAnimeDownloadDir(animeId)) || settings.download.defaultDownloadDir;
+    logger.info("Release download add requested", {
+      engine: settings.download.defaultTorrentEngine,
+      animeId,
+      episodeId,
+      episodeNo,
+      releaseId: release.id
+    });
     const engine = createTorrentEngine(settings, {
       qbittorrentBaseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings)
     });
     const task = await engine.addMagnet(url, {
-      savePath: settings.download.defaultDownloadDir
+      savePath,
+      paused: input.paused
     });
     const downloads = await repository.upsertDownloadTask({
       ...task,
       releaseId: release.id,
-      animeId: release.animeId,
+      animeId,
+      episodeId,
       name: release.title
+    });
+    await updateEpisodeDownloadLink({
+      animeId,
+      episodeId,
+      fansubGroupId,
+      releaseId: release.id
     });
 
     return downloads;
@@ -305,4 +326,50 @@ function getManualDownloadName(url: string): string {
   } catch {
     return "手动添加下载";
   }
+}
+
+async function getAnimeDownloadDir(animeId?: string): Promise<string | undefined> {
+  if (!animeId) {
+    return undefined;
+  }
+
+  const anime = (await repository.listMyAnime()).find((item) => item.anime.id === animeId);
+  return anime?.downloadDir?.trim() || undefined;
+}
+
+async function updateEpisodeDownloadLink(input: {
+  animeId?: string;
+  episodeId?: string;
+  fansubGroupId?: string;
+  releaseId: string;
+}): Promise<void> {
+  if (!input.animeId || !input.episodeId) {
+    return;
+  }
+
+  const [episodes, preferences] = await Promise.all([
+    repository.listEpisodes(input.animeId),
+    repository.listEpisodePreferences(input.animeId)
+  ]);
+  const episode = episodes.find((item) => item.id === input.episodeId);
+  if (episode) {
+    await repository.upsertEpisode({
+      ...episode,
+      status: "downloading"
+    });
+  }
+
+  const existingPreference = preferences.find((item) => item.episodeId === input.episodeId);
+  if (!existingPreference && !input.fansubGroupId) {
+    return;
+  }
+
+  await repository.upsertEpisodePreference({
+    id: existingPreference?.id ?? `episode-pref-${Date.now()}`,
+    animeId: input.animeId,
+    episodeId: input.episodeId,
+    fansubGroupId: existingPreference?.fansubGroupId ?? input.fansubGroupId,
+    releaseId: input.releaseId,
+    isManualOverride: existingPreference?.isManualOverride ?? Boolean(input.fansubGroupId)
+  });
 }

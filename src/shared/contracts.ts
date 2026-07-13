@@ -57,6 +57,16 @@ export interface AddDownloadUrlInput {
   paused?: boolean;
 }
 
+export interface AddReleaseDownloadInput {
+  release: Release;
+  animeId?: string;
+  episodeId?: string;
+  episodeNo?: number;
+  fansubGroupId?: string;
+  savePath?: string;
+  paused?: boolean;
+}
+
 export interface AddTorrentOptions {
   savePath: string;
   selectedFileIndexes?: number[];
