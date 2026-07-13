@@ -6,12 +6,23 @@ import { GenericDefaultSettingsProvider } from "../../platform/default-settings-
 import type { AppRepository } from "../../repositories/app-repository";
 import { AutomationRunService } from "../automation-run-service";
 
-const defaultSettings = new GenericDefaultSettingsProvider({
+const baseSettings = new GenericDefaultSettingsProvider({
   downloads: "/test/Downloads",
   userData: "/test/UserData",
   cache: "/test/Cache",
   logs: "/test/Logs"
 }).getSettings();
+const defaultSettings: AppSettings = {
+  ...baseSettings,
+  download: {
+    ...baseSettings.download,
+    defaultTorrentEngine: "embedded",
+    embedded: {
+      ...baseSettings.download.embedded,
+      enabled: true
+    }
+  }
+};
 
 test("AutomationRunService 使用单集字幕组覆盖选择最佳资源并写回下载状态", async (t) => {
   const repository = new FakeAutomationRepository({
