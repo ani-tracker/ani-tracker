@@ -79,6 +79,9 @@
 - 已新增 Mikan/DMHY 解析样例测试：
   - 覆盖 DMHY 资源行中的标题、magnet、torrent、发布时间、体积和媒体字段解析。
   - 覆盖 Mikan 搜索结果中的 Episode、Download torrent、magnet、体积和兜底 torrent 地址生成。
+  - 覆盖 RSS item/enclosure 中的下载地址、发布时间、体积和标题媒体字段解析。
+  - 覆盖 Torznab 查询参数、enclosure、seeders/size attr 和标题媒体字段解析。
+  - 覆盖 XML helper 对文本节点、数组节点和空值的基础归一化。
   - 使用 Node 内置 `node:test`，不引入额外测试依赖。
 - 已实现资源标题解析：
   - 字幕组。
@@ -195,6 +198,6 @@ git diff --check
 
 ## 下一步建议
 
-1. 继续补 RSS/Torznab/XML 解析样例测试。
-2. 给 Metadata/Release 解析逻辑补更多边界样例，例如多季标题、总集篇、合集资源。
+1. 给 Metadata/Release 解析逻辑补更多边界样例，例如多季标题、总集篇、合集资源。
+2. 给平台默认配置 provider 补独立单元测试，覆盖 macOS/Windows 路径模板。
 3. 在领域行为继续稳定后，开始 SQLite repository 替换 JSON repository。
