@@ -189,6 +189,7 @@ export function DiscoveryPage() {
         <div className="grid grid-cols-3 gap-4">
           {items.map((anime) => {
             const followed = followedIds.has(anime.id);
+            const externalIds = buildExternalIdBadges(anime);
             return (
               <Panel key={anime.id} className="p-0">
                 {anime.coverUrl && (
@@ -217,6 +218,19 @@ export function DiscoveryPage() {
                       <Badge key={alias.id}>{alias.alias}</Badge>
                     ))}
                   </div>
+                  {externalIds.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {externalIds.map((externalId) => (
+                        <Badge
+                          key={externalId.key}
+                          tone={externalId.tone}
+                          title={`${externalId.label}: ${externalId.value}`}
+                        >
+                          {externalId.label} {externalId.value}
+                        </Badge>
+                      ))}
+                    </div>
+                  )}
                   <Button
                     className="mt-4 w-full"
                     variant={followed ? "secondary" : "outline"}
@@ -249,6 +263,15 @@ const seasonText = {
   fall: "秋季"
 };
 
+const externalIdText: Record<string, { label: string; tone: "blue" | "green" | "amber" | "neutral" }> = {
+  bangumi: { label: "Bangumi", tone: "blue" },
+  anilist: { label: "AniList", tone: "green" },
+  mikan: { label: "Mikan", tone: "amber" },
+  mal: { label: "MAL", tone: "neutral" }
+};
+
+const externalIdOrder = ["bangumi", "anilist", "mikan", "mal"];
+
 function getPreviousMonth(): { year: number; month: number } {
   const date = new Date();
   date.setMonth(date.getMonth() - 1);
@@ -267,4 +290,26 @@ function buildMonthOptions(): Array<{ year: number; month: number }> {
       month: date.getMonth() + 1
     };
   });
+}
+
+function buildExternalIdBadges(anime: Anime): Array<{
+  key: string;
+  label: string;
+  value: string;
+  tone: "blue" | "green" | "amber" | "neutral";
+}> {
+  return Object.entries(anime.externalIds)
+    .filter(([, value]) => Boolean(value))
+    .sort(([left], [right]) => getExternalIdRank(left) - getExternalIdRank(right))
+    .map(([key, value]) => ({
+      key,
+      label: externalIdText[key]?.label ?? key,
+      value,
+      tone: externalIdText[key]?.tone ?? "neutral"
+    }));
+}
+
+function getExternalIdRank(key: string): number {
+  const index = externalIdOrder.indexOf(key);
+  return index >= 0 ? index : externalIdOrder.length;
 }

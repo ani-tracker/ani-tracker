@@ -17,6 +17,7 @@
 
 - 新番发现页使用独立的本地 anime catalog，不直接污染“我的追番”。
 - 支持按首播年月读取本地目录、搜索中文名/日文名/别名、添加到我的追番。
+- 支持在新番卡片展示 Bangumi、AniList、Mikan、MAL 等 external id，方便排查多来源合并结果。
 - 已接入 AniList 月度采集，按季度查询后过滤到目标月份。
 - 已新增 Bangumi 元数据来源：
   - 使用 Bangumi v0 subjects API 按动画类型、年份、月份采集。
@@ -179,6 +180,6 @@
 
 ## 下一步建议
 
-1. 在 Discovery 页面展示元数据来源和 external id，方便排查匹配问题。
-2. 为 Mikan/DMHY 适配器补解析样例测试，固定 HTML 结构变化带来的回归风险。
+1. 为 Mikan/DMHY 适配器补解析样例测试，固定 HTML 结构变化带来的回归风险。
+2. 为 Discovery 的 external id 增加跳转到外部站点的打开能力。
 3. 在领域行为继续稳定后，开始 SQLite repository 替换 JSON repository。
