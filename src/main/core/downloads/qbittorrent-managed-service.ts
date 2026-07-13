@@ -2,7 +2,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { createConnection } from "node:net";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:path";
 import type { QbittorrentManagedStatus } from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
 import { logger } from "../logger";
@@ -79,8 +79,10 @@ export class QbittorrentManagedService {
       profileDir: plan.profileDir
     });
 
+    const env = buildQbittorrentLaunchEnvironment(plan.binaryPath);
     const child = spawn(plan.binaryPath, args, {
       cwd: dirname(plan.binaryPath),
+      env,
       windowsHide: true
     });
     this.child = child;
@@ -216,6 +218,30 @@ export function resolveBundledQbittorrentBinary(options: QbittorrentBinaryResolv
   return undefined;
 }
 
+export function buildQbittorrentLaunchEnvironment(
+  binaryPath: string,
+  baseEnv: NodeJS.ProcessEnv = process.env
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...baseEnv };
+  const contentsDir = resolveMacAppContentsDir(binaryPath);
+
+  if (!contentsDir) {
+    return env;
+  }
+
+  const pluginPath = join(contentsDir, "PlugIns");
+  if (existsSync(pluginPath)) {
+    env.QT_PLUGIN_PATH = prependEnvPath(pluginPath, env.QT_PLUGIN_PATH);
+  }
+
+  const opensslModulesPath = join(contentsDir, "Frameworks", "ossl-modules");
+  if (existsSync(opensslModulesPath)) {
+    env.OPENSSL_MODULES = opensslModulesPath;
+  }
+
+  return env;
+}
+
 async function buildLaunchPlan(settings: AppSettings): Promise<QbittorrentLaunchPlan> {
   const plan = buildStatusLaunchPlan(settings);
   const webUiUrl = new URL(plan.webUiUrl);
@@ -278,6 +304,29 @@ function getQbittorrentBinaryNames(platform: NodeJS.Platform): string[] {
   }
 
   return ["qbittorrent-nox"];
+}
+
+function resolveMacAppContentsDir(binaryPath: string): string | undefined {
+  const executableDir = dirname(binaryPath);
+  if (basename(executableDir) !== "MacOS") {
+    return undefined;
+  }
+
+  const contentsDir = dirname(executableDir);
+  if (basename(contentsDir) !== "Contents") {
+    return undefined;
+  }
+
+  const appDir = dirname(contentsDir);
+  if (!basename(appDir).endsWith(".app")) {
+    return undefined;
+  }
+
+  return contentsDir;
+}
+
+function prependEnvPath(path: string, currentValue: string | undefined): string {
+  return currentValue ? `${path}${delimiter}${currentValue}` : path;
 }
 
 function normalizeBaseUrl(value: string): URL {

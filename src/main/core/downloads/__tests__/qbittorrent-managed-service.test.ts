@@ -1,10 +1,14 @@
 import { strict as assert } from "node:assert";
 import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
-import { QbittorrentManagedService, resolveBundledQbittorrentBinary } from "../qbittorrent-managed-service";
+import {
+  buildQbittorrentLaunchEnvironment,
+  QbittorrentManagedService,
+  resolveBundledQbittorrentBinary
+} from "../qbittorrent-managed-service";
 
 const defaultSettings = new GenericDefaultSettingsProvider({
   downloads: "/test/Downloads",
@@ -46,6 +50,27 @@ test("resolveBundledQbittorrentBinary 不把 GUI 版 qBittorrent 当成托管核
   );
 });
 
+test("buildQbittorrentLaunchEnvironment 为 macOS app bundle 注入插件和 OpenSSL 模块路径", async () => {
+  const root = await mkdtemp(join(tmpdir(), "ani-qbittorrent-macos-env-"));
+  const contentsDir = join(root, "qbittorrent-nox.app", "Contents");
+  const binaryDir = join(contentsDir, "MacOS");
+  const pluginPath = join(contentsDir, "PlugIns");
+  const opensslModulesPath = join(contentsDir, "Frameworks", "ossl-modules");
+  const binaryPath = join(binaryDir, "qbittorrent-nox");
+  await mkdir(binaryDir, { recursive: true });
+  await mkdir(pluginPath, { recursive: true });
+  await mkdir(opensslModulesPath, { recursive: true });
+  await writeFile(binaryPath, "", "utf8");
+
+  const env = buildQbittorrentLaunchEnvironment(binaryPath, {
+    QT_PLUGIN_PATH: "/existing/plugins",
+    OPENSSL_MODULES: "/existing/openssl-modules"
+  });
+
+  assert.equal(env.QT_PLUGIN_PATH, `${pluginPath}${delimiter}/existing/plugins`);
+  assert.equal(env.OPENSSL_MODULES, opensslModulesPath);
+});
+
 test("QbittorrentManagedService 对托管启动避开 10000 以下 WebUI 端口", async () => {
   const service = new QbittorrentManagedService();
   const status = await service.start({
@@ -57,7 +82,8 @@ test("QbittorrentManagedService 对托管启动避开 10000 以下 WebUI 端口"
         baseUrl: "http://127.0.0.1:8080",
         managed: {
           ...defaultSettings.download.qbittorrent.managed,
-          enabled: true
+          enabled: true,
+          binaryPath: join(tmpdir(), "ani-missing-qbittorrent-nox")
         }
       }
     }

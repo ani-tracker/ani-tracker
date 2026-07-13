@@ -24,11 +24,12 @@
 
 - `docs/design-plan.md`
 - `docs/progress.md`
+- `docs/startup.md`
 - `AGENTS.md`
 
 ## 运行方式
 
-推荐使用 pnpm：
+推荐使用 pnpm。详细启动链路和验证记录见 `docs/startup.md`。
 
 ```powershell
 pnpm.cmd install
@@ -49,3 +50,7 @@ pnpm.cmd build
 3. 完善新番元数据源和新番采集。
 4. 增加动漫花园等站点专用适配器。
 5. 补托盘、后台运行和开机启动策略。
+
+
+
+待评估： https://github.com/equeim/tremotesf2 作为单文件下载器
