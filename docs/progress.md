@@ -14,6 +14,7 @@
   - 通过 `DefaultSettingsProvider` 抽象类生成默认配置，由 macOS、Windows 和通用子类提供平台差异。
   - macOS 默认下载目录为系统 Downloads 下的 `Ani Tracker`，用户数据使用 Electron `userData`，缓存使用 `~/Library/Caches/<app>`，日志使用 Electron `logs`。
   - Windows 默认下载目录为系统 Downloads 下的 `Ani Tracker`，用户数据使用 Electron `userData`，缓存优先使用 `%LOCALAPPDATA%\<app>\Cache`，日志使用 Electron `logs`。
+  - 已新增 provider 单元测试，覆盖 macOS、Windows、通用模板和工厂分发。
   - 数据版本已升到 10，旧版本加载时直接切到新的平台默认设置模板。
 - 已预留未来 SQLite schema：`src/main/core/storage/schema.sql`。
 - 已完成 Home、我的追番、新番发现、资源搜索、下载、来源、设置、通知中心等页面。
@@ -204,6 +205,6 @@ git diff --check
 
 ## 下一步建议
 
-1. 给平台默认配置 provider 补独立单元测试，覆盖 macOS/Windows 路径模板。
-2. 补自动化匹配/下载决策单元测试，覆盖字幕组覆盖、已下载跳过和 fallback 策略。
+1. 补自动化匹配/下载决策单元测试，覆盖字幕组覆盖、已下载跳过和 fallback 策略。
+2. 给平台默认配置增加设置页“一键恢复默认模板”能力。
 3. 在领域行为继续稳定后，开始 SQLite repository 替换 JSON repository。
