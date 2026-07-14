@@ -64,12 +64,25 @@ const subtitleText: Record<SubtitlePreference, string> = {
   eng: "英语"
 };
 const unknownFansubFilter = "__unknown__";
+type AnimeDownloadDetailFilter = "all" | "active" | "completed";
+
+interface AnimeDownloadDetailState {
+  item: MyAnime;
+  filter: AnimeDownloadDetailFilter;
+}
+
+const downloadDetailFilters: Array<{ value: AnimeDownloadDetailFilter; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "active", label: "下载中" },
+  { value: "completed", label: "已完成" }
+];
 
 export function MyAnimePage() {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
   const [draft, setDraft] = useState<MyAnime | null>(null);
   const [downloadTarget, setDownloadTarget] = useState<MyAnime | null>(null);
+  const [downloadDetail, setDownloadDetail] = useState<AnimeDownloadDetailState | null>(null);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [episodePreferences, setEpisodePreferences] = useState<EpisodePreference[]>([]);
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
@@ -134,6 +147,21 @@ export function MyAnimePage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [downloadTarget]);
+
+  useEffect(() => {
+    if (!downloadDetail) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeDownloadDetail();
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [downloadDetail]);
 
   useEffect(() => {
     let active = true;
@@ -228,6 +256,9 @@ export function MyAnimePage() {
       }
       if (downloadTarget?.id === item.id) {
         closeAnimeDownloads();
+      }
+      if (downloadDetail?.item.id === item.id) {
+        closeDownloadDetail();
       }
       setMessage({ tone: "success", text: "已移除追番" });
     } catch (error) {
@@ -351,6 +382,18 @@ export function MyAnimePage() {
     setAnimeReleases([]);
     setAnimeReleaseErrors([]);
     setAnimeReleaseFansubId("");
+  }
+
+  /** 打开某部追番的下载任务明细抽屉。 */
+  function openDownloadDetail(item: MyAnime, filter: AnimeDownloadDetailFilter) {
+    setDownloadDetail({
+      item: cloneMyAnime(item),
+      filter
+    });
+  }
+
+  function closeDownloadDetail() {
+    setDownloadDetail(null);
   }
 
   async function searchAnimeReleases(target = downloadTarget) {
@@ -534,10 +577,22 @@ export function MyAnimePage() {
                         </Badge>
                       </td>
                       <td className="px-4 py-4">
-                        <div className="whitespace-nowrap text-xs">
-                          <span className="font-medium text-emerald-700">{downloadSummary.completed} 已完成</span>
+                        <div className="flex whitespace-nowrap text-xs">
+                          <button
+                            className="rounded-md px-1.5 py-1 font-medium text-emerald-700 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-200"
+                            type="button"
+                            onClick={() => openDownloadDetail(item, "completed")}
+                          >
+                            {downloadSummary.completed} 已完成
+                          </button>
                           <span className="mx-2 text-border">/</span>
-                          <span className="text-cyan-700">{downloadSummary.active} 下载中</span>
+                          <button
+                            className="rounded-md px-1.5 py-1 text-cyan-700 hover:bg-cyan-50 focus:outline-none focus:ring-2 focus:ring-cyan-200"
+                            type="button"
+                            onClick={() => openDownloadDetail(item, "active")}
+                          >
+                            {downloadSummary.active} 下载中
+                          </button>
                         </div>
                         <div className="mt-1 text-xs text-muted-foreground">共关联 {downloadSummary.linked} 集</div>
                       </td>
@@ -652,6 +707,18 @@ export function MyAnimePage() {
         </div>
       )}
 
+      {downloadDetail && (
+        <AnimeDownloadDetailDrawer
+          detail={downloadDetail}
+          downloadTasks={downloadTasks}
+          fansubNames={fansubNames}
+          onClose={closeDownloadDetail}
+          onFilterChange={(filter) =>
+            setDownloadDetail((current) => (current ? { ...current, filter } : current))
+          }
+        />
+      )}
+
       <div className="grid grid-cols-4 gap-4">
         {statusOptions.map(([status, label]) => {
           const count = items.filter((item) => item.status === status).length;
@@ -663,6 +730,152 @@ export function MyAnimePage() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function AnimeDownloadDetailDrawer({
+  detail,
+  downloadTasks,
+  fansubNames,
+  onFilterChange,
+  onClose
+}: {
+  detail: AnimeDownloadDetailState;
+  downloadTasks: DownloadTask[];
+  fansubNames: Map<string, string>;
+  onFilterChange: (filter: AnimeDownloadDetailFilter) => void;
+  onClose: () => void;
+}) {
+  const titleDisplay = resolveAnimeTitleDisplay(detail.item.anime);
+  const animeTasks = getAnimeDownloadTasks(downloadTasks, detail.item.anime.id);
+  const visibleTasks = filterAnimeDownloadDetailTasks(animeTasks, detail.filter);
+  const counts = {
+    all: animeTasks.length,
+    active: animeTasks.filter(isActiveDownload).length,
+    completed: animeTasks.filter(isCompletedDownload).length
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-foreground/35"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onClose();
+        }
+      }}
+    >
+      <aside
+        aria-label="下载明细"
+        aria-modal="true"
+        className="animate-slide-in-right flex h-full w-full max-w-2xl flex-col border-l bg-card shadow-xl"
+        role="dialog"
+      >
+        <div className="flex items-start justify-between gap-4 border-b p-5">
+          <div className="min-w-0">
+            <h2 className="truncate text-lg font-semibold tracking-normal">{titleDisplay.title}</h2>
+            <p className="mt-1 truncate text-sm text-muted-foreground">{titleDisplay.subtitle ?? "下载任务明细"}</p>
+          </div>
+          <Button variant="ghost" onClick={onClose} aria-label="关闭下载明细" title="关闭下载明细">
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+
+        <div className="border-b p-4">
+          <div className="grid h-9 grid-cols-3 overflow-hidden rounded-md border bg-background" role="group" aria-label="筛选下载任务">
+            {downloadDetailFilters.map((filter) => (
+              <button
+                key={filter.value}
+                aria-pressed={detail.filter === filter.value}
+                className={[
+                  "border-r px-3 text-sm transition-colors last:border-r-0",
+                  detail.filter === filter.value
+                    ? "bg-primary font-medium text-primary-foreground"
+                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                ].join(" ")}
+                type="button"
+                onClick={() => onFilterChange(filter.value)}
+              >
+                {filter.label} {counts[filter.value]}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto p-4">
+          {visibleTasks.length > 0 ? (
+            <div className="space-y-3">
+              {visibleTasks.map((task) => (
+                <DownloadDetailTaskCard key={task.id} task={task} fansubNames={fansubNames} />
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+              当前筛选下没有下载任务。
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function DownloadDetailTaskCard({
+  task,
+  fansubNames
+}: {
+  task: DownloadTask;
+  fansubNames: Map<string, string>;
+}) {
+  const fansubName = task.fansubName ?? (task.fansubGroupId ? fansubNames.get(task.fansubGroupId) : undefined) ?? "未识别字幕组";
+
+  return (
+    <article className="rounded-md border bg-background p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {task.episodeNo !== undefined && <Badge tone="blue">第 {task.episodeNo} 集</Badge>}
+            <Badge tone={getDownloadStatusTone(task.status)}>{downloadStatusText[task.status]}</Badge>
+            <Badge>{fansubName}</Badge>
+          </div>
+          <h3 className="mt-2 truncate text-sm font-medium" title={task.name}>
+            {task.name}
+          </h3>
+        </div>
+        <div className="shrink-0 text-sm font-medium tabular-nums">{formatPercent(task.progress)}</div>
+      </div>
+
+      <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
+        <div className="h-full rounded-full bg-primary" style={{ width: `${getProgressWidth(task.progress)}%` }} />
+      </div>
+
+      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+        <DownloadDetailMeta label="保存路径" value={task.savePath} className="col-span-2" />
+        <DownloadDetailMeta label="创建时间" value={formatDateTime(task.createdAt)} />
+        <DownloadDetailMeta label="完成时间" value={task.completedAt ? formatDateTime(task.completedAt) : "未完成"} />
+        <DownloadDetailMeta label="下载速度" value={formatSpeedText(task.downloadSpeed)} />
+        <DownloadDetailMeta label="上传速度" value={formatSpeedText(task.uploadSpeed)} />
+      </dl>
+    </article>
+  );
+}
+
+function DownloadDetailMeta({
+  label,
+  value,
+  className
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn("min-w-0", className)}>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="mt-1 truncate font-medium" title={value}>
+        {value}
+      </dd>
     </div>
   );
 }
@@ -1312,6 +1525,48 @@ function isActiveDownload(task: DownloadTask): boolean {
   );
 }
 
+/** 读取并按集数、创建时间排序某部番的下载任务。 */
+function getAnimeDownloadTasks(downloadTasks: DownloadTask[], animeId: string): DownloadTask[] {
+  return downloadTasks
+    .filter((task) => task.animeId === animeId)
+    .sort((left, right) => {
+      const leftEpisode = left.episodeNo ?? -1;
+      const rightEpisode = right.episodeNo ?? -1;
+      if (leftEpisode !== rightEpisode) {
+        return rightEpisode - leftEpisode;
+      }
+
+      return right.createdAt.localeCompare(left.createdAt);
+    });
+}
+
+function filterAnimeDownloadDetailTasks(
+  downloadTasks: DownloadTask[],
+  filter: AnimeDownloadDetailFilter
+): DownloadTask[] {
+  if (filter === "active") {
+    return downloadTasks.filter(isActiveDownload);
+  }
+
+  if (filter === "completed") {
+    return downloadTasks.filter(isCompletedDownload);
+  }
+
+  return downloadTasks;
+}
+
+function getDownloadStatusTone(status: DownloadTask["status"]): "neutral" | "green" | "amber" | "red" | "blue" {
+  if (status === "completed" || status === "seeding") return "green";
+  if (status === "error" || status === "missing_files") return "red";
+  if (status === "paused" || status === "stalled") return "amber";
+  if (status === "downloading") return "blue";
+  return "neutral";
+}
+
+function getProgressWidth(progress: number): number {
+  return Math.max(0, Math.min(100, Math.round(progress * 100)));
+}
+
 function buildSearchTerms(item: MyAnime): string[] {
   return unique(
     [
@@ -1441,6 +1696,19 @@ function findReleaseDownloadTask(tasks: DownloadTask[], release: Release): Downl
 
 function isCompletedDownload(task: DownloadTask): boolean {
   return task.status === "completed" || task.status === "seeding";
+}
+
+function formatDateTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
+
+function formatSpeedText(value: number): string {
+  return `${formatBytes(value)}/s`;
 }
 
 function getReleaseFansubName(release: Release, fansubNames: Map<string, string>): string {

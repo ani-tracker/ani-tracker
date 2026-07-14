@@ -1,4 +1,4 @@
-import type { Anime, AnimeAlias, Season } from "@shared/domain";
+import type { Anime, AnimeAlias, AnimeRating, Season } from "@shared/domain";
 import { inferAnimeAliasLanguage, isLikelyChineseTitle, isLikelyJapaneseTitle } from "../../../shared/anime-title";
 
 export interface MonthlyAnimeMetadataProvider {
@@ -89,6 +89,7 @@ export function uniqueByNormalizedTitle<
     title: string;
     originalTitle?: string;
     aliases: Array<{ alias: string }>;
+    rating?: AnimeRating;
     externalIds: Record<string, string>;
   }
 >(items: T[]): T[] {
@@ -196,11 +197,43 @@ function mergeAnimeMetadata(primary: Anime, secondary: Anime): Anime {
     season: primary.season ?? secondary.season,
     summary: primary.summary ?? secondary.summary,
     coverUrl: primary.coverUrl ?? secondary.coverUrl,
+    rating: pickPreferredRating(primary.rating, secondary.rating),
     externalIds: {
       ...primary.externalIds,
       ...secondary.externalIds
     }
   };
+}
+
+/** 多来源合并时优先保留更可信的评分来源。 */
+function pickPreferredRating(primary: AnimeRating | undefined, secondary: AnimeRating | undefined): AnimeRating | undefined {
+  if (!primary) {
+    return secondary;
+  }
+
+  if (!secondary) {
+    return primary;
+  }
+
+  const primaryRank = getRatingSourceRank(primary.source);
+  const secondaryRank = getRatingSourceRank(secondary.source);
+  if (primaryRank !== secondaryRank) {
+    return primaryRank < secondaryRank ? primary : secondary;
+  }
+
+  return (secondary.count ?? 0) > (primary.count ?? 0) ? secondary : primary;
+}
+
+function getRatingSourceRank(source: string): number {
+  if (source === "bangumi") {
+    return 0;
+  }
+
+  if (source === "anilist") {
+    return 1;
+  }
+
+  return 10;
 }
 
 function pickPremiereDate(primary: Anime, secondary: Anime): string | undefined {
@@ -347,13 +380,14 @@ function collectNames(item: { title: string; originalTitle?: string; aliases: Ar
   );
 }
 
-function mergeAnimeLike<T extends { aliases: Array<{ alias: string }>; externalIds: Record<string, string> }>(
+function mergeAnimeLike<T extends { aliases: Array<{ alias: string }>; rating?: AnimeRating; externalIds: Record<string, string> }>(
   left: T,
   right: T
 ): T {
   return {
     ...left,
     aliases: mergeAliases(left.aliases, right.aliases),
+    rating: pickPreferredRating(left.rating, right.rating),
     externalIds: {
       ...left.externalIds,
       ...right.externalIds

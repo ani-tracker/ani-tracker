@@ -21,6 +21,7 @@ test("首次启动忽略旧 JSON 并直接初始化 SQLite", async () => {
 
   assert.equal(runtime.getBackend(), "sqlite");
   assert.equal((await runtime.repository.listAnimeCatalog()).length, fixture.data.animeCatalog.length);
+  assert.deepEqual((await runtime.repository.listAnimeCatalog())[0].rating, fixture.data.animeCatalog[0].rating);
   assert.equal((await runtime.repository.listMyAnime()).length, fixture.data.myAnime.length);
   assert.equal((await runtime.repository.listDownloads()).length, fixture.data.downloads.length);
   assert.equal((await runtime.repository.listNotifications()).length, fixture.data.notifications.length);

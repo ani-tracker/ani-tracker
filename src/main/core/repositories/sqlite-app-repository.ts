@@ -441,8 +441,20 @@ export class SqliteAppRepository implements AppRepository {
     if (currentSchemaVersion > SQLITE_SCHEMA_VERSION) {
       throw new Error(`SQLite schema version ${currentSchemaVersion} is newer than supported ${SQLITE_SCHEMA_VERSION}`);
     }
+    this.migrateSchema(currentSchemaVersion);
     this.setMeta("schema_version", String(SQLITE_SCHEMA_VERSION));
     logger.info("SQLite repository initialized", { path: this.databasePath, schemaVersion: SQLITE_SCHEMA_VERSION });
+  }
+
+  /** 补齐已存在 SQLite 数据库缺少的新列。 */
+  private migrateSchema(currentSchemaVersion: number): void {
+    if (currentSchemaVersion >= 2) {
+      return;
+    }
+
+    this.ensureColumn("anime_catalog", "rating_score", "rating_score REAL");
+    this.ensureColumn("anime_catalog", "rating_count", "rating_count INTEGER");
+    this.ensureColumn("anime_catalog", "rating_source", "rating_source TEXT");
   }
 
   /** 将首次启动快照写入各业务表。 */
@@ -541,20 +553,24 @@ export class SqliteAppRepository implements AppRepository {
     this.run(
       `INSERT INTO anime_catalog (
         id, title, original_title, premiere_date, premiere_year, premiere_month, season, summary,
-        cover_url, external_ids_json, created_at, updated_at
+        cover_url, rating_score, rating_count, rating_source, external_ids_json, created_at, updated_at
       ) VALUES (
         @id, @title, @originalTitle, @premiereDate, @premiereYear, @premiereMonth, @season, @summary,
-        @coverUrl, @externalIdsJson, @createdAt, @updatedAt
+        @coverUrl, @ratingScore, @ratingCount, @ratingSource, @externalIdsJson, @createdAt, @updatedAt
       ) ON CONFLICT(id) DO UPDATE SET
         title = excluded.title, original_title = excluded.original_title, premiere_date = excluded.premiere_date,
         premiere_year = excluded.premiere_year, premiere_month = excluded.premiere_month, season = excluded.season,
-        summary = excluded.summary, cover_url = excluded.cover_url, external_ids_json = excluded.external_ids_json,
+        summary = excluded.summary, cover_url = excluded.cover_url, rating_score = excluded.rating_score,
+        rating_count = excluded.rating_count, rating_source = excluded.rating_source,
+        external_ids_json = excluded.external_ids_json,
         updated_at = excluded.updated_at`,
       {
         id: anime.id, title: anime.title, originalTitle: anime.originalTitle ?? null,
         premiereDate: anime.premiereDate ?? null, premiereYear: anime.premiereYear,
         premiereMonth: anime.premiereMonth, season: anime.season ?? null, summary: anime.summary ?? null,
-        coverUrl: anime.coverUrl ?? null, externalIdsJson: toJson(anime.externalIds),
+        coverUrl: anime.coverUrl ?? null, ratingScore: anime.rating?.score ?? null,
+        ratingCount: anime.rating?.count ?? null, ratingSource: anime.rating?.source ?? null,
+        externalIdsJson: toJson(anime.externalIds),
         createdAt: timestamp, updatedAt: timestamp
       }
     );
@@ -795,6 +811,14 @@ export class SqliteAppRepository implements AppRepository {
   private all(sql: string, params: SqliteParams = {}): SqliteRow[] {
     return this.database.prepare(sql).all(params) as SqliteRow[];
   }
+
+  /** 在旧库迁移时按需追加列。 */
+  private ensureColumn(table: string, column: string, definition: string): void {
+    const columns = this.all(`PRAGMA table_info(${table})`).map((row) => asString(row.name));
+    if (!columns.includes(column)) {
+      this.database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
+    }
+  }
 }
 
 function mapAnime(row: SqliteRow, aliases: Anime["aliases"]): Anime {
@@ -803,7 +827,22 @@ function mapAnime(row: SqliteRow, aliases: Anime["aliases"]): Anime {
     premiereDate: optionalString(row.premiere_date), premiereYear: Number(row.premiere_year),
     premiereMonth: Number(row.premiere_month), season: optionalString(row.season) as Anime["season"],
     summary: optionalString(row.summary), coverUrl: optionalString(row.cover_url),
+    rating: mapAnimeRating(row),
     externalIds: fromJson<Record<string, string>>(asString(row.external_ids_json))
+  });
+}
+
+function mapAnimeRating(row: SqliteRow): Anime["rating"] {
+  const score = optionalNumber(row.rating_score);
+  const source = optionalString(row.rating_source);
+  if (score === undefined || !source) {
+    return undefined;
+  }
+
+  return compact({
+    score,
+    count: optionalNumber(row.rating_count),
+    source
   });
 }
 

@@ -42,7 +42,14 @@ export interface Anime {
   season?: Season;
   summary?: string;
   coverUrl?: string;
+  rating?: AnimeRating;
   externalIds: Record<string, string>;
+}
+
+export interface AnimeRating {
+  score: number;
+  count?: number;
+  source: string;
 }
 
 export interface AnimeAlias {

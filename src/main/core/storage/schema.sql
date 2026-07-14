@@ -28,6 +28,9 @@ CREATE TABLE IF NOT EXISTS anime_catalog (
   season TEXT,
   summary TEXT,
   cover_url TEXT,
+  rating_score REAL,
+  rating_count INTEGER,
+  rating_source TEXT,
   external_ids_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL

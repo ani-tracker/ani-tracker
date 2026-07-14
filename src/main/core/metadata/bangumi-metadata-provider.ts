@@ -38,6 +38,10 @@ interface BangumiSubject {
     grid?: string;
   };
   infobox?: BangumiInfoboxItem[];
+  rating?: {
+    score?: number;
+    total?: number;
+  };
 }
 
 interface BangumiInfoboxItem {
@@ -198,10 +202,25 @@ function mapBangumiSubject(
     season,
     summary: item.summary,
     coverUrl: item.images?.large ?? item.images?.common ?? item.images?.medium ?? item.images?.grid,
+    rating: mapBangumiRating(item),
     externalIds: {
       bangumi: String(item.id),
       ...buildBangumiExternalIds(item)
     }
+  };
+}
+
+/** 将 Bangumi 评分映射为统一的 10 分制评分。 */
+function mapBangumiRating(item: BangumiSubject): Anime["rating"] {
+  const score = item.rating?.score;
+  if (!score || !Number.isFinite(score) || score <= 0) {
+    return undefined;
+  }
+
+  return {
+    score: normalizeRatingScore(score),
+    count: normalizeRatingCount(item.rating?.total),
+    source: "bangumi"
   };
 }
 
@@ -237,6 +256,14 @@ function buildBangumiAliases(item: BangumiSubject, title: string): AnimeAlias[] 
   }
 
   return aliases;
+}
+
+function normalizeRatingScore(value: number): number {
+  return Math.round(Math.max(0, Math.min(10, value)) * 10) / 10;
+}
+
+function normalizeRatingCount(value: number | undefined): number | undefined {
+  return value && Number.isFinite(value) && value > 0 ? Math.round(value) : undefined;
 }
 
 function readInfoboxAliasValues(infobox: BangumiInfoboxItem[] | undefined): BangumiAliasCandidate[] {

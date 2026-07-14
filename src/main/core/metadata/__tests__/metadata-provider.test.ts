@@ -213,6 +213,7 @@ test("BangumiMetadataProvider 分页采集第二页番组并补充详情别名",
   assert.ok(skeletonKnight);
   assert.equal(skeletonKnight.title, "骸骨骑士大人异世界冒险中 第二季");
   assert.equal(skeletonKnight.originalTitle, "骸骨騎士様、只今異世界へお出掛け中Ⅱ");
+  assert.deepEqual(skeletonKnight.rating, { score: 7.3, count: 123, source: "bangumi" });
   assert.ok(skeletonKnight.aliases.some((alias) => alias.alias === "Skeleton Knight in Another World Season 2"));
 });
 
@@ -340,6 +341,7 @@ test("mergeAnimeMetadataBatches 不用次来源覆盖主来源已有字段", () 
           title: "主标题",
           summary: "主简介",
           coverUrl: "https://bangumi.test/cover.jpg",
+          rating: { score: 7.1, count: 80, source: "bangumi" },
           externalIds: { bangumi: "2" }
         })
       ]
@@ -352,6 +354,7 @@ test("mergeAnimeMetadataBatches 不用次来源覆盖主来源已有字段", () 
           title: "主标题",
           summary: "次简介",
           coverUrl: "https://anilist.test/cover.jpg",
+          rating: { score: 8.8, source: "anilist" },
           externalIds: { anilist: "20" }
         })
       ]
@@ -361,6 +364,7 @@ test("mergeAnimeMetadataBatches 不用次来源覆盖主来源已有字段", () 
   assert.equal(merged.title, "主标题");
   assert.equal(merged.summary, "主简介");
   assert.equal(merged.coverUrl, "https://bangumi.test/cover.jpg");
+  assert.deepEqual(merged.rating, { score: 7.1, count: 80, source: "bangumi" });
   assert.deepEqual(merged.externalIds, { bangumi: "2", anilist: "20" });
 });
 
@@ -376,6 +380,7 @@ function createAnime(overrides: Partial<Anime> & { id: string; title: string }):
     season: overrides.season ?? "summer",
     summary: overrides.summary,
     coverUrl: overrides.coverUrl,
+    rating: overrides.rating,
     externalIds: overrides.externalIds ?? {}
   };
 }
@@ -416,6 +421,10 @@ class FakeBangumiHttpClient {
         name: "骸骨騎士様、只今異世界へお出掛け中Ⅱ",
         name_cn: "骸骨骑士大人异世界冒险中 第二季",
         date: "2026-07-06",
+        rating: {
+          score: 7.3,
+          total: 123
+        },
         infobox: [
           { key: "中文名", value: "骸骨骑士大人异世界冒险中 第二季" },
           {

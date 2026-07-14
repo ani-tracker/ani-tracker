@@ -5,7 +5,8 @@ import {
   ImageOff,
   Plus,
   RotateCcw,
-  Search
+  Search,
+  Star
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Panel } from "@/components/panel";
@@ -27,6 +28,8 @@ interface SeasonOption {
   months: readonly [number, number, number];
 }
 
+type DiscoverySortKey = "premiereAsc" | "premiereDesc" | "ratingDesc";
+
 const seasonOptions: readonly SeasonOption[] = [
   { value: "winter", label: "冬季", shortLabel: "冬", months: [1, 2, 3] },
   { value: "spring", label: "春季", shortLabel: "春", months: [4, 5, 6] },
@@ -47,6 +50,7 @@ export function DiscoveryPage() {
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [keyword, setKeyword] = useState("");
   const [appliedKeyword, setAppliedKeyword] = useState("");
+  const [sortKey, setSortKey] = useState<DiscoverySortKey>("premiereAsc");
   const [items, setItems] = useState<Anime[]>([]);
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,8 +64,8 @@ export function DiscoveryPage() {
   const activeSeason = getSeasonOption(target.season);
   const followedIds = useMemo(() => new Set(myAnime.map((item) => item.anime.id)), [myAnime]);
   const visibleItems = useMemo(
-    () => filterAnimeItems(items, selectedMonth, appliedKeyword),
-    [appliedKeyword, items, selectedMonth]
+    () => sortAnimeItems(filterAnimeItems(items, selectedMonth, appliedKeyword), sortKey),
+    [appliedKeyword, items, selectedMonth, sortKey]
   );
 
   useEffect(() => {
@@ -294,7 +298,7 @@ export function DiscoveryPage() {
           <div className="text-right text-sm font-medium tabular-nums">{resultLabel}</div>
         </div>
 
-        <div className="grid grid-cols-[auto_minmax(240px,1fr)_auto] items-center gap-3 border-t p-3">
+        <div className="grid grid-cols-[auto_160px_minmax(240px,1fr)_auto] items-center gap-3 border-t p-3">
           <div className="flex h-9 overflow-hidden rounded-md border bg-background" role="group" aria-label="选择月份">
             <button
               aria-pressed={selectedMonth === null}
@@ -316,6 +320,17 @@ export function DiscoveryPage() {
               </button>
             ))}
           </div>
+
+          <select
+            aria-label="排序方式"
+            className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+            value={sortKey}
+            onChange={(event) => setSortKey(event.target.value as DiscoverySortKey)}
+          >
+            <option value="premiereAsc">发布时间升序</option>
+            <option value="premiereDesc">发布时间降序</option>
+            <option value="ratingDesc">评分降序</option>
+          </select>
 
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -386,10 +401,14 @@ export function DiscoveryPage() {
                     </Badge>
                   </div>
 
-                  <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                     <CalendarDays className="h-3.5 w-3.5 flex-none" />
                     <span>{formatPremiere(anime)}</span>
                     {anime.season && <span>· {seasonText[anime.season]}</span>}
+                    <span className="inline-flex items-center gap-1">
+                      <Star className="h-3.5 w-3.5 flex-none text-amber-500" />
+                      {formatAnimeRating(anime)}
+                    </span>
                   </div>
 
                   <p className="mt-2 line-clamp-2 min-h-12 text-sm leading-6 text-muted-foreground">
@@ -522,14 +541,10 @@ function getSeasonOption(season: Season): SeasonOption {
   return seasonOptions.find((option) => option.value === season) ?? seasonOptions[0];
 }
 
-/** Merges monthly catalogs, removes duplicates, and orders entries by premiere. */
+/** Merges monthly catalogs and removes duplicates. */
 function mergeAnimeItems(items: Anime[]): Anime[] {
   const uniqueItems = new Map(items.map((anime) => [anime.id, anime]));
-  return Array.from(uniqueItems.values()).sort((left, right) => {
-    const leftDate = left.premiereDate ?? `${left.premiereYear}-${String(left.premiereMonth).padStart(2, "0")}`;
-    const rightDate = right.premiereDate ?? `${right.premiereYear}-${String(right.premiereMonth).padStart(2, "0")}`;
-    return leftDate.localeCompare(rightDate) || left.title.localeCompare(right.title);
-  });
+  return Array.from(uniqueItems.values());
 }
 
 /** Filters a seasonal catalog by month and normalized title text. */
@@ -549,6 +564,36 @@ function filterAnimeItems(items: Anime[], month: number | null, keyword: string)
   });
 }
 
+/** Applies the selected catalog sort order after filtering. */
+function sortAnimeItems(items: Anime[], sortKey: DiscoverySortKey): Anime[] {
+  return [...items].sort((left, right) => {
+    if (sortKey === "ratingDesc") {
+      const leftScore = left.rating?.score;
+      const rightScore = right.rating?.score;
+      if (leftScore !== undefined || rightScore !== undefined) {
+        if (leftScore === undefined) return 1;
+        if (rightScore === undefined) return -1;
+        if (leftScore !== rightScore) return rightScore - leftScore;
+        if ((left.rating?.count ?? 0) !== (right.rating?.count ?? 0)) {
+          return (right.rating?.count ?? 0) - (left.rating?.count ?? 0);
+        }
+      }
+    }
+
+    const direction = sortKey === "premiereDesc" ? -1 : 1;
+    return direction * compareAnimePremiere(left, right) || left.title.localeCompare(right.title, "zh-CN");
+  });
+}
+
+/** Compares two anime entries by the most precise premiere date available. */
+function compareAnimePremiere(left: Anime, right: Anime): number {
+  return getPremiereSortValue(left).localeCompare(getPremiereSortValue(right));
+}
+
+function getPremiereSortValue(anime: Anime): string {
+  return anime.premiereDate ?? `${anime.premiereYear}-${String(anime.premiereMonth).padStart(2, "0")}-01`;
+}
+
 /** Formats the most precise available premiere date for a card. */
 function formatPremiere(anime: Anime): string {
   const dateParts = anime.premiereDate?.match(/^\d{4}-(\d{2})-(\d{2})/);
@@ -556,6 +601,15 @@ function formatPremiere(anime: Anime): string {
     return `${Number(dateParts[1])} 月 ${Number(dateParts[2])} 日首播`;
   }
   return `${anime.premiereYear} 年 ${anime.premiereMonth} 月首播`;
+}
+
+function formatAnimeRating(anime: Anime): string {
+  if (!anime.rating) {
+    return "暂无评分";
+  }
+
+  const countText = anime.rating.count ? ` / ${anime.rating.count} 人` : "";
+  return `${anime.rating.score.toFixed(1)}${countText}`;
 }
 
 /** Returns the active and inactive styles for month filter buttons. */

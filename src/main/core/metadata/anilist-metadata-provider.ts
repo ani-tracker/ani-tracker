@@ -17,6 +17,7 @@ interface AniListResponse {
 interface AniListMedia {
   id: number;
   idMal?: number;
+  averageScore?: number;
   title?: {
     native?: string;
     romaji?: string;
@@ -56,6 +57,7 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider {
           media(type: ANIME, season: $season, seasonYear: $seasonYear, sort: POPULARITY_DESC) {
             id
             idMal
+            averageScore
             title {
               native
               romaji
@@ -128,10 +130,24 @@ function mapAniListMedia(item: AniListMedia, season: Season): Anime {
     season,
     summary: item.description,
     coverUrl: item.coverImage?.large,
+    rating: mapAniListRating(item),
     externalIds: {
       anilist: String(item.id),
       ...(item.idMal ? { mal: String(item.idMal) } : {})
     }
+  };
+}
+
+/** 将 AniList 百分制平均分映射为统一的 10 分制评分。 */
+function mapAniListRating(item: AniListMedia): Anime["rating"] {
+  const averageScore = item.averageScore;
+  if (!averageScore || !Number.isFinite(averageScore) || averageScore <= 0) {
+    return undefined;
+  }
+
+  return {
+    score: Math.round(Math.max(0, Math.min(100, averageScore)) / 10 * 10) / 10,
+    source: "anilist"
   };
 }
 

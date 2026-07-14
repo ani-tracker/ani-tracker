@@ -61,6 +61,11 @@ export const myAnime: MyAnime[] = [
       season: "fall",
       summary: "勇者一行击败魔王后，精灵魔法使重新理解时间与旅途的故事。",
       coverUrl: "",
+      rating: {
+        score: 8.6,
+        count: 10234,
+        source: "bangumi"
+      },
       externalIds: {
         bangumi: "400602",
         anilist: "154587"
@@ -96,6 +101,11 @@ export const myAnime: MyAnime[] = [
       season: "fall",
       summary: "社恐吉他少女和乐队伙伴一起长大的音乐日常。",
       coverUrl: "",
+      rating: {
+        score: 8.4,
+        count: 8912,
+        source: "bangumi"
+      },
       externalIds: {
         bangumi: "328609",
         anilist: "130003"
