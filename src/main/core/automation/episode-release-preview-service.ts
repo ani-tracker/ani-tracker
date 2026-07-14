@@ -1,5 +1,6 @@
 import type { EpisodeReleasePreview, ReleaseSearchResult } from "@shared/contracts";
 import type { Release } from "@shared/domain";
+import { buildAnimeReleaseSearchTerms } from "../../../shared/anime-release-search";
 import type { AppRepository } from "../repositories/app-repository";
 import { rankReleases } from "../releases/release-matcher";
 import { ReleaseSourceService } from "../sources/release-source-service";
@@ -27,7 +28,7 @@ export class EpisodeReleasePreviewService {
 
     const preference = preferences.find((item) => item.episodeId === episodeId);
     const preferredFansubGroupId = preference?.fansubGroupId ?? anime.defaultFansubGroupId;
-    const terms = buildSearchTerms(anime);
+    const terms = buildAnimeReleaseSearchTerms(anime.anime);
     const sourceService = new ReleaseSourceService(sources, fansubs);
     const searchResults = await Promise.all(
       terms.map((term) =>
@@ -65,18 +66,6 @@ export class EpisodeReleasePreviewService {
   }
 }
 
-function buildSearchTerms(anime: Awaited<ReturnType<AppRepository["listMyAnime"]>>[number]): string[] {
-  return unique(
-    [
-      anime.anime.title,
-      anime.anime.originalTitle ?? "",
-      ...anime.anime.aliases.map((alias) => alias.alias)
-    ]
-      .map((term) => term.trim())
-      .filter(Boolean)
-  ).slice(0, 8);
-}
-
 function dedupeReleases(releases: Release[]): Release[] {
   const seen = new Set<string>();
 
@@ -93,8 +82,4 @@ function dedupeReleases(releases: Release[]): Release[] {
 
 function mergeErrors(results: ReleaseSearchResult[]): ReleaseSearchResult["errors"] {
   return results.flatMap((result) => result.errors);
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values)];
 }

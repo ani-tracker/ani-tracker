@@ -1,5 +1,6 @@
 import type { AutomationRunResult, ReleaseSearchResult } from "@shared/contracts";
 import type { AppSettings, AutomationSettings, Episode, MyAnime, Release } from "@shared/domain";
+import { buildAnimeReleaseSearchTerms } from "../../../shared/anime-release-search";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
 import { logger } from "../logger";
 import type { AppRepository } from "../repositories/app-repository";
@@ -193,7 +194,7 @@ async function searchEpisodeReleases(
   episode: Episode,
   fansubGroupId?: string
 ): Promise<ReleaseSearchResult[]> {
-  const terms = buildSearchTerms(anime);
+  const terms = buildAnimeReleaseSearchTerms(anime.anime);
   return Promise.all(
     terms.map((term) =>
       sourceService.search({
@@ -206,18 +207,6 @@ async function searchEpisodeReleases(
       })
     )
   );
-}
-
-function buildSearchTerms(anime: MyAnime): string[] {
-  return unique(
-    [
-      anime.anime.title,
-      anime.anime.originalTitle ?? "",
-      ...anime.anime.aliases.map((alias) => alias.alias)
-    ]
-      .map((term) => term.trim())
-      .filter(Boolean)
-  ).slice(0, 8);
 }
 
 function isActionableEpisode(episode: Episode): boolean {
@@ -265,8 +254,4 @@ function applyFansubFallbackPolicy(
   }
 
   return [];
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values)];
 }

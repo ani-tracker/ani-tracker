@@ -1,5 +1,6 @@
 import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
+import { normalizeReleaseSearchText } from "../../../shared/anime-release-search";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { parseXml, textValue, toArray } from "./xml";
 
@@ -33,8 +34,13 @@ export class RssReleaseSource implements ReleaseSource {
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
     const releases = await this.readFeed();
     const keyword = query.keyword.trim().toLowerCase();
+    const normalizedKeyword = normalizeReleaseSearchText(query.keyword);
     const filtered = keyword
-      ? releases.filter((release) => release.title.toLowerCase().includes(keyword))
+      ? releases.filter((release) => {
+          const title = release.title.toLowerCase();
+          const normalizedTitle = normalizeReleaseSearchText(release.title);
+          return title.includes(keyword) || (normalizedKeyword ? normalizedTitle.includes(normalizedKeyword) : false);
+        })
       : releases;
 
     return filtered.slice(0, query.limit ?? 50);

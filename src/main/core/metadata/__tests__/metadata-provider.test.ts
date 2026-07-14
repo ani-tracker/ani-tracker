@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { Anime } from "@shared/domain";
+import { buildAnimeReleaseSearchTerms, normalizeReleaseSearchText } from "../../../../shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "../../../../shared/anime-title";
 import {
   mergeAnimeMetadataBatches,
@@ -11,6 +12,21 @@ import {
 test("normalizeTitle 忽略常见空白、括号和标点差异", () => {
   assert.equal(normalizeTitle(" 测试番：第 2 季（TV） "), normalizeTitle("测试番 第2季 TV"));
   assert.equal(normalizeTitle("Test_Anime-S2!"), normalizeTitle("test anime s2"));
+});
+
+test("buildAnimeReleaseSearchTerms 扩展引号标题和去标点标题", () => {
+  const terms = buildAnimeReleaseSearchTerms(
+    createAnime({
+      id: "anime-search-1",
+      title: "「きみを愛する気はない」と言った次期公爵様がなぜか溺愛してきます",
+      originalTitle: "Kimi wo Aisuru Ki wa nai",
+      aliases: [createAlias("anime-search-1", "The Duke's Son Claims He Won't Love Me Yet Showers Me with Adoration", "en", 80)]
+    })
+  );
+
+  assert.ok(terms.includes("きみを愛する気はない"));
+  assert.ok(terms.includes("Kimi wo Aisuru Ki wa nai"));
+  assert.ok(terms.some((term) => normalizeReleaseSearchText(term).includes("きみを愛する気はない")));
 });
 
 test("uniqueByNormalizedTitle 按标题、原名和别名去重并合并 external id", () => {

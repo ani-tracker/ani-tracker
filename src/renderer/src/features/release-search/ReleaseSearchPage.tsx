@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { appApi } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
+import { buildAnimeReleaseSearchTerms } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { ReleaseSearchResult } from "@shared/contracts";
 import type { MyAnime, Release } from "@shared/domain";
@@ -270,17 +271,11 @@ export function ReleaseSearchPage() {
 }
 
 function buildSearchTerms(selectedAnime: MyAnime | null, keyword: string): string[] {
-  const terms = [keyword.trim()];
-
   if (selectedAnime) {
-    terms.push(
-      selectedAnime.anime.title,
-      selectedAnime.anime.originalTitle ?? "",
-      ...selectedAnime.anime.aliases.map((alias) => alias.alias)
-    );
+    return buildAnimeReleaseSearchTerms(selectedAnime.anime, keyword ? [keyword] : []);
   }
 
-  return unique(terms.map((term) => term.trim()).filter(Boolean)).slice(0, 8);
+  return keyword.trim() ? [keyword.trim()] : [];
 }
 
 function mergeResults(
