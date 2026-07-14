@@ -1,9 +1,9 @@
-import { app, BrowserWindow } from "electron";
+import { app, BrowserWindow, dialog } from "electron";
 import { join } from "node:path";
 import { DailyReminderService } from "./core/automation/daily-reminder-service";
 import { logger } from "./core/logger";
 import { DesktopIntegrationService } from "./core/platform/desktop-integration-service";
-import { automationScheduler, qbittorrentManagedService, registerIpcHandlers, repository } from "./ipc";
+import { automationScheduler, qbittorrentManagedService, registerIpcHandlers, repository, repositoryRuntime } from "./ipc";
 
 let mainWindow: BrowserWindow | null = null;
 let quitAfterManagedQbittorrentStops = false;
@@ -77,6 +77,7 @@ app.whenReady().then(async () => {
     app.setAppUserModelId("AniTracker");
   }
 
+  await repositoryRuntime.initialize();
   registerIpcHandlers({
     onSettingsUpdated: async (settings) => {
       desktopIntegration.applySettings(settings);
@@ -97,6 +98,11 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     showMainWindow();
   });
+}).catch((error: unknown) => {
+  const message = error instanceof Error ? error.message : String(error);
+  logger.error("Application startup failed", { message });
+  dialog.showErrorBox("Ani Tracker 启动失败", `SQLite 数据库初始化失败：${message}`);
+  app.quit();
 });
 
 app.on("before-quit", (event) => {
@@ -127,6 +133,7 @@ async function stopManagedQbittorrentThenQuit(): Promise<void> {
       message: error instanceof Error ? error.message : String(error)
     });
   } finally {
+    repositoryRuntime.close();
     quitAfterManagedQbittorrentStops = true;
     app.quit();
   }

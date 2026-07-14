@@ -9,15 +9,19 @@
 - 已完成 Electron、React、TypeScript、Vite、Tailwind CSS 桌面应用脚手架。
 - 已接通主进程、preload、renderer 的 IPC bridge。
 - 已定义共享 domain model 和 IPC/service contracts。
-- 已实现 JSON 本地持久化和数据迁移框架。
+- 已完成 SQLite Repository 全量切换。
+  - SQLite 使用 WAL、外键、busy timeout、事务和查询索引。
+  - 首次启动直接创建数据库，并在单事务中写入初始数据。
+  - 二次启动通过应用数据版本标记跳过 seed，保留 SQLite 增量数据。
+  - JSON Repository、旧数据迁移和失败回退路径已移除。
 - 已新增平台默认配置模板：
   - 通过 `DefaultSettingsProvider` 抽象类生成默认配置，由 macOS、Windows 和通用子类提供平台差异。
   - macOS 默认下载目录为系统 Downloads 下的 `Ani Tracker`，用户数据使用 Electron `userData`，缓存使用 `~/Library/Caches/<app>`，日志使用 Electron `logs`。
   - Windows 默认下载目录为系统 Downloads 下的 `Ani Tracker`，用户数据使用 Electron `userData`，缓存优先使用 `%LOCALAPPDATA%\<app>\Cache`，日志使用 Electron `logs`。
   - 已新增 provider 单元测试，覆盖 macOS、Windows、通用模板和工厂分发。
   - 设置页已支持一键恢复当前平台默认配置模板，恢复后会重新应用桌面集成设置并重启自动化调度。
-  - 数据版本已升到 10，旧版本加载时直接切到新的平台默认设置模板。
-- 已预留未来 SQLite schema：`src/main/core/storage/schema.sql`。
+  - 新建 SQLite 数据库直接使用当前平台默认设置模板。
+- 已启用 SQLite schema：`src/main/core/storage/schema.sql`。
 - 已完成 Home、我的追番、新番发现、资源搜索、下载、来源、设置、通知中心等页面。
 
 ### 新番发现和元数据
@@ -63,7 +67,7 @@
   - 主标题中文优先。
   - 副标题优先保留日文原名或其他原语言标题。
   - 编辑表单仍保留标题、原名、搜索别名等原始数据入口。
-- 支持 Episode 和 EpisodePreference JSON 持久化。
+- 支持 Episode 和 EpisodePreference SQLite 持久化。
 - 支持单集规则：
   - 添加下一集。
   - 编辑单集状态。
@@ -86,7 +90,7 @@
   - 解析 Episode 链接、Download torrent 地址、magnet、发布时间和体积。
   - 没有直接 torrent 链接时按 Episode id 兜底生成下载地址。
   - 对请求设置超时，避免站点不可达时长期阻塞。
-  - 新增默认禁用来源 `mikan-site`，并通过数据版本迁移补进已有 JSON 数据。
+  - 新增默认禁用来源 `mikan-site`，初始化与来源查询会自动补齐该来源。
 - 已实现 AniBT site adapter：
   - 使用 `anibt.net/api/bgm/search` 将关键词匹配到番剧条目。
   - 优先读取 `anibt.net/rss/anime.xml` 的番剧 RSS，必要时回退到 `anibt.net/rss/magnets.xml` 最新资源 RSS。
@@ -97,7 +101,7 @@
   - API 返回 HTML 或不可用时使用站点搜索 HTML 解析兜底。
   - 解析标题、magnet、torrent、infoHash、发布时间、体积和 seeders。
   - 默认来源地址可配置，便于 ACGNX 域名或 API 路径变化后直接调整。
-- 已新增默认禁用来源 `anibt` 和 `acgnx`，数据版本已升到 12，旧 JSON 数据加载时会自动补齐这两个来源。
+- 已新增默认禁用来源 `anibt` 和 `acgnx`，初始化与来源查询会自动补齐这两个来源。
 - 已新增 Mikan/DMHY/AniBT/ACGNX 解析样例测试：
   - 覆盖 DMHY 资源行中的标题、magnet、torrent、发布时间、体积和媒体字段解析。
   - 覆盖 Mikan 搜索结果中的 Episode、Download torrent、magnet、体积和兜底 torrent 地址生成。
@@ -253,10 +257,8 @@ git diff --check
 - 更多站点专用 source adapter，例如 Nyaa、ACG.RIP 等。
 - 真实内置 BT 核心；当前 `EmbeddedTorrentEngine` 仍是占位实现。
 - qBittorrent-nox 平台二进制还缺 macOS arm64、Windows x64 和 Linux x64；当前已内置 macOS x64。
-- SQLite repository 替换 JSON repository。
-- 目前是json保存，可以优先接入SQLite，来保存数据。下载源目前只接入了部分。
 - 更完整的新番元数据聚合策略，例如冲突消解、增量刷新、字段来源展示。
 - madVR 播放链路或外部 renderer 集成。
 
 ## 下一步建议
-3. 使用 SQLite repository 替换 JSON repository，并保留现有数据迁移路径。
+3. 为后续 SQLite schema 变更补充分版本 migration 脚本。

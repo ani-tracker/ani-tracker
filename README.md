@@ -2,7 +2,7 @@
 
 Ani Tracker 是一个本地桌面追番工具，围绕“新番发现、追番管理、资源搜索、BT 下载、媒体扫描、播放器调用、自动提醒”构建完整追番闭环。
 
-项目优先面向本地使用场景：数据保存在本机，下载引擎可连接外部 qBittorrent，也可使用随应用托管的 qBittorrent-nox。当前持久化使用 JSON 文件，SQLite schema 已预留。
+项目优先面向本地使用场景：数据通过 SQLite 保存在本机，下载引擎可连接外部 qBittorrent，也可使用随应用托管的 qBittorrent-nox。
 
 ## 核心能力
 
@@ -71,7 +71,7 @@ Renderer UI
 - Tailwind CSS
 - shadcn/ui 风格自定义基础组件
 - pnpm
-- JSON 本地持久化，后续迁移 SQLite
+- SQLite 本地持久化（WAL、事务与查询索引）
 - qBittorrent Web API / qBittorrent-nox
 - ffprobe
 
@@ -83,7 +83,7 @@ src/main/core/sources         RSS、Torznab、站点资源搜索适配器
 src/main/core/downloads       qBittorrent 兼容引擎和下载任务管理
 src/main/core/automation      自动扫描、自动下载和候选资源匹配
 src/main/core/media           媒体文件扫描和 ffprobe 探测
-src/main/core/storage         JSON 持久化、seed data、SQLite schema
+src/main/core/storage         seed data 与 SQLite schema
 src/preload                   Electron preload bridge
 src/renderer/src              React UI
 src/shared                    主进程和渲染进程共享类型、契约和领域模型
@@ -122,10 +122,9 @@ pnpm.cmd build
 
 1. 真正的内置 BT 核心。
 2. qBittorrent 随应用托管启动体验。
-3. SQLite 仓库替换 JSON 仓库。
-4. 更多新番元数据源和站点专用适配器。
-5. madVR 相关播放链路。
-6. 托盘、开机启动和后台运行策略的跨平台细节。
+3. 更多新番元数据源和站点专用适配器。
+4. madVR 相关播放链路。
+5. 托盘、开机启动和后台运行策略的跨平台细节。
 
 ## 备注
 

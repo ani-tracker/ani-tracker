@@ -14,442 +14,51 @@ import type {
   ReleaseSourceConfig
 } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
-import { logger } from "../logger";
-import { mergeAnimeMetadataBatches } from "../metadata/metadata-provider";
-import { sourceConfigs } from "../mock-data";
-import { createDefaultSettingsProvider } from "../platform/default-settings-provider";
-import type { AppDataStore } from "../storage/app-data-store";
 
-export class AppRepository {
-  constructor(private readonly store: AppDataStore) {}
-
-  async getDashboard(): Promise<DashboardData> {
-    const data = await this.store.getData();
-    const dailyReminder = buildDailyReminderSummary(data);
-
-    return {
-      ...data.dashboard,
-      dailyReminder,
-      todayEpisodes: dailyReminder.items.map(toEpisodeSummary),
-      activeDownloads: data.downloads,
-      recentCompleted: sortMediaFiles(data.mediaFiles).slice(0, 10),
-      sourceHealth: data.dashboard.sourceHealth.map((source) => {
-        const config = data.sources.find((item) => item.id === source.sourceId);
-        return {
-          ...source,
-          status: config?.enabled === false ? "warning" : source.status
-        };
-      })
-    };
-  }
-
-  async listMyAnime(): Promise<MyAnime[]> {
-    return sortMyAnime((await this.store.getData()).myAnime);
-  }
-
-  async listAnimeCatalog(): Promise<Anime[]> {
-    return sortAnimeCatalog((await this.store.getData()).animeCatalog);
-  }
-
-  async listNotifications(): Promise<NotificationRecord[]> {
-    return sortNotifications((await this.store.getData()).notifications);
-  }
-
-  async getUnreadNotificationCount(): Promise<number> {
-    return (await this.store.getData()).notifications.filter((item) => !item.readAt).length;
-  }
-
-  async addNotifications(records: NotificationRecord[]): Promise<NotificationRecord[]> {
-    if (!records.length) {
-      return this.listNotifications();
-    }
-
-    const data = await this.store.update((draft) => {
-      draft.notifications.unshift(...records);
-      draft.notifications = sortNotifications(draft.notifications).slice(0, 200);
-    });
-
-    return sortNotifications(data.notifications);
-  }
-
-  async markNotificationRead(notificationId: string): Promise<NotificationRecord[]> {
-    const data = await this.store.update((draft) => {
-      draft.notifications = draft.notifications.map((item) =>
-        item.id === notificationId
-          ? {
-              ...item,
-              readAt: item.readAt ?? new Date().toISOString()
-            }
-          : item
-      );
-    });
-
-    return sortNotifications(data.notifications);
-  }
-
-  async markAllNotificationsRead(): Promise<NotificationRecord[]> {
-    const now = new Date().toISOString();
-    const data = await this.store.update((draft) => {
-      draft.notifications = draft.notifications.map((item) => ({
-        ...item,
-        readAt: item.readAt ?? now
-      }));
-    });
-
-    return sortNotifications(data.notifications);
-  }
-
-  async clearNotifications(): Promise<NotificationRecord[]> {
-    const data = await this.store.update((draft) => {
-      draft.notifications = [];
-    });
-
-    return data.notifications;
-  }
-
-  async searchAnimeCatalog(keyword: string): Promise<Anime[]> {
-    const normalized = keyword.trim().toLowerCase();
-    const items = await this.listAnimeCatalog();
-    if (!normalized) {
-      return items;
-    }
-
-    return items.filter((anime) =>
-      [anime.title, anime.originalTitle, ...anime.aliases.map((alias) => alias.alias)]
-        .filter(Boolean)
-        .some((value) => value!.toLowerCase().includes(normalized))
-    );
-  }
-
-  async listAnimeCatalogByMonth(year: number, month: number): Promise<Anime[]> {
-    return sortAnimeCatalog(
-      (await this.store.getData()).animeCatalog.filter(
-        (anime) => anime.premiereYear === year && anime.premiereMonth === month
-      )
-    );
-  }
-
-  async upsertAnimeCatalog(items: Anime[]): Promise<{ items: Anime[]; addedCount: number; existingCount: number }> {
-    let addedCount = 0;
-    let existingCount = 0;
-    const data = await this.store.update((draft) => {
-      for (const item of items) {
-        const index = draft.animeCatalog.findIndex((anime) => isSameAnime(anime, item));
-        if (index >= 0) {
-          draft.animeCatalog[index] = {
-            ...draft.animeCatalog[index],
-            ...item,
-            aliases: mergeAliases(draft.animeCatalog[index].aliases, item.aliases),
-            externalIds: {
-              ...draft.animeCatalog[index].externalIds,
-              ...item.externalIds
-            }
-          };
-          existingCount += 1;
-          continue;
-        }
-
-        draft.animeCatalog.push(item);
-        addedCount += 1;
-      }
-
-      const beforeDedupeCount = draft.animeCatalog.length;
-      draft.animeCatalog = dedupeAnimeCatalog(draft.animeCatalog);
-      if (draft.animeCatalog.length !== beforeDedupeCount) {
-        logger.info("Anime catalog duplicates merged", {
-          beforeCount: beforeDedupeCount,
-          afterCount: draft.animeCatalog.length
-        });
-      }
-    });
-
-    return {
-      items: sortAnimeCatalog(data.animeCatalog),
-      addedCount,
-      existingCount
-    };
-  }
-
-  async clearAnimeCatalog(): Promise<void> {
-    await this.store.update((draft) => {
-      const clearedCount = draft.animeCatalog.length;
-      draft.animeCatalog = [];
-      logger.info("Anime catalog cache cleared", { clearedCount });
-    });
-  }
-
-  async listDownloads(): Promise<DownloadTask[]> {
-    return (await this.store.getData()).downloads;
-  }
-
-  async listEpisodes(animeId: string): Promise<Episode[]> {
-    return sortEpisodes((await this.store.getData()).episodes.filter((episode) => episode.animeId === animeId));
-  }
-
-  async upsertEpisode(episode: Episode): Promise<Episode[]> {
-    const data = await this.store.update((draft) => {
-      const index = draft.episodes.findIndex((item) => item.id === episode.id);
-      if (index >= 0) {
-        draft.episodes[index] = episode;
-        return;
-      }
-
-      draft.episodes.push(episode);
-    });
-
-    return sortEpisodes(data.episodes.filter((item) => item.animeId === episode.animeId));
-  }
-
-  async listEpisodePreferences(animeId: string): Promise<EpisodePreference[]> {
-    return (await this.store.getData()).episodePreferences.filter((preference) => preference.animeId === animeId);
-  }
-
-  async upsertEpisodePreference(preference: EpisodePreference): Promise<EpisodePreference[]> {
-    const data = await this.store.update((draft) => {
-      const index = draft.episodePreferences.findIndex((item) => item.episodeId === preference.episodeId);
-      if (index >= 0) {
-        draft.episodePreferences[index] = preference;
-        return;
-      }
-
-      draft.episodePreferences.push(preference);
-    });
-
-    return data.episodePreferences.filter((item) => item.animeId === preference.animeId);
-  }
-
-  async removeEpisodePreference(episodeId: string): Promise<EpisodePreference[]> {
-    let animeId = "";
-    const data = await this.store.update((draft) => {
-      const preference = draft.episodePreferences.find((item) => item.episodeId === episodeId);
-      animeId = preference?.animeId ?? draft.episodes.find((episode) => episode.id === episodeId)?.animeId ?? "";
-      draft.episodePreferences = draft.episodePreferences.filter((item) => item.episodeId !== episodeId);
-    });
-
-    return animeId ? data.episodePreferences.filter((item) => item.animeId === animeId) : data.episodePreferences;
-  }
-
-  async getDownloadTask(taskId: string): Promise<DownloadTask | undefined> {
-    return (await this.store.getData()).downloads.find((task) => task.id === taskId || task.torrentHash === taskId);
-  }
-
-  async upsertDownloadTask(task: DownloadTask): Promise<DownloadTask[]> {
-    const data = await this.store.update((draft) => {
-      const index = draft.downloads.findIndex((item) => item.id === task.id);
-      if (index >= 0) {
-        draft.downloads[index] = task;
-        return;
-      }
-
-      draft.downloads.unshift(task);
-      draft.dashboard.activeDownloads = draft.downloads;
-    });
-
-    return data.downloads;
-  }
-
-  async mergeDownloadTasksFromEngine(tasks: DownloadTask[]): Promise<DownloadTask[]> {
-    const data = await this.store.update((draft) => {
-      const merged = tasks.map((task) => {
-        const existing = findExistingDownloadTask(draft.downloads, task);
-        return existing
-          ? {
-              ...task,
-              releaseId: existing.releaseId,
-              animeId: existing.animeId,
-              episodeId: existing.episodeId,
-              animeTitle: existing.animeTitle,
-              episodeNo: existing.episodeNo,
-              fansubGroupId: existing.fansubGroupId,
-              fansubName: existing.fansubName,
-              correlationTag: existing.correlationTag ?? task.correlationTag,
-              createdAt: existing.createdAt,
-              completedAt: task.completedAt ?? existing.completedAt
-            }
-          : task;
-      });
-
-      const inactiveLocalTasks = draft.downloads.filter((task) => !isEngineTaskCovered(merged, task));
-      draft.downloads = [...merged, ...inactiveLocalTasks];
-      draft.dashboard.activeDownloads = draft.downloads.filter((task) => !["completed", "seeding"].includes(task.status));
-      syncEpisodeStatusesFromDownloads(draft);
-    });
-
-    return data.downloads;
-  }
-
-  async updateDownloadStatus(taskId: string, status: DownloadStatus): Promise<DownloadTask[]> {
-    const data = await this.store.update((draft) => {
-      draft.downloads = draft.downloads.map((task) =>
-        task.id === taskId || task.torrentHash === taskId
-          ? {
-              ...task,
-              status
-            }
-          : task
-      );
-      draft.dashboard.activeDownloads = draft.downloads.filter((task) => !["completed", "seeding"].includes(task.status));
-    });
-
-    return data.downloads;
-  }
-
-  async removeDownloadTask(taskId: string): Promise<DownloadTask[]> {
-    const data = await this.store.update((draft) => {
-      draft.downloads = draft.downloads.filter((task) => task.id !== taskId && task.torrentHash !== taskId);
-      draft.dashboard.activeDownloads = draft.downloads.filter((task) => !["completed", "seeding"].includes(task.status));
-      syncEpisodeStatusesFromDownloads(draft);
-    });
-
-    return data.downloads;
-  }
-
-  async listMediaFiles(): Promise<MediaFile[]> {
-    return sortMediaFiles((await this.store.getData()).mediaFiles);
-  }
-
-  async upsertMediaFiles(mediaFiles: MediaFile[]): Promise<MediaFile[]> {
-    const data = await this.store.update((draft) => {
-      for (const mediaFile of mediaFiles) {
-        const index = draft.mediaFiles.findIndex(
-          (item) => item.id === mediaFile.id || item.filePath === mediaFile.filePath
-        );
-
-        if (index >= 0) {
-          draft.mediaFiles[index] = mediaFile;
-          continue;
-        }
-
-        draft.mediaFiles.unshift(mediaFile);
-      }
-
-      draft.dashboard.recentCompleted = sortMediaFiles(draft.mediaFiles).slice(0, 10);
-    });
-
-    return sortMediaFiles(data.mediaFiles);
-  }
-
-  async listFansubs(): Promise<FansubGroup[]> {
-    return (await this.store.getData()).fansubGroups;
-  }
-
-  async listSources(): Promise<ReleaseSourceConfig[]> {
-    return this.ensureDefaultSources();
-  }
-
-  async getSettings(): Promise<AppSettings> {
-    return (await this.store.getData()).settings;
-  }
-
-  async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
-    const data = await this.store.update((draft) => {
-      draft.settings = mergeSettings(draft.settings, patch);
-    });
-
-    return data.settings;
-  }
-
-  async resetSettingsToDefaults(): Promise<AppSettings> {
-    const settings = createDefaultSettingsProvider().getSettings();
-    const data = await this.store.update((draft) => {
-      draft.settings = settings;
-    });
-
-    logger.info("App settings reset to current platform defaults", {
-      defaultDownloadDir: settings.download.defaultDownloadDir,
-      userDataDir: settings.storage.userDataDir
-    });
-
-    return data.settings;
-  }
-
-  async updateSourceEnabled(sourceId: string, enabled: boolean): Promise<ReleaseSourceConfig[]> {
-    await this.ensureDefaultSources();
-    const data = await this.store.update((draft) => {
-      draft.sources = draft.sources.map((source) => (source.id === sourceId ? { ...source, enabled } : source));
-    });
-
-    return data.sources;
-  }
-
-  async upsertSource(source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]> {
-    await this.ensureDefaultSources();
-    const data = await this.store.update((draft) => {
-      const index = draft.sources.findIndex((item) => item.id === source.id);
-      if (index >= 0) {
-        draft.sources[index] = source;
-        return;
-      }
-
-      draft.sources.unshift(source);
-    });
-
-    return data.sources;
-  }
-
-  private async ensureDefaultSources(): Promise<ReleaseSourceConfig[]> {
-    const data = await this.store.getData();
-    const missingSources = sourceConfigs.filter((source) => !data.sources.some((item) => item.id === source.id));
-    if (!missingSources.length) {
-      return data.sources;
-    }
-
-    const updated = await this.store.update((draft) => {
-      draft.sources.push(...missingSources);
-    });
-
-    logger.info("Default release sources added to existing app data", {
-      sourceIds: missingSources.map((source) => source.id)
-    });
-
-    return updated.sources;
-  }
-
-  async upsertMyAnime(item: MyAnime): Promise<MyAnime[]> {
-    const data = await this.store.update((draft) => {
-      const index = draft.myAnime.findIndex((anime) => anime.id === item.id);
-
-      if (index >= 0) {
-        draft.myAnime[index] = {
-          ...item,
-          updatedAt: new Date().toISOString()
-        };
-        return;
-      }
-
-      draft.myAnime.push({
-        ...item,
-        addedAt: item.addedAt || new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      });
-    });
-
-    return sortMyAnime(data.myAnime);
-  }
-
-  async removeMyAnime(itemId: string): Promise<MyAnime[]> {
-    const data = await this.store.update((draft) => {
-      const removing = draft.myAnime.find((item) => item.id === itemId);
-      draft.myAnime = draft.myAnime.filter((item) => item.id !== itemId);
-      if (removing) {
-        draft.episodes = draft.episodes.filter((episode) => episode.animeId !== removing.anime.id);
-        draft.episodePreferences = draft.episodePreferences.filter(
-          (preference) => preference.animeId !== removing.anime.id
-        );
-      }
-    });
-
-    return sortMyAnime(data.myAnime);
-  }
-
-  async replaceData(data: AppDataFile): Promise<AppDataFile> {
-    return this.store.update((draft) => {
-      Object.assign(draft, data);
-    });
-  }
+/** 定义主进程业务服务使用的应用数据访问能力。 */
+export interface AppRepository {
+  getDashboard(): Promise<DashboardData>;
+  listMyAnime(): Promise<MyAnime[]>;
+  listAnimeCatalog(): Promise<Anime[]>;
+  listNotifications(): Promise<NotificationRecord[]>;
+  getUnreadNotificationCount(): Promise<number>;
+  addNotifications(records: NotificationRecord[]): Promise<NotificationRecord[]>;
+  markNotificationRead(notificationId: string): Promise<NotificationRecord[]>;
+  markAllNotificationsRead(): Promise<NotificationRecord[]>;
+  clearNotifications(): Promise<NotificationRecord[]>;
+  searchAnimeCatalog(keyword: string): Promise<Anime[]>;
+  listAnimeCatalogByMonth(year: number, month: number): Promise<Anime[]>;
+  upsertAnimeCatalog(items: Anime[]): Promise<{ items: Anime[]; addedCount: number; existingCount: number }>;
+  clearAnimeCatalog(): Promise<void>;
+  listDownloads(): Promise<DownloadTask[]>;
+  listEpisodes(animeId: string): Promise<Episode[]>;
+  upsertEpisode(episode: Episode): Promise<Episode[]>;
+  listEpisodePreferences(animeId: string): Promise<EpisodePreference[]>;
+  upsertEpisodePreference(preference: EpisodePreference): Promise<EpisodePreference[]>;
+  removeEpisodePreference(episodeId: string): Promise<EpisodePreference[]>;
+  getDownloadTask(taskId: string): Promise<DownloadTask | undefined>;
+  upsertDownloadTask(task: DownloadTask): Promise<DownloadTask[]>;
+  mergeDownloadTasksFromEngine(tasks: DownloadTask[]): Promise<DownloadTask[]>;
+  updateDownloadStatus(taskId: string, status: DownloadStatus): Promise<DownloadTask[]>;
+  removeDownloadTask(taskId: string): Promise<DownloadTask[]>;
+  listMediaFiles(): Promise<MediaFile[]>;
+  upsertMediaFiles(mediaFiles: MediaFile[]): Promise<MediaFile[]>;
+  listFansubs(): Promise<FansubGroup[]>;
+  listSources(): Promise<ReleaseSourceConfig[]>;
+  getSettings(): Promise<AppSettings>;
+  updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
+  resetSettingsToDefaults(): Promise<AppSettings>;
+  updateSourceEnabled(sourceId: string, enabled: boolean): Promise<ReleaseSourceConfig[]>;
+  upsertSource(source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]>;
+  upsertMyAnime(item: MyAnime): Promise<MyAnime[]>;
+  removeMyAnime(itemId: string): Promise<MyAnime[]>;
 }
 
-function findExistingDownloadTask(existingTasks: DownloadTask[], incoming: DownloadTask): DownloadTask | undefined {
+/** 按稳定标识合并下载引擎任务与本地关联信息。 */
+export function findExistingDownloadTask(
+  existingTasks: DownloadTask[],
+  incoming: DownloadTask
+): DownloadTask | undefined {
   return existingTasks.find((task) => {
     if (incoming.correlationTag && task.correlationTag === incoming.correlationTag) {
       return true;
@@ -467,7 +76,8 @@ function findExistingDownloadTask(existingTasks: DownloadTask[], incoming: Downl
   });
 }
 
-function isEngineTaskCovered(engineTasks: DownloadTask[], existing: DownloadTask): boolean {
+/** 判断本地任务是否仍被下载引擎结果覆盖。 */
+export function isEngineTaskCovered(engineTasks: DownloadTask[], existing: DownloadTask): boolean {
   return engineTasks.some((task) => {
     if (existing.correlationTag && task.correlationTag === existing.correlationTag) {
       return true;
@@ -482,7 +92,7 @@ function isEngineTaskCovered(engineTasks: DownloadTask[], existing: DownloadTask
 }
 
 /** 下载引擎刷新后同步关联单集的生命周期状态。 */
-function syncEpisodeStatusesFromDownloads(data: AppDataFile): void {
+export function syncEpisodeStatusesFromDownloads(data: AppDataFile): void {
   for (const episode of data.episodes) {
     if (episode.status === "watched") {
       continue;
@@ -515,7 +125,8 @@ function isActiveDownloadStatus(status: DownloadStatus): boolean {
   return ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(status);
 }
 
-function mergeSettings(current: AppSettings, patch: Partial<AppSettings>): AppSettings {
+/** 深度合并设置分组，避免局部更新覆盖同组其他字段。 */
+export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>): AppSettings {
   return {
     ...current,
     ...patch,
@@ -551,7 +162,8 @@ function mergeSettings(current: AppSettings, patch: Partial<AppSettings>): AppSe
   };
 }
 
-function buildDailyReminderSummary(data: AppDataFile): DashboardData["dailyReminder"] {
+/** 根据单集与下载关联生成当日追番摘要。 */
+export function buildDailyReminderSummary(data: AppDataFile): DashboardData["dailyReminder"] {
   const todayKey = toLocalDateKey(new Date());
   const followedByAnimeId = new Map(data.myAnime.map((item) => [item.anime.id, item]));
   const fansubById = new Map(data.fansubGroups.map((item) => [item.id, item]));
@@ -612,7 +224,8 @@ function resolveReminderStatus(episode: Episode, download?: DownloadTask): Daily
   return episode.status;
 }
 
-function toEpisodeSummary(item: DailyReminderItem): DashboardData["todayEpisodes"][number] {
+/** 将每日提醒条目转换为首页单集摘要。 */
+export function toEpisodeSummary(item: DailyReminderItem): DashboardData["todayEpisodes"][number] {
   return {
     id: item.id,
     animeTitle: item.animeTitle,
@@ -649,7 +262,8 @@ function padDatePart(value: number): string {
   return value.toString().padStart(2, "0");
 }
 
-function sortMediaFiles(mediaFiles: MediaFile[]): MediaFile[] {
+/** 按最近探测或下载时间倒序排列媒体文件。 */
+export function sortMediaFiles(mediaFiles: MediaFile[]): MediaFile[] {
   return [...mediaFiles].sort((a, b) => {
     const left = a.probedAt ?? a.downloadedAt ?? "";
     const right = b.probedAt ?? b.downloadedAt ?? "";
@@ -657,11 +271,13 @@ function sortMediaFiles(mediaFiles: MediaFile[]): MediaFile[] {
   });
 }
 
-function sortNotifications(notifications: NotificationRecord[]): NotificationRecord[] {
+/** 按创建时间倒序排列通知。 */
+export function sortNotifications(notifications: NotificationRecord[]): NotificationRecord[] {
   return [...notifications].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
-function sortAnimeCatalog(items: Anime[]): Anime[] {
+/** 按季度和标题排列番剧目录。 */
+export function sortAnimeCatalog(items: Anime[]): Anime[] {
   return [...items].sort((a, b) => {
     if (a.premiereYear !== b.premiereYear) {
       return b.premiereYear - a.premiereYear;
@@ -673,15 +289,13 @@ function sortAnimeCatalog(items: Anime[]): Anime[] {
   });
 }
 
-function sortEpisodes(episodes: Episode[]): Episode[] {
+/** 按集数升序排列单集。 */
+export function sortEpisodes(episodes: Episode[]): Episode[] {
   return [...episodes].sort((a, b) => a.episodeNo - b.episodeNo);
 }
 
-function dedupeAnimeCatalog(items: Anime[]): Anime[] {
-  return mergeAnimeMetadataBatches([{ source: "catalog", items }]);
-}
-
-function isSameAnime(left: Anime, right: Anime): boolean {
+/** 根据 ID、外部 ID 或标题判断番剧是否相同。 */
+export function isSameAnime(left: Anime, right: Anime): boolean {
   if (left.id === right.id) {
     return true;
   }
@@ -696,7 +310,8 @@ function isSameAnime(left: Anime, right: Anime): boolean {
   );
 }
 
-function mergeAliases(left: Anime["aliases"], right: Anime["aliases"]): Anime["aliases"] {
+/** 合并番剧别名并忽略大小写重复项。 */
+export function mergeAliases(left: Anime["aliases"], right: Anime["aliases"]): Anime["aliases"] {
   const aliases = [...left];
   for (const alias of right) {
     if (!aliases.some((item) => item.alias.toLowerCase() === alias.alias.toLowerCase())) {
@@ -707,7 +322,8 @@ function mergeAliases(left: Anime["aliases"], right: Anime["aliases"]): Anime["a
   return aliases;
 }
 
-function sortMyAnime(items: MyAnime[]): MyAnime[] {
+/** 按季度和标题排列追番列表。 */
+export function sortMyAnime(items: MyAnime[]): MyAnime[] {
   return [...items].sort((a, b) => {
     if (a.anime.premiereYear !== b.anime.premiereYear) {
       return b.anime.premiereYear - a.anime.premiereYear;

@@ -1,3 +1,6 @@
+export const SQLITE_SCHEMA_VERSION = 1;
+
+export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
 
 CREATE TABLE IF NOT EXISTS app_meta (
@@ -44,8 +47,7 @@ CREATE TABLE IF NOT EXISTS anime_alias (
   priority INTEGER NOT NULL DEFAULT 0
 );
 
-CREATE INDEX IF NOT EXISTS idx_anime_alias_alias
-  ON anime_alias (alias);
+CREATE INDEX IF NOT EXISTS idx_anime_alias_alias ON anime_alias (alias);
 
 CREATE TABLE IF NOT EXISTS fansub_group (
   id TEXT PRIMARY KEY,
@@ -70,8 +72,7 @@ CREATE TABLE IF NOT EXISTS my_anime (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_my_anime_status
-  ON my_anime (status);
+CREATE INDEX IF NOT EXISTS idx_my_anime_status ON my_anime (status);
 
 CREATE TABLE IF NOT EXISTS episode (
   id TEXT PRIMARY KEY,
@@ -157,14 +158,9 @@ CREATE TABLE IF NOT EXISTS download_task (
   updated_at TEXT NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_download_task_status
-  ON download_task (status);
-
-CREATE INDEX IF NOT EXISTS idx_download_task_torrent_hash
-  ON download_task (torrent_hash);
-
-CREATE INDEX IF NOT EXISTS idx_download_task_correlation_tag
-  ON download_task (correlation_tag);
+CREATE INDEX IF NOT EXISTS idx_download_task_status ON download_task (status);
+CREATE INDEX IF NOT EXISTS idx_download_task_torrent_hash ON download_task (torrent_hash);
+CREATE INDEX IF NOT EXISTS idx_download_task_correlation_tag ON download_task (correlation_tag);
 
 CREATE TABLE IF NOT EXISTS torrent_file (
   id TEXT PRIMARY KEY,
@@ -199,8 +195,7 @@ CREATE TABLE IF NOT EXISTS media_file (
   probed_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_media_file_anime_episode
-  ON media_file (anime_id, episode_id);
+CREATE INDEX IF NOT EXISTS idx_media_file_anime_episode ON media_file (anime_id, episode_id);
 
 CREATE TABLE IF NOT EXISTS notification (
   id TEXT PRIMARY KEY,
@@ -215,8 +210,6 @@ CREATE TABLE IF NOT EXISTS notification (
   read_at TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_notification_created_at
-  ON notification (created_at DESC);
-
-CREATE INDEX IF NOT EXISTS idx_notification_unread
-  ON notification (read_at, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_created_at ON notification (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_notification_unread ON notification (read_at, created_at DESC);
+`;

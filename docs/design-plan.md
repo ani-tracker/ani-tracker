@@ -10,7 +10,7 @@ The first platform target is Windows. macOS should remain compatible at the inte
 
 - Desktop shell: Electron
 - UI: React, TypeScript, Vite, shadcn/ui-style components, Tailwind CSS
-- Local data: SQLite in a later implementation phase
+- Local data: SQLite repository with WAL and transactional writes
 - Download engine: bundled qBittorrent-nox by default
 - Compatibility: optional external qBittorrent Web API adapter
 - Media probing: ffprobe or MediaInfo
@@ -120,7 +120,8 @@ The current repository contains:
 - Electron main process
 - Preload bridge
 - Shared domain and service contracts
-- JSON-backed persistent dashboard and application data
+- SQLite-only application repository with WAL, transactions, schema versioning, and indexes
+- Fresh databases are initialized once from the application seed data
 - React UI shell
 - Home, My Anime, Discovery, Downloads, Sources, and Settings pages
 - My Anime CRUD and per-episode fansub overrides
@@ -130,7 +131,7 @@ The current repository contains:
 - qBittorrent state mapping helper
 - qBittorrent Web API adapter with progress, speed, ETA, task actions, and file priority selection
 - DMHY / 动漫花园, Mikan / 蜜柑计划, AniBT, and ACGNX site adapters
-- Future SQLite schema at `src/main/core/storage/schema.sql`
+- Active SQLite schema at `src/main/core/storage/schema.sql`
 - Download engine adapters and monitor service
 - Release title parser and automatic matching score
 - Player launch and reveal-file integration

@@ -1,7 +1,7 @@
 import { ipcMain, shell } from "electron";
 import type { AppSettings, Episode, EpisodePreference, MyAnime, ReleaseSourceConfig } from "@shared/domain";
-import { AppRepository } from "./core/repositories/app-repository";
-import { AppDataStore } from "./core/storage/app-data-store";
+import type { AppRepository } from "./core/repositories/app-repository";
+import { createRepositoryRuntime } from "./core/repositories/repository-runtime";
 import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
 import { ReleaseSourceService } from "./core/sources/release-source-service";
 import type { AddDownloadUrlInput, AddReleaseDownloadInput, AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
@@ -17,7 +17,8 @@ import { QbittorrentManagedService } from "./core/downloads/qbittorrent-managed-
 import { logger } from "./core/logger";
 import { resolveAnimeDownloadPath } from "./core/downloads/download-path-resolver";
 
-export const repository = new AppRepository(new AppDataStore());
+export const repositoryRuntime = createRepositoryRuntime();
+export const repository = repositoryRuntime.repository;
 export const qbittorrentManagedService = new QbittorrentManagedService();
 export const automationScheduler = new AutomationScheduler(repository, undefined, {
   getQbittorrentBaseUrl: (settings) => qbittorrentManagedService.getRuntimeBaseUrl(settings)

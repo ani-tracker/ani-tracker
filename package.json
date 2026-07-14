@@ -6,17 +6,19 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
+    "postinstall": "electron-rebuild -f -w better-sqlite3",
     "dev": "electron-vite dev",
     "build": "electron-vite build && npm run prepare:qbittorrent",
     "preview": "electron-vite preview",
     "prepare:qbittorrent": "node scripts/prepare-qbittorrent-resources.mjs",
     "verify:qbittorrent": "node scripts/prepare-qbittorrent-resources.mjs --required",
     "typecheck": "tsc -p tsconfig.typecheck.node.json --pretty false && tsc -p tsconfig.typecheck.web.json --pretty false",
-    "test:parsers": "tsc -p tsconfig.test.node.json --pretty false && node -e \"require('node:fs').writeFileSync('out/test-node/package.json', '{\\\"type\\\":\\\"commonjs\\\"}\\n')\" && node --test out/test-node/main/core/*/__tests__/*.js"
+    "test:parsers": "node scripts/run-node-tests.mjs"
   },
   "dependencies": {
     "@tanstack/react-query": "^5.59.16",
     "@tanstack/react-table": "^8.20.5",
+    "better-sqlite3": "11.10.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
     "fast-xml-parser": "^4.5.0",
@@ -27,6 +29,8 @@
     "zustand": "^5.0.1"
   },
   "devDependencies": {
+    "@electron/rebuild": "4.0.1",
+    "@types/better-sqlite3": "7.6.13",
     "@types/node": "^22.7.5",
     "@types/react": "^18.3.11",
     "@types/react-dom": "^18.3.1",
@@ -39,13 +43,5 @@
     "tailwindcss": "^3.4.13",
     "typescript": "^5.6.3",
     "vite": "^5.4.8"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "electron"
-    ],
-    "ignoredBuiltDependencies": [
-      "esbuild"
-    ]
   }
 }
