@@ -7,13 +7,19 @@ import {
   type MonthlyAnimeMetadataProvider
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
+import { logger } from "../logger";
 
 const BANGUMI_API_BASE_URL = "https://api.bgm.tv/";
 const BANGUMI_ANIME_SUBJECT_TYPE = 2;
+const BANGUMI_PAGE_LIMIT = 50;
+const BANGUMI_MAX_MONTHLY_ITEMS = 300;
 const BANGUMI_DETAIL_CONCURRENCY = 6;
 
 interface BangumiPagedSubject {
   data?: BangumiSubject[];
+  total?: number;
+  limit?: number;
+  offset?: number;
 }
 
 interface BangumiSubject {
@@ -54,13 +60,77 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider {
 
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {
     const seasonInfo = getSeasonInfo(month);
+    const subjects = (await this.fetchMonthlySubjects(year, month))
+      .filter((item) => item.type === BANGUMI_ANIME_SUBJECT_TYPE)
+      .filter((item) => !item.date || isDateInMonth(item.date, year, month));
+    // The monthly list lacks aliases and external links; detail pages provide the bridge fields used for cross-source merge.
+    const detailedSubjects = await mapWithConcurrency(subjects, BANGUMI_DETAIL_CONCURRENCY, (item) =>
+      this.fetchDetail(item)
+    );
+
+    return detailedSubjects.map((item) => mapBangumiSubject(item, year, month, seasonInfo.season));
+  }
+
+  /** Fetches every Bangumi monthly page so second-page shows still get detail aliases for cross-source merge. */
+  private async fetchMonthlySubjects(year: number, month: number): Promise<BangumiSubject[]> {
+    const subjects: BangumiSubject[] = [];
+    let offset = 0;
+    let pageCount = 0;
+    let reportedTotal: number | undefined;
+
+    while (offset < BANGUMI_MAX_MONTHLY_ITEMS) {
+      const page = await this.fetchSubjectPage(year, month, offset);
+      const pageItems = page.data ?? [];
+      const pageOffset = normalizePageNumber(page.offset, offset);
+      const pageLimit = normalizePageNumber(page.limit, BANGUMI_PAGE_LIMIT);
+      const total = normalizeOptionalPageNumber(page.total);
+
+      pageCount += 1;
+      reportedTotal = total ?? reportedTotal;
+      subjects.push(...pageItems);
+
+      if (!pageItems.length || pageOffset + pageItems.length >= (total ?? Number.POSITIVE_INFINITY)) {
+        break;
+      }
+
+      const nextOffset = pageOffset + pageLimit;
+      if (nextOffset <= offset) {
+        break;
+      }
+
+      offset = nextOffset;
+    }
+
+    if (reportedTotal && offset < reportedTotal && offset >= BANGUMI_MAX_MONTHLY_ITEMS) {
+      logger.warn("Bangumi 月度分页达到上限", {
+        year,
+        month,
+        fetchedCount: subjects.length,
+        total: reportedTotal,
+        maxItems: BANGUMI_MAX_MONTHLY_ITEMS
+      });
+    }
+
+    logger.info("Bangumi 月度分页采集完成", {
+      year,
+      month,
+      pages: pageCount,
+      count: subjects.length,
+      total: reportedTotal
+    });
+
+    return subjects;
+  }
+
+  /** Reads one Bangumi monthly page; pagination control stays in fetchMonthlySubjects. */
+  private async fetchSubjectPage(year: number, month: number, offset: number): Promise<BangumiPagedSubject> {
     const url = new URL("/v0/subjects", this.baseUrl);
     url.searchParams.set("type", String(BANGUMI_ANIME_SUBJECT_TYPE));
     url.searchParams.set("sort", "date");
     url.searchParams.set("year", String(year));
     url.searchParams.set("month", String(month));
-    url.searchParams.set("limit", "50");
-    url.searchParams.set("offset", "0");
+    url.searchParams.set("limit", String(BANGUMI_PAGE_LIMIT));
+    url.searchParams.set("offset", String(offset));
 
     const response = await this.httpClient.fetch(url, {
       source: this.id,
@@ -74,16 +144,7 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider {
       throw new Error(`Bangumi 请求失败: ${response.status} ${response.statusText}`);
     }
 
-    const json = (await response.json()) as BangumiPagedSubject;
-    const subjects = (json.data ?? [])
-      .filter((item) => item.type === BANGUMI_ANIME_SUBJECT_TYPE)
-      .filter((item) => !item.date || isDateInMonth(item.date, year, month));
-    // The monthly list lacks aliases and external links; detail pages provide the bridge fields used for cross-source merge.
-    const detailedSubjects = await mapWithConcurrency(subjects, BANGUMI_DETAIL_CONCURRENCY, (item) =>
-      this.fetchDetail(item)
-    );
-
-    return detailedSubjects.map((item) => mapBangumiSubject(item, year, month, seasonInfo.season));
+    return (await response.json()) as BangumiPagedSubject;
   }
 
   private async fetchDetail(item: BangumiSubject): Promise<BangumiSubject> {
@@ -255,4 +316,12 @@ function isEnglishAliasLabel(value: string | undefined): boolean {
 
 function normalizeAlias(value: string | undefined): string {
   return (value ?? "").trim().toLowerCase();
+}
+
+function normalizePageNumber(value: number | undefined, fallback: number): number {
+  return Number.isFinite(value) && value! >= 0 ? value! : fallback;
+}
+
+function normalizeOptionalPageNumber(value: number | undefined): number | undefined {
+  return Number.isFinite(value) && value! >= 0 ? value : undefined;
 }

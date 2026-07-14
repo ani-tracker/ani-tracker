@@ -81,7 +81,7 @@ export function normalizeTitle(value: string | undefined): string {
     // NFKC folds title variants such as Roman numerals "Ⅱ" into "II" before matching.
     .normalize("NFKC")
     .toLowerCase()
-    .replace(/[\s\u3000()[\]（）【】「」『』,，.!！?？:：;；_-]+/g, "");
+    .replace(/[\s\u3000()[\]（）【】「」『』,，、.!！?？:：;；・／/~～_-]+/g, "");
 }
 
 export function uniqueByNormalizedTitle<

@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { Anime } from "@shared/domain";
 import { buildAnimeReleaseSearchTerms, normalizeReleaseSearchText } from "../../../../shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "../../../../shared/anime-title";
+import { BangumiMetadataProvider } from "../bangumi-metadata-provider";
 import {
   mergeAnimeMetadataBatches,
   normalizeTitle,
@@ -199,6 +200,80 @@ test("mergeAnimeMetadataBatches 通过传递 external id 桥接 AniList、Bangum
   });
 });
 
+test("BangumiMetadataProvider 分页采集第二页番组并补充详情别名", async () => {
+  const httpClient = new FakeBangumiHttpClient();
+  const provider = new BangumiMetadataProvider("https://api.bgm.tv/", httpClient as never);
+
+  const items = await provider.getAnimeByMonth(2026, 7);
+  const skeletonKnight = items.find((item) => item.externalIds.bangumi === "528828");
+
+  assert.ok(httpClient.requests.some((url) => url.searchParams.get("offset") === "50"));
+  assert.ok(skeletonKnight);
+  assert.equal(skeletonKnight.title, "骸骨骑士大人异世界冒险中 第二季");
+  assert.equal(skeletonKnight.originalTitle, "骸骨騎士様、只今異世界へお出掛け中Ⅱ");
+  assert.ok(skeletonKnight.aliases.some((alias) => alias.alias === "Skeleton Knight in Another World Season 2"));
+});
+
+test("mergeAnimeMetadataBatches 用 Bangumi 详情英文别名桥接 AniList 和 Mikan", () => {
+  const items = mergeAnimeMetadataBatches([
+    {
+      source: "bangumi",
+      items: [
+        createAnime({
+          id: "bangumi-528828",
+          title: "骸骨骑士大人异世界冒险中 第二季",
+          originalTitle: "骸骨騎士様、只今異世界へお出掛け中Ⅱ",
+          aliases: [
+            createAlias("bangumi-528828", "骸骨騎士様、只今異世界へお出掛け中Ⅱ", "ja", 95),
+            createAlias(
+              "bangumi-528828",
+              "Gaikotsu Kishi-sama, Tadaima Isekai e Odekake-chuu Season 2",
+              "romaji",
+              78
+            ),
+            createAlias("bangumi-528828", "Skeleton Knight in Another World Season 2", "en", 78)
+          ],
+          externalIds: { bangumi: "528828" }
+        })
+      ]
+    },
+    {
+      source: "anilist",
+      items: [
+        createAnime({
+          id: "anilist-185542",
+          title: "骸骨騎士様、只今異世界へお出掛け中Ⅱ",
+          originalTitle: "骸骨騎士様、只今異世界へお出掛け中Ⅱ",
+          aliases: [
+            createAlias("anilist-185542", "Gaikotsu Kishi-sama, Tadaima Isekai e Odekakechuu II", "romaji", 90),
+            createAlias("anilist-185542", "Skeleton Knight in Another World Season 2", "en", 80)
+          ],
+          externalIds: { anilist: "185542", mal: "60522" }
+        })
+      ]
+    },
+    {
+      source: "mikan",
+      items: [
+        createAnime({
+          id: "mikan-3983",
+          title: "骸骨骑士大人异世界冒险中 第二季",
+          externalIds: { bangumi: "528828", mikan: "3983" }
+        })
+      ]
+    }
+  ]);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, "骸骨骑士大人异世界冒险中 第二季");
+  assert.deepEqual(items[0].externalIds, {
+    bangumi: "528828",
+    anilist: "185542",
+    mal: "60522",
+    mikan: "3983"
+  });
+});
+
 test("resolveAnimeTitleDisplay 展示时中文优先并用原名做副标题", () => {
   const display = resolveAnimeTitleDisplay(
     createAnime({
@@ -316,4 +391,89 @@ function createAlias(
     language,
     priority
   };
+}
+
+class FakeBangumiHttpClient {
+  readonly requests: URL[] = [];
+
+  async fetch(input: string | URL): Promise<Response> {
+    const url = new URL(input.toString());
+    this.requests.push(url);
+
+    if (url.pathname === "/v0/subjects") {
+      return jsonResponse(createBangumiPage(Number(url.searchParams.get("offset") ?? 0)));
+    }
+
+    const subjectId = url.pathname.match(/\/v0\/subjects\/(\d+)/)?.[1];
+    if (subjectId === "528828") {
+      return jsonResponse({
+        id: 528828,
+        type: 2,
+        name: "骸骨騎士様、只今異世界へお出掛け中Ⅱ",
+        name_cn: "骸骨骑士大人异世界冒险中 第二季",
+        date: "2026-07-06",
+        infobox: [
+          { key: "中文名", value: "骸骨骑士大人异世界冒险中 第二季" },
+          {
+            key: "别名",
+            value: [
+              { v: "Gaikotsu Kishi-sama, Tadaima Isekai e Odekake-chuu Season 2" },
+              { v: "Skeleton Knight in Another World Season 2" }
+            ]
+          }
+        ]
+      });
+    }
+
+    return jsonResponse({
+      id: 100,
+      type: 2,
+      name: "Dummy Anime",
+      name_cn: "测试动画",
+      date: "2026-07-01"
+    });
+  }
+}
+
+function createBangumiPage(offset: number): unknown {
+  if (offset === 0) {
+    return {
+      total: 51,
+      limit: 50,
+      offset: 0,
+      data: [
+        {
+          id: 100,
+          type: 2,
+          name: "Dummy Anime",
+          name_cn: "测试动画",
+          date: "2026-07-01"
+        }
+      ]
+    };
+  }
+
+  return {
+    total: 51,
+    limit: 50,
+    offset: 50,
+    data: [
+      {
+        id: 528828,
+        type: 2,
+        name: "骸骨騎士様、只今異世界へお出掛け中Ⅱ",
+        name_cn: "骸骨骑士大人异世界冒险中 第二季",
+        date: "2026-07-06"
+      }
+    ]
+  };
+}
+
+function jsonResponse(value: unknown): Response {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: {
+      "Content-Type": "application/json"
+    }
+  });
 }

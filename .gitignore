@@ -35,3 +35,5 @@ bin-release/
 /.build/
 /.tmp-qbt*/
 /.codex/
+docs/img_*.png
+other.md
