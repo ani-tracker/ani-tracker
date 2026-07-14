@@ -10,6 +10,7 @@ import {
   uniqueByNormalizedTitle
 } from "../metadata-provider";
 import { parseMikanDetailHtml } from "../mikan-metadata-provider";
+import { BANGUMI_USER_AGENT } from "../../http/user-agents";
 
 test("normalizeTitle 忽略常见空白、括号和标点差异", () => {
   assert.equal(normalizeTitle(" 测试番：第 2 季（TV） "), normalizeTitle("测试番 第2季 TV"));
@@ -208,6 +209,7 @@ test("BangumiMetadataProvider 分页采集第二页番组并补充详情别名",
   const skeletonKnight = items.find((item) => item.externalIds.bangumi === "528828");
 
   assert.ok(httpClient.requests.some((url) => url.searchParams.get("offset") === "50"));
+  assert.ok(httpClient.headers.every((headers) => headers.get("User-Agent") === BANGUMI_USER_AGENT));
   assert.ok(skeletonKnight);
   assert.equal(skeletonKnight.title, "骸骨骑士大人异世界冒险中 第二季");
   assert.equal(skeletonKnight.originalTitle, "骸骨騎士様、只今異世界へお出掛け中Ⅱ");
@@ -395,10 +397,12 @@ function createAlias(
 
 class FakeBangumiHttpClient {
   readonly requests: URL[] = [];
+  readonly headers: Headers[] = [];
 
-  async fetch(input: string | URL): Promise<Response> {
+  async fetch(input: string | URL, init?: RequestInit): Promise<Response> {
     const url = new URL(input.toString());
     this.requests.push(url);
+    this.headers.push(new Headers(init?.headers));
 
     if (url.pathname === "/v0/subjects") {
       return jsonResponse(createBangumiPage(Number(url.searchParams.get("offset") ?? 0)));

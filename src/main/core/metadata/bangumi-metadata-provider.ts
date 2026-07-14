@@ -8,6 +8,7 @@ import {
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
 import { logger } from "../logger";
+import { BANGUMI_USER_AGENT } from "../http/user-agents";
 
 const BANGUMI_API_BASE_URL = "https://api.bgm.tv/";
 const BANGUMI_ANIME_SUBJECT_TYPE = 2;
@@ -136,7 +137,7 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider {
       source: this.id,
       headers: {
         Accept: "application/json",
-        "User-Agent": "AniTracker/0.1"
+        "User-Agent": BANGUMI_USER_AGENT
       }
     });
 
@@ -155,7 +156,7 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider {
         source: this.id,
         headers: {
           Accept: "application/json",
-          "User-Agent": "AniTracker/0.1"
+          "User-Agent": BANGUMI_USER_AGENT
         }
       });
 

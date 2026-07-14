@@ -2,6 +2,7 @@ import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { normalizeReleaseSearchText } from "../../../shared/anime-release-search";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
+import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { parseXml, textValue, toArray } from "./xml";
 
 interface RssDocument {
@@ -59,7 +60,11 @@ export class RssReleaseSource implements ReleaseSource {
       return [];
     }
 
-    const response = await fetch(this.config.rssUrl);
+    const response = await fetch(this.config.rssUrl, {
+      headers: {
+        "User-Agent": DESKTOP_BROWSER_USER_AGENT
+      }
+    });
     if (!response.ok) {
       throw new Error(`RSS source failed: ${response.status} ${response.statusText}`);
     }

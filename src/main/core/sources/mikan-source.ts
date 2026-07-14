@@ -1,6 +1,7 @@
 import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
+import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 
 const DEFAULT_MIKAN_BASE_URL = "https://mikanani.me/";
 const MIKAN_FETCH_TIMEOUT_MS = 10_000;
@@ -112,7 +113,7 @@ async function fetchText(url: string): Promise<string> {
       signal: controller.signal,
       headers: {
         Accept: "text/html,application/xhtml+xml",
-        "User-Agent": "AniTracker/0.1"
+        "User-Agent": DESKTOP_BROWSER_USER_AGENT
       }
     });
 

@@ -1,6 +1,7 @@
 import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
+import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { parseXml, textValue, toArray } from "./xml";
 
 interface TorznabDocument {
@@ -43,7 +44,11 @@ export class TorznabReleaseSource implements ReleaseSource {
       url.searchParams.set("apikey", this.config.apiKey);
     }
 
-    const response = await fetch(url);
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": DESKTOP_BROWSER_USER_AGENT
+      }
+    });
     if (!response.ok) {
       throw new Error(`Torznab source failed: ${response.status} ${response.statusText}`);
     }

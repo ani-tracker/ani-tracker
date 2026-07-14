@@ -2,6 +2,7 @@ import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { logger } from "../logger";
+import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 
 const DEFAULT_ACGNX_BASE_URL = "https://share.acgnx.se/";
 const ACGNX_FETCH_TIMEOUT_MS = 10_000;
@@ -137,7 +138,7 @@ async function fetchWithTimeout(url: string): Promise<Response> {
       signal: controller.signal,
       headers: {
         Accept: "application/json,text/html,application/xhtml+xml",
-        "User-Agent": "AniTracker/0.1"
+        "User-Agent": DESKTOP_BROWSER_USER_AGENT
       }
     });
   } finally {

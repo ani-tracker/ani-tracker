@@ -2,6 +2,7 @@ import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig, SubtitlePreference } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { logger } from "../logger";
+import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { parseXml, textValue, toArray } from "./xml";
 
 const DEFAULT_ANIBT_BASE_URL = "https://anibt.net/";
@@ -158,7 +159,7 @@ export class AniBtReleaseSource implements ReleaseSource {
 export function createAniBtHeaders(config: ReleaseSourceConfig, accept: string): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: accept,
-    "User-Agent": "AniTracker/0.1"
+    "User-Agent": DESKTOP_BROWSER_USER_AGENT
   };
 
   const credential = config.apiKey?.trim();

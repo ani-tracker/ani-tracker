@@ -1,6 +1,7 @@
 import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
+import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 
 const DEFAULT_DMHY_BASE_URL = "https://share.dmhy.org/";
 
@@ -16,7 +17,7 @@ export class DmhyReleaseSource implements ReleaseSource {
 
     const response = await fetch(url, {
       headers: {
-        "User-Agent": "AniTracker/0.1"
+        "User-Agent": DESKTOP_BROWSER_USER_AGENT
       }
     });
 
