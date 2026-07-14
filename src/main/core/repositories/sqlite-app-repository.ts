@@ -200,20 +200,23 @@ export class SqliteAppRepository implements AppRepository {
 
   async upsertAnimeCatalog(items: Anime[]): Promise<{ items: Anime[]; addedCount: number; existingCount: number }> {
     const catalog = await this.listAnimeCatalog();
+    const followedAnimeIds = new Set((await this.listMyAnime()).map((item) => item.anime.id));
     let addedCount = 0;
     let existingCount = 0;
     for (const item of items) {
       const index = catalog.findIndex((anime) => isSameAnime(anime, item));
       if (index >= 0) {
+        const existing = catalog[index];
         catalog[index] = {
-          ...catalog[index],
+          ...existing,
           ...item,
-          id: catalog[index].id,
-          aliases: mergeAliases(catalog[index].aliases, item.aliases).map((alias) => ({
+          id: existing.id,
+          rating: followedAnimeIds.has(existing.id) ? (existing.rating ?? item.rating) : item.rating,
+          aliases: mergeAliases(existing.aliases, item.aliases).map((alias) => ({
             ...alias,
-            animeId: catalog[index].id
+            animeId: existing.id
           })),
-          externalIds: { ...catalog[index].externalIds, ...item.externalIds }
+          externalIds: { ...existing.externalIds, ...item.externalIds }
         };
         existingCount += 1;
       } else {

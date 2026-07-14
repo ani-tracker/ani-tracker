@@ -6,23 +6,48 @@ import { Progress } from "@/components/ui/progress";
 import { appApi } from "@/lib/api";
 import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
 import { useAsyncData } from "@/lib/use-async-data";
+import type { AnimeStatus, MyAnime } from "@shared/domain";
+
+const animeStatusText: Record<AnimeStatus, string> = {
+  watching: "在追",
+  planned: "想看",
+  completed: "已完成",
+  paused: "暂停",
+  dropped: "已弃"
+};
+
+const animeStatusOptions = Object.entries(animeStatusText) as Array<[AnimeStatus, string]>;
+
+/** 加载首页看板和追番状态统计所需数据。 */
+async function loadHomeData() {
+  const [dashboard, myAnime] = await Promise.all([appApi.getDashboard(), appApi.listMyAnime()]);
+  return { dashboard, myAnime };
+}
 
 export function HomePage() {
-  const { data, loading, error } = useAsyncData(appApi.getDashboard, []);
+  const { data: homeData, loading, error } = useAsyncData(loadHomeData, []);
 
   if (loading) {
     return <div className="text-sm text-muted-foreground">正在加载首页...</div>;
   }
 
-  if (error || !data) {
+  if (error || !homeData) {
     return <div className="text-sm text-rose-600">首页数据加载失败。</div>;
   }
+
+  const data = homeData.dashboard;
 
   return (
     <div className="space-y-5">
       <div>
         <h1 className="text-2xl font-semibold tracking-normal">今日追番</h1>
         <p className="mt-1 text-sm text-muted-foreground">更新、下载和需要处理的任务会集中出现在这里。</p>
+      </div>
+
+      <div className="grid grid-cols-[repeat(auto-fit,minmax(120px,1fr))] gap-4">
+        {animeStatusOptions.map(([status, label]) => (
+          <AnimeStatusStat key={status} label={label} value={countMyAnimeStatus(homeData.myAnime, status)} />
+        ))}
       </div>
 
       <div className="grid grid-cols-[minmax(0,1.5fr)_minmax(320px,0.8fr)] gap-5">
@@ -172,6 +197,16 @@ export function HomePage() {
   );
 }
 
+/** 渲染单个追番状态统计卡片。 */
+function AnimeStatusStat({ label, value }: { label: string; value: number }) {
+  return (
+    <Panel className="p-4">
+      <div className="text-2xl font-semibold">{value}</div>
+      <div className="mt-1 text-sm text-muted-foreground">{label}</div>
+    </Panel>
+  );
+}
+
 function ReminderStat({ label, value }: { label: string; value: number }) {
   return (
     <div className="rounded-md border bg-muted/40 px-3 py-2">
@@ -179,6 +214,11 @@ function ReminderStat({ label, value }: { label: string; value: number }) {
       <div className="mt-1 text-lg font-semibold">{value}</div>
     </div>
   );
+}
+
+/** 统计指定追番状态的数量。 */
+function countMyAnimeStatus(items: MyAnime[], status: AnimeStatus): number {
+  return items.filter((item) => item.status === status).length;
 }
 
 function formatReminderDate(value: string): string {

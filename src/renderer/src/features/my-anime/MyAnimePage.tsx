@@ -1,4 +1,4 @@
-import { Download, Plus, Save, Search, SlidersHorizontal, Trash2, X } from "lucide-react";
+import { CalendarDays, Download, ImageOff, MoreHorizontal, Plus, Save, Search, SlidersHorizontal, Star, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
@@ -162,6 +162,21 @@ export function MyAnimePage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [downloadDetail]);
+
+  useEffect(() => {
+    if (!draft) {
+      return;
+    }
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        setDraft(null);
+      }
+    }
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [draft]);
 
   useEffect(() => {
     let active = true;
@@ -396,6 +411,13 @@ export function MyAnimePage() {
     setDownloadDetail(null);
   }
 
+  /** 打开追番规则抽屉，并保留已采集的番剧元数据快照。 */
+  function openRulesDrawer(item: MyAnime) {
+    closeAnimeDownloads();
+    closeDownloadDetail();
+    setDraft(cloneMyAnime(item));
+  }
+
   async function searchAnimeReleases(target = downloadTarget) {
     if (!target) {
       return;
@@ -543,136 +565,56 @@ export function MyAnimePage() {
         </div>
       )}
 
-      <div className="grid grid-cols-[minmax(0,1.35fr)_minmax(360px,0.65fr)] items-start gap-5">
-        <Panel>
-          <div className="overflow-hidden rounded-md border">
-            <table className="w-full border-collapse text-sm">
-              <thead className="bg-muted text-left text-xs uppercase tracking-normal text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-3 font-medium">番剧</th>
-                  <th className="px-4 py-3 font-medium">首播年月</th>
-                  <th className="px-4 py-3 font-medium">默认字幕组</th>
-                  <th className="px-4 py-3 font-medium">自动下载</th>
-                  <th className="px-4 py-3 font-medium">下载情况</th>
-                  <th className="px-4 py-3 font-medium">偏好</th>
-                  <th className="px-4 py-3 text-right font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => {
-                  const titleDisplay = resolveAnimeTitleDisplay(item.anime);
-                  const downloadSummary = summarizeAnimeDownloads(downloadTasks, item.anime.id);
-
-                  return (
-                    <tr key={item.id} className="border-t">
-                      <td className="px-4 py-4">
-                        <div className="font-medium">{titleDisplay.title}</div>
-                        <div className="mt-1 text-xs text-muted-foreground">{titleDisplay.subtitle ?? "无原名"}</div>
-                      </td>
-                      <td className="px-4 py-4">{formatMonth(item.anime.premiereYear, item.anime.premiereMonth)}</td>
-                      <td className="px-4 py-4">{fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}</td>
-                      <td className="px-4 py-4">
-                        <Badge tone={item.autoDownload ? "green" : "neutral"}>
-                          {item.autoDownload ? "已开启" : "未开启"}
-                        </Badge>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex whitespace-nowrap text-xs">
-                          <button
-                            className="rounded-md px-1.5 py-1 font-medium text-emerald-700 hover:bg-emerald-50 focus:outline-none focus:ring-2 focus:ring-emerald-200"
-                            type="button"
-                            onClick={() => openDownloadDetail(item, "completed")}
-                          >
-                            {downloadSummary.completed} 已完成
-                          </button>
-                          <span className="mx-2 text-border">/</span>
-                          <button
-                            className="rounded-md px-1.5 py-1 text-cyan-700 hover:bg-cyan-50 focus:outline-none focus:ring-2 focus:ring-cyan-200"
-                            type="button"
-                            onClick={() => openDownloadDetail(item, "active")}
-                          >
-                            {downloadSummary.active} 下载中
-                          </button>
-                        </div>
-                        <div className="mt-1 text-xs text-muted-foreground">共关联 {downloadSummary.linked} 集</div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex items-center justify-between gap-3">
-                          <div className="flex flex-wrap gap-2">
-                            {item.status && <Badge>{statusText[item.status]}</Badge>}
-                            {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
-                            {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
-                          </div>
-                          <Button className="shrink-0" variant="outline" onClick={() => void openAnimeDownloads(item)}>
-                            <Download className="h-4 w-4" />
-                            下载
-                          </Button>
-                        </div>
-                      </td>
-                      <td className="px-4 py-4">
-                        <div className="flex justify-end gap-2">
-                          <Button
-                            variant="outline"
-                            onClick={() => {
-                              closeAnimeDownloads();
-                              setDraft(cloneMyAnime(item));
-                            }}
-                          >
-                            <SlidersHorizontal className="h-4 w-4" />
-                            规则
-                          </Button>
-                          <Button variant="outline" onClick={() => void removeItem(item)}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-
-          {items.length === 0 && (
-            <div className="mt-4 rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-              当前还没有追番。
-            </div>
-          )}
-        </Panel>
-
-        <div className="space-y-5">
-          <RulesPanel
-            draft={draft}
-            fansubs={fansubs}
-            saving={saving}
-            onChange={setDraft}
-            onCancel={() => setDraft(null)}
-            onSave={() => void saveDraft()}
-          />
-          <EpisodeRulesPanel
-            draft={draft}
-            persisted={draftPersisted}
-            episodes={episodes}
-            episodePreferences={episodePreferences}
-            downloadTasks={downloadTasks}
-            releasePreviews={releasePreviews}
-            fansubs={fansubs}
-            fansubNames={fansubNames}
-            loading={episodeLoading}
-            previewingEpisodeId={previewingEpisodeId}
-            addingReleaseId={addingReleaseId}
-            onAddEpisode={() => void addNextEpisode()}
-            onStatusChange={(episode, status) => void updateEpisodeStatus(episode, status)}
-            onFansubChange={(episode, fansubGroupId) => void updateEpisodeFansub(episode, fansubGroupId)}
-            onPreviewReleases={(episode) => void previewEpisodeReleases(episode)}
-            onAddRelease={(episode, release) => void addEpisodeReleaseDownload(episode, release)}
-          />
+      {items.length > 0 ? (
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
+          {items.map((item) => (
+            <MyAnimeCard
+              key={item.id}
+              item={item}
+              defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
+              downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
+              onOpenActive={() => openDownloadDetail(item, "active")}
+              onOpenCompleted={() => openDownloadDetail(item, "completed")}
+              onOpenDownloads={() => void openAnimeDownloads(item)}
+              onOpenRules={() => openRulesDrawer(item)}
+              onRemove={() => void removeItem(item)}
+            />
+          ))}
         </div>
-      </div>
+      ) : (
+        <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+          当前还没有追番。
+        </div>
+      )}
+
+      {draft && (
+        <RulesDrawer
+          addingReleaseId={addingReleaseId}
+          draft={draft}
+          downloadTasks={downloadTasks}
+          draftPersisted={draftPersisted}
+          episodeLoading={episodeLoading}
+          episodePreferences={episodePreferences}
+          episodes={episodes}
+          fansubNames={fansubNames}
+          fansubs={fansubs}
+          previewingEpisodeId={previewingEpisodeId}
+          releasePreviews={releasePreviews}
+          saving={saving}
+          onAddEpisode={() => void addNextEpisode()}
+          onAddRelease={(episode, release) => void addEpisodeReleaseDownload(episode, release)}
+          onCancel={() => setDraft(null)}
+          onChange={setDraft}
+          onFansubChange={(episode, fansubGroupId) => void updateEpisodeFansub(episode, fansubGroupId)}
+          onPreviewReleases={(episode) => void previewEpisodeReleases(episode)}
+          onSave={() => void saveDraft()}
+          onStatusChange={(episode, status) => void updateEpisodeStatus(episode, status)}
+        />
+      )}
 
       {downloadTarget && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/35 p-6"
+          className="fixed inset-0 z-50 flex justify-end bg-foreground/35"
           role="presentation"
           onMouseDown={(event) => {
             if (event.target === event.currentTarget) {
@@ -680,10 +622,10 @@ export function MyAnimePage() {
             }
           }}
         >
-          <div
+          <aside
             aria-label="资源下载"
             aria-modal="true"
-            className="w-full max-w-5xl"
+            className="animate-slide-in-right h-full w-full max-w-5xl border-l bg-card shadow-xl"
             role="dialog"
           >
             <AnimeDownloadPanel
@@ -692,9 +634,9 @@ export function MyAnimePage() {
               errors={animeReleaseErrors}
               fansubNames={fansubNames}
               fansubs={fansubs}
-              listClassName="max-h-[52vh] overflow-y-auto pr-1"
+              listClassName="max-h-[calc(100vh-22rem)] overflow-y-auto pr-1"
               loading={animeReleaseLoading}
-              panelClassName="max-h-[calc(100vh-4rem)] overflow-hidden shadow-xl"
+              panelClassName="h-full overflow-hidden rounded-none border-0 shadow-none"
               releases={animeReleases}
               selectedFansubId={animeReleaseFansubId}
               target={downloadTarget}
@@ -703,7 +645,7 @@ export function MyAnimePage() {
               onFansubChange={setAnimeReleaseFansubId}
               onRefresh={() => void searchAnimeReleases()}
             />
-          </div>
+          </aside>
         </div>
       )}
 
@@ -719,17 +661,243 @@ export function MyAnimePage() {
         />
       )}
 
-      <div className="grid grid-cols-4 gap-4">
-        {statusOptions.map(([status, label]) => {
-          const count = items.filter((item) => item.status === status).length;
-          return (
-            <Panel key={status} className="p-4">
-              <div className="text-2xl font-semibold">{count}</div>
-              <div className="mt-1 text-sm text-muted-foreground">{label}</div>
-            </Panel>
-          );
-        })}
+    </div>
+  );
+}
+
+/** 渲染我的追番卡片，并承载右上角快捷操作入口。 */
+function MyAnimeCard({
+  item,
+  defaultFansubName,
+  downloadSummary,
+  onOpenActive,
+  onOpenCompleted,
+  onOpenDownloads,
+  onOpenRules,
+  onRemove
+}: {
+  item: MyAnime;
+  defaultFansubName: string;
+  downloadSummary: ReturnType<typeof summarizeAnimeDownloads>;
+  onOpenActive: () => void;
+  onOpenCompleted: () => void;
+  onOpenDownloads: () => void;
+  onOpenRules: () => void;
+  onRemove: () => void;
+}) {
+  const titleDisplay = resolveAnimeTitleDisplay(item.anime);
+  const ratingText = item.anime.rating ? item.anime.rating.score.toFixed(1) : "暂无";
+
+  return (
+    <article className="group relative overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
+      <div className="relative aspect-[16/9] bg-muted">
+        {item.anime.coverUrl ? (
+          <img
+            alt={titleDisplay.title}
+            className="h-full w-full object-cover"
+            loading="lazy"
+            src={item.anime.coverUrl}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
+            <ImageOff className="h-8 w-8" />
+          </div>
+        )}
+
+        <div className="absolute left-3 top-3 inline-flex h-7 items-center gap-1 rounded-md border border-amber-200 bg-amber-50/95 px-2 text-xs font-medium text-amber-700 shadow-sm">
+          <Star className="h-3.5 w-3.5" />
+          {ratingText}
+        </div>
+
+        <div className="absolute right-3 top-3 z-10 flex justify-end">
+          <button
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background/95 text-muted-foreground shadow-sm"
+            type="button"
+            aria-label="显示操作"
+            title="显示操作"
+          >
+            <MoreHorizontal className="h-4 w-4" />
+          </button>
+          <div className="pointer-events-none absolute right-0 top-10 w-28 translate-y-1 rounded-md border bg-background/95 p-1 opacity-0 shadow-lg transition-all group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100">
+            <CardActionButton label="已完成" onClick={onOpenCompleted} />
+            <CardActionButton label="下载中" onClick={onOpenActive} />
+            <CardActionButton label="下载资源" onClick={onOpenDownloads} />
+            <CardActionButton label="规则" onClick={onOpenRules} />
+            <button
+              className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-medium text-rose-700 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-200"
+              type="button"
+              onClick={onRemove}
+            >
+              删除
+            </button>
+          </div>
+        </div>
       </div>
+
+      <div className="space-y-3 p-3">
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold" title={titleDisplay.title}>
+            {titleDisplay.title}
+          </h2>
+          <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle}>
+            {titleDisplay.subtitle ?? "无原名"}
+          </p>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <span className="inline-flex items-center gap-1">
+            <CalendarDays className="h-3.5 w-3.5" />
+            {formatMonth(item.anime.premiereYear, item.anime.premiereMonth)}
+          </span>
+          <Badge>{statusText[item.status]}</Badge>
+          <Badge tone={item.autoDownload ? "green" : "neutral"}>{item.autoDownload ? "自动" : "手动"}</Badge>
+        </div>
+
+        <p className="line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+          {item.anime.summary ?? "暂无简介"}
+        </p>
+
+        <div className="grid grid-cols-3 gap-2 text-xs">
+          <CardMetric label="已完成" value={downloadSummary.completed} tone="green" />
+          <CardMetric label="下载中" value={downloadSummary.active} tone="blue" />
+          <CardMetric label="关联集" value={downloadSummary.linked} />
+        </div>
+
+        <div className="flex min-w-0 flex-wrap gap-2">
+          <Badge className="max-w-full truncate" title={defaultFansubName}>
+            {defaultFansubName}
+          </Badge>
+          {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
+          {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/** 渲染卡片悬停菜单中的单个操作按钮。 */
+function CardActionButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-medium text-foreground hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary/25"
+      type="button"
+      onClick={onClick}
+    >
+      {label}
+    </button>
+  );
+}
+
+/** 渲染卡片内的下载统计指标。 */
+function CardMetric({
+  label,
+  value,
+  tone = "neutral"
+}: {
+  label: string;
+  value: number;
+  tone?: "neutral" | "green" | "blue";
+}) {
+  const toneClassName =
+    tone === "green" ? "text-emerald-700" : tone === "blue" ? "text-cyan-700" : "text-foreground";
+
+  return (
+    <div className="rounded-md bg-muted/60 px-2 py-1.5">
+      <div className={cn("text-sm font-semibold tabular-nums", toneClassName)}>{value}</div>
+      <div className="mt-0.5 truncate text-muted-foreground">{label}</div>
+    </div>
+  );
+}
+
+/** 渲染追番规则和单集规则的右侧抽屉。 */
+function RulesDrawer({
+  draft,
+  fansubs,
+  saving,
+  draftPersisted,
+  episodes,
+  episodePreferences,
+  downloadTasks,
+  releasePreviews,
+  fansubNames,
+  episodeLoading,
+  previewingEpisodeId,
+  addingReleaseId,
+  onChange,
+  onCancel,
+  onSave,
+  onAddEpisode,
+  onStatusChange,
+  onFansubChange,
+  onPreviewReleases,
+  onAddRelease
+}: {
+  draft: MyAnime;
+  fansubs: FansubGroup[];
+  saving: boolean;
+  draftPersisted: boolean;
+  episodes: Episode[];
+  episodePreferences: EpisodePreference[];
+  downloadTasks: DownloadTask[];
+  releasePreviews: Record<string, EpisodeReleasePreview>;
+  fansubNames: Map<string, string>;
+  episodeLoading: boolean;
+  previewingEpisodeId: string | null;
+  addingReleaseId: string | null;
+  onChange: (item: MyAnime | null) => void;
+  onCancel: () => void;
+  onSave: () => void;
+  onAddEpisode: () => void;
+  onStatusChange: (episode: Episode, status: EpisodeStatus) => void;
+  onFansubChange: (episode: Episode, fansubGroupId: string) => void;
+  onPreviewReleases: (episode: Episode) => void;
+  onAddRelease: (episode: Episode, release: Release) => void;
+}) {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex justify-end bg-foreground/35"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) {
+          onCancel();
+        }
+      }}
+    >
+      <aside
+        aria-label="追番规则"
+        aria-modal="true"
+        className="animate-slide-in-right h-full w-full max-w-3xl overflow-y-auto border-l bg-background p-4 shadow-xl"
+        role="dialog"
+      >
+        <div className="space-y-4">
+          <RulesPanel
+            draft={draft}
+            fansubs={fansubs}
+            saving={saving}
+            onChange={onChange}
+            onCancel={onCancel}
+            onSave={onSave}
+          />
+          <EpisodeRulesPanel
+            draft={draft}
+            persisted={draftPersisted}
+            episodes={episodes}
+            episodePreferences={episodePreferences}
+            downloadTasks={downloadTasks}
+            releasePreviews={releasePreviews}
+            fansubs={fansubs}
+            fansubNames={fansubNames}
+            loading={episodeLoading}
+            previewingEpisodeId={previewingEpisodeId}
+            addingReleaseId={addingReleaseId}
+            onAddEpisode={onAddEpisode}
+            onStatusChange={onStatusChange}
+            onFansubChange={onFansubChange}
+            onPreviewReleases={onPreviewReleases}
+            onAddRelease={onAddRelease}
+          />
+        </div>
+      </aside>
     </div>
   );
 }
