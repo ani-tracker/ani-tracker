@@ -13,6 +13,7 @@ import { parseMikanDetailHtml } from "../mikan-metadata-provider";
 test("normalizeTitle 忽略常见空白、括号和标点差异", () => {
   assert.equal(normalizeTitle(" 测试番：第 2 季（TV） "), normalizeTitle("测试番 第2季 TV"));
   assert.equal(normalizeTitle("Test_Anime-S2!"), normalizeTitle("test anime s2"));
+  assert.equal(normalizeTitle("片田舎のおっさん、剣聖になるⅡ"), normalizeTitle("片田舎のおっさん、剣聖になるII"));
 });
 
 test("buildAnimeReleaseSearchTerms 扩展引号标题和去标点标题", () => {

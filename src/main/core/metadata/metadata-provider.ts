@@ -78,6 +78,8 @@ export function parseDateParts(value: string | undefined): { year: number; month
 export function normalizeTitle(value: string | undefined): string {
   return (value ?? "")
     .trim()
+    // NFKC folds title variants such as Roman numerals "Ⅱ" into "II" before matching.
+    .normalize("NFKC")
     .toLowerCase()
     .replace(/[\s\u3000()[\]（）【】「」『』,，.!！?？:：;；_-]+/g, "");
 }
