@@ -167,6 +167,18 @@ export function SettingsPage() {
       <div className="grid grid-cols-2 gap-5">
         <Panel title="下载目录" description="支持全局默认目录，后续单部番可以覆盖。">
           <div className="space-y-4">
+            <ToggleSetting
+              icon={<FolderCog className="h-4 w-4" />}
+              label="创建番剧目录"
+              description="按目录模板为每部追番生成独立保存目录。"
+              checked={draft.download.createAnimeFolder}
+              onChange={(value) =>
+                setDraft({
+                  ...draft,
+                  download: { ...draft.download, createAnimeFolder: value }
+                })
+              }
+            />
             <TextSetting
               icon={<FolderCog className="h-4 w-4" />}
               label="默认下载目录"
@@ -195,7 +207,7 @@ export function SettingsPage() {
               }
             />
             <TextSetting
-              label="番剧目录模板"
+              label="番剧目录模板（{year}、{month}、{title}、{originalTitle}）"
               value={draft.download.animeFolderPattern}
               onChange={(value) =>
                 setDraft({

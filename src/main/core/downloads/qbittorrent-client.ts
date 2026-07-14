@@ -19,6 +19,7 @@ export interface QbittorrentTorrentInfo {
   save_path: string;
   content_path?: string;
   size?: number;
+  tags?: string;
 }
 
 export interface QbittorrentTorrentFile {
@@ -72,12 +73,15 @@ export class QbittorrentClient {
     }
   }
 
-  async addUrl(url: string, savePath: string, paused = false): Promise<void> {
+  async addUrl(url: string, savePath: string, paused = false, correlationTag?: string): Promise<void> {
     const body = new URLSearchParams({
       urls: url,
       savepath: savePath,
       paused: paused ? "true" : "false"
     });
+    if (correlationTag) {
+      body.set("tags", correlationTag);
+    }
 
     await this.requestText("/api/v2/torrents/add", {
       method: "POST",
@@ -88,12 +92,15 @@ export class QbittorrentClient {
     });
   }
 
-  async addTorrentFile(filePath: string, savePath: string, paused = false): Promise<void> {
+  async addTorrentFile(filePath: string, savePath: string, paused = false, correlationTag?: string): Promise<void> {
     const buffer = await readFile(filePath);
     const formData = new FormData();
     formData.append("torrents", new Blob([buffer]), basename(filePath));
     formData.append("savepath", savePath);
     formData.append("paused", paused ? "true" : "false");
+    if (correlationTag) {
+      formData.append("tags", correlationTag);
+    }
 
     await this.requestText("/api/v2/torrents/add", {
       method: "POST",

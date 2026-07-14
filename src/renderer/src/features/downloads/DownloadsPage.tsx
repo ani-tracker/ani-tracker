@@ -1,5 +1,5 @@
-import { Download as DownloadIcon, FileSearch, Pause, Play, RotateCcw, Trash2 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, Download as DownloadIcon, FileSearch, Folder, Pause, Play, RotateCcw, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
@@ -7,10 +7,26 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { appApi } from "@/lib/api";
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format";
-import type { DownloadTask } from "@shared/domain";
+import type { DownloadStatus, DownloadTask, MyAnime } from "@shared/domain";
+
+const downloadStatusText: Record<DownloadStatus, string> = {
+  queued: "排队中",
+  fetching_metadata: "获取元数据",
+  downloading: "下载中",
+  stalled: "等待连接",
+  paused: "已暂停",
+  checking: "校验中",
+  moving: "移动文件",
+  completed: "已完成",
+  seeding: "做种中",
+  error: "错误",
+  missing_files: "文件缺失"
+};
 
 export function DownloadsPage() {
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
+  const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
+  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [mutatingTaskId, setMutatingTaskId] = useState<string | null>(null);
@@ -21,6 +37,7 @@ export function DownloadsPage() {
   const [error, setError] = useState<string | null>(null);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const animeGroups = useMemo(() => groupDownloadTasks(tasks, myAnime), [tasks, myAnime]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -108,11 +125,11 @@ export function DownloadsPage() {
   useEffect(() => {
     let active = true;
 
-    appApi
-      .listDownloads()
-      .then((items) => {
+    Promise.all([appApi.listDownloads(), appApi.listMyAnime()])
+      .then(([items, animeItems]) => {
         if (active) {
           setTasks(items);
+          setMyAnime(animeItems);
           setLoading(false);
         }
       })
@@ -134,6 +151,19 @@ export function DownloadsPage() {
     };
   }, [refresh]);
 
+  /** 切换单个字幕组任务区的折叠状态。 */
+  function toggleGroup(groupKey: string) {
+    setCollapsedGroupKeys((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  }
+
   if (loading) {
     return <div className="text-sm text-muted-foreground">正在加载下载队列...</div>;
   }
@@ -143,7 +173,7 @@ export function DownloadsPage() {
       <div className="flex items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-normal">下载队列</h1>
-          <p className="mt-1 text-sm text-muted-foreground">内置引擎和 qB 兼容模式会统一显示任务状态。</p>
+          <p className="mt-1 text-sm text-muted-foreground">按追番和字幕组归并任务，集数、进度和保存目录集中查看。</p>
         </div>
         <Button variant="outline" onClick={() => void refresh()} disabled={refreshing}>
           <RotateCcw className="h-4 w-4" />
@@ -171,29 +201,118 @@ export function DownloadsPage() {
         </form>
       </Panel>
 
-      <Panel>
-        <div className="space-y-4">
-          {tasks.map((task) => (
-            <div key={task.id} className="rounded-md border p-4">
+      <div className="space-y-5">
+          {animeGroups.map((animeGroup) => (
+            <section key={animeGroup.key}>
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                <div className="min-w-0">
+                  <h2 className="truncate text-base font-semibold">{animeGroup.title}</h2>
+                  <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                    <span>{animeGroup.tasks.length} 个任务</span>
+                    <span>已关联 {animeGroup.linkedEpisodes} 集</span>
+                    <span>已完成 {animeGroup.completedEpisodes} 集</span>
+                    <span>下载中 {animeGroup.activeEpisodes} 集</span>
+                  </div>
+                </div>
+                <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                  <Folder className="h-4 w-4 shrink-0" />
+                  <span className="max-w-[420px] truncate" title={animeGroup.savePath}>{animeGroup.savePath}</span>
+                </div>
+              </div>
+
+              <div className="mt-3 space-y-3">
+                {animeGroup.fansubGroups.map((fansubGroup) => {
+                  const collapsed = collapsedGroupKeys.has(fansubGroup.key);
+                  return (
+                    <section key={fansubGroup.key} className="overflow-hidden rounded-md border">
+                      <button
+                        className="flex h-11 w-full items-center justify-between gap-3 bg-muted/70 px-3 text-left hover:bg-muted"
+                        type="button"
+                        onClick={() => toggleGroup(fansubGroup.key)}
+                      >
+                        <span className="flex min-w-0 items-center gap-2">
+                          {collapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
+                          <span className="truncate text-sm font-medium">{fansubGroup.name}</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2">
+                          <Badge>{formatEpisodeRange(fansubGroup.tasks)}</Badge>
+                          <span className="text-xs text-muted-foreground">{fansubGroup.tasks.length} 个任务</span>
+                        </span>
+                      </button>
+
+                      {!collapsed && (
+                        <div className="divide-y">
+                          {fansubGroup.tasks.map((task) => (
+                            <DownloadTaskRow
+                              key={task.id}
+                              task={task}
+                              mutatingTaskId={mutatingTaskId}
+                              mutatingFileId={mutatingFileId}
+                              scanningTaskId={scanningTaskId}
+                              onMutate={mutateTask}
+                              onScan={scanTask}
+                              onToggleFile={toggleFileSelection}
+                            />
+                          ))}
+                        </div>
+                      )}
+                    </section>
+                  );
+                })}
+              </div>
+            </section>
+          ))}
+
+          {tasks.length === 0 && (
+            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+              当前没有下载任务。
+            </div>
+          )}
+      </div>
+    </div>
+  );
+}
+
+function DownloadTaskRow({
+  task,
+  mutatingTaskId,
+  mutatingFileId,
+  scanningTaskId,
+  onMutate,
+  onScan,
+  onToggleFile
+}: {
+  task: DownloadTask;
+  mutatingTaskId: string | null;
+  mutatingFileId: string | null;
+  scanningTaskId: string | null;
+  onMutate: (taskId: string, action: "pause" | "resume" | "remove") => Promise<void>;
+  onScan: (taskId: string) => Promise<void>;
+  onToggleFile: (task: DownloadTask, file: DownloadTask["files"][number]) => Promise<void>;
+}) {
+  return (
+    <div className="p-4">
               <div className="flex items-start justify-between gap-4">
                 <div className="min-w-0 flex-1">
-                  <div className="truncate font-medium">{task.name}</div>
+                  <div className="flex min-w-0 items-center gap-2">
+                    {task.episodeNo !== undefined && <Badge tone="blue">第 {task.episodeNo} 集</Badge>}
+                    <div className="truncate font-medium">{task.name}</div>
+                  </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                     <Badge tone="blue">{task.engine === "embedded" ? "内置引擎" : "qBittorrent"}</Badge>
                     <span>{formatSpeed(task.downloadSpeed)}</span>
                     <span>上传 {formatSpeed(task.uploadSpeed)}</span>
                     <span>剩余 {formatDuration(task.etaSeconds)}</span>
-                    <span>{task.savePath}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge tone={task.status === "downloading" ? "green" : "neutral"}>{task.status}</Badge>
+                  <Badge tone={getDownloadStatusTone(task.status)}>{downloadStatusText[task.status]}</Badge>
                   <Button
                     variant="outline"
                     aria-label="暂停下载"
                     title="暂停下载"
                     disabled={mutatingTaskId === task.id}
-                    onClick={() => void mutateTask(task.id, "pause")}
+                    onClick={() => void onMutate(task.id, "pause")}
                   >
                     <Pause className="h-4 w-4" />
                   </Button>
@@ -202,7 +321,7 @@ export function DownloadsPage() {
                     aria-label="继续下载"
                     title="继续下载"
                     disabled={mutatingTaskId === task.id}
-                    onClick={() => void mutateTask(task.id, "resume")}
+                    onClick={() => void onMutate(task.id, "resume")}
                   >
                     <Play className="h-4 w-4" />
                   </Button>
@@ -211,7 +330,7 @@ export function DownloadsPage() {
                     aria-label="扫描媒体信息"
                     title="扫描媒体信息"
                     disabled={scanningTaskId === task.id || !canScanTask(task)}
-                    onClick={() => void scanTask(task.id)}
+                    onClick={() => void onScan(task.id)}
                   >
                     <FileSearch className="h-4 w-4" />
                   </Button>
@@ -220,7 +339,7 @@ export function DownloadsPage() {
                     aria-label="移除任务"
                     title="移除任务"
                     disabled={mutatingTaskId === task.id}
-                    onClick={() => void mutateTask(task.id, "remove")}
+                    onClick={() => void onMutate(task.id, "remove")}
                   >
                     <Trash2 className="h-4 w-4" />
                   </Button>
@@ -241,7 +360,7 @@ export function DownloadsPage() {
                         type="checkbox"
                         checked={file.selected}
                         disabled={mutatingFileId === file.id}
-                        onChange={() => void toggleFileSelection(task, file)}
+                        onChange={() => void onToggleFile(task, file)}
                       />
                       <span className={file.selected ? "truncate" : "truncate text-muted-foreground line-through"}>
                         {file.name}
@@ -254,18 +373,107 @@ export function DownloadsPage() {
                   </div>
                 ))}
               </div>
-            </div>
-          ))}
-
-          {tasks.length === 0 && (
-            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-              当前没有下载任务。
-            </div>
-          )}
-        </div>
-      </Panel>
     </div>
   );
+}
+
+interface DownloadFansubGroup {
+  key: string;
+  name: string;
+  tasks: DownloadTask[];
+}
+
+interface DownloadAnimeGroup {
+  key: string;
+  title: string;
+  savePath: string;
+  tasks: DownloadTask[];
+  fansubGroups: DownloadFansubGroup[];
+  linkedEpisodes: number;
+  completedEpisodes: number;
+  activeEpisodes: number;
+}
+
+/** 依次按追番和字幕组归并任务，同时保留未关联的手动任务。 */
+function groupDownloadTasks(tasks: DownloadTask[], myAnime: MyAnime[]): DownloadAnimeGroup[] {
+  const animeById = new Map(myAnime.map((item) => [item.anime.id, item]));
+  const grouped = new Map<string, DownloadAnimeGroup>();
+
+  for (const task of tasks) {
+    const anime = task.animeId ? animeById.get(task.animeId) : undefined;
+    const animeKey = task.animeId ?? "__manual__";
+    const group = grouped.get(animeKey) ?? {
+      key: animeKey,
+      title: task.animeTitle ?? anime?.anime.title ?? "未关联下载",
+      savePath: task.savePath,
+      tasks: [],
+      fansubGroups: [],
+      linkedEpisodes: 0,
+      completedEpisodes: 0,
+      activeEpisodes: 0
+    };
+    group.tasks.push(task);
+    grouped.set(animeKey, group);
+  }
+
+  return [...grouped.values()].map((group) => {
+    const fansubs = new Map<string, DownloadFansubGroup>();
+    for (const task of group.tasks) {
+      const key = task.fansubGroupId ?? task.fansubName ?? "__unknown__";
+      const fansub = fansubs.get(key) ?? {
+        key: `${group.key}:${key}`,
+        name: task.fansubName ?? task.fansubGroupId ?? "未识别字幕组",
+        tasks: []
+      };
+      fansub.tasks.push(task);
+      fansubs.set(key, fansub);
+    }
+
+    const episodeTasks = group.tasks.filter((task) => task.episodeNo !== undefined);
+    group.linkedEpisodes = countUniqueEpisodes(episodeTasks);
+    group.completedEpisodes = countUniqueEpisodes(episodeTasks.filter(isCompletedTask));
+    group.activeEpisodes = countUniqueEpisodes(episodeTasks.filter(isActiveTask));
+    group.fansubGroups = [...fansubs.values()]
+      .map((fansub) => ({ ...fansub, tasks: sortTasksByEpisode(fansub.tasks) }))
+      .sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+    return group;
+  });
+}
+
+function sortTasksByEpisode(tasks: DownloadTask[]): DownloadTask[] {
+  return [...tasks].sort((left, right) => (right.episodeNo ?? -1) - (left.episodeNo ?? -1));
+}
+
+function countUniqueEpisodes(tasks: DownloadTask[]): number {
+  return new Set(tasks.map((task) => task.episodeNo).filter((value) => value !== undefined)).size;
+}
+
+function formatEpisodeRange(tasks: DownloadTask[]): string {
+  const episodes = [...new Set(tasks.map((task) => task.episodeNo).filter((value): value is number => value !== undefined))]
+    .sort((left, right) => left - right);
+  if (episodes.length === 0) {
+    return "未关联集数";
+  }
+  if (episodes.length === 1) {
+    return `第 ${episodes[0]} 集`;
+  }
+  return `第 ${episodes[0]}-${episodes.at(-1)} 集`;
+}
+
+function isCompletedTask(task: DownloadTask): boolean {
+  return task.status === "completed" || task.status === "seeding";
+}
+
+function isActiveTask(task: DownloadTask): boolean {
+  return ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(task.status);
+}
+
+function getDownloadStatusTone(status: DownloadStatus): "neutral" | "green" | "amber" | "red" | "blue" {
+  if (status === "completed" || status === "seeding") return "green";
+  if (status === "error" || status === "missing_files") return "red";
+  if (status === "paused" || status === "stalled") return "amber";
+  if (status === "downloading") return "blue";
+  return "neutral";
 }
 
 function canScanTask(task: DownloadTask): boolean {

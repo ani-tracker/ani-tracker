@@ -125,6 +125,7 @@ function migrateAppData(data: AppDataFile): AppDataMigrationResult {
     settings: shouldApplyQbittorrentNoxDefaults
       ? applyQbittorrentNoxDefaults(settings, defaults.settings, data.settings)
       : settings,
+    downloads: backfillDownloadAssociations(data),
     sources: mergeDefaultSources(defaults.sources, data.sources),
     dashboard: {
       ...defaults.dashboard,
@@ -139,6 +140,25 @@ function migrateAppData(data: AppDataFile): AppDataMigrationResult {
       data.version !== APP_DATA_VERSION || shouldApplyQbittorrentNoxDefaults || addedDefaultSourceIds.length > 0,
     addedDefaultSourceIds
   };
+}
+
+/** 为版本 15 之前创建的下载关联补齐展示快照。 */
+function backfillDownloadAssociations(data: AppDataFile): AppDataFile["downloads"] {
+  return (data.downloads ?? []).map((task) => {
+    const followedAnime = data.myAnime?.find((item) => item.anime.id === task.animeId);
+    const episode = data.episodes?.find((item) => item.id === task.episodeId);
+    const preference = data.episodePreferences?.find((item) => item.episodeId === task.episodeId);
+    const fansubGroupId = task.fansubGroupId ?? preference?.fansubGroupId ?? followedAnime?.defaultFansubGroupId;
+    const fansub = data.fansubGroups?.find((item) => item.id === fansubGroupId);
+
+    return {
+      ...task,
+      animeTitle: task.animeTitle ?? followedAnime?.anime.title,
+      episodeNo: task.episodeNo ?? episode?.episodeNo,
+      fansubGroupId,
+      fansubName: task.fansubName ?? fansub?.name
+    };
+  });
 }
 
 function applyQbittorrentNoxDefaults(

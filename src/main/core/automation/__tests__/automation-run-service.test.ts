@@ -5,6 +5,7 @@ import type { AppSettings, DownloadTask, Episode, EpisodePreference, FansubGroup
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
 import type { AppRepository } from "../../repositories/app-repository";
 import { AutomationRunService } from "../automation-run-service";
+import { resolveAnimeDownloadPath } from "../../downloads/download-path-resolver";
 
 const baseSettings = new GenericDefaultSettingsProvider({
   downloads: "/test/Downloads",
@@ -64,7 +65,7 @@ test("AutomationRunService 使用单集字幕组覆盖选择最佳资源并写�
   assert.equal(result.downloaded[0].releaseTitle, "[覆盖字幕组] 测试番 - 01 [1080p][HEVC][简体]");
   assert.equal(repository.downloads.length, 1);
   assert.equal(repository.downloads[0].releaseId, "rss-test:release-override");
-  assert.equal(repository.downloads[0].savePath, defaultSettings.download.defaultDownloadDir);
+  assert.equal(repository.downloads[0].savePath, resolveAnimeDownloadPath(defaultSettings, repository.myAnime[0]));
   assert.equal(repository.episodes[0].status, "downloading");
 });
 

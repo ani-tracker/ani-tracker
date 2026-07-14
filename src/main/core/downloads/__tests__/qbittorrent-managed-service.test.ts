@@ -118,6 +118,28 @@ test("QbittorrentClient accepts qBittorrent 5 no-content login success", async (
   await client.login();
 });
 
+test("QbittorrentClient adds the Ani Tracker correlation tag", async (t) => {
+  let addedBody: URLSearchParams | undefined;
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    if (String(input).includes("/api/v2/auth/login")) {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+
+    addedBody = init?.body as URLSearchParams;
+    return new Response("Ok", { status: 200 });
+  });
+
+  const client = new QbittorrentClient({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin",
+    password: "ani-tracker"
+  });
+  await client.login();
+  await client.addUrl("magnet:?xt=urn:btih:TEST", "/downloads", false, "ani-tracker-test");
+
+  assert.equal(addedBody?.get("tags"), "ani-tracker-test");
+});
+
 test("QbittorrentManagedService 对托管启动避开 10000 以下 WebUI 端口", async () => {
   const service = new QbittorrentManagedService();
   const status = await service.start({

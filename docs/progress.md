@@ -131,6 +131,15 @@
 
 ### 下载和媒体
 
+- 已实现下载任务与追番、单集、字幕组的持久关联：
+  - 从番剧资源弹窗下载时自动复用或创建对应单集，并同步单集下载状态。
+  - 下载任务保存番剧标题、集数和字幕组快照，qBittorrent 状态刷新后继续保留关联。
+  - qBittorrent 任务使用 Ani Tracker 唯一标签回填关联，兼容添加 torrent URL 时无法立即获得 hash 的情况。
+  - 资源弹窗按字幕组分组、组内按集数展示，并阻止重复添加同一关联资源。
+  - 下载队列按番剧和字幕组归并，展示已关联、下载中、已完成集数。
+  - 我的追番列表展示每部番的下载集数概览。
+- 已应用番剧目录模板，支持 `{year}`、`{month}`、`{title}`、`{originalTitle}`，单番目录覆盖优先。
+
 - 已实现 qBittorrent Web API 兼容引擎：
   - 添加 URL/torrent。
   - 列出任务。
@@ -250,7 +259,4 @@ git diff --check
 - madVR 播放链路或外部 renderer 集成。
 
 ## 下一步建议
-
-1. 补齐 qBittorrent-nox 的 macOS arm64、Windows x64 和 Linux x64 实际无头二进制。
-2. 实现真实内置 BT 核心，替换当前 `EmbeddedTorrentEngine` 占位逻辑。
 3. 使用 SQLite repository 替换 JSON repository，并保留现有数据迁移路径。

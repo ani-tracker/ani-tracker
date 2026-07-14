@@ -60,6 +60,7 @@ export class EmbeddedTorrentEngine implements TorrentEngine {
     const task: DownloadTask = {
       id: `embedded-${Date.now()}`,
       engine: "embedded",
+      correlationTag: options.correlationTag,
       name: input,
       status: options.paused ? "paused" : "queued",
       progress: 0,

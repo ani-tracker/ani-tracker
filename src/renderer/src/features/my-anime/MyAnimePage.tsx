@@ -510,6 +510,7 @@ export function MyAnimePage() {
                   <th className="px-4 py-3 font-medium">首播年月</th>
                   <th className="px-4 py-3 font-medium">默认字幕组</th>
                   <th className="px-4 py-3 font-medium">自动下载</th>
+                  <th className="px-4 py-3 font-medium">下载情况</th>
                   <th className="px-4 py-3 font-medium">偏好</th>
                   <th className="px-4 py-3 text-right font-medium">操作</th>
                 </tr>
@@ -517,6 +518,7 @@ export function MyAnimePage() {
               <tbody>
                 {items.map((item) => {
                   const titleDisplay = resolveAnimeTitleDisplay(item.anime);
+                  const downloadSummary = summarizeAnimeDownloads(downloadTasks, item.anime.id);
 
                   return (
                     <tr key={item.id} className="border-t">
@@ -530,6 +532,14 @@ export function MyAnimePage() {
                         <Badge tone={item.autoDownload ? "green" : "neutral"}>
                           {item.autoDownload ? "已开启" : "未开启"}
                         </Badge>
+                      </td>
+                      <td className="px-4 py-4">
+                        <div className="whitespace-nowrap text-xs">
+                          <span className="font-medium text-emerald-700">{downloadSummary.completed} 已完成</span>
+                          <span className="mx-2 text-border">/</span>
+                          <span className="text-cyan-700">{downloadSummary.active} 下载中</span>
+                        </div>
+                        <div className="mt-1 text-xs text-muted-foreground">共关联 {downloadSummary.linked} 集</div>
                       </td>
                       <td className="px-4 py-4">
                         <div className="flex items-center justify-between gap-3">
@@ -623,6 +633,7 @@ export function MyAnimePage() {
           >
             <AnimeDownloadPanel
               addingReleaseId={addingReleaseId}
+              downloadTasks={downloadTasks}
               errors={animeReleaseErrors}
               fansubNames={fansubNames}
               fansubs={fansubs}
@@ -880,6 +891,7 @@ function AnimeDownloadPanel({
   target,
   releases,
   errors,
+  downloadTasks,
   fansubs,
   fansubNames,
   selectedFansubId,
@@ -895,6 +907,7 @@ function AnimeDownloadPanel({
   target: MyAnime;
   releases: Release[];
   errors: ReleaseSearchResult["errors"];
+  downloadTasks: DownloadTask[];
   fansubs: FansubGroup[];
   fansubNames: Map<string, string>;
   selectedFansubId: string;
@@ -909,9 +922,18 @@ function AnimeDownloadPanel({
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(target.anime);
   const visibleReleases = filterReleasesByFansub(releases, selectedFansubId);
+  const releaseGroups = groupReleasesByFansub(visibleReleases, fansubNames);
   const visibleErrors = dedupeReleaseErrors(errors);
   const unknownFansubCount = releases.filter((release) => !release.fansubGroupId).length;
   const sourceFailed = releases.length === 0 && visibleErrors.length > 0;
+  const linkedTasks = downloadTasks.filter((task) => task.animeId === target.anime.id);
+  const linkedEpisodeCount = new Set(linkedTasks.map((task) => task.episodeNo).filter((value) => value !== undefined)).size;
+  const completedEpisodeCount = new Set(
+    linkedTasks
+      .filter((task) => task.status === "completed" || task.status === "seeding")
+      .map((task) => task.episodeNo)
+      .filter((value) => value !== undefined)
+  ).size;
 
   return (
     <Panel
@@ -927,6 +949,12 @@ function AnimeDownloadPanel({
         <div>
           <div className="truncate text-sm font-medium">{titleDisplay.title}</div>
           {titleDisplay.subtitle && <div className="mt-1 truncate text-xs text-muted-foreground">{titleDisplay.subtitle}</div>}
+        </div>
+
+        <div className="grid grid-cols-3 gap-3 border-y py-3">
+          <DownloadMetric label="已关联集数" value={linkedEpisodeCount} />
+          <DownloadMetric label="已完成" value={completedEpisodeCount} />
+          <DownloadMetric label="下载任务" value={linkedTasks.length} />
         </div>
 
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3">
@@ -974,41 +1002,67 @@ function AnimeDownloadPanel({
         {loading ? (
           <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">正在查询发布资源...</div>
         ) : (
-          <div className={cn("space-y-2", listClassName)}>
-            {visibleReleases.map((release) => {
-              const canDownload = Boolean(release.magnetUrl ?? release.torrentUrl);
-              return (
-                <div key={releaseKey(release)} className="rounded-md border p-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-medium">{release.title}</div>
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        <Badge tone="blue">{release.sourceName}</Badge>
-                        <Badge>{getReleaseFansubName(release, fansubNames)}</Badge>
-                        {release.episodeNo && <Badge>第 {release.episodeNo} 集</Badge>}
-                        {release.resolution && <Badge>{release.resolution}</Badge>}
-                        {release.normalizedVideoCodec && <Badge tone="green">{release.normalizedVideoCodec}</Badge>}
-                        {release.subtitle && <Badge>{subtitleText[release.subtitle]}</Badge>}
-                        {release.size && <Badge>{formatBytes(release.size)}</Badge>}
-                        {typeof release.seeders === "number" && (
-                          <Badge tone={release.seeders > 0 ? "green" : "neutral"}>{release.seeders} 做种</Badge>
-                        )}
-                      </div>
-                      <div className="mt-2 text-xs text-muted-foreground">{formatReleaseDate(release.publishedAt)}</div>
-                    </div>
-                    <Button
-                      className="shrink-0"
-                      variant="outline"
-                      onClick={() => onAddRelease(release)}
-                      disabled={!canDownload || addingReleaseId === release.id}
-                    >
-                      <Download className="h-4 w-4" />
-                      {addingReleaseId === release.id ? "添加中" : "添加下载"}
-                    </Button>
+          <div className={cn("space-y-4", listClassName)}>
+            {releaseGroups.map((group) => (
+              <section key={group.key} className="overflow-hidden rounded-md border bg-background">
+                <div className="flex items-center justify-between border-b bg-muted/70 px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-semibold">{group.name}</span>
+                    <Badge>{group.releases.length} 个资源</Badge>
                   </div>
+                  <span className="text-xs text-muted-foreground">{countEpisodes(group.releases)} 集</span>
                 </div>
-              );
-            })}
+                <div className="divide-y">
+                  {groupReleaseEpisodes(group.releases).map((episodeGroup) => (
+                    <section key={episodeGroup.key}>
+                      <div className="flex items-center justify-between bg-muted/30 px-3 py-2 text-xs">
+                        <span className="font-medium">{episodeGroup.label}</span>
+                        <span className="text-muted-foreground">{episodeGroup.releases.length} 个版本</span>
+                      </div>
+                      <div className="divide-y border-t">
+                        {episodeGroup.releases.map((release) => {
+                          const linkedTask = findReleaseDownloadTask(linkedTasks, release);
+                          const canDownload = Boolean(release.magnetUrl ?? release.torrentUrl);
+                          return (
+                            <div key={releaseKey(release)} className="p-3">
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1">
+                                  <div className="truncate text-sm font-medium">{release.title}</div>
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    <Badge tone="blue">{release.sourceName}</Badge>
+                                    {release.resolution && <Badge>{release.resolution}</Badge>}
+                                    {release.normalizedVideoCodec && <Badge tone="green">{release.normalizedVideoCodec}</Badge>}
+                                    {release.subtitle && <Badge>{subtitleText[release.subtitle]}</Badge>}
+                                    {release.size && <Badge>{formatBytes(release.size)}</Badge>}
+                                    {linkedTask && (
+                                      <Badge tone={isCompletedDownload(linkedTask) ? "green" : "amber"}>
+                                        {downloadStatusText[linkedTask.status]}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  <div className="mt-2 text-xs text-muted-foreground">
+                                    {formatReleaseDate(release.publishedAt)}
+                                  </div>
+                                </div>
+                                <Button
+                                  className="shrink-0"
+                                  variant="outline"
+                                  onClick={() => onAddRelease(release)}
+                                  disabled={!canDownload || Boolean(linkedTask) || addingReleaseId === release.id}
+                                >
+                                  <Download className="h-4 w-4" />
+                                  {linkedTask ? "已加入" : addingReleaseId === release.id ? "添加中" : "添加下载"}
+                                </Button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </section>
+                  ))}
+                </div>
+              </section>
+            ))}
 
             {visibleReleases.length === 0 && (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
@@ -1023,6 +1077,15 @@ function AnimeDownloadPanel({
         )}
       </div>
     </Panel>
+  );
+}
+
+function DownloadMetric({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="min-w-0 px-2">
+      <div className="text-lg font-semibold">{value}</div>
+      <div className="truncate text-xs text-muted-foreground">{label}</div>
+    </div>
   );
 }
 
@@ -1229,6 +1292,26 @@ function findEpisodeDownloadTask(downloadTasks: DownloadTask[], episode: Episode
   return downloadTasks.find((task) => task.episodeId === episode.id);
 }
 
+/** 汇总一部追番已关联的唯一集数。 */
+function summarizeAnimeDownloads(downloadTasks: DownloadTask[], animeId: string) {
+  const tasks = downloadTasks.filter((task) => task.animeId === animeId && task.episodeNo !== undefined);
+  return {
+    linked: countDownloadEpisodes(tasks),
+    completed: countDownloadEpisodes(tasks.filter(isCompletedDownload)),
+    active: countDownloadEpisodes(tasks.filter(isActiveDownload))
+  };
+}
+
+function countDownloadEpisodes(downloadTasks: DownloadTask[]): number {
+  return new Set(downloadTasks.map((task) => task.episodeNo).filter((value) => value !== undefined)).size;
+}
+
+function isActiveDownload(task: DownloadTask): boolean {
+  return ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(
+    task.status
+  );
+}
+
 function buildSearchTerms(item: MyAnime): string[] {
   return unique(
     [
@@ -1295,6 +1378,69 @@ function filterReleasesByFansub(releases: Release[], fansubGroupId: string): Rel
 
 function countReleasesByFansub(releases: Release[], fansubGroupId: string): number {
   return releases.filter((release) => release.fansubGroupId === fansubGroupId).length;
+}
+
+interface ReleaseFansubGroup {
+  key: string;
+  name: string;
+  releases: Release[];
+}
+
+function groupReleasesByFansub(releases: Release[], fansubNames: Map<string, string>): ReleaseFansubGroup[] {
+  const groups = new Map<string, ReleaseFansubGroup>();
+  for (const release of releases) {
+    const key = release.fansubGroupId ?? release.fansubName ?? unknownFansubFilter;
+    const group = groups.get(key) ?? {
+      key,
+      name: getReleaseFansubName(release, fansubNames),
+      releases: []
+    };
+    group.releases.push(release);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+}
+
+function countEpisodes(releases: Release[]): number {
+  return new Set(releases.map((release) => release.episodeNo).filter((value) => value !== undefined)).size;
+}
+
+interface ReleaseEpisodeGroup {
+  key: string;
+  label: string;
+  releases: Release[];
+}
+
+function groupReleaseEpisodes(releases: Release[]): ReleaseEpisodeGroup[] {
+  const groups = new Map<string, ReleaseEpisodeGroup>();
+  for (const release of releases) {
+    const key = release.episodeNo === undefined ? "unknown" : String(release.episodeNo);
+    const group = groups.get(key) ?? {
+      key,
+      label: release.episodeNo === undefined ? "未识别集数" : `第 ${release.episodeNo} 集`,
+      releases: []
+    };
+    group.releases.push(release);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()];
+}
+
+function findReleaseDownloadTask(tasks: DownloadTask[], release: Release): DownloadTask | undefined {
+  return tasks.find((task) => {
+    if (task.releaseId === release.id) {
+      return true;
+    }
+
+    return task.episodeNo !== undefined && task.episodeNo === release.episodeNo &&
+      (task.fansubGroupId ?? task.fansubName) === (release.fansubGroupId ?? release.fansubName);
+  });
+}
+
+function isCompletedDownload(task: DownloadTask): boolean {
+  return task.status === "completed" || task.status === "seeding";
 }
 
 function getReleaseFansubName(release: Release, fansubNames: Map<string, string>): string {

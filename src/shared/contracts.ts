@@ -71,6 +71,7 @@ export interface AddTorrentOptions {
   savePath: string;
   selectedFileIndexes?: number[];
   category?: string;
+  correlationTag?: string;
   paused?: boolean;
 }
 

@@ -15,6 +15,7 @@ import { AutomationScheduler } from "./core/automation/automation-scheduler";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
 import { QbittorrentManagedService } from "./core/downloads/qbittorrent-managed-service";
 import { logger } from "./core/logger";
+import { resolveAnimeDownloadPath } from "./core/downloads/download-path-resolver";
 
 export const repository = new AppRepository(new AppDataStore());
 export const qbittorrentManagedService = new QbittorrentManagedService();
@@ -192,15 +193,37 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     }
 
     const animeId = input.animeId ?? release.animeId;
-    const episodeId = input.episodeId;
     const episodeNo = input.episodeNo ?? release.episodeNo;
     const fansubGroupId = input.fansubGroupId ?? release.fansubGroupId;
-    const savePath = input.savePath?.trim() || (await getAnimeDownloadDir(animeId)) || settings.download.defaultDownloadDir;
+    const [followedAnime, fansubs] = await Promise.all([
+      findMyAnime(animeId),
+      repository.listFansubs()
+    ]);
+    const fansubName =
+      release.fansubName ?? fansubs.find((item) => item.id === fansubGroupId)?.name;
+    const duplicate = findDuplicateReleaseDownload(await repository.listDownloads(), {
+      releaseId: release.id,
+      animeId,
+      episodeNo,
+      fansubGroupId,
+      fansubName
+    });
+    if (duplicate) {
+      throw new Error(
+        episodeNo !== undefined
+          ? `第 ${episodeNo} 集的同字幕组资源已在下载队列中`
+          : "该资源已在下载队列中"
+      );
+    }
+    const episode = await resolveDownloadEpisode(animeId, input.episodeId, episodeNo);
+    const savePath = input.savePath?.trim() || resolveAnimeDownloadPath(settings, followedAnime);
     logger.info("Release download add requested", {
       engine: settings.download.defaultTorrentEngine,
       animeId,
-      episodeId,
+      episodeId: episode?.id,
       episodeNo,
+      fansubGroupId,
+      savePath,
       releaseId: release.id
     });
     const engine = createTorrentEngine(settings, {
@@ -214,12 +237,16 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       ...task,
       releaseId: release.id,
       animeId,
-      episodeId,
+      episodeId: episode?.id,
+      animeTitle: followedAnime?.anime.title,
+      episodeNo,
+      fansubGroupId,
+      fansubName,
       name: release.title
     });
     await updateEpisodeDownloadLink({
       animeId,
-      episodeId,
+      episodeId: episode?.id,
       fansubGroupId,
       releaseId: release.id
     });
@@ -328,13 +355,77 @@ function getManualDownloadName(url: string): string {
   }
 }
 
-async function getAnimeDownloadDir(animeId?: string): Promise<string | undefined> {
+/** 根据番剧目录 ID 查找追番配置。 */
+async function findMyAnime(animeId?: string): Promise<MyAnime | undefined> {
   if (!animeId) {
     return undefined;
   }
 
-  const anime = (await repository.listMyAnime()).find((item) => item.anime.id === animeId);
-  return anime?.downloadDir?.trim() || undefined;
+  return (await repository.listMyAnime()).find((item) => item.anime.id === animeId);
+}
+
+/** 复用或创建资源下载需要关联的单集。 */
+async function resolveDownloadEpisode(
+  animeId?: string,
+  episodeId?: string,
+  episodeNo?: number
+): Promise<Episode | undefined> {
+  if (!animeId) {
+    return undefined;
+  }
+
+  const episodes = await repository.listEpisodes(animeId);
+  const existing =
+    (episodeId ? episodes.find((item) => item.id === episodeId) : undefined) ??
+    (episodeNo !== undefined ? episodes.find((item) => item.episodeNo === episodeNo) : undefined);
+  if (existing) {
+    return existing;
+  }
+
+  if (episodeNo === undefined) {
+    return undefined;
+  }
+
+  const episode: Episode = {
+    id: createEpisodeId(animeId, episodeNo),
+    animeId,
+    episodeNo,
+    status: "downloading"
+  };
+  await repository.upsertEpisode(episode);
+  logger.info("Episode created from release download", { animeId, episodeId: episode.id, episodeNo });
+  return episode;
+}
+
+function createEpisodeId(animeId: string, episodeNo: number): string {
+  return `episode-${animeId}-${String(episodeNo).replace(".", "-")}`;
+}
+
+function findDuplicateReleaseDownload(
+  downloads: Awaited<ReturnType<AppRepository["listDownloads"]>>,
+  input: {
+    releaseId: string;
+    animeId?: string;
+    episodeNo?: number;
+    fansubGroupId?: string;
+    fansubName?: string;
+  }
+) {
+  return downloads.find((task) => {
+    if (task.releaseId === input.releaseId) {
+      return true;
+    }
+
+    const fansubKey = input.fansubGroupId ?? input.fansubName;
+    return Boolean(
+      input.animeId &&
+      input.episodeNo !== undefined &&
+      fansubKey &&
+      task.animeId === input.animeId &&
+      task.episodeNo === input.episodeNo &&
+      (task.fansubGroupId ?? task.fansubName) === fansubKey
+    );
+  });
 }
 
 async function updateEpisodeDownloadLink(input: {

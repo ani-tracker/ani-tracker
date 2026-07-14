@@ -139,6 +139,11 @@ export interface DownloadTask {
   releaseId?: string;
   animeId?: string;
   episodeId?: string;
+  animeTitle?: string;
+  episodeNo?: number;
+  fansubGroupId?: string;
+  fansubName?: string;
+  correlationTag?: string;
   engine: TorrentEngineKind;
   torrentHash?: string;
   name: string;

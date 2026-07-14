@@ -3,6 +3,7 @@ import type { AppSettings, AutomationSettings, Episode, MyAnime, Release } from 
 import { buildAnimeReleaseSearchTerms } from "../../../shared/anime-release-search";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
 import { logger } from "../logger";
+import { resolveAnimeDownloadPath } from "../downloads/download-path-resolver";
 import type { AppRepository } from "../repositories/app-repository";
 import { rankReleases, type ReleaseMatchResult } from "../releases/release-matcher";
 import { ReleaseSourceService } from "../sources/release-source-service";
@@ -148,13 +149,17 @@ export class AutomationRunService {
           }
 
           const task = await engine.addMagnet(url, {
-            savePath: anime.downloadDir ?? settings.download.defaultDownloadDir
+            savePath: resolveAnimeDownloadPath(settings, anime)
           });
           const savedTasks = await this.repository.upsertDownloadTask({
             ...task,
             releaseId: best.id,
             animeId: anime.anime.id,
             episodeId: episode.id,
+            animeTitle: anime.anime.title,
+            episodeNo: episode.episodeNo,
+            fansubGroupId: best.fansubGroupId ?? preferredFansubGroupId,
+            fansubName: best.fansubName ?? fansubs.find((item) => item.id === preferredFansubGroupId)?.name,
             name: best.title
           });
           await this.repository.upsertEpisode({

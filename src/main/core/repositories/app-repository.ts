@@ -258,6 +258,11 @@ export class AppRepository {
               releaseId: existing.releaseId,
               animeId: existing.animeId,
               episodeId: existing.episodeId,
+              animeTitle: existing.animeTitle,
+              episodeNo: existing.episodeNo,
+              fansubGroupId: existing.fansubGroupId,
+              fansubName: existing.fansubName,
+              correlationTag: existing.correlationTag ?? task.correlationTag,
               createdAt: existing.createdAt,
               completedAt: task.completedAt ?? existing.completedAt
             }
@@ -267,6 +272,7 @@ export class AppRepository {
       const inactiveLocalTasks = draft.downloads.filter((task) => !isEngineTaskCovered(merged, task));
       draft.downloads = [...merged, ...inactiveLocalTasks];
       draft.dashboard.activeDownloads = draft.downloads.filter((task) => !["completed", "seeding"].includes(task.status));
+      syncEpisodeStatusesFromDownloads(draft);
     });
 
     return data.downloads;
@@ -292,6 +298,7 @@ export class AppRepository {
     const data = await this.store.update((draft) => {
       draft.downloads = draft.downloads.filter((task) => task.id !== taskId && task.torrentHash !== taskId);
       draft.dashboard.activeDownloads = draft.downloads.filter((task) => !["completed", "seeding"].includes(task.status));
+      syncEpisodeStatusesFromDownloads(draft);
     });
 
     return data.downloads;
@@ -444,6 +451,10 @@ export class AppRepository {
 
 function findExistingDownloadTask(existingTasks: DownloadTask[], incoming: DownloadTask): DownloadTask | undefined {
   return existingTasks.find((task) => {
+    if (incoming.correlationTag && task.correlationTag === incoming.correlationTag) {
+      return true;
+    }
+
     if (incoming.torrentHash && task.torrentHash === incoming.torrentHash) {
       return true;
     }
@@ -458,12 +469,50 @@ function findExistingDownloadTask(existingTasks: DownloadTask[], incoming: Downl
 
 function isEngineTaskCovered(engineTasks: DownloadTask[], existing: DownloadTask): boolean {
   return engineTasks.some((task) => {
+    if (existing.correlationTag && task.correlationTag === existing.correlationTag) {
+      return true;
+    }
+
     if (existing.torrentHash && task.torrentHash === existing.torrentHash) {
       return true;
     }
 
     return task.id === existing.id || task.name === existing.name;
   });
+}
+
+/** 下载引擎刷新后同步关联单集的生命周期状态。 */
+function syncEpisodeStatusesFromDownloads(data: AppDataFile): void {
+  for (const episode of data.episodes) {
+    if (episode.status === "watched") {
+      continue;
+    }
+
+    const linkedTasks = data.downloads.filter((task) => task.episodeId === episode.id);
+    if (linkedTasks.length === 0) {
+      if (episode.status === "downloading") {
+        episode.status = "aired";
+      }
+      continue;
+    }
+    if (linkedTasks.some((task) => task.status === "completed" || task.status === "seeding")) {
+      episode.status = "downloaded";
+      continue;
+    }
+
+    if (linkedTasks.some((task) => isActiveDownloadStatus(task.status))) {
+      episode.status = "downloading";
+      continue;
+    }
+
+    if (episode.status === "downloading") {
+      episode.status = "aired";
+    }
+  }
+}
+
+function isActiveDownloadStatus(status: DownloadStatus): boolean {
+  return ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(status);
 }
 
 function mergeSettings(current: AppSettings, patch: Partial<AppSettings>): AppSettings {

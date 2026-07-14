@@ -1,5 +1,6 @@
 import type { AddTorrentOptions, TorrentEngine } from "@shared/contracts";
 import type { DownloadTask, TorrentFile } from "@shared/domain";
+import { randomUUID } from "node:crypto";
 import { qbStateToStatus, QbittorrentClient, type QbittorrentClientOptions, type QbittorrentTorrentInfo } from "./qbittorrent-client";
 
 export class QbittorrentEngine implements TorrentEngine {
@@ -17,14 +18,16 @@ export class QbittorrentEngine implements TorrentEngine {
 
   async addMagnet(magnetUrl: string, options: AddTorrentOptions): Promise<DownloadTask> {
     await this.ensureConnected();
-    await this.client.addUrl(magnetUrl, options.savePath, options.paused);
-    return createPendingTask(magnetUrl, options.savePath);
+    const correlationTag = options.correlationTag ?? createCorrelationTag();
+    await this.client.addUrl(magnetUrl, options.savePath, options.paused, correlationTag);
+    return createPendingTask(magnetUrl, options.savePath, correlationTag);
   }
 
   async addTorrentFile(filePath: string, options: AddTorrentOptions): Promise<DownloadTask> {
     await this.ensureConnected();
-    await this.client.addTorrentFile(filePath, options.savePath, options.paused);
-    return createPendingTask(filePath, options.savePath);
+    const correlationTag = options.correlationTag ?? createCorrelationTag();
+    await this.client.addTorrentFile(filePath, options.savePath, options.paused, correlationTag);
+    return createPendingTask(filePath, options.savePath, correlationTag);
   }
 
   async listTasks(): Promise<DownloadTask[]> {
@@ -90,6 +93,7 @@ export class QbittorrentEngine implements TorrentEngine {
       id: torrent.hash,
       engine: "qbittorrent",
       torrentHash: torrent.hash,
+      correlationTag: extractCorrelationTag(torrent.tags),
       name: torrent.name,
       status: qbStateToStatus(torrent.state),
       progress: torrent.progress,
@@ -104,13 +108,14 @@ export class QbittorrentEngine implements TorrentEngine {
   }
 }
 
-function createPendingTask(name: string, savePath: string): DownloadTask {
+function createPendingTask(name: string, savePath: string, correlationTag: string): DownloadTask {
   const infoHash = extractInfoHash(name);
 
   return {
     id: infoHash ?? `pending-${Date.now()}`,
     engine: "qbittorrent",
     torrentHash: infoHash,
+    correlationTag,
     name,
     status: "queued",
     progress: 0,
@@ -120,6 +125,14 @@ function createPendingTask(name: string, savePath: string): DownloadTask {
     files: [],
     createdAt: new Date().toISOString()
   };
+}
+
+function createCorrelationTag(): string {
+  return `ani-tracker-${randomUUID()}`;
+}
+
+function extractCorrelationTag(tags?: string): string | undefined {
+  return tags?.split(",").map((tag) => tag.trim()).find((tag) => tag.startsWith("ani-tracker-"));
 }
 
 function extractInfoHash(value: string): string | undefined {
