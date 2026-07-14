@@ -1,21 +1,26 @@
 import type { ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
 import type { FansubGroup, ReleaseSourceConfig } from "@shared/domain";
+import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { AcgnxReleaseSource } from "./acgnx-source";
 import { AniBtReleaseSource } from "./anibt-source";
 import { DmhyReleaseSource } from "./dmhy-source";
-import { MikanReleaseSource } from "./mikan-source";
+import { MikanReleaseSource, type ReleaseHttpClient } from "./mikan-source";
 import { RssReleaseSource } from "./rss-source";
 import { TorznabReleaseSource } from "./torznab-source";
 
 export class ReleaseSourceService {
   constructor(
     private readonly configs: ReleaseSourceConfig[],
-    private readonly fansubs: FansubGroup[] = []
+    private readonly fansubs: FansubGroup[] = [],
+    private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
   ) {}
 
   async search(query: ReleaseQuery): Promise<ReleaseSearchResult> {
-    const sources = this.configs.filter((config) => config.enabled).map(createReleaseSource).filter(Boolean) as ReleaseSource[];
+    const sources = this.configs
+      .filter((config) => config.enabled)
+      .map((config) => createReleaseSource(config, this.httpClient))
+      .filter(Boolean) as ReleaseSource[];
     const errors: ReleaseSearchResult["errors"] = [];
     const releases = (
       await Promise.all(
@@ -44,7 +49,10 @@ export class ReleaseSourceService {
   }
 }
 
-export function createReleaseSource(config: ReleaseSourceConfig): ReleaseSource | null {
+export function createReleaseSource(
+  config: ReleaseSourceConfig,
+  httpClient: ReleaseHttpClient = defaultMetadataHttpClient
+): ReleaseSource | null {
   if (config.kind === "rss") {
     return new RssReleaseSource(config);
   }
@@ -58,7 +66,7 @@ export function createReleaseSource(config: ReleaseSourceConfig): ReleaseSource 
   }
 
   if (config.kind === "site_adapter" && isMikanConfig(config)) {
-    return new MikanReleaseSource(config);
+    return new MikanReleaseSource(config, httpClient);
   }
 
   if (config.kind === "site_adapter" && isAniBtConfig(config)) {

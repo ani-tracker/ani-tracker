@@ -13,6 +13,7 @@ import { CompletedDownloadMediaAutoScanner } from "./core/media/completed-downlo
 import { EpisodeReleasePreviewService } from "./core/automation/episode-release-preview-service";
 import { AutomationScheduler } from "./core/automation/automation-scheduler";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
+import { MetadataHttpClient } from "./core/metadata/metadata-http-client";
 import { QbittorrentManagedService } from "./core/downloads/qbittorrent-managed-service";
 import { logger } from "./core/logger";
 import { resolveAnimeDownloadPath } from "./core/downloads/download-path-resolver";
@@ -261,8 +262,12 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   );
   ipcMain.handle("sources:upsert", (_event, source: ReleaseSourceConfig) => repository.upsertSource(source));
   ipcMain.handle("releases:search", async (_event, query: ReleaseQuery) => {
-    const [sources, fansubs] = await Promise.all([repository.listSources(), repository.listFansubs()]);
-    return new ReleaseSourceService(sources, fansubs).search(query);
+    const [sources, fansubs, settings] = await Promise.all([
+      repository.listSources(),
+      repository.listFansubs(),
+      repository.getSettings()
+    ]);
+    return new ReleaseSourceService(sources, fansubs, new MetadataHttpClient(settings.network.metadataProxy)).search(query);
   });
   ipcMain.handle("settings:get", () => repository.getSettings());
   ipcMain.handle("settings:update", async (_event, patch: Partial<AppSettings>) => {

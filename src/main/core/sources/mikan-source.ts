@@ -2,12 +2,20 @@ import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
+import { defaultMetadataHttpClient, type MetadataFetchOptions } from "../metadata/metadata-http-client";
 
 const DEFAULT_MIKAN_BASE_URL = "https://mikanani.me/";
 const MIKAN_FETCH_TIMEOUT_MS = 10_000;
 
+export interface ReleaseHttpClient {
+  fetch(input: string | URL, options?: MetadataFetchOptions): Promise<Response>;
+}
+
 export class MikanReleaseSource implements ReleaseSource {
-  constructor(public readonly config: ReleaseSourceConfig) {}
+  constructor(
+    public readonly config: ReleaseSourceConfig,
+    private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
+  ) {}
 
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
     const keyword = query.keyword.trim();
@@ -18,7 +26,7 @@ export class MikanReleaseSource implements ReleaseSource {
     const url = new URL("/Home/Search", this.config.baseUrl ?? DEFAULT_MIKAN_BASE_URL);
     url.searchParams.set("searchstr", keyword);
 
-    const html = await fetchText(url.toString());
+    const html = await fetchText(url.toString(), this.httpClient);
     return parseMikanReleaseList(html, this.config).slice(0, query.limit ?? 50);
   }
 
@@ -104,27 +112,21 @@ function findEpisodeLink(row: string): { id: string; title: string } | null {
   };
 }
 
-async function fetchText(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), MIKAN_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: "text/html,application/xhtml+xml",
-        "User-Agent": DESKTOP_BROWSER_USER_AGENT
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Mikan 下载源请求失败: ${response.status} ${response.statusText}`);
+async function fetchText(url: string, httpClient: ReleaseHttpClient): Promise<string> {
+  const response = await httpClient.fetch(url, {
+    source: "mikan-release",
+    timeoutMs: MIKAN_FETCH_TIMEOUT_MS,
+    headers: {
+      Accept: "text/html,application/xhtml+xml",
+      "User-Agent": DESKTOP_BROWSER_USER_AGENT
     }
+  });
 
-    return response.text();
-  } finally {
-    clearTimeout(timeout);
+  if (!response.ok) {
+    throw new Error(`Mikan 下载源请求失败: ${response.status} ${response.statusText}`);
   }
+
+  return response.text();
 }
 
 function findHref(row: string, pattern: RegExp): string | undefined {

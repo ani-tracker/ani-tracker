@@ -5,7 +5,7 @@ import { sourceConfigs } from "../../mock-data";
 import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
 import { AniBtReleaseSource, createAniBtHeaders, parseAniBtRss } from "../anibt-source";
 import { parseDmhyList } from "../dmhy-source";
-import { parseMikanReleaseList } from "../mikan-source";
+import { MikanReleaseSource, parseMikanReleaseList, type ReleaseHttpClient } from "../mikan-source";
 import { createReleaseSource } from "../release-source-service";
 import { RssReleaseSource } from "../rss-source";
 import { TorznabReleaseSource } from "../torznab-source";
@@ -144,6 +144,32 @@ test("parseMikanReleaseList 在只有 Episode 链接时兜底生成 torrent 地�
   assert.equal(releases[0].torrentUrl, "https://mikanani.me/Download/789.torrent");
   assert.equal(releases[0].episodeNo, 3);
   assert.equal(releases[0].resolution, "720p");
+});
+
+test("MikanReleaseSource 使用注入 HTTP client 请求搜索页", async () => {
+  const requests: Array<{ url: string; options?: Parameters<ReleaseHttpClient["fetch"]>[1] }> = [];
+  const httpClient: ReleaseHttpClient = {
+    async fetch(input, options) {
+      requests.push({ url: String(input), options });
+      return new Response(
+        `
+          <div>
+            <a href="/Home/Episode/901">[字幕组] 代理测试番 - 01 [1080p]</a>
+          </div>
+        `,
+        { status: 200, statusText: "OK" }
+      );
+    }
+  };
+
+  const releases = await new MikanReleaseSource(mikanConfig, httpClient).searchReleases({ keyword: "代理测试番", limit: 5 });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, "https://mikanani.me/Home/Search?searchstr=%E4%BB%A3%E7%90%86%E6%B5%8B%E8%AF%95%E7%95%AA");
+  assert.equal(requests[0].options?.source, "mikan-release");
+  assert.equal(requests[0].options?.timeoutMs, 10_000);
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0].id, "mikan-site:901");
 });
 
 test("parseAniBtRss 解析 AniBT RSS 扩展字段和内嵌 torrent 元数据", () => {
