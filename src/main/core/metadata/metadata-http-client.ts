@@ -3,7 +3,7 @@ import type { MetadataProxySettings } from "@shared/domain";
 import { logger } from "../logger";
 
 const METADATA_SESSION_PARTITION = "metadata-proxy";
-const DEFAULT_METADATA_TIMEOUT_MS = 5_000;
+const DEFAULT_METADATA_TIMEOUT_MS = 15_000;
 
 export interface MetadataFetchOptions extends RequestInit {
   source?: string;

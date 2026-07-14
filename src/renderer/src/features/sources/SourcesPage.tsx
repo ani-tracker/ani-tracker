@@ -314,7 +314,7 @@ function canUseCredential(source: ReleaseSourceConfig): boolean {
 
 const defaultMetadataProxySettings: MetadataProxySettings = {
   mode: "off",
-  timeoutMs: 5_000
+  timeoutMs: 15_000
 };
 
 function getMetadataProxySettings(settings: AppSettings | null): MetadataProxySettings {

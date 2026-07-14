@@ -124,7 +124,7 @@ function assertSharedDefaults(settings: AppSettings): void {
   assert.deepEqual(settings.network, {
     metadataProxy: {
       mode: "off",
-      timeoutMs: 5_000
+      timeoutMs: 15_000
     }
   });
 }

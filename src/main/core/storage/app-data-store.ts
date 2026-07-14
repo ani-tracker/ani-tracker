@@ -9,6 +9,8 @@ import { createSeedData } from "./seed-data";
 
 const PLATFORM_DEFAULT_SETTINGS_VERSION = 11;
 const QBITTORRENT_NOX_DEFAULT_SETTINGS_VERSION = 13;
+const METADATA_PROXY_TIMEOUT_DEFAULT_SETTINGS_VERSION = 16;
+const LEGACY_METADATA_PROXY_TIMEOUT_MS = 5_000;
 
 export class AppDataStore {
   private data: AppDataFile | null = null;
@@ -101,6 +103,8 @@ function migrateAppData(data: AppDataFile): AppDataMigrationResult {
   const defaults = createSeedData();
   const shouldResetSettingsToPlatformDefaults = (data.version ?? 0) < PLATFORM_DEFAULT_SETTINGS_VERSION;
   const shouldApplyQbittorrentNoxDefaults = (data.version ?? 0) < QBITTORRENT_NOX_DEFAULT_SETTINGS_VERSION;
+  const shouldApplyMetadataProxyTimeoutDefaults =
+    (data.version ?? 0) < METADATA_PROXY_TIMEOUT_DEFAULT_SETTINGS_VERSION;
   const addedDefaultSourceIds = getMissingDefaultSourceIds(defaults.sources, data.sources);
 
   if (shouldResetSettingsToPlatformDefaults) {
@@ -117,14 +121,24 @@ function migrateAppData(data: AppDataFile): AppDataMigrationResult {
     });
   }
 
+  if (shouldApplyMetadataProxyTimeoutDefaults) {
+    logger.info("App metadata proxy timeout defaults migrated", {
+      fromVersion: data.version ?? 0,
+      toVersion: APP_DATA_VERSION
+    });
+  }
+
   const settings = shouldResetSettingsToPlatformDefaults ? defaults.settings : mergeSettings(defaults.settings, data.settings);
+  const qBittorrentSettings = shouldApplyQbittorrentNoxDefaults
+    ? applyQbittorrentNoxDefaults(settings, defaults.settings, data.settings)
+    : settings;
   const migrated: AppDataFile = {
     ...defaults,
     ...data,
     version: APP_DATA_VERSION,
-    settings: shouldApplyQbittorrentNoxDefaults
-      ? applyQbittorrentNoxDefaults(settings, defaults.settings, data.settings)
-      : settings,
+    settings: shouldApplyMetadataProxyTimeoutDefaults
+      ? applyMetadataProxyTimeoutDefaults(qBittorrentSettings, defaults.settings)
+      : qBittorrentSettings,
     downloads: backfillDownloadAssociations(data),
     sources: mergeDefaultSources(defaults.sources, data.sources),
     dashboard: {
@@ -137,7 +151,10 @@ function migrateAppData(data: AppDataFile): AppDataMigrationResult {
   return {
     data: migrated,
     shouldSave:
-      data.version !== APP_DATA_VERSION || shouldApplyQbittorrentNoxDefaults || addedDefaultSourceIds.length > 0,
+      data.version !== APP_DATA_VERSION ||
+      shouldApplyQbittorrentNoxDefaults ||
+      shouldApplyMetadataProxyTimeoutDefaults ||
+      addedDefaultSourceIds.length > 0,
     addedDefaultSourceIds
   };
 }
@@ -200,6 +217,25 @@ function applyQbittorrentNoxDefaults(
           ...settings.download.qbittorrent.managed,
           enabled: true
         }
+      }
+    }
+  };
+}
+
+/** 将旧版本的 5 秒元数据请求默认超时提升到当前默认值。 */
+function applyMetadataProxyTimeoutDefaults(settings: AppSettings, defaults: AppSettings): AppSettings {
+  const currentTimeoutMs = settings.network.metadataProxy.timeoutMs;
+  if (currentTimeoutMs !== LEGACY_METADATA_PROXY_TIMEOUT_MS) {
+    return settings;
+  }
+
+  return {
+    ...settings,
+    network: {
+      ...settings.network,
+      metadataProxy: {
+        ...settings.network.metadataProxy,
+        timeoutMs: defaults.network.metadataProxy.timeoutMs
       }
     }
   };
