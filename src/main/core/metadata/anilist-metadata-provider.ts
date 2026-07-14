@@ -1,4 +1,5 @@
-import type { Anime, Season } from "@shared/domain";
+import type { Anime, AnimeAlias, Season } from "@shared/domain";
+import { inferAnimeAliasLanguage } from "../../../shared/anime-title";
 import { getSeasonInfo, type MonthlyAnimeMetadataProvider } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
 
@@ -28,6 +29,7 @@ interface AniListMedia {
   };
   season?: string;
   description?: string;
+  synonyms?: string[];
   coverImage?: {
     large?: string;
   };
@@ -66,6 +68,7 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider {
             }
             season
             description(asHtml: false)
+            synonyms
             coverImage {
               large
             }
@@ -109,20 +112,7 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider {
 
 function mapAniListMedia(item: AniListMedia, season: Season): Anime {
   const title = item.title?.native ?? item.title?.romaji ?? item.title?.english ?? `AniList ${item.id}`;
-  const aliases = [
-    { alias: item.title?.romaji, language: "romaji" as const, priority: 90 },
-    { alias: item.title?.english, language: "en" as const, priority: 80 }
-  ]
-    .filter((candidate): candidate is { alias: string; language: "romaji" | "en"; priority: number } =>
-      Boolean(candidate.alias && candidate.alias !== title)
-    )
-    .map((alias, index) => ({
-      id: `anilist-${item.id}-alias-${index + 1}`,
-      animeId: `anilist-${item.id}`,
-      alias: alias.alias,
-      language: alias.language,
-      priority: alias.priority
-    }));
+  const aliases = buildAniListAliases(item, title);
   const year = item.startDate?.year ?? new Date().getFullYear();
   const month = item.startDate?.month ?? 1;
   const day = item.startDate?.day ?? 1;
@@ -143,4 +133,41 @@ function mapAniListMedia(item: AniListMedia, season: Season): Anime {
       ...(item.idMal ? { mal: String(item.idMal) } : {})
     }
   };
+}
+
+function buildAniListAliases(item: AniListMedia, title: string): AnimeAlias[] {
+  const candidates = [
+    { alias: item.title?.romaji, language: "romaji" as const, priority: 90 },
+    { alias: item.title?.english, language: "en" as const, priority: 80 },
+    ...(item.synonyms ?? []).map((alias) => ({
+      alias,
+      language: inferAnimeAliasLanguage(alias, "custom"),
+      priority: 70
+    }))
+  ];
+  const seen = new Set([normalizeAlias(title)]);
+  const aliases: AnimeAlias[] = [];
+
+  for (const candidate of candidates) {
+    const alias = candidate.alias?.trim();
+    const normalized = normalizeAlias(alias);
+    if (!alias || !normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    aliases.push({
+      id: `anilist-${item.id}-alias-${aliases.length + 1}`,
+      animeId: `anilist-${item.id}`,
+      alias,
+      language: candidate.language,
+      priority: candidate.priority
+    });
+  }
+
+  return aliases;
+}
+
+function normalizeAlias(value: string | undefined): string {
+  return (value ?? "").trim().toLowerCase();
 }

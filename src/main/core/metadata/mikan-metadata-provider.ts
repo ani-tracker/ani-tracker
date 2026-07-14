@@ -122,7 +122,7 @@ export function parseMikanDetailHtml(html: string, detailUrl: string): MikanDeta
     readTagText(html, "h1"),
     readTitleTag(html)
   ]);
-  const summary = readMetaContent(html, "description") ?? readMetaContent(html, "og:description");
+  const summary = sanitizeMikanSummary(readMetaContent(html, "description") ?? readMetaContent(html, "og:description"));
   const coverUrl = absolutizeOptionalUrl(
     readMetaContent(html, "og:image") ?? readImageSource(html),
     detailUrl
@@ -289,6 +289,14 @@ function pickMikanTitle(values: Array<string | undefined>): string | undefined {
 
 function isIgnoredMikanTitle(value: string): boolean {
   return /^(详情|订阅|更多|Mikan Project)$/i.test(value.trim());
+}
+
+function sanitizeMikanSummary(value: string | undefined): string | undefined {
+  if (!value || /蜜柑计划|Mikan Project/i.test(value)) {
+    return undefined;
+  }
+
+  return value;
 }
 
 function absolutizeOptionalUrl(value: string | undefined, baseUrl: string): string | undefined {

@@ -106,29 +106,75 @@ export function uniqueByNormalizedTitle<
 }
 
 export function mergeAnimeMetadataBatches(batches: AnimeMetadataBatch[]): Anime[] {
-  const merged: Anime[] = [];
+  const candidates = batches.flatMap((batch, batchIndex) =>
+    batch.items.map((item, itemIndex) => ({
+      source: batch.source,
+      batchIndex,
+      itemIndex,
+      item
+    }))
+  );
+  const unionFind = new UnionFind(candidates.length);
 
-  for (const batch of batches) {
-    for (const item of batch.items) {
-      const index = merged.findIndex((existing) => isSameAnimeMetadata(existing, item));
-      if (index < 0) {
-        merged.push(item);
+  for (let leftIndex = 0; leftIndex < candidates.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < candidates.length; rightIndex += 1) {
+      const reason = getMergeReason(candidates[leftIndex].item, candidates[rightIndex].item);
+      if (!reason) {
         continue;
       }
 
-      merged[index] = mergeAnimeMetadata(merged[index], item);
+      unionFind.union(leftIndex, rightIndex);
     }
   }
 
-  return merged;
+  const groups = new Map<number, typeof candidates>();
+  candidates.forEach((candidate, index) => {
+    const root = unionFind.find(index);
+    groups.set(root, [...(groups.get(root) ?? []), candidate]);
+  });
+
+  return [...groups.values()].map((group) => {
+    const ordered = group
+      .sort((left, right) => left.batchIndex - right.batchIndex || left.itemIndex - right.itemIndex)
+      .map((candidate) => candidate.item);
+
+    return ordered.slice(1).reduce((merged, item) => mergeAnimeMetadata(merged, item), ordered[0]);
+  });
 }
 
 function isSameAnimeMetadata(left: Anime, right: Anime): boolean {
-  return hasSharedExternalId(left, right) || hasSharedTitle(left, right);
+  return Boolean(getMergeReason(left, right));
 }
 
-function hasSharedExternalId(left: Anime, right: Anime): boolean {
-  return Object.entries(right.externalIds).some(([key, value]) => Boolean(value && left.externalIds[key] === value));
+function getMergeReason(left: Anime, right: Anime): string | null {
+  if (hasConflictingExternalId(left, right)) {
+    return null;
+  }
+
+  const sharedExternalId = getSharedExternalId(left, right);
+  if (sharedExternalId) {
+    return `external-id:${sharedExternalId}`;
+  }
+
+  // Title-only matches are accepted only inside the same broadcast window to avoid cross-season false positives.
+  if (isSameBroadcastWindow(left, right) && hasSharedTitle(left, right)) {
+    return "title";
+  }
+
+  return null;
+}
+
+function getSharedExternalId(left: Anime, right: Anime): string | null {
+  const shared = Object.entries(right.externalIds).find(([key, value]) => Boolean(value && left.externalIds[key] === value));
+  return shared ? shared[0] : null;
+}
+
+function hasConflictingExternalId(left: Anime, right: Anime): boolean {
+  return Object.entries(right.externalIds).some(([key, value]) => Boolean(value && left.externalIds[key] && left.externalIds[key] !== value));
+}
+
+function isSameBroadcastWindow(left: Anime, right: Anime): boolean {
+  return left.premiereYear === right.premiereYear && left.season === right.season;
 }
 
 function mergeAnimeMetadata(primary: Anime, secondary: Anime): Anime {
@@ -323,6 +369,34 @@ function mergeAliases<T extends { alias: string }>(left: T[], right: T[]): T[] {
   }
 
   return aliases;
+}
+
+// Keeps transitive source matches together: A=B by Mikan->Bangumi, B=C by MAL, therefore A/B/C become one record.
+class UnionFind {
+  private readonly parents: number[];
+
+  constructor(size: number) {
+    this.parents = Array.from({ length: size }, (_, index) => index);
+  }
+
+  find(index: number): number {
+    const parent = this.parents[index];
+    if (parent === index) {
+      return index;
+    }
+
+    const root = this.find(parent);
+    this.parents[index] = root;
+    return root;
+  }
+
+  union(left: number, right: number): void {
+    const leftRoot = this.find(left);
+    const rightRoot = this.find(right);
+    if (leftRoot !== rightRoot) {
+      this.parents[rightRoot] = leftRoot;
+    }
+  }
 }
 
 function padDatePart(value: number): string {

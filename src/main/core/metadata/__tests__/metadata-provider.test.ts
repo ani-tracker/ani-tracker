@@ -136,6 +136,68 @@ test("mergeAnimeMetadataBatches 优先使用中文标题并保留多语言标题
   assert.ok(merged.aliases.every((alias) => alias.animeId === "anilist-30"));
 });
 
+test("mergeAnimeMetadataBatches 通过传递 external id 桥接 AniList、Bangumi 和 Mikan", () => {
+  const items = mergeAnimeMetadataBatches([
+    {
+      source: "bangumi",
+      items: [
+        createAnime({
+          id: "bangumi-638151",
+          title: "地狱模式～喜欢挑战特殊成就的玩家在废设定的异世界成为无双～第二季",
+          originalTitle: "ヘルモード ～やり込み好きのゲーマーは廃設定の異世界で無双する～ 2nd Season",
+          aliases: [
+            createAlias(
+              "bangumi-638151",
+              "HELL MODE: The Hardcore Gamer Dominates in Another World with Garbage Balancing Season 2",
+              "en",
+              78
+            )
+          ],
+          externalIds: { bangumi: "638151", mal: "63817" }
+        })
+      ]
+    },
+    {
+      source: "anilist",
+      items: [
+        createAnime({
+          id: "anilist-209983",
+          title: "ヘルモード ～やり込み好きのゲーマーは廃設定の異世界で無双する～ 2nd Season",
+          aliases: [
+            createAlias(
+              "anilist-209983",
+              "HELL MODE: The Hardcore Gamer Dominates in Another World with Garbage Balancing Season 2",
+              "en",
+              80
+            )
+          ],
+          externalIds: { anilist: "209983", mal: "63817" }
+        })
+      ]
+    },
+    {
+      source: "mikan",
+      items: [
+        createAnime({
+          id: "mikan-3999",
+          title: "地狱模式～喜欢挑战特殊成就的玩家在废设定的异世界成为无双～第二季",
+          externalIds: { bangumi: "638151", mikan: "3999" }
+        })
+      ]
+    }
+  ]);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].title, "地狱模式～喜欢挑战特殊成就的玩家在废设定的异世界成为无双～第二季");
+  assert.equal(items[0].originalTitle, "ヘルモード ～やり込み好きのゲーマーは廃設定の異世界で無双する～ 2nd Season");
+  assert.deepEqual(items[0].externalIds, {
+    bangumi: "638151",
+    mal: "63817",
+    anilist: "209983",
+    mikan: "3999"
+  });
+});
+
 test("resolveAnimeTitleDisplay 展示时中文优先并用原名做副标题", () => {
   const display = resolveAnimeTitleDisplay(
     createAnime({
