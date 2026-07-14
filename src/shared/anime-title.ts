@@ -75,7 +75,13 @@ function collectAnimeNameCandidates(anime: Anime): AnimeNameCandidate[] {
 }
 
 function pickPreferredTitle(candidates: AnimeNameCandidate[], fallback: string): string {
+  const primaryTitle = candidates.find((candidate) => candidate.priority === 100 && !candidate.explicitLanguage);
+
   return (
+    primaryTitle && (primaryTitle.language === "zh" || isLikelyChineseTitle(primaryTitle.value))
+      ? primaryTitle.value
+      : undefined
+  ) ?? (
     candidates.find((candidate) => candidate.language === "zh" && candidate.explicitLanguage)?.value ??
     candidates.find((candidate) => candidate.language === "zh")?.value ??
     candidates.find((candidate) => isLikelyChineseTitle(candidate.value))?.value ??

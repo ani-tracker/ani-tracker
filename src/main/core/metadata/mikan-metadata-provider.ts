@@ -6,6 +6,7 @@ import {
   isDateInMonth,
   type MonthlyAnimeMetadataProvider
 } from "./metadata-provider";
+import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
 
 const DEFAULT_MIKAN_BASE_URL = "https://mikanani.me/";
 const MIKAN_FETCH_TIMEOUT_MS = 10_000;
@@ -30,7 +31,10 @@ interface MikanDetail {
 export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider {
   readonly id = "mikan";
 
-  constructor(private readonly baseUrl = DEFAULT_MIKAN_BASE_URL) {}
+  constructor(
+    private readonly baseUrl = DEFAULT_MIKAN_BASE_URL,
+    private readonly httpClient: MetadataHttpClient = defaultMetadataHttpClient
+  ) {}
 
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {
     const seasonInfo = getSeasonInfo(month);
@@ -63,7 +67,7 @@ export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider {
       url.searchParams.set("seasonStr", season);
 
       try {
-        const html = await fetchText(url.toString());
+        const html = await fetchText(url.toString(), this.httpClient);
         if (parseMikanSeasonHtml(html, this.baseUrl).length) {
           return html;
         }
@@ -77,7 +81,7 @@ export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider {
 
   private async fetchDetail(detailUrl: string): Promise<MikanDetail> {
     try {
-      return parseMikanDetailHtml(await fetchText(detailUrl), detailUrl);
+      return parseMikanDetailHtml(await fetchText(detailUrl, this.httpClient), detailUrl);
     } catch {
       return {};
     }
@@ -183,27 +187,21 @@ function buildMikanAliases(candidate: MikanCandidate, detail: MikanDetail, title
     }));
 }
 
-async function fetchText(url: string): Promise<string> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), MIKAN_FETCH_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: "text/html,application/xhtml+xml",
-        "User-Agent": "AniTracker/0.1"
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Mikan 请求失败: ${response.status} ${response.statusText}`);
+async function fetchText(url: string, httpClient: MetadataHttpClient): Promise<string> {
+  const response = await httpClient.fetch(url, {
+    source: "mikan",
+    timeoutMs: MIKAN_FETCH_TIMEOUT_MS,
+    headers: {
+      Accept: "text/html,application/xhtml+xml",
+      "User-Agent": "AniTracker/0.1"
     }
+  });
 
-    return response.text();
-  } finally {
-    clearTimeout(timeout);
+  if (!response.ok) {
+    throw new Error(`Mikan 请求失败: ${response.status} ${response.statusText}`);
   }
+
+  return response.text();
 }
 
 async function mapWithConcurrency<T, R>(
@@ -232,12 +230,18 @@ function parsePremiereDate(html: string): string | undefined {
 }
 
 function normalizeDate(value?: string): string | undefined {
-  const match = value?.match(/(20\d{2})[年./-]\s*(\d{1,2})(?:[月./-]\s*(\d{1,2}))?/);
-  if (!match) {
+  const yearFirstMatch = value?.match(/(20\d{2})[年./-]\s*(\d{1,2})(?:[月./-]\s*(\d{1,2}))?/);
+  if (yearFirstMatch) {
+    const [, year, month, day] = yearFirstMatch;
+    return `${year}-${padDatePart(Number(month))}-${padDatePart(Number(day ?? 1))}`;
+  }
+
+  const monthFirstMatch = value?.match(/\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b/);
+  if (!monthFirstMatch) {
     return undefined;
   }
 
-  const [, year, month, day] = match;
+  const [, month, day, year] = monthFirstMatch;
   return `${year}-${padDatePart(Number(month))}-${padDatePart(Number(day ?? 1))}`;
 }
 
@@ -280,7 +284,11 @@ function readAttribute(attrs: string, name: string): string | undefined {
 }
 
 function pickMikanTitle(values: Array<string | undefined>): string | undefined {
-  return values.map(normalizeText).find((value) => Boolean(value && value.length > 1 && !/^(详情|订阅|更多)$/.test(value)));
+  return values.map(normalizeText).find((value) => Boolean(value && value.length > 1 && !isIgnoredMikanTitle(value)));
+}
+
+function isIgnoredMikanTitle(value: string): boolean {
+  return /^(详情|订阅|更多|Mikan Project)$/i.test(value.trim());
 }
 
 function absolutizeOptionalUrl(value: string | undefined, baseUrl: string): string | undefined {

@@ -243,6 +243,18 @@ export interface DesktopSettings {
   launchAtLogin: boolean;
 }
 
+export type MetadataProxyMode = "off" | "system" | "manual";
+
+export interface MetadataProxySettings {
+  mode: MetadataProxyMode;
+  url?: string;
+  timeoutMs: number;
+}
+
+export interface NetworkSettings {
+  metadataProxy: MetadataProxySettings;
+}
+
 export interface AppSettings {
   download: DownloadSettings;
   storage: StorageSettings;
@@ -251,6 +263,7 @@ export interface AppSettings {
   automation: AutomationSettings;
   media: MediaSettings;
   desktop: DesktopSettings;
+  network: NetworkSettings;
 }
 
 export interface DashboardData {

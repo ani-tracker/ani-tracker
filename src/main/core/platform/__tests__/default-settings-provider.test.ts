@@ -121,4 +121,10 @@ function assertSharedDefaults(settings: AppSettings): void {
     minimizeToTray: true,
     launchAtLogin: false
   });
+  assert.deepEqual(settings.network, {
+    metadataProxy: {
+      mode: "off",
+      timeoutMs: 5_000
+    }
+  });
 }

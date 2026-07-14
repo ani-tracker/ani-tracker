@@ -5,6 +5,7 @@ import {
   isDateInMonth,
   type MonthlyAnimeMetadataProvider
 } from "./metadata-provider";
+import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
 
 const BANGUMI_API_BASE_URL = "https://api.bgm.tv/";
 const BANGUMI_ANIME_SUBJECT_TYPE = 2;
@@ -32,7 +33,10 @@ interface BangumiSubject {
 export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider {
   readonly id = "bangumi";
 
-  constructor(private readonly baseUrl = BANGUMI_API_BASE_URL) {}
+  constructor(
+    private readonly baseUrl = BANGUMI_API_BASE_URL,
+    private readonly httpClient: MetadataHttpClient = defaultMetadataHttpClient
+  ) {}
 
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {
     const seasonInfo = getSeasonInfo(month);
@@ -44,7 +48,8 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider {
     url.searchParams.set("limit", "50");
     url.searchParams.set("offset", "0");
 
-    const response = await fetch(url, {
+    const response = await this.httpClient.fetch(url, {
+      source: this.id,
       headers: {
         Accept: "application/json",
         "User-Agent": "AniTracker/0.1"

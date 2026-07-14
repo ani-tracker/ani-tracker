@@ -1,5 +1,6 @@
 import type { Anime, Season } from "@shared/domain";
 import { getSeasonInfo, type MonthlyAnimeMetadataProvider } from "./metadata-provider";
+import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
 
 const ANILIST_GRAPHQL_ENDPOINT = "https://graphql.anilist.co";
 
@@ -42,6 +43,8 @@ const anilistSeasonByLocalSeason: Record<Season, "WINTER" | "SPRING" | "SUMMER" 
 export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider {
   readonly id = "anilist";
 
+  constructor(private readonly httpClient: MetadataHttpClient = defaultMetadataHttpClient) {}
+
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {
     const seasonInfo = getSeasonInfo(month);
 
@@ -71,7 +74,8 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider {
       }
     `;
 
-    const response = await fetch(ANILIST_GRAPHQL_ENDPOINT, {
+    const response = await this.httpClient.fetch(ANILIST_GRAPHQL_ENDPOINT, {
+      source: this.id,
       method: "POST",
       headers: {
         "Content-Type": "application/json",

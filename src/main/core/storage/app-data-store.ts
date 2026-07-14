@@ -268,6 +268,14 @@ function mergeSettings(defaults: AppSettings, current?: AppSettings): AppSetting
       ...defaults.desktop,
       ...current.desktop
     },
+    network: {
+      ...defaults.network,
+      ...current.network,
+      metadataProxy: {
+        ...defaults.network.metadataProxy,
+        ...current.network?.metadataProxy
+      }
+    },
     players: current.players ?? defaults.players
   };
 }

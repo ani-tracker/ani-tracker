@@ -64,6 +64,12 @@ export abstract class DefaultSettingsProvider {
       desktop: {
         minimizeToTray: true,
         launchAtLogin: false
+      },
+      network: {
+        metadataProxy: {
+          mode: "off",
+          timeoutMs: 5_000
+        }
       }
     };
   }

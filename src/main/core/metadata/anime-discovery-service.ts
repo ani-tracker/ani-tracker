@@ -5,6 +5,7 @@ import type { AppRepository } from "../repositories/app-repository";
 import { AniListMetadataProvider } from "./anilist-metadata-provider";
 import { BangumiMetadataProvider } from "./bangumi-metadata-provider";
 import { MikanMetadataProvider } from "./mikan-metadata-provider";
+import { MetadataHttpClient } from "./metadata-http-client";
 import {
   mergeAnimeMetadataBatches,
   type MonthlyAnimeMetadataProvider,
@@ -14,11 +15,7 @@ import {
 export class AnimeDiscoveryService {
   constructor(
     private readonly repository: AppRepository,
-    private readonly providers: MonthlyAnimeMetadataProvider[] = [
-      new BangumiMetadataProvider(),
-      new AniListMetadataProvider(),
-      new MikanMetadataProvider()
-    ]
+    private readonly providers?: MonthlyAnimeMetadataProvider[]
   ) {}
 
   async listCatalog(year?: number, month?: number) {
@@ -35,15 +32,8 @@ export class AnimeDiscoveryService {
 
   async collectMonth(query: AnimeDiscoveryQuery): Promise<AnimeDiscoveryResult> {
     const existing = await this.repository.listAnimeCatalogByMonth(query.year, query.month);
-    if (existing.length && !query.forceRefresh) {
-      return {
-        query,
-        items: existing,
-        addedCount: 0,
-        existingCount: existing.length,
-        source: "local-cache",
-        errors: []
-      };
+    if (query.forceRefresh) {
+      await this.repository.clearAnimeCatalog();
     }
 
     const result = await this.collectFromProviders(query.year, query.month);
@@ -64,9 +54,9 @@ export class AnimeDiscoveryService {
 
     return {
       query,
-      items: existing,
+      items: query.forceRefresh ? [] : existing,
       addedCount: 0,
-      existingCount: existing.length,
+      existingCount: query.forceRefresh ? 0 : existing.length,
       source: result.source,
       errors: result.errors.length ? result.errors : ["新番采集没有返回结果"]
     };
@@ -78,8 +68,9 @@ export class AnimeDiscoveryService {
   ): Promise<{ items: Anime[]; source: string; errors: string[] }> {
     const errors: string[] = [];
     const batches: Array<{ source: string; items: Anime[] }> = [];
+    const providers = await this.getProviders();
 
-    for (const provider of this.providers) {
+    for (const provider of providers) {
       logger.info("开始采集新番元数据", { source: provider.id, year, month });
 
       try {
@@ -119,8 +110,23 @@ export class AnimeDiscoveryService {
 
     return {
       items: [],
-      source: this.providers.map((provider) => provider.id).join(","),
+      source: providers.map((provider) => provider.id).join(","),
       errors
     };
+  }
+
+  private async getProviders(): Promise<MonthlyAnimeMetadataProvider[]> {
+    if (this.providers) {
+      return this.providers;
+    }
+
+    const settings = await this.repository.getSettings();
+    const httpClient = new MetadataHttpClient(settings.network.metadataProxy);
+
+    return [
+      new BangumiMetadataProvider(undefined, httpClient),
+      new AniListMetadataProvider(httpClient),
+      new MikanMetadataProvider(undefined, httpClient)
+    ];
   }
 }

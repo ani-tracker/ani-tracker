@@ -34,3 +34,4 @@ bin-release/
 # information for Eclipse / Flash Builder.
 /.build/
 /.tmp-qbt*/
+/.codex/

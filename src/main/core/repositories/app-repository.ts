@@ -15,6 +15,7 @@ import type {
 } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { logger } from "../logger";
+import { mergeAnimeMetadataBatches } from "../metadata/metadata-provider";
 import { sourceConfigs } from "../mock-data";
 import { createDefaultSettingsProvider } from "../platform/default-settings-provider";
 import type { AppDataStore } from "../storage/app-data-store";
@@ -151,6 +152,15 @@ export class AppRepository {
         draft.animeCatalog.push(item);
         addedCount += 1;
       }
+
+      const beforeDedupeCount = draft.animeCatalog.length;
+      draft.animeCatalog = dedupeAnimeCatalog(draft.animeCatalog);
+      if (draft.animeCatalog.length !== beforeDedupeCount) {
+        logger.info("Anime catalog duplicates merged", {
+          beforeCount: beforeDedupeCount,
+          afterCount: draft.animeCatalog.length
+        });
+      }
     });
 
     return {
@@ -158,6 +168,14 @@ export class AppRepository {
       addedCount,
       existingCount
     };
+  }
+
+  async clearAnimeCatalog(): Promise<void> {
+    await this.store.update((draft) => {
+      const clearedCount = draft.animeCatalog.length;
+      draft.animeCatalog = [];
+      logger.info("Anime catalog cache cleared", { clearedCount });
+    });
   }
 
   async listDownloads(): Promise<DownloadTask[]> {
@@ -472,6 +490,14 @@ function mergeSettings(current: AppSettings, patch: Partial<AppSettings>): AppSe
       ...current.desktop,
       ...patch.desktop
     },
+    network: {
+      ...current.network,
+      ...patch.network,
+      metadataProxy: {
+        ...current.network.metadataProxy,
+        ...patch.network?.metadataProxy
+      }
+    },
     players: patch.players ?? current.players
   };
 }
@@ -600,6 +626,10 @@ function sortAnimeCatalog(items: Anime[]): Anime[] {
 
 function sortEpisodes(episodes: Episode[]): Episode[] {
   return [...episodes].sort((a, b) => a.episodeNo - b.episodeNo);
+}
+
+function dedupeAnimeCatalog(items: Anime[]): Anime[] {
+  return mergeAnimeMetadataBatches([{ source: "catalog", items }]);
 }
 
 function isSameAnime(left: Anime, right: Anime): boolean {

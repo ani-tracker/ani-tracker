@@ -8,6 +8,7 @@ import {
   normalizeTitle,
   uniqueByNormalizedTitle
 } from "../metadata-provider";
+import { parseMikanDetailHtml } from "../mikan-metadata-provider";
 
 test("normalizeTitle 忽略常见空白、括号和标点差异", () => {
   assert.equal(normalizeTitle(" 测试番：第 2 季（TV） "), normalizeTitle("测试番 第2季 TV"));
@@ -154,6 +155,39 @@ test("resolveAnimeTitleDisplay 展示时中文优先并用原名做副标题", (
     display.aliases.map((alias) => alias.alias),
     ["Test Anime"]
   );
+});
+
+test("resolveAnimeTitleDisplay 主标题是中文时不让旧中文别名覆盖", () => {
+  const display = resolveAnimeTitleDisplay(
+    createAnime({
+      id: "bangumi-552533",
+      title: "穹庐下的魔女",
+      originalTitle: "天幕のジャードゥーガル",
+      aliases: [createAlias("bangumi-552533", "欺诈游戏", "zh", 100)]
+    })
+  );
+
+  assert.equal(display.title, "穹庐下的魔女");
+  assert.equal(display.subtitle, "天幕のジャードゥーガル");
+});
+
+test("parseMikanDetailHtml 忽略站点标题并解析月日年格式日期", () => {
+  const detail = parseMikanDetailHtml(
+    `
+      <html>
+        <head><title>Mikan Project</title></head>
+        <body>
+          <div>放送开始：7/4/2026</div>
+          <a href="https://bgm.tv/subject/552533">Bangumi</a>
+        </body>
+      </html>
+    `,
+    "https://mikanani.me/Home/Bangumi/4007"
+  );
+
+  assert.equal(detail.title, undefined);
+  assert.equal(detail.premiereDate, "2026-07-04");
+  assert.equal(detail.bangumiId, "552533");
 });
 
 test("mergeAnimeMetadataBatches 不用次来源覆盖主来源已有字段", () => {

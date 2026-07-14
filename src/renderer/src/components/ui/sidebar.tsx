@@ -99,7 +99,7 @@ export const Sidebar = forwardRef<HTMLElement, HTMLAttributes<HTMLElement>>(func
     <aside
       ref={ref}
       className={cn(
-        "flex h-screen w-[var(--sidebar-width)] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width]",
+        "sticky top-0 flex h-screen max-h-screen w-[var(--sidebar-width)] shrink-0 flex-col self-start border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width]",
         "data-[state=collapsed]:w-[var(--sidebar-width-icon)]",
         className
       )}
