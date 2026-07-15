@@ -67,10 +67,21 @@ export interface MyAnime {
   defaultFansubGroupId?: string;
   autoDownload: boolean;
   downloadDir?: string;
+  rssSubscriptions?: AnimeRssSubscription[];
   preferredResolution?: "720p" | "1080p" | "2160p";
   preferredCodec?: NormalizedVideoCodec;
   preferredSubtitle?: SubtitlePreference;
   addedAt: string;
+  updatedAt: string;
+}
+
+export interface AnimeRssSubscription {
+  id: string;
+  myAnimeId: string;
+  name: string;
+  url: string;
+  enabled: boolean;
+  createdAt: string;
   updatedAt: string;
 }
 

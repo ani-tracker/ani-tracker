@@ -25,6 +25,8 @@ import type {
   QbittorrentManagedStatus,
   ReleaseQuery,
   ReleaseSearchResult,
+  RssSubscriptionReleaseQuery,
+  RssSubscriptionReleaseResult,
   TorrentConnectionTestResult
 } from "@shared/contracts";
 
@@ -65,6 +67,7 @@ declare global {
       setSourceEnabled: (sourceId: string, enabled: boolean) => Promise<ReleaseSourceConfig[]>;
       upsertSource: (source: ReleaseSourceConfig) => Promise<ReleaseSourceConfig[]>;
       searchReleases: (query: ReleaseQuery) => Promise<ReleaseSearchResult>;
+      searchRssSubscriptionReleases: (query: RssSubscriptionReleaseQuery) => Promise<RssSubscriptionReleaseResult>;
       getSettings: () => Promise<AppSettings>;
       updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
       resetSettingsToDefaults: () => Promise<AppSettings>;

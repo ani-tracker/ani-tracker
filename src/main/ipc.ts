@@ -4,7 +4,13 @@ import type { AppRepository } from "./core/repositories/app-repository";
 import { createRepositoryRuntime } from "./core/repositories/repository-runtime";
 import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
 import { ReleaseSourceService } from "./core/sources/release-source-service";
-import type { AddDownloadUrlInput, AddReleaseDownloadInput, AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
+import type {
+  AddDownloadUrlInput,
+  AddReleaseDownloadInput,
+  AnimeDiscoveryQuery,
+  ReleaseQuery,
+  RssSubscriptionReleaseQuery
+} from "@shared/contracts";
 import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
 import { PlayerLauncherService } from "./core/platform/player-launcher";
 import { DownloadMediaScanner } from "./core/media/download-media-scanner";
@@ -17,6 +23,7 @@ import { MetadataHttpClient } from "./core/metadata/metadata-http-client";
 import { QbittorrentManagedService } from "./core/downloads/qbittorrent-managed-service";
 import { logger } from "./core/logger";
 import { resolveAnimeDownloadPath } from "./core/downloads/download-path-resolver";
+import { RssReleaseSource } from "./core/sources/rss-source";
 
 export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
@@ -269,6 +276,9 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     ]);
     return new ReleaseSourceService(sources, fansubs, new MetadataHttpClient(settings.network.metadataProxy)).search(query);
   });
+  ipcMain.handle("releases:searchRssSubscription", (_event, query: RssSubscriptionReleaseQuery) =>
+    searchRssSubscriptionReleases(query)
+  );
   ipcMain.handle("settings:get", () => repository.getSettings());
   ipcMain.handle("settings:update", async (_event, patch: Partial<AppSettings>) => {
     const settings = await repository.updateSettings(patch);
@@ -370,6 +380,68 @@ async function findMyAnime(animeId?: string): Promise<MyAnime | undefined> {
   return (await repository.listMyAnime()).find((item) => item.anime.id === animeId);
 }
 
+/** 按单个追番 RSS 订阅读取资源，独立于全局下载源开关。 */
+async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery) {
+  const settings = await repository.getSettings();
+  const rssUrl = query.rssUrl.trim();
+  if (!rssUrl) {
+    return {
+      query,
+      releases: [],
+      errors: [{ sourceId: query.subscriptionId, message: "RSS 订阅地址不能为空" }]
+    };
+  }
+
+  logger.info("RSS 订阅资源搜索开始", {
+    animeId: query.animeId,
+    subscriptionId: query.subscriptionId,
+    subscriptionName: query.subscriptionName
+  });
+  try {
+    const source = new RssReleaseSource(
+      {
+        id: `rss-subscription:${query.subscriptionId}`,
+        name: query.subscriptionName,
+        kind: "rss",
+        enabled: true,
+        rssUrl
+      },
+      new MetadataHttpClient(settings.network.metadataProxy)
+    );
+    const releases = await source.searchReleases({
+      keyword: "",
+      animeId: query.animeId,
+      preferredResolution: query.preferredResolution,
+      limit: query.limit
+    });
+    logger.info("RSS 订阅资源搜索完成", {
+      animeId: query.animeId,
+      subscriptionId: query.subscriptionId,
+      releaseCount: releases.length
+    });
+    return {
+      query,
+      releases: releases.map((release) => ({
+        ...release,
+        animeId: query.animeId
+      })),
+      errors: []
+    };
+  } catch (error) {
+    const message = formatReleaseSearchError(error);
+    logger.warn("RSS 订阅资源搜索失败", {
+      animeId: query.animeId,
+      subscriptionId: query.subscriptionId,
+      message
+    });
+    return {
+      query,
+      releases: [],
+      errors: [{ sourceId: query.subscriptionId, message }]
+    };
+  }
+}
+
 /** 复用或创建资源下载需要关联的单集。 */
 async function resolveDownloadEpisode(
   animeId?: string,
@@ -469,4 +541,22 @@ async function updateEpisodeDownloadLink(input: {
     releaseId: input.releaseId,
     isManualOverride: existingPreference?.isManualOverride ?? Boolean(input.fansubGroupId)
   });
+}
+
+function formatReleaseSearchError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "下载源搜索失败";
+  }
+
+  const cause = error.cause instanceof Error ? error.cause.message : undefined;
+  const message = cause ? `${error.message}: ${cause}` : error.message;
+  if (/fetch failed/i.test(message)) {
+    return "下载源网络请求失败，请检查网络、代理或下载源地址";
+  }
+
+  if (/aborted|timeout/i.test(message)) {
+    return "下载源请求超时，请稍后重试";
+  }
+
+  return message;
 }

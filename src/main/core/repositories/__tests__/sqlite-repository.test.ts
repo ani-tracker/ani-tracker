@@ -64,6 +64,38 @@ test("SQLite 二次启动保留增量数据且不重复 seed", async () => {
   second.close();
 });
 
+test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const [item] = await first.repository.listMyAnime();
+  const timestamp = new Date().toISOString();
+  await first.repository.upsertMyAnime({
+    ...item,
+    rssSubscriptions: [
+      {
+        id: "rss-sqlite-test",
+        myAnimeId: item.id,
+        name: "蜜柑计划",
+        url: "https://mikanani.me/RSS/Bangumi?bangumiId=3941",
+        enabled: true,
+        createdAt: timestamp,
+        updatedAt: timestamp
+      }
+    ]
+  });
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const restored = (await second.repository.listMyAnime()).find((entry) => entry.id === item.id);
+  assert.equal(restored?.rssSubscriptions?.length, 1);
+  assert.equal(restored?.rssSubscriptions?.[0].name, "蜜柑计划");
+  assert.equal(restored?.rssSubscriptions?.[0].url, "https://mikanani.me/RSS/Bangumi?bangumiId=3941");
+  assert.equal(restored?.rssSubscriptions?.[0].enabled, true);
+  second.close();
+});
+
 test("损坏的 SQLite 会阻止启动且不会回退 JSON", async () => {
   const fixture = await createFixture();
   await writeFile(fixture.databasePath, "not a sqlite database", "utf8");

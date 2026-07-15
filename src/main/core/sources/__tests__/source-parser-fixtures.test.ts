@@ -261,6 +261,35 @@ test("createAniBtHeaders accepts copied Cookie credentials", () => {
   assert.equal(headers["X-API-Key"], undefined);
 });
 
+test("ReleaseSourceService 过滤 AniBT BGM 搜索返回的其他番剧", async (t) => {
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/api/bgm/search") {
+      return Response.json({ ok: true, data: [{ bgmId: 100 }, { bgmId: 200 }] });
+    }
+
+    const bgmId = url.searchParams.get("bgmId");
+    const title =
+      bgmId === "100"
+        ? "[ANi] 凡人修仙传 年番 - 160 [1080p]"
+        : "[黑ネズミたち] 出租女友 第五季 / Kanojo, Okarishimasu 5th Season - 60 [1080p]";
+    return new Response(
+      `<rss><channel><item><title>${title}</title><guid>release-${bgmId}</guid></item></channel></rss>`,
+      { status: 200, statusText: "OK" }
+    );
+  });
+
+  const service = new ReleaseSourceService([anibtConfig]);
+  const result = await service.search({
+    keyword: "凡人修仙传 第五季",
+    animeId: "anime-mortal-cultivation",
+    limit: 2
+  });
+
+  assert.equal(result.releases.length, 1);
+  assert.match(result.releases[0].title, /凡人修仙传/);
+});
+
 test("parseAcgnxApiResponse 兼容 ACGNX JSON/API 风格响应", () => {
   const releases = parseAcgnxApiResponse(
     {
@@ -351,13 +380,49 @@ test("RssReleaseSource 解析 RSS item 的下载地址、体积和媒体字段",
   assert.equal(releases[0].id, "rss-test:rss-guid-04");
   assert.equal(releases[0].title, "[喵萌奶茶屋] 测试番 - 04 [1080p][HEVC][繁日]");
   assert.equal(releases[0].magnetUrl, "magnet:?xt=urn:btih:FACEB00C&dn=test");
-  assert.equal(releases[0].torrentUrl, undefined);
+  assert.equal(releases[0].torrentUrl, "https://example.test/test.torrent");
   assert.equal(releases[0].size, 2147483648);
   assert.equal(releases[0].publishedAt, "Mon, 13 Jul 2026 12:30:00 GMT");
   assert.equal(releases[0].episodeNo, 4);
   assert.equal(releases[0].resolution, "1080p");
   assert.equal(releases[0].normalizedVideoCodec, "H.265/HEVC");
   assert.equal(releases[0].subtitle, "cht");
+});
+
+test("RssReleaseSource 优先使用 enclosure 作为蜜柑 RSS 下载地址", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    new Response(
+      `
+        <rss>
+          <channel>
+            <item>
+              <guid isPermaLink="false">[喵萌奶茶屋] 欺诈游戏 - 15 [1080p][简日双语]</guid>
+              <link>https://mikanani.me/Home/Episode/d3f8c75b903f438f6e2284aa856d65f092cd5b5f</link>
+              <title>[喵萌奶茶屋] 欺诈游戏 - 15 [1080p][简日双语]</title>
+              <torrent xmlns="https://mikanani.me/0.1/">
+                <contentLength>441031072</contentLength>
+                <pubDate>2026-07-15T00:28:00</pubDate>
+              </torrent>
+              <enclosure type="application/x-bittorrent" length="441031072" url="https://mikanani.me/Download/20260715/d3f8c75b903f438f6e2284aa856d65f092cd5b5f.torrent" />
+            </item>
+          </channel>
+        </rss>
+      `,
+      { status: 200, statusText: "OK" }
+    )
+  );
+
+  const releases = await new RssReleaseSource(rssConfig).searchReleases({ keyword: "", limit: 10 });
+
+  assert.equal(releases.length, 1);
+  assert.equal(
+    releases[0].torrentUrl,
+    "https://mikanani.me/Download/20260715/d3f8c75b903f438f6e2284aa856d65f092cd5b5f.torrent"
+  );
+  assert.equal(releases[0].magnetUrl, undefined);
+  assert.equal(releases[0].size, 441031072);
+  assert.equal(releases[0].publishedAt, "2026-07-15T00:28:00");
+  assert.equal(releases[0].episodeNo, 15);
 });
 
 test("ReleaseSourceService 在缓存有效期内复用资源搜索结果并支持强制刷新", async (t) => {

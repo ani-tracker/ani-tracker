@@ -123,10 +123,11 @@ export class SqliteAppRepository implements AppRepository {
 
   async listMyAnime(): Promise<MyAnime[]> {
     const animeById = new Map((await this.listAnimeCatalog()).map((anime) => [anime.id, anime]));
+    const rssSubscriptionsByMyAnime = this.readRssSubscriptionsByMyAnime();
     return sortMyAnime(
       this.all("SELECT * FROM my_anime").flatMap((row) => {
         const anime = animeById.get(asString(row.anime_id));
-        return anime ? [mapMyAnime(row, anime)] : [];
+        return anime ? [mapMyAnime(row, anime, rssSubscriptionsByMyAnime.get(asString(row.id)) ?? [])] : [];
       })
     );
   }
@@ -452,13 +453,28 @@ export class SqliteAppRepository implements AppRepository {
 
   /** 补齐已存在 SQLite 数据库缺少的新列。 */
   private migrateSchema(currentSchemaVersion: number): void {
-    if (currentSchemaVersion >= 2) {
-      return;
+    if (currentSchemaVersion < 2) {
+      this.ensureColumn("anime_catalog", "rating_score", "rating_score REAL");
+      this.ensureColumn("anime_catalog", "rating_count", "rating_count INTEGER");
+      this.ensureColumn("anime_catalog", "rating_source", "rating_source TEXT");
     }
 
-    this.ensureColumn("anime_catalog", "rating_score", "rating_score REAL");
-    this.ensureColumn("anime_catalog", "rating_count", "rating_count INTEGER");
-    this.ensureColumn("anime_catalog", "rating_source", "rating_source TEXT");
+    if (currentSchemaVersion < 3) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS my_anime_rss_subscription (
+          id TEXT PRIMARY KEY,
+          my_anime_id TEXT NOT NULL REFERENCES my_anime(id) ON DELETE CASCADE,
+          name TEXT NOT NULL,
+          url TEXT NOT NULL,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_my_anime_rss_subscription_my_anime
+          ON my_anime_rss_subscription (my_anime_id);
+      `);
+    }
   }
 
   /** 将首次启动快照写入各业务表。 */
@@ -522,12 +538,33 @@ export class SqliteAppRepository implements AppRepository {
 
   private readMyAnimeSync(catalog: Anime[]): MyAnime[] {
     const animeById = new Map(catalog.map((anime) => [anime.id, anime]));
+    const rssSubscriptionsByMyAnime = this.readRssSubscriptionsByMyAnime();
     return sortMyAnime(
       this.all("SELECT * FROM my_anime").flatMap((row) => {
         const anime = animeById.get(asString(row.anime_id));
-        return anime ? [mapMyAnime(row, anime)] : [];
+        return anime ? [mapMyAnime(row, anime, rssSubscriptionsByMyAnime.get(asString(row.id)) ?? [])] : [];
       })
     );
+  }
+
+  /** 按追番记录读取 RSS 订阅配置。 */
+  private readRssSubscriptionsByMyAnime(): Map<string, MyAnime["rssSubscriptions"]> {
+    const groups = new Map<string, NonNullable<MyAnime["rssSubscriptions"]>>();
+    for (const row of this.all("SELECT * FROM my_anime_rss_subscription ORDER BY created_at, name")) {
+      const myAnimeId = asString(row.my_anime_id);
+      const items = groups.get(myAnimeId) ?? [];
+      items.push({
+        id: asString(row.id),
+        myAnimeId,
+        name: asString(row.name),
+        url: asString(row.url),
+        enabled: toBoolean(row.enabled),
+        createdAt: asString(row.created_at),
+        updatedAt: asString(row.updated_at)
+      });
+      groups.set(myAnimeId, items);
+    }
+    return groups;
   }
 
   private readDownloadsSync(): DownloadTask[] {
@@ -545,7 +582,8 @@ export class SqliteAppRepository implements AppRepository {
   private clearAllData(): void {
     for (const table of [
       "notification", "media_file", "torrent_file", "download_task", "episode_preference", "episode",
-      "my_anime", "anime_alias", "release", "anime_catalog", "fansub_group", "release_source", "app_settings", "app_state", "app_meta"
+      "my_anime_rss_subscription", "my_anime", "anime_alias", "release", "anime_catalog", "fansub_group",
+      "release_source", "app_settings", "app_state", "app_meta"
     ]) {
       this.database.exec(`DELETE FROM ${table}`);
     }
@@ -621,6 +659,31 @@ export class SqliteAppRepository implements AppRepository {
         addedAt: item.addedAt, updatedAt: item.updatedAt
       }
     );
+    this.replaceMyAnimeRssSubscriptions(item);
+  }
+
+  /** 用当前追番草稿同步 RSS 订阅配置。 */
+  private replaceMyAnimeRssSubscriptions(item: MyAnime): void {
+    this.run("DELETE FROM my_anime_rss_subscription WHERE my_anime_id = @myAnimeId", { myAnimeId: item.id });
+    for (const subscription of item.rssSubscriptions ?? []) {
+      const timestamp = nowIso();
+      this.run(
+        `INSERT INTO my_anime_rss_subscription (
+          id, my_anime_id, name, url, enabled, created_at, updated_at
+        ) VALUES (
+          @id, @myAnimeId, @name, @url, @enabled, @createdAt, @updatedAt
+        )`,
+        {
+          id: subscription.id,
+          myAnimeId: item.id,
+          name: subscription.name,
+          url: subscription.url,
+          enabled: toInteger(subscription.enabled),
+          createdAt: subscription.createdAt || timestamp,
+          updatedAt: subscription.updatedAt || timestamp
+        }
+      );
+    }
   }
 
   private upsertEpisodeRow(episode: Episode): void {
@@ -855,12 +918,13 @@ function mapAnimeAlias(row: SqliteRow): Anime["aliases"][number] {
     language: asString(row.language) as Anime["aliases"][number]["language"], priority: Number(row.priority) };
 }
 
-function mapMyAnime(row: SqliteRow, anime: Anime): MyAnime {
+function mapMyAnime(row: SqliteRow, anime: Anime, rssSubscriptions: NonNullable<MyAnime["rssSubscriptions"]>): MyAnime {
   return compact({ id: asString(row.id), anime, status: asString(row.status) as MyAnime["status"],
     defaultFansubGroupId: optionalString(row.default_fansub_group_id), autoDownload: toBoolean(row.auto_download),
     downloadDir: optionalString(row.download_dir), preferredResolution: optionalString(row.preferred_resolution) as MyAnime["preferredResolution"],
     preferredCodec: optionalString(row.preferred_codec) as MyAnime["preferredCodec"],
     preferredSubtitle: optionalString(row.preferred_subtitle) as MyAnime["preferredSubtitle"],
+    rssSubscriptions,
     addedAt: asString(row.added_at), updatedAt: asString(row.updated_at) });
 }
 

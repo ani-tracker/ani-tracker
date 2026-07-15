@@ -8,7 +8,13 @@ import type {
   NotificationRecord,
   ReleaseSourceConfig
 } from "@shared/domain";
-import type { AddDownloadUrlInput, AddReleaseDownloadInput, AnimeDiscoveryQuery, ReleaseQuery } from "@shared/contracts";
+import type {
+  AddDownloadUrlInput,
+  AddReleaseDownloadInput,
+  AnimeDiscoveryQuery,
+  ReleaseQuery,
+  RssSubscriptionReleaseQuery
+} from "@shared/contracts";
 
 const api = {
   getDashboard: () => ipcRenderer.invoke("dashboard:get"),
@@ -50,6 +56,8 @@ const api = {
   setSourceEnabled: (sourceId: string, enabled: boolean) => ipcRenderer.invoke("sources:setEnabled", sourceId, enabled),
   upsertSource: (source: ReleaseSourceConfig) => ipcRenderer.invoke("sources:upsert", source),
   searchReleases: (query: ReleaseQuery) => ipcRenderer.invoke("releases:search", query),
+  searchRssSubscriptionReleases: (query: RssSubscriptionReleaseQuery) =>
+    ipcRenderer.invoke("releases:searchRssSubscription", query),
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings:update", patch),
   resetSettingsToDefaults: () => ipcRenderer.invoke("settings:resetDefaults"),

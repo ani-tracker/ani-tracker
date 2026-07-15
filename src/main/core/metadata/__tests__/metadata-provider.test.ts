@@ -1,7 +1,11 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { Anime } from "@shared/domain";
-import { buildAnimeReleaseSearchTerms, normalizeReleaseSearchText } from "../../../../shared/anime-release-search";
+import {
+  buildAnimeReleaseSearchTerms,
+  matchesAnimeReleaseTitle,
+  normalizeReleaseSearchText
+} from "../../../../shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "../../../../shared/anime-title";
 import { BangumiMetadataProvider } from "../bangumi-metadata-provider";
 import {
@@ -31,6 +35,23 @@ test("buildAnimeReleaseSearchTerms 扩展引号标题和去标点标题", () => 
   assert.ok(terms.includes("きみを愛する気はない"));
   assert.ok(terms.includes("Kimi wo Aisuru Ki wa nai"));
   assert.ok(terms.some((term) => normalizeReleaseSearchText(term).includes("きみを愛する気はない")));
+});
+
+test("buildAnimeReleaseSearchTerms 移除季数后缀并过滤其他作品标题", () => {
+  const terms = buildAnimeReleaseSearchTerms(
+    createAnime({
+      id: "anime-search-season",
+      title: "凡人修仙传 第五季",
+      originalTitle: "凡人寰尘之战"
+    })
+  );
+
+  assert.ok(terms.includes("凡人修仙传"));
+  assert.equal(matchesAnimeReleaseTitle("[字幕组] 凡人修仙传 年番 - 160 [1080p]", terms), true);
+  assert.equal(
+    matchesAnimeReleaseTitle("[黑ネズミたち] 出租女友 第五季 / Kanojo, Okarishimasu 5th Season - 60", terms),
+    false
+  );
 });
 
 test("uniqueByNormalizedTitle 按标题、原名和别名去重并合并 external id", () => {

@@ -3,7 +3,12 @@ import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { normalizeReleaseSearchText } from "../../../shared/anime-release-search";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
+import { defaultMetadataHttpClient, type MetadataFetchOptions } from "../metadata/metadata-http-client";
 import { parseXml, textValue, toArray } from "./xml";
+
+export interface RssHttpClient {
+  fetch(input: string | URL, options?: MetadataFetchOptions): Promise<Response>;
+}
 
 interface RssDocument {
   rss?: {
@@ -27,10 +32,18 @@ interface RssItem {
     "@url"?: string;
     "@length"?: string;
   };
+  torrent?: {
+    link?: unknown;
+    contentLength?: unknown;
+    pubDate?: unknown;
+  };
 }
 
 export class RssReleaseSource implements ReleaseSource {
-  constructor(public readonly config: ReleaseSourceConfig) {}
+  constructor(
+    public readonly config: ReleaseSourceConfig,
+    private readonly httpClient: RssHttpClient = defaultMetadataHttpClient
+  ) {}
 
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
     const releases = await this.readFeed();
@@ -60,7 +73,8 @@ export class RssReleaseSource implements ReleaseSource {
       return [];
     }
 
-    const response = await fetch(this.config.rssUrl, {
+    const response = await this.httpClient.fetch(this.config.rssUrl, {
+      source: "rss-release",
       headers: {
         "User-Agent": DESKTOP_BROWSER_USER_AGENT
       }
@@ -83,23 +97,34 @@ export class RssReleaseSource implements ReleaseSource {
     const title = textValue(item.title) ?? `RSS Item ${index + 1}`;
     const link = textValue(item.link) ?? textValue(item.guid);
     const enclosureUrl = item.enclosure?.["@url"];
-    const downloadUrl = link ?? enclosureUrl;
+    const torrentLink = textValue(item.torrent?.link);
+    const magnetUrl = [link, enclosureUrl, torrentLink].find(isMagnet);
+    const torrentUrl = [enclosureUrl, torrentLink, link].find(isTorrentDownloadUrl);
 
     return {
-      id: `${this.config.id}:${textValue(item.guid) ?? downloadUrl ?? title}`,
+      id: `${this.config.id}:${textValue(item.guid) ?? magnetUrl ?? torrentUrl ?? link ?? title}`,
       title,
       sourceId: this.config.id,
       sourceName: this.config.name,
-      magnetUrl: isMagnet(downloadUrl) ? downloadUrl : undefined,
-      torrentUrl: downloadUrl && !isMagnet(downloadUrl) ? downloadUrl : undefined,
-      size: parseOptionalNumber(item.enclosure?.["@length"]),
-      publishedAt: textValue(item.pubDate) ?? textValue(item.published) ?? textValue(item.updated) ?? new Date().toISOString()
+      magnetUrl,
+      torrentUrl,
+      size: parseOptionalNumber(item.enclosure?.["@length"]) ?? parseOptionalNumber(textValue(item.torrent?.contentLength)),
+      publishedAt:
+        textValue(item.pubDate) ??
+        textValue(item.published) ??
+        textValue(item.updated) ??
+        textValue(item.torrent?.pubDate) ??
+        new Date().toISOString()
     };
   }
 }
 
 function isMagnet(value?: string): boolean {
   return Boolean(value?.startsWith("magnet:"));
+}
+
+function isTorrentDownloadUrl(value?: string): value is string {
+  return Boolean(value && !isMagnet(value) && /(?:\.torrent\b|\/Download\/|\/download\/|\/topics\/download\/)/i.test(value));
 }
 
 function parseOptionalNumber(value?: string): number | undefined {

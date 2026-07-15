@@ -23,6 +23,8 @@ import type {
   QbittorrentManagedStatus,
   ReleaseQuery,
   ReleaseSearchResult,
+  RssSubscriptionReleaseQuery,
+  RssSubscriptionReleaseResult,
   TorrentConnectionTestResult
 } from "@shared/contracts";
 
@@ -77,6 +79,8 @@ export const appApi = {
     bridge().setSourceEnabled(sourceId, enabled),
   upsertSource: (source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]> => bridge().upsertSource(source),
   searchReleases: (query: ReleaseQuery): Promise<ReleaseSearchResult> => bridge().searchReleases(query),
+  searchRssSubscriptionReleases: (query: RssSubscriptionReleaseQuery): Promise<RssSubscriptionReleaseResult> =>
+    bridge().searchRssSubscriptionReleases(query),
   getSettings: (): Promise<AppSettings> => bridge().getSettings(),
   updateSettings: (patch: Partial<AppSettings>): Promise<AppSettings> => bridge().updateSettings(patch),
   resetSettingsToDefaults: (): Promise<AppSettings> => bridge().resetSettingsToDefaults(),

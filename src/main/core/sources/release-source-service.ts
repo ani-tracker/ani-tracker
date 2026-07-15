@@ -1,6 +1,7 @@
 import type { ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
 import type { FansubGroup, ReleaseSourceConfig } from "@shared/domain";
 import { createHash } from "node:crypto";
+import { matchesAnimeReleaseTitle } from "../../../shared/anime-release-search";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import { logger } from "../logger";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
@@ -61,9 +62,21 @@ export class ReleaseSourceService {
       .flat()
       .map((release) => enrichReleaseFromTitle(release, this.fansubs));
 
+    const dedupedReleases = dedupeReleases(releases);
+    const relevantReleases = query.animeId
+      ? dedupedReleases.filter((release) => matchesAnimeReleaseTitle(release.title, [query.keyword]))
+      : dedupedReleases;
+    if (relevantReleases.length !== dedupedReleases.length) {
+      logger.info("下载资源模糊误匹配已过滤", {
+        animeId: query.animeId,
+        keyword: query.keyword,
+        filteredCount: dedupedReleases.length - relevantReleases.length
+      });
+    }
+
     const result = {
       query,
-      releases: dedupeReleases(releases).slice(0, query.limit ?? 100),
+      releases: relevantReleases.slice(0, query.limit ?? 100),
       searchedSourceIds: sources.map((source) => source.config.id),
       errors
     };
@@ -128,7 +141,7 @@ export function createReleaseSource(
   httpClient: ReleaseHttpClient = defaultMetadataHttpClient
 ): ReleaseSource | null {
   if (config.kind === "rss") {
-    return new RssReleaseSource(config);
+    return new RssReleaseSource(config, httpClient);
   }
 
   if (config.kind === "torznab") {

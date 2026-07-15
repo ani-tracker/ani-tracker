@@ -52,6 +52,24 @@ export interface ReleaseSearchResult {
   }>;
 }
 
+export interface RssSubscriptionReleaseQuery {
+  animeId?: string;
+  subscriptionId: string;
+  subscriptionName: string;
+  rssUrl: string;
+  preferredResolution?: string;
+  limit?: number;
+}
+
+export interface RssSubscriptionReleaseResult {
+  query: RssSubscriptionReleaseQuery;
+  releases: Release[];
+  errors: Array<{
+    sourceId: string;
+    message: string;
+  }>;
+}
+
 export interface AddDownloadUrlInput {
   url: string;
   name?: string;
