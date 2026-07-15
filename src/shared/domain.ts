@@ -247,7 +247,16 @@ export interface QbittorrentSettings {
   autoConnect: boolean;
   downloadLimitKiBps: number;
   uploadLimitKiBps: number;
+  seedingLimits: QbittorrentSeedingLimits;
   managed: QbittorrentManagedSettings;
+}
+
+export interface QbittorrentSeedingLimits {
+  enabled: boolean;
+  ratioEnabled: boolean;
+  ratioLimit: number;
+  timeEnabled: boolean;
+  timeLimitMinutes: number;
 }
 
 export interface QbittorrentManagedSettings {

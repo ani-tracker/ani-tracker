@@ -35,6 +35,13 @@ export abstract class DefaultSettingsProvider {
           autoConnect: true,
           downloadLimitKiBps: 0,
           uploadLimitKiBps: 0,
+          seedingLimits: {
+            enabled: false,
+            ratioEnabled: false,
+            ratioLimit: 1,
+            timeEnabled: false,
+            timeLimitMinutes: 120
+          },
           managed: {
             enabled: true,
             profileDir: join(userDataDir, "qbittorrent"),

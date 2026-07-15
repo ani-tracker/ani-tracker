@@ -36,6 +36,13 @@ function createSettings(): AppSettings {
         autoConnect: false,
         downloadLimitKiBps: 0,
         uploadLimitKiBps: 0,
+        seedingLimits: {
+          enabled: false,
+          ratioEnabled: false,
+          ratioLimit: 1,
+          timeEnabled: false,
+          timeLimitMinutes: 120
+        },
         managed: { enabled: false, startupTimeoutMs: 15_000 }
       }
     },

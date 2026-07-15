@@ -94,6 +94,13 @@ function assertSharedDefaults(settings: AppSettings): void {
     autoConnect: true,
     downloadLimitKiBps: 0,
     uploadLimitKiBps: 0,
+    seedingLimits: {
+      enabled: false,
+      ratioEnabled: false,
+      ratioLimit: 1,
+      timeEnabled: false,
+      timeLimitMinutes: 120
+    },
     managed: {
       enabled: true,
       profileDir: join(paths.userData, "qbittorrent"),

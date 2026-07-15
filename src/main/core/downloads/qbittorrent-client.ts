@@ -31,6 +31,11 @@ export interface QbittorrentTorrentFile {
   is_seed?: boolean;
 }
 
+export interface QbittorrentSeedingLimits {
+  ratioLimit: number;
+  timeLimitMinutes: number;
+}
+
 export class QbittorrentClient {
   private cookie = "";
 
@@ -149,6 +154,26 @@ export class QbittorrentClient {
     ]);
   }
 
+  /** 设置 qBittorrent 全局做种停止目标，-1 表示禁用对应目标。 */
+  async setGlobalSeedingLimits(limits: QbittorrentSeedingLimits): Promise<void> {
+    const body = new URLSearchParams({
+      json: JSON.stringify({
+        max_ratio_enabled: limits.ratioLimit >= 0,
+        max_ratio: normalizeRatioLimit(limits.ratioLimit),
+        max_seeding_time_enabled: limits.timeLimitMinutes >= 0,
+        max_seeding_time: normalizeTimeLimitMinutes(limits.timeLimitMinutes),
+        max_ratio_act: 0
+      })
+    });
+    await this.requestText("/api/v2/app/setPreferences", {
+      method: "POST",
+      body,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    });
+  }
+
   async pause(hash: string): Promise<void> {
     await this.torrentAction("/api/v2/torrents/pause", hash);
   }
@@ -235,4 +260,12 @@ export function qbStateToStatus(state: string) {
 
 function normalizeTransferLimit(value: number): number {
   return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+}
+
+function normalizeRatioLimit(value: number): number {
+  return value >= 0 && Number.isFinite(value) ? Math.max(0, value) : -1;
+}
+
+function normalizeTimeLimitMinutes(value: number): number {
+  return value >= 0 && Number.isFinite(value) ? Math.max(1, Math.round(value)) : -1;
 }

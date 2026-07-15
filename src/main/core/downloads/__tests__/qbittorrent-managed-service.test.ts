@@ -10,6 +10,7 @@ import {
   extractManagedTemporaryPassword,
   QbittorrentManagedService,
   resolveBundledQbittorrentBinary,
+  toQbittorrentSeedingLimits,
   toQbittorrentSpeedLimitBytes
 } from "../qbittorrent-managed-service";
 
@@ -163,6 +164,69 @@ test("QbittorrentClient applies global transfer speed limits", async (t) => {
 
   assert.equal(requestBodies.get("/api/v2/transfer/setDownloadLimit")?.get("limit"), "1048576");
   assert.equal(requestBodies.get("/api/v2/transfer/setUploadLimit")?.get("limit"), "262144");
+});
+
+test("QbittorrentClient applies seeding targets and pauses torrents after either limit", async (t) => {
+  let preferences: Record<string, unknown> | undefined;
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+
+    const body = init?.body as URLSearchParams;
+    preferences = JSON.parse(body.get("json") ?? "{}") as Record<string, unknown>;
+    return new Response("Ok", { status: 200 });
+  });
+
+  const client = new QbittorrentClient({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin",
+    password: "ani-tracker"
+  });
+  await client.login();
+  await client.setGlobalSeedingLimits({ ratioLimit: 1.5, timeLimitMinutes: 90 });
+
+  assert.deepEqual(preferences, {
+    max_ratio_enabled: true,
+    max_ratio: 1.5,
+    max_seeding_time_enabled: true,
+    max_seeding_time: 90,
+    max_ratio_act: 0
+  });
+});
+
+test("toQbittorrentSeedingLimits honors the master switch and per-target switches", () => {
+  assert.deepEqual(toQbittorrentSeedingLimits(defaultSettings.download.qbittorrent.seedingLimits), {
+    ratioLimit: 0,
+    timeLimitMinutes: -1
+  });
+  assert.deepEqual(
+    toQbittorrentSeedingLimits({
+      enabled: true,
+      ratioEnabled: false,
+      ratioLimit: 1.25,
+      timeEnabled: false,
+      timeLimitMinutes: 45
+    }),
+    {
+      ratioLimit: -1,
+      timeLimitMinutes: -1
+    }
+  );
+  assert.deepEqual(
+    toQbittorrentSeedingLimits({
+      enabled: true,
+      ratioEnabled: true,
+      ratioLimit: 1.25,
+      timeEnabled: true,
+      timeLimitMinutes: 45
+    }),
+    {
+      ratioLimit: 1.25,
+      timeLimitMinutes: 45
+    }
+  );
 });
 
 test("QbittorrentManagedService 对托管启动避开 10000 以下 WebUI 端口", async () => {

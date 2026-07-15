@@ -516,6 +516,123 @@ export function SettingsPage() {
               />
             </div>
             <p className="text-sm text-muted-foreground">限速值填 0 表示不限制。</p>
+            <div className="space-y-3 border-t pt-4">
+              <ToggleSetting
+                label="启用做种"
+                description="默认关闭；关闭后下载完成即暂停。开启后可按分享率或时长停止，任务和文件始终保留。"
+                checked={draft.download.qbittorrent.seedingLimits.enabled}
+                onChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    download: {
+                      ...draft.download,
+                      qbittorrent: {
+                        ...draft.download.qbittorrent,
+                        seedingLimits: {
+                          ...draft.download.qbittorrent.seedingLimits,
+                          enabled: value
+                        }
+                      }
+                    }
+                  })
+                }
+              />
+              <div className="grid grid-cols-2 gap-3">
+                <ToggleSetting
+                  label="按分享率停止"
+                  description="上传量与下载量达到指定比例后停止做种。"
+                  checked={draft.download.qbittorrent.seedingLimits.ratioEnabled}
+                  disabled={!draft.download.qbittorrent.seedingLimits.enabled}
+                  onChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      download: {
+                        ...draft.download,
+                        qbittorrent: {
+                          ...draft.download.qbittorrent,
+                          seedingLimits: {
+                            ...draft.download.qbittorrent.seedingLimits,
+                            ratioEnabled: value
+                          }
+                        }
+                      }
+                    })
+                  }
+                />
+                <NumberSetting
+                  label="目标分享率"
+                  value={draft.download.qbittorrent.seedingLimits.ratioLimit}
+                  suffix="倍"
+                  min={0.1}
+                  step={0.1}
+                  disabled={
+                    !draft.download.qbittorrent.seedingLimits.enabled ||
+                    !draft.download.qbittorrent.seedingLimits.ratioEnabled
+                  }
+                  onChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      download: {
+                        ...draft.download,
+                        qbittorrent: {
+                          ...draft.download.qbittorrent,
+                          seedingLimits: {
+                            ...draft.download.qbittorrent.seedingLimits,
+                            ratioLimit: value
+                          }
+                        }
+                      }
+                    })
+                  }
+                />
+                <ToggleSetting
+                  label="按时长停止"
+                  description="从任务进入做种状态开始累计做种时间。"
+                  checked={draft.download.qbittorrent.seedingLimits.timeEnabled}
+                  disabled={!draft.download.qbittorrent.seedingLimits.enabled}
+                  onChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      download: {
+                        ...draft.download,
+                        qbittorrent: {
+                          ...draft.download.qbittorrent,
+                          seedingLimits: {
+                            ...draft.download.qbittorrent.seedingLimits,
+                            timeEnabled: value
+                          }
+                        }
+                      }
+                    })
+                  }
+                />
+                <NumberSetting
+                  label="目标做种时长"
+                  value={draft.download.qbittorrent.seedingLimits.timeLimitMinutes}
+                  suffix="分钟"
+                  min={1}
+                  disabled={
+                    !draft.download.qbittorrent.seedingLimits.enabled ||
+                    !draft.download.qbittorrent.seedingLimits.timeEnabled
+                  }
+                  onChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      download: {
+                        ...draft.download,
+                        qbittorrent: {
+                          ...draft.download.qbittorrent,
+                          seedingLimits: {
+                            ...draft.download.qbittorrent.seedingLimits,
+                            timeLimitMinutes: value
+                          }
+                        }
+                      }
+                    })
+                  }
+                />
+              </div>
+            </div>
             {draft.download.qbittorrent.managed.enabled ? (
               <div className="rounded-md border p-3 text-sm">
                 <div className="flex items-start justify-between gap-3">
@@ -749,16 +866,22 @@ function ToggleSetting({
   label,
   description,
   checked,
+  disabled = false,
   onChange
 }: {
   icon?: ReactNode;
   label: string;
   description: string;
   checked: boolean;
+  disabled?: boolean;
   onChange: (value: boolean) => void;
 }) {
   return (
-    <label className="flex min-h-[104px] items-center justify-between gap-4 rounded-md border p-4">
+    <label
+      className={`flex min-h-[104px] items-center justify-between gap-4 rounded-md border p-4 ${
+        disabled ? "cursor-not-allowed opacity-60" : ""
+      }`}
+    >
       <div className="min-w-0">
         <div className="flex items-center gap-2 text-sm font-medium">
           {icon && <span className="text-primary">{icon}</span>}
@@ -770,6 +893,7 @@ function ToggleSetting({
         className="h-5 w-5 shrink-0 accent-primary"
         type="checkbox"
         checked={checked}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.checked)}
       />
     </label>
@@ -781,21 +905,27 @@ function NumberSetting({
   value,
   suffix,
   min = 0,
+  step = 1,
+  disabled = false,
   onChange
 }: {
   label: string;
   value: number;
   suffix?: string;
   min?: number;
+  step?: number;
+  disabled?: boolean;
   onChange: (value: number) => void;
 }) {
   return (
-    <label className="block rounded-md border p-4">
+    <label className={`block rounded-md border p-4 ${disabled ? "opacity-60" : ""}`}>
       <div className="text-sm text-muted-foreground">{label}</div>
       <div className="mt-2 flex items-center gap-2">
         <input
-          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+          disabled={disabled}
           min={min}
+          step={step}
           type="number"
           value={value}
           onChange={(event) => onChange(Number(event.target.value))}

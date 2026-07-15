@@ -144,6 +144,10 @@ export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>)
       qbittorrent: {
         ...current.download.qbittorrent,
         ...patch.download?.qbittorrent,
+        seedingLimits: {
+          ...current.download.qbittorrent.seedingLimits,
+          ...patch.download?.qbittorrent?.seedingLimits
+        },
         managed: {
           ...current.download.qbittorrent.managed,
           ...patch.download?.qbittorrent?.managed
