@@ -382,7 +382,8 @@ export class SqliteAppRepository implements AppRepository {
 
   async getSettings(): Promise<AppSettings> {
     const value = this.getState<AppSettings>("settings");
-    return value ?? this.settingsProvider.getSettings();
+    const defaults = this.settingsProvider.getSettings();
+    return value ? mergeSettings(defaults, value) : defaults;
   }
 
   async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {

@@ -141,6 +141,14 @@ export class QbittorrentClient {
     });
   }
 
+  /** 设置 qBittorrent 全局上传和下载速度限制，单位为 bytes/s，0 表示不限速。 */
+  async setGlobalSpeedLimits(downloadLimitBytesPerSecond: number, uploadLimitBytesPerSecond: number): Promise<void> {
+    await Promise.all([
+      this.setTransferLimit("/api/v2/transfer/setDownloadLimit", downloadLimitBytesPerSecond),
+      this.setTransferLimit("/api/v2/transfer/setUploadLimit", uploadLimitBytesPerSecond)
+    ]);
+  }
+
   async pause(hash: string): Promise<void> {
     await this.torrentAction("/api/v2/torrents/pause", hash);
   }
@@ -167,6 +175,21 @@ export class QbittorrentClient {
   private async torrentAction(path: string, hash: string): Promise<void> {
     const body = new URLSearchParams({
       hashes: hash
+    });
+
+    await this.requestText(path, {
+      method: "POST",
+      body,
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded"
+      }
+    });
+  }
+
+  /** 调用 qBittorrent transfer API 设置单个全局速度限制。 */
+  private async setTransferLimit(path: string, limitBytesPerSecond: number): Promise<void> {
+    const body = new URLSearchParams({
+      limit: String(normalizeTransferLimit(limitBytesPerSecond))
     });
 
     await this.requestText(path, {
@@ -208,4 +231,8 @@ export class QbittorrentClient {
 
 export function qbStateToStatus(state: string) {
   return mapQbittorrentState(state);
+}
+
+function normalizeTransferLimit(value: number): number {
+  return Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 }

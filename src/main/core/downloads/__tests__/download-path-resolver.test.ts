@@ -34,6 +34,8 @@ function createSettings(): AppSettings {
         baseUrl: "http://127.0.0.1:18080",
         username: "admin",
         autoConnect: false,
+        downloadLimitKiBps: 0,
+        uploadLimitKiBps: 0,
         managed: { enabled: false, startupTimeoutMs: 15_000 }
       }
     },

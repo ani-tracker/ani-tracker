@@ -477,6 +477,45 @@ export function SettingsPage() {
                 }
               />
             </div>
+            <div className="grid grid-cols-2 gap-3">
+              <NumberSetting
+                label="下载限速"
+                value={draft.download.qbittorrent.downloadLimitKiBps ?? 0}
+                suffix="KiB/s"
+                min={0}
+                onChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    download: {
+                      ...draft.download,
+                      qbittorrent: {
+                        ...draft.download.qbittorrent,
+                        downloadLimitKiBps: value
+                      }
+                    }
+                  })
+                }
+              />
+              <NumberSetting
+                label="上传限速"
+                value={draft.download.qbittorrent.uploadLimitKiBps ?? 0}
+                suffix="KiB/s"
+                min={0}
+                onChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    download: {
+                      ...draft.download,
+                      qbittorrent: {
+                        ...draft.download.qbittorrent,
+                        uploadLimitKiBps: value
+                      }
+                    }
+                  })
+                }
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">限速值填 0 表示不限制。</p>
             {draft.download.qbittorrent.managed.enabled ? (
               <div className="rounded-md border p-3 text-sm">
                 <div className="flex items-start justify-between gap-3">

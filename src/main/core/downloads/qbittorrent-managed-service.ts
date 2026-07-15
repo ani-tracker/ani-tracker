@@ -6,6 +6,7 @@ import { basename, delimiter, dirname, isAbsolute, join, resolve } from "node:pa
 import type { QbittorrentManagedStatus } from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
 import { logger } from "../logger";
+import { QbittorrentClient } from "./qbittorrent-client";
 
 const MIN_MANAGED_WEBUI_PORT = 10_000;
 const DEFAULT_MANAGED_WEBUI_PORT = 18_080;
@@ -48,6 +49,10 @@ export class QbittorrentManagedService {
       await this.stop();
     }
 
+    if (!settings.download.qbittorrent.managed.enabled) {
+      await this.applyConfiguredSpeedLimits(settings);
+    }
+
     return this.getStatus(settings);
   }
 
@@ -60,6 +65,7 @@ export class QbittorrentManagedService {
     }
 
     if (this.child) {
+      await this.applyConfiguredSpeedLimits(settings);
       return this.getStatus(settings);
     }
 
@@ -138,6 +144,7 @@ export class QbittorrentManagedService {
       if (!configured) {
         this.lastError = "qBittorrent WebUI 已启动，但项目账号密码同步失败";
       }
+      await this.applyConfiguredSpeedLimits(settings);
     }
 
     return this.getStatus(settings);
@@ -209,6 +216,35 @@ export class QbittorrentManagedService {
 
     return settings.download.qbittorrent.baseUrl;
   }
+
+  /** 将设置中的 qBittorrent 全局限速同步到当前 WebUI。 */
+  private async applyConfiguredSpeedLimits(settings: AppSettings): Promise<void> {
+    try {
+      const client = new QbittorrentClient({
+        baseUrl: this.getRuntimeBaseUrl(settings),
+        username: settings.download.qbittorrent.username,
+        password: settings.download.qbittorrent.password
+      });
+      await client.login();
+      await client.setGlobalSpeedLimits(
+        toQbittorrentSpeedLimitBytes(settings.download.qbittorrent.downloadLimitKiBps),
+        toQbittorrentSpeedLimitBytes(settings.download.qbittorrent.uploadLimitKiBps)
+      );
+      logger.info("qBittorrent speed limits applied", {
+        downloadLimitKiBps: normalizeSpeedLimitKiBps(settings.download.qbittorrent.downloadLimitKiBps),
+        uploadLimitKiBps: normalizeSpeedLimitKiBps(settings.download.qbittorrent.uploadLimitKiBps)
+      });
+    } catch (error) {
+      logger.warn("qBittorrent speed limits apply failed", {
+        message: getErrorMessage(error)
+      });
+    }
+  }
+}
+
+/** 将 KiB/s 配置转换为 qBittorrent 使用的 bytes/s，0 表示不限速。 */
+export function toQbittorrentSpeedLimitBytes(value: number | undefined): number {
+  return normalizeSpeedLimitKiBps(value) * 1024;
 }
 
 export function resolveBundledQbittorrentBinary(options: QbittorrentBinaryResolverOptions = {}): string | undefined {
@@ -302,7 +338,7 @@ async function configureManagedWebUiCredentials(
   const { username, password } = getManagedWebUiCredentials(settings);
   const login = await loginManagedWebUi(webUiUrl, username, password);
   if (login.ok) {
-    return setManagedWebUiPreferences(webUiUrl, login.cookie, username, password);
+    return setManagedWebUiPreferences(webUiUrl, login.cookie, settings);
   }
 
   const temporaryPassword = extractManagedTemporaryPassword(startupOutput);
@@ -324,7 +360,7 @@ async function configureManagedWebUiCredentials(
     return false;
   }
 
-  return setManagedWebUiPreferences(webUiUrl, temporaryLogin.cookie, username, password);
+  return setManagedWebUiPreferences(webUiUrl, temporaryLogin.cookie, settings);
 }
 
 function getManagedWebUiCredentials(settings: AppSettings): { username: string; password: string } {
@@ -379,8 +415,7 @@ async function loginManagedWebUi(
 async function setManagedWebUiPreferences(
   webUiUrl: string,
   cookie: string | undefined,
-  username: string,
-  password: string
+  settings: AppSettings
 ): Promise<boolean> {
   if (!cookie) {
     logger.warn("Managed qBittorrent credential sync skipped because login cookie is missing", { webUiUrl });
@@ -388,6 +423,7 @@ async function setManagedWebUiPreferences(
   }
 
   try {
+    const { username, password } = getManagedWebUiCredentials(settings);
     const response = await fetch(new URL("/api/v2/app/setPreferences", webUiUrl), {
       method: "POST",
       headers: {
@@ -398,7 +434,9 @@ async function setManagedWebUiPreferences(
         json: JSON.stringify({
           web_ui_username: username,
           web_ui_password: password,
-          web_ui_upnp: false
+          web_ui_upnp: false,
+          dl_limit: toQbittorrentSpeedLimitBytes(settings.download.qbittorrent.downloadLimitKiBps),
+          up_limit: toQbittorrentSpeedLimitBytes(settings.download.qbittorrent.uploadLimitKiBps)
         })
       })
     });
@@ -641,6 +679,10 @@ function formatProcessOutput(chunk: Buffer): string {
 
 function unique(values: string[]): string[] {
   return [...new Set(values)];
+}
+
+function normalizeSpeedLimitKiBps(value: number | undefined): number {
+  return Number.isFinite(value) ? Math.max(0, Math.round(value ?? 0)) : 0;
 }
 
 function getErrorMessage(error: unknown): string {

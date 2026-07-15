@@ -9,7 +9,8 @@ import {
   buildQbittorrentLaunchEnvironment,
   extractManagedTemporaryPassword,
   QbittorrentManagedService,
-  resolveBundledQbittorrentBinary
+  resolveBundledQbittorrentBinary,
+  toQbittorrentSpeedLimitBytes
 } from "../qbittorrent-managed-service";
 
 const defaultSettings = new GenericDefaultSettingsProvider({
@@ -138,6 +139,30 @@ test("QbittorrentClient adds the Ani Tracker correlation tag", async (t) => {
   await client.addUrl("magnet:?xt=urn:btih:TEST", "/downloads", false, "ani-tracker-test");
 
   assert.equal(addedBody?.get("tags"), "ani-tracker-test");
+});
+
+test("QbittorrentClient applies global transfer speed limits", async (t) => {
+  const requestBodies = new Map<string, URLSearchParams>();
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const url = new URL(String(input));
+    if (url.pathname === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+
+    requestBodies.set(url.pathname, init?.body as URLSearchParams);
+    return new Response("Ok", { status: 200 });
+  });
+
+  const client = new QbittorrentClient({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin",
+    password: "ani-tracker"
+  });
+  await client.login();
+  await client.setGlobalSpeedLimits(toQbittorrentSpeedLimitBytes(1024), toQbittorrentSpeedLimitBytes(256));
+
+  assert.equal(requestBodies.get("/api/v2/transfer/setDownloadLimit")?.get("limit"), "1048576");
+  assert.equal(requestBodies.get("/api/v2/transfer/setUploadLimit")?.get("limit"), "262144");
 });
 
 test("QbittorrentManagedService 对托管启动避开 10000 以下 WebUI 端口", async () => {

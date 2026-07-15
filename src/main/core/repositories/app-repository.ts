@@ -132,7 +132,19 @@ export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>)
     ...patch,
     download: {
       ...current.download,
-      ...patch.download
+      ...patch.download,
+      embedded: {
+        ...current.download.embedded,
+        ...patch.download?.embedded
+      },
+      qbittorrent: {
+        ...current.download.qbittorrent,
+        ...patch.download?.qbittorrent,
+        managed: {
+          ...current.download.qbittorrent.managed,
+          ...patch.download?.qbittorrent?.managed
+        }
+      }
     },
     storage: {
       ...current.storage,

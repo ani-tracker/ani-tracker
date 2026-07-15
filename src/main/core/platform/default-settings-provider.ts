@@ -33,6 +33,8 @@ export abstract class DefaultSettingsProvider {
           username: "admin",
           password: "ani-tracker",
           autoConnect: true,
+          downloadLimitKiBps: 0,
+          uploadLimitKiBps: 0,
           managed: {
             enabled: true,
             profileDir: join(userDataDir, "qbittorrent"),

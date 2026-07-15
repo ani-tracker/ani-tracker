@@ -218,6 +218,8 @@ export interface QbittorrentSettings {
   username: string;
   password?: string;
   autoConnect: boolean;
+  downloadLimitKiBps: number;
+  uploadLimitKiBps: number;
   managed: QbittorrentManagedSettings;
 }
 

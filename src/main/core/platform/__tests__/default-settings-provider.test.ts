@@ -92,6 +92,8 @@ function assertSharedDefaults(settings: AppSettings): void {
     username: "admin",
     password: "ani-tracker",
     autoConnect: true,
+    downloadLimitKiBps: 0,
+    uploadLimitKiBps: 0,
     managed: {
       enabled: true,
       profileDir: join(paths.userData, "qbittorrent"),
