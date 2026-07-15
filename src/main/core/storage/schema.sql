@@ -89,6 +89,24 @@ CREATE TABLE IF NOT EXISTS my_anime_rss_subscription (
 CREATE INDEX IF NOT EXISTS idx_my_anime_rss_subscription_my_anime
   ON my_anime_rss_subscription (my_anime_id);
 
+CREATE TABLE IF NOT EXISTS anime_source_binding (
+  id TEXT PRIMARY KEY,
+  anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
+  source_id TEXT NOT NULL REFERENCES release_source(id) ON DELETE CASCADE,
+  source_anime_id TEXT NOT NULL,
+  source_anime_title TEXT,
+  source_url TEXT,
+  match_method TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0,
+  confirmed INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(anime_id, source_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_anime_source_binding_source
+  ON anime_source_binding (source_id, source_anime_id);
+
 CREATE TABLE IF NOT EXISTS episode (
   id TEXT PRIMARY KEY,
   anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,

@@ -1,8 +1,10 @@
-import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
-import type { Release, ReleaseSourceConfig } from "@shared/domain";
+import type { AnimeSourceCandidate, ReleaseQuery, ReleaseSource } from "@shared/contracts";
+import type { Anime, Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { defaultMetadataHttpClient, type MetadataFetchOptions } from "../metadata/metadata-http-client";
+import { parseMikanSeasonHtml } from "../metadata/mikan-metadata-provider";
+import { RssReleaseSource } from "./rss-source";
 
 const DEFAULT_MIKAN_BASE_URL = "https://mikanani.me/";
 const MIKAN_FETCH_TIMEOUT_MS = 10_000;
@@ -37,6 +39,60 @@ export class MikanReleaseSource implements ReleaseSource {
   async listLatestByAnime(animeId: string): Promise<Release[]> {
     return this.searchReleases({ keyword: animeId });
   }
+
+  /** 按 Mikan 番组 ID 精确读取该番剧 RSS。 */
+  async listReleasesByAnimeId(sourceAnimeId: string, limit = 100): Promise<Release[]> {
+    const rssUrl = new URL("/RSS/Bangumi", getMikanBaseUrl(this.config));
+    rssUrl.searchParams.set("bangumiId", sourceAnimeId);
+    const source = new RssReleaseSource(
+      {
+        ...this.config,
+        kind: "rss",
+        rssUrl: rssUrl.toString()
+      },
+      this.httpClient
+    );
+    return source.searchReleases({ keyword: "", limit });
+  }
+
+  /** 从 Mikan 对应季度目录查找待确认番剧。 */
+  async searchAnimeCandidates(anime: Anime): Promise<Array<Omit<AnimeSourceCandidate, "score" | "reasons">>> {
+    const url = new URL("/Home/BangumiCoverFlowByDayOfWeek", getMikanBaseUrl(this.config));
+    url.searchParams.set("year", String(anime.premiereYear));
+    url.searchParams.set("seasonStr", getMikanSeason(anime.premiereMonth));
+    const html = await fetchText(url.toString(), this.httpClient);
+    return parseMikanSeasonHtml(html, getMikanBaseUrl(this.config)).map((candidate) => ({
+      sourceId: this.config.id,
+      sourceName: this.config.name,
+      sourceAnimeId: candidate.id,
+      title: candidate.title,
+      aliases: [],
+      premiereYear: anime.premiereYear,
+      premiereMonth: getSeasonStartMonth(anime.premiereMonth),
+      sourceUrl: candidate.detailUrl
+    }));
+  }
+}
+
+function getMikanBaseUrl(config: ReleaseSourceConfig): string {
+  if (config.baseUrl) {
+    return config.baseUrl;
+  }
+  if (config.rssUrl) {
+    return new URL(config.rssUrl).origin;
+  }
+  return DEFAULT_MIKAN_BASE_URL;
+}
+
+function getMikanSeason(month: number): "冬" | "春" | "夏" | "秋" {
+  if (month <= 3) return "冬";
+  if (month <= 6) return "春";
+  if (month <= 9) return "夏";
+  return "秋";
+}
+
+function getSeasonStartMonth(month: number): number {
+  return Math.floor((month - 1) / 3) * 3 + 1;
 }
 
 export function parseMikanReleaseList(html: string, config: ReleaseSourceConfig): Release[] {

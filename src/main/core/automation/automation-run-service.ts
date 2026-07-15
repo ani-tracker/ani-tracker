@@ -1,12 +1,12 @@
 import type { AutomationRunResult, ReleaseSearchResult } from "@shared/contracts";
-import type { AppSettings, AutomationSettings, Episode, MyAnime, Release } from "@shared/domain";
-import { buildAnimeReleaseSearchTerms } from "../../../shared/anime-release-search";
+import type { AnimeSourceBinding, AppSettings, AutomationSettings, Episode, MyAnime, Release } from "@shared/domain";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
 import { logger } from "../logger";
 import { resolveAnimeDownloadPath } from "../downloads/download-path-resolver";
 import type { AppRepository } from "../repositories/app-repository";
 import { rankReleases, type ReleaseMatchResult } from "../releases/release-matcher";
 import { ReleaseSourceService } from "../sources/release-source-service";
+import { AnimeSourceBindingService } from "../source-bindings/anime-source-binding-service";
 
 export interface AutomationRunServiceOptions {
   getQbittorrentBaseUrl?: (settings: AppSettings) => string;
@@ -67,6 +67,7 @@ export class AutomationRunService {
         this.repository.listEpisodePreferences(anime.anime.id)
       ]);
       const actionableEpisodes = episodes.filter(isActionableEpisode);
+      const bindingState = await new AnimeSourceBindingService(this.repository).getState(anime.anime.id, false);
 
       if (!actionableEpisodes.length) {
         result.skipped.push({
@@ -93,7 +94,13 @@ export class AutomationRunService {
 
         try {
           const preference = preferences.find((item) => item.episodeId === episode.id);
-          const searchResults = await searchEpisodeReleases(sourceService, anime, episode, preference?.fansubGroupId);
+          const searchResults = await searchEpisodeReleases(
+            sourceService,
+            anime,
+            episode,
+            bindingState.bindings,
+            preference?.fansubGroupId
+          );
           const preferredFansubGroupId = preference?.fansubGroupId ?? anime.defaultFansubGroupId;
           const ranked = rankReleases(
             dedupeReleases(searchResults.flatMap((item) => item.releases)),
@@ -197,21 +204,16 @@ async function searchEpisodeReleases(
   sourceService: ReleaseSourceService,
   anime: MyAnime,
   episode: Episode,
+  bindings: AnimeSourceBinding[],
   fansubGroupId?: string
 ): Promise<ReleaseSearchResult[]> {
-  const terms = buildAnimeReleaseSearchTerms(anime.anime);
-  return Promise.all(
-    terms.map((term) =>
-      sourceService.search({
-        keyword: term,
-        animeId: anime.anime.id,
-        episodeNo: episode.episodeNo,
-        fansubGroupId: fansubGroupId ?? anime.defaultFansubGroupId,
-        preferredResolution: anime.preferredResolution,
-        limit: 80
-      })
-    )
-  );
+  return [await sourceService.searchAnime(anime.anime, {
+    animeId: anime.anime.id,
+    episodeNo: episode.episodeNo,
+    fansubGroupId: fansubGroupId ?? anime.defaultFansubGroupId,
+    preferredResolution: anime.preferredResolution,
+    limit: 80
+  }, bindings)];
 }
 
 function isActionableEpisode(episode: Episode): boolean {

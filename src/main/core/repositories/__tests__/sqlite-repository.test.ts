@@ -96,6 +96,49 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   second.close();
 });
 
+test("SQLite 保存、替换并恢复番剧来源绑定", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const [item] = await first.repository.listMyAnime();
+  const timestamp = new Date().toISOString();
+  await first.repository.upsertAnimeSourceBinding({
+    id: "binding-test-mikan",
+    animeId: item.anime.id,
+    sourceId: "mikan-site",
+    sourceAnimeId: "3941",
+    sourceAnimeTitle: "测试番",
+    sourceUrl: "https://mikanani.me/Home/Bangumi/3941",
+    matchMethod: "manual",
+    confidence: 0.92,
+    confirmed: true,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await first.repository.upsertAnimeSourceBinding({
+    id: "binding-test-mikan-replaced",
+    animeId: item.anime.id,
+    sourceId: "mikan-site",
+    sourceAnimeId: "4007",
+    sourceAnimeTitle: "测试番 修正版",
+    matchMethod: "manual",
+    confidence: 1,
+    confirmed: true,
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const restored = await second.repository.listAnimeSourceBindings(item.anime.id);
+  assert.equal(restored.length, 1);
+  assert.equal(restored[0].sourceAnimeId, "4007");
+  assert.equal(restored[0].sourceAnimeTitle, "测试番 修正版");
+  assert.equal(restored[0].confirmed, true);
+  second.close();
+});
+
 test("损坏的 SQLite 会阻止启动且不会回退 JSON", async () => {
   const fixture = await createFixture();
   await writeFile(fixture.databasePath, "not a sqlite database", "utf8");

@@ -261,6 +261,31 @@ test("createAniBtHeaders accepts copied Cookie credentials", () => {
   assert.equal(headers["X-API-Key"], undefined);
 });
 
+test("AniBT 按已绑定 Bangumi ID 精确读取番剧 RSS", async (t) => {
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    assert.equal(String(input), "https://anibt.net/rss/anime.xml?bgmId=528828&limit=30");
+    return new Response("<rss><channel><item><title>凡人修仙传 - 160</title><guid>exact-1</guid></item></channel></rss>");
+  });
+
+  const releases = await new AniBtReleaseSource(anibtConfig).listReleasesByAnimeId("528828", 30);
+  assert.equal(releases.length, 1);
+  assert.match(releases[0].title, /凡人修仙传/);
+});
+
+test("Mikan 按已绑定番组 ID 精确读取 RSS", async () => {
+  const inputs: string[] = [];
+  const httpClient: ReleaseHttpClient = {
+    async fetch(input) {
+      inputs.push(String(input));
+      return new Response("<rss><channel><item><title>测试番 - 01</title><guid>mikan-exact-1</guid></item></channel></rss>");
+    }
+  };
+
+  const releases = await new MikanReleaseSource(mikanConfig, httpClient).listReleasesByAnimeId("3941", 25);
+  assert.equal(inputs[0], "https://mikanani.me/RSS/Bangumi?bangumiId=3941");
+  assert.equal(releases.length, 1);
+});
+
 test("ReleaseSourceService 过滤 AniBT BGM 搜索返回的其他番剧", async (t) => {
   t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
     const url = new URL(String(input));

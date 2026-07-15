@@ -4,17 +4,19 @@ import { buildAnimeReleaseSearchTerms } from "../../../shared/anime-release-sear
 import type { AppRepository } from "../repositories/app-repository";
 import { rankReleases } from "../releases/release-matcher";
 import { ReleaseSourceService } from "../sources/release-source-service";
+import { AnimeSourceBindingService } from "../source-bindings/anime-source-binding-service";
 
 export class EpisodeReleasePreviewService {
   constructor(private readonly repository: AppRepository) {}
 
   async preview(animeId: string, episodeId: string): Promise<EpisodeReleasePreview> {
-    const [myAnimeItems, episodes, preferences, fansubs, sources] = await Promise.all([
+    const [myAnimeItems, episodes, preferences, fansubs, sources, settings] = await Promise.all([
       this.repository.listMyAnime(),
       this.repository.listEpisodes(animeId),
       this.repository.listEpisodePreferences(animeId),
       this.repository.listFansubs(),
-      this.repository.listSources()
+      this.repository.listSources(),
+      this.repository.getSettings()
     ]);
     const anime = myAnimeItems.find((item) => item.anime.id === animeId);
     const episode = episodes.find((item) => item.id === episodeId);
@@ -29,19 +31,16 @@ export class EpisodeReleasePreviewService {
     const preference = preferences.find((item) => item.episodeId === episodeId);
     const preferredFansubGroupId = preference?.fansubGroupId ?? anime.defaultFansubGroupId;
     const terms = buildAnimeReleaseSearchTerms(anime.anime);
+    const bindingState = await new AnimeSourceBindingService(this.repository).getState(animeId, false);
     const sourceService = new ReleaseSourceService(sources, fansubs);
-    const searchResults = await Promise.all(
-      terms.map((term) =>
-        sourceService.search({
-          keyword: term,
-          animeId,
-          episodeNo: episode.episodeNo,
-          fansubGroupId: preferredFansubGroupId,
-          preferredResolution: anime.preferredResolution,
-          limit: 80
-        })
-      )
-    );
+    const searchResults = [await sourceService.searchAnime(anime.anime, {
+      animeId,
+      episodeNo: episode.episodeNo,
+      fansubGroupId: preferredFansubGroupId,
+      preferredResolution: anime.preferredResolution,
+      limit: 80,
+      cacheTtlMs: settings.automation.checkIntervalMinutes * 60 * 1000
+    }, bindingState.bindings)];
     const releases = dedupeReleases(searchResults.flatMap((result) => result.releases)).map((release) => ({
       ...release,
       animeId,

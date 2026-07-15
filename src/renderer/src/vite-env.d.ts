@@ -16,10 +16,13 @@ import type {
 import type {
   AddDownloadUrlInput,
   AddReleaseDownloadInput,
+  AnimeReleaseQuery,
+  AnimeSourceBindingState,
   AnimeDiscoveryQuery,
   AnimeDiscoveryResult,
   AutomationRunResult,
   AutomationSchedulerStatus,
+  ConfirmAnimeSourceBindingInput,
   EpisodeReleasePreview,
   MediaScanResult,
   QbittorrentManagedStatus,
@@ -66,7 +69,11 @@ declare global {
       listSources: () => Promise<ReleaseSourceConfig[]>;
       setSourceEnabled: (sourceId: string, enabled: boolean) => Promise<ReleaseSourceConfig[]>;
       upsertSource: (source: ReleaseSourceConfig) => Promise<ReleaseSourceConfig[]>;
+      getAnimeSourceBindingState: (animeId: string, discoverCandidates?: boolean) => Promise<AnimeSourceBindingState>;
+      confirmAnimeSourceBinding: (input: ConfirmAnimeSourceBindingInput) => Promise<AnimeSourceBindingState>;
+      removeAnimeSourceBinding: (animeId: string, sourceId: string) => Promise<AnimeSourceBindingState>;
       searchReleases: (query: ReleaseQuery) => Promise<ReleaseSearchResult>;
+      searchAnimeReleases: (query: AnimeReleaseQuery) => Promise<ReleaseSearchResult>;
       searchRssSubscriptionReleases: (query: RssSubscriptionReleaseQuery) => Promise<RssSubscriptionReleaseResult>;
       getSettings: () => Promise<AppSettings>;
       updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;

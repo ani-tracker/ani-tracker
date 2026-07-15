@@ -1,7 +1,7 @@
-import type { ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
-import type { FansubGroup, ReleaseSourceConfig } from "@shared/domain";
+import type { AnimeReleaseQuery, ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
+import type { Anime, AnimeSourceBinding, FansubGroup, Release, ReleaseSourceConfig } from "@shared/domain";
 import { createHash } from "node:crypto";
-import { matchesAnimeReleaseTitle } from "../../../shared/anime-release-search";
+import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "../../../shared/anime-release-search";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import { logger } from "../logger";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
@@ -96,6 +96,100 @@ export class ReleaseSourceService {
     return result;
   }
 
+  /** 按本地番剧及已确认来源绑定统一查询资源。 */
+  async searchAnime(
+    anime: Anime,
+    query: AnimeReleaseQuery,
+    bindings: AnimeSourceBinding[]
+  ): Promise<ReleaseSearchResult> {
+    const cacheKey = this.buildAnimeCacheKey(anime, query, bindings);
+    if (cacheKey && !query.forceRefresh) {
+      const cached = releaseSearchCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        logger.info("番剧资源搜索命中缓存", { animeId: anime.id, releaseCount: cached.result.releases.length });
+        return cloneSearchResult(cached.result);
+      }
+      if (cached) {
+        releaseSearchCache.delete(cacheKey);
+      }
+    }
+
+    const sources = this.configs.filter(
+      (config) => config.enabled && !isMikanSiteConfig(config)
+    );
+    const terms = buildAnimeReleaseSearchTerms(anime, [], 8);
+    const errors: ReleaseSearchResult["errors"] = [];
+    const releases = (
+      await Promise.all(
+        sources.map(async (config) => {
+          const binding = bindings.find((item) => item.sourceId === config.id && item.confirmed);
+          try {
+            if (isMikanRssConfig(config)) {
+              if (!binding) {
+                errors.push({ sourceId: config.id, message: "请先确认蜜柑计划番剧匹配" });
+                return [];
+              }
+              return new MikanReleaseSource(config, this.httpClient).listReleasesByAnimeId(
+                binding.sourceAnimeId,
+                query.limit
+              );
+            }
+            if (isAniBtConfig(config)) {
+              if (!binding) {
+                errors.push({ sourceId: config.id, message: "请先确认 AniBT 番剧匹配" });
+                return [];
+              }
+              return new AniBtReleaseSource(config).listReleasesByAnimeId(binding.sourceAnimeId, query.limit);
+            }
+
+            const source = createReleaseSource(config, this.httpClient);
+            if (!source) {
+              return [];
+            }
+            if (config.kind === "rss") {
+              return source.searchReleases({ ...query, keyword: "", animeId: anime.id });
+            }
+            const results = await Promise.all(
+              terms.map((keyword) => source.searchReleases({ ...query, keyword, animeId: anime.id }))
+            );
+            return results.flat();
+          } catch (error) {
+            errors.push({ sourceId: config.id, message: formatReleaseSourceError(error) });
+            return [];
+          }
+        })
+      )
+    )
+      .flat()
+      .map((release) => ({ ...enrichReleaseFromTitle(release, this.fansubs), animeId: anime.id }));
+    const relevantReleases = dedupeReleases(releases).filter((release) => {
+      const hasConfirmedExactBinding = bindings.some(
+        (binding) => binding.sourceId === release.sourceId && binding.confirmed
+      );
+      return hasConfirmedExactBinding || matchesAnimeReleaseTitle(release.title, terms);
+    });
+
+    logger.info("Anime release search finished", {
+      animeId: anime.id,
+      sourceCount: sources.length,
+      bindingCount: bindings.filter((binding) => binding.confirmed).length,
+      releaseCount: relevantReleases.length
+    });
+    const result = {
+      query: { ...query, keyword: anime.title },
+      releases: relevantReleases.slice(0, query.limit ?? 100),
+      searchedSourceIds: sources.map((source) => source.id),
+      errors
+    };
+    if (cacheKey) {
+      releaseSearchCache.set(cacheKey, {
+        expiresAt: Date.now() + normalizeCacheTtlMs(query.cacheTtlMs),
+        result: cloneSearchResult(result)
+      });
+    }
+    return result;
+  }
+
   /** 生成资源搜索缓存键，绑定查询条件、启用下载源和字幕组配置。 */
   private buildCacheKey(query: ReleaseQuery): string | null {
     if (!query.cacheTtlMs || query.cacheTtlMs <= 0) {
@@ -133,6 +227,39 @@ export class ReleaseSourceService {
     };
 
     return hashValue(JSON.stringify(cacheInput));
+  }
+
+  /** 生成番剧级资源搜索缓存键，并包含已确认来源映射。 */
+  private buildAnimeCacheKey(
+    anime: Anime,
+    query: AnimeReleaseQuery,
+    bindings: AnimeSourceBinding[]
+  ): string | null {
+    if (!query.cacheTtlMs || query.cacheTtlMs <= 0) {
+      return null;
+    }
+
+    return hashValue(JSON.stringify({
+      kind: "anime",
+      anime: {
+        id: anime.id,
+        title: anime.title,
+        originalTitle: anime.originalTitle,
+        aliases: anime.aliases.map((item) => item.alias)
+      },
+      query: {
+        animeId: query.animeId,
+        episodeNo: query.episodeNo,
+        fansubGroupId: query.fansubGroupId,
+        preferredResolution: query.preferredResolution,
+        limit: query.limit
+      },
+      bindings: bindings
+        .filter((binding) => binding.confirmed)
+        .map((binding) => [binding.sourceId, binding.sourceAnimeId, binding.updatedAt]),
+      sources: this.configs.map((source) => [source.id, source.enabled, source.baseUrl, source.rssUrl]),
+      fansubs: this.fansubs.map((fansub) => [fansub.id, fansub.name, fansub.aliases])
+    }));
   }
 }
 
@@ -172,12 +299,20 @@ function isDmhyConfig(config: ReleaseSourceConfig): boolean {
   return text.includes("dmhy") || text.includes("动漫花园") || text.includes("share.dmhy.org");
 }
 
-function isMikanConfig(config: ReleaseSourceConfig): boolean {
+export function isMikanConfig(config: ReleaseSourceConfig): boolean {
   const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
   return text.includes("mikan") || text.includes("蜜柑") || text.includes("mikanani.me");
 }
 
-function isAniBtConfig(config: ReleaseSourceConfig): boolean {
+export function isMikanRssConfig(config: ReleaseSourceConfig): boolean {
+  return config.kind === "rss" && isMikanConfig(config);
+}
+
+export function isMikanSiteConfig(config: ReleaseSourceConfig): boolean {
+  return config.kind === "site_adapter" && isMikanConfig(config);
+}
+
+export function isAniBtConfig(config: ReleaseSourceConfig): boolean {
   const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
   return text.includes("anibt") || text.includes("anibt.net");
 }

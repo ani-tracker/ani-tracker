@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import * as BetterSqlite3Module from "better-sqlite3";
 import type {
   Anime,
+  AnimeSourceBinding,
   AppSettings,
   DashboardData,
   DownloadStatus,
@@ -130,6 +131,61 @@ export class SqliteAppRepository implements AppRepository {
         return anime ? [mapMyAnime(row, anime, rssSubscriptionsByMyAnime.get(asString(row.id)) ?? [])] : [];
       })
     );
+  }
+
+  /** 读取番剧已缓存或确认的来源映射。 */
+  async listAnimeSourceBindings(animeId: string): Promise<AnimeSourceBinding[]> {
+    return this.all(
+      "SELECT * FROM anime_source_binding WHERE anime_id = @animeId ORDER BY source_id",
+      { animeId }
+    ).map(mapAnimeSourceBinding);
+  }
+
+  /** 保存番剧来源映射，同一番剧每个来源仅保留一项。 */
+  async upsertAnimeSourceBinding(binding: AnimeSourceBinding): Promise<AnimeSourceBinding[]> {
+    this.run(
+      `INSERT INTO anime_source_binding (
+        id, anime_id, source_id, source_anime_id, source_anime_title, source_url,
+        match_method, confidence, confirmed, created_at, updated_at
+      ) VALUES (
+        @id, @animeId, @sourceId, @sourceAnimeId, @sourceAnimeTitle, @sourceUrl,
+        @matchMethod, @confidence, @confirmed, @createdAt, @updatedAt
+      ) ON CONFLICT(anime_id, source_id) DO UPDATE SET
+        id = excluded.id, source_anime_id = excluded.source_anime_id,
+        source_anime_title = excluded.source_anime_title, source_url = excluded.source_url,
+        match_method = excluded.match_method, confidence = excluded.confidence,
+        confirmed = excluded.confirmed, updated_at = excluded.updated_at`,
+      {
+        id: binding.id,
+        animeId: binding.animeId,
+        sourceId: binding.sourceId,
+        sourceAnimeId: binding.sourceAnimeId,
+        sourceAnimeTitle: binding.sourceAnimeTitle ?? null,
+        sourceUrl: binding.sourceUrl ?? null,
+        matchMethod: binding.matchMethod,
+        confidence: binding.confidence,
+        confirmed: toInteger(binding.confirmed),
+        createdAt: binding.createdAt,
+        updatedAt: binding.updatedAt
+      }
+    );
+    logger.info("Anime source binding saved", {
+      animeId: binding.animeId,
+      sourceId: binding.sourceId,
+      sourceAnimeId: binding.sourceAnimeId,
+      confirmed: binding.confirmed
+    });
+    return this.listAnimeSourceBindings(binding.animeId);
+  }
+
+  /** 删除番剧指定来源的映射。 */
+  async removeAnimeSourceBinding(animeId: string, sourceId: string): Promise<AnimeSourceBinding[]> {
+    this.run(
+      "DELETE FROM anime_source_binding WHERE anime_id = @animeId AND source_id = @sourceId",
+      { animeId, sourceId }
+    );
+    logger.info("Anime source binding removed", { animeId, sourceId });
+    return this.listAnimeSourceBindings(animeId);
   }
 
   async listAnimeCatalog(): Promise<Anime[]> {
@@ -475,6 +531,28 @@ export class SqliteAppRepository implements AppRepository {
           ON my_anime_rss_subscription (my_anime_id);
       `);
     }
+
+    if (currentSchemaVersion < 4) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS anime_source_binding (
+          id TEXT PRIMARY KEY,
+          anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
+          source_id TEXT NOT NULL REFERENCES release_source(id) ON DELETE CASCADE,
+          source_anime_id TEXT NOT NULL,
+          source_anime_title TEXT,
+          source_url TEXT,
+          match_method TEXT NOT NULL,
+          confidence REAL NOT NULL DEFAULT 0,
+          confirmed INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(anime_id, source_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_anime_source_binding_source
+          ON anime_source_binding (source_id, source_anime_id);
+      `);
+    }
   }
 
   /** 将首次启动快照写入各业务表。 */
@@ -582,7 +660,7 @@ export class SqliteAppRepository implements AppRepository {
   private clearAllData(): void {
     for (const table of [
       "notification", "media_file", "torrent_file", "download_task", "episode_preference", "episode",
-      "my_anime_rss_subscription", "my_anime", "anime_alias", "release", "anime_catalog", "fansub_group",
+      "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_alias", "release", "anime_catalog", "fansub_group",
       "release_source", "app_settings", "app_state", "app_meta"
     ]) {
       this.database.exec(`DELETE FROM ${table}`);
@@ -910,6 +988,22 @@ function mapAnimeRating(row: SqliteRow): Anime["rating"] {
     score,
     count: optionalNumber(row.rating_count),
     source
+  });
+}
+
+function mapAnimeSourceBinding(row: SqliteRow): AnimeSourceBinding {
+  return compact({
+    id: asString(row.id),
+    animeId: asString(row.anime_id),
+    sourceId: asString(row.source_id),
+    sourceAnimeId: asString(row.source_anime_id),
+    sourceAnimeTitle: optionalString(row.source_anime_title),
+    sourceUrl: optionalString(row.source_url),
+    matchMethod: asString(row.match_method) as AnimeSourceBinding["matchMethod"],
+    confidence: Number(row.confidence),
+    confirmed: toBoolean(row.confirmed),
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at)
   });
 }
 

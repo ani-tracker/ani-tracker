@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
-import type { AppSettings, DownloadTask, Episode, EpisodePreference, FansubGroup, MyAnime, ReleaseSourceConfig } from "@shared/domain";
+import type { AnimeSourceBinding, AppSettings, DownloadTask, Episode, EpisodePreference, FansubGroup, MyAnime, ReleaseSourceConfig } from "@shared/domain";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
 import type { AppRepository } from "../../repositories/app-repository";
 import { AutomationRunService } from "../automation-run-service";
@@ -249,6 +249,10 @@ class FakeAutomationRepository {
 
   async listSources(): Promise<ReleaseSourceConfig[]> {
     return this.sources;
+  }
+
+  async listAnimeSourceBindings(): Promise<AnimeSourceBinding[]> {
+    return [];
   }
 
   async listEpisodes(animeId: string): Promise<Episode[]> {

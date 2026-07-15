@@ -7,7 +7,9 @@ import { ReleaseSourceService } from "./core/sources/release-source-service";
 import type {
   AddDownloadUrlInput,
   AddReleaseDownloadInput,
+  AnimeReleaseQuery,
   AnimeDiscoveryQuery,
+  ConfirmAnimeSourceBindingInput,
   ReleaseQuery,
   RssSubscriptionReleaseQuery
 } from "@shared/contracts";
@@ -24,6 +26,8 @@ import { QbittorrentManagedService } from "./core/downloads/qbittorrent-managed-
 import { logger } from "./core/logger";
 import { resolveAnimeDownloadPath } from "./core/downloads/download-path-resolver";
 import { RssReleaseSource } from "./core/sources/rss-source";
+import { AnimeSourceBindingService } from "./core/source-bindings/anime-source-binding-service";
+import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
 
 export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
@@ -268,6 +272,27 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     repository.updateSourceEnabled(sourceId, enabled)
   );
   ipcMain.handle("sources:upsert", (_event, source: ReleaseSourceConfig) => repository.upsertSource(source));
+  ipcMain.handle("animeSourceBindings:getState", async (_event, animeId: string, discoverCandidates = true) => {
+    const settings = await repository.getSettings();
+    return new AnimeSourceBindingService(
+      repository,
+      new MetadataHttpClient(settings.network.metadataProxy)
+    ).getState(animeId, discoverCandidates);
+  });
+  ipcMain.handle("animeSourceBindings:confirm", async (_event, input: ConfirmAnimeSourceBindingInput) => {
+    const settings = await repository.getSettings();
+    return new AnimeSourceBindingService(
+      repository,
+      new MetadataHttpClient(settings.network.metadataProxy)
+    ).confirm(input);
+  });
+  ipcMain.handle("animeSourceBindings:remove", async (_event, animeId: string, sourceId: string) => {
+    const settings = await repository.getSettings();
+    return new AnimeSourceBindingService(
+      repository,
+      new MetadataHttpClient(settings.network.metadataProxy)
+    ).remove(animeId, sourceId);
+  });
   ipcMain.handle("releases:search", async (_event, query: ReleaseQuery) => {
     const [sources, fansubs, settings] = await Promise.all([
       repository.listSources(),
@@ -275,6 +300,24 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       repository.getSettings()
     ]);
     return new ReleaseSourceService(sources, fansubs, new MetadataHttpClient(settings.network.metadataProxy)).search(query);
+  });
+  ipcMain.handle("releases:searchAnime", async (_event, query: AnimeReleaseQuery) => {
+    const followedAnime = await findMyAnime(query.animeId);
+    if (!followedAnime) {
+      throw new Error("追番不存在");
+    }
+    const [sources, fansubs, settings] = await Promise.all([
+      repository.listSources(),
+      repository.listFansubs(),
+      repository.getSettings()
+    ]);
+    const httpClient = new MetadataHttpClient(settings.network.metadataProxy);
+    const bindingState = await new AnimeSourceBindingService(repository, httpClient).getState(query.animeId, false);
+    return new ReleaseSourceService(sources, fansubs, httpClient).searchAnime(
+      followedAnime.anime,
+      query,
+      bindingState.bindings
+    );
   });
   ipcMain.handle("releases:searchRssSubscription", (_event, query: RssSubscriptionReleaseQuery) =>
     searchRssSubscriptionReleases(query)
@@ -382,26 +425,36 @@ async function findMyAnime(animeId?: string): Promise<MyAnime | undefined> {
 
 /** 按单个追番 RSS 订阅读取资源，独立于全局下载源开关。 */
 async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery) {
-  const settings = await repository.getSettings();
-  const rssUrl = query.rssUrl.trim();
-  if (!rssUrl) {
+  const [settings, followedAnime] = await Promise.all([
+    repository.getSettings(),
+    findMyAnime(query.animeId)
+  ]);
+  if (!followedAnime) {
     return {
       query,
       releases: [],
-      errors: [{ sourceId: query.subscriptionId, message: "RSS 订阅地址不能为空" }]
+      errors: [{ sourceId: query.subscriptionId, message: "追番不存在" }]
     };
   }
-
+  const subscription = followedAnime.rssSubscriptions?.find((item) => item.id === query.subscriptionId);
+  if (!subscription?.enabled) {
+    return {
+      query,
+      releases: [],
+      errors: [{ sourceId: query.subscriptionId, message: "RSS 订阅不存在或未启用" }]
+    };
+  }
   logger.info("RSS 订阅资源搜索开始", {
     animeId: query.animeId,
     subscriptionId: query.subscriptionId,
-    subscriptionName: query.subscriptionName
+    subscriptionName: subscription.name
   });
   try {
+    const rssUrl = validateRssUrl(subscription.url);
     const source = new RssReleaseSource(
       {
         id: `rss-subscription:${query.subscriptionId}`,
-        name: query.subscriptionName,
+        name: subscription.name,
         kind: "rss",
         enabled: true,
         rssUrl
@@ -414,14 +467,19 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
       preferredResolution: query.preferredResolution,
       limit: query.limit
     });
+    const searchTerms = buildAnimeReleaseSearchTerms(followedAnime.anime);
+    const relevantReleases = isExactMikanSubscription(rssUrl, followedAnime)
+      ? releases
+      : releases.filter((release) => matchesAnimeReleaseTitle(release.title, searchTerms));
     logger.info("RSS 订阅资源搜索完成", {
       animeId: query.animeId,
       subscriptionId: query.subscriptionId,
-      releaseCount: releases.length
+      releaseCount: relevantReleases.length,
+      filteredCount: releases.length - relevantReleases.length
     });
     return {
       query,
-      releases: releases.map((release) => ({
+      releases: relevantReleases.map((release) => ({
         ...release,
         animeId: query.animeId
       })),
@@ -440,6 +498,27 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
       errors: [{ sourceId: query.subscriptionId, message }]
     };
   }
+}
+
+/** 校验用户保存的 RSS 地址，主进程只允许 HTTP(S)。 */
+function validateRssUrl(value: string): string {
+  const url = new URL(value.trim());
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("RSS 订阅仅支持 HTTP 或 HTTPS 地址");
+  }
+  return url.toString();
+}
+
+/** 判断 RSS 是否为当前番剧外部 ID 对应的 Mikan 精确订阅。 */
+function isExactMikanSubscription(rssUrl: string, followedAnime: MyAnime): boolean {
+  const mikanId = followedAnime.anime.externalIds.mikan?.trim();
+  if (!mikanId) {
+    return false;
+  }
+  const url = new URL(rssUrl);
+  const hostname = url.hostname.toLowerCase();
+  return (hostname === "mikanani.me" || hostname.endsWith(".mikanani.me")) &&
+    url.searchParams.get("bangumiId") === mikanId;
 }
 
 /** 复用或创建资源下载需要关联的单集。 */

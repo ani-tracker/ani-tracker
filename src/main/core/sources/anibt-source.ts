@@ -1,5 +1,5 @@
-import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
-import type { Release, ReleaseSourceConfig, SubtitlePreference } from "@shared/domain";
+import type { AnimeSourceCandidate, ReleaseQuery, ReleaseSource } from "@shared/contracts";
+import type { Anime, Release, ReleaseSourceConfig, SubtitlePreference } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { logger } from "../logger";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
@@ -16,6 +16,13 @@ interface AniBtBgmSearchResponse {
 
 interface AniBtBgmSearchItem {
   bgmId?: number | string;
+  title?: string;
+  name?: string;
+  nameCn?: string;
+  originalTitle?: string;
+  year?: number | string;
+  month?: number | string;
+  episodeCount?: number | string;
 }
 
 interface AniBtRssDocument {
@@ -107,7 +114,33 @@ export class AniBtReleaseSource implements ReleaseSource {
     return this.searchReleases({ keyword: animeId });
   }
 
+  /** 按 Bangumi ID 精确读取 AniBT 番剧 RSS。 */
+  async listReleasesByAnimeId(sourceAnimeId: string, limit = 100): Promise<Release[]> {
+    return this.readAnimeFeed(sourceAnimeId, limit);
+  }
+
+  /** 查询 AniBT 可供用户确认的番剧候选。 */
+  async searchAnimeCandidates(anime: Anime): Promise<Array<Omit<AnimeSourceCandidate, "score" | "reasons">>> {
+    const keywords = [anime.title, anime.originalTitle, ...anime.aliases.map((item) => item.alias)].filter(
+      (value): value is string => Boolean(value)
+    );
+    const candidates = (
+      await Promise.all(keywords.slice(0, 4).map((keyword) => this.searchBgmCandidates(keyword)))
+    ).flat();
+    const byId = new Map<string, Omit<AnimeSourceCandidate, "score" | "reasons">>();
+    for (const candidate of candidates) {
+      byId.set(candidate.sourceAnimeId, candidate);
+    }
+    return [...byId.values()];
+  }
+
   private async searchBgmIds(keyword: string): Promise<string[]> {
+    return (await this.searchBgmCandidates(keyword)).map((item) => item.sourceAnimeId);
+  }
+
+  private async searchBgmCandidates(
+    keyword: string
+  ): Promise<Array<Omit<AnimeSourceCandidate, "score" | "reasons">>> {
     const url = new URL("/api/bgm/search", this.config.baseUrl ?? DEFAULT_ANIBT_BASE_URL);
     url.searchParams.set("q", keyword);
 
@@ -125,9 +158,19 @@ export class AniBtReleaseSource implements ReleaseSource {
     }
 
     return toArray(payload.data)
-      .map((item) => item.bgmId)
-      .filter((bgmId): bgmId is number | string => bgmId !== undefined && bgmId !== null)
-      .map(String);
+      .filter((item) => item.bgmId !== undefined && item.bgmId !== null)
+      .map((item) => ({
+        sourceId: this.config.id,
+        sourceName: this.config.name,
+        sourceAnimeId: String(item.bgmId),
+        title: item.nameCn ?? item.title ?? item.name ?? keyword,
+        originalTitle: item.originalTitle,
+        aliases: [],
+        premiereYear: parseOptionalNumber(item.year === undefined ? undefined : String(item.year)),
+        premiereMonth: parseOptionalNumber(item.month === undefined ? undefined : String(item.month)),
+        episodeCount: parseOptionalNumber(item.episodeCount === undefined ? undefined : String(item.episodeCount)),
+        sourceUrl: `https://bgm.tv/subject/${encodeURIComponent(String(item.bgmId))}`
+      }));
   }
 
   private async readAnimeFeed(bgmId: string, limit: number): Promise<Release[]> {

@@ -1,5 +1,6 @@
 import type {
   Anime,
+  AnimeSourceBinding,
   AppSettings,
   DailyReminderItem,
   DashboardData,
@@ -30,6 +31,9 @@ export interface AppRepository {
   listAnimeCatalogByMonth(year: number, month: number): Promise<Anime[]>;
   upsertAnimeCatalog(items: Anime[]): Promise<{ items: Anime[]; addedCount: number; existingCount: number }>;
   clearAnimeCatalog(): Promise<void>;
+  listAnimeSourceBindings(animeId: string): Promise<AnimeSourceBinding[]>;
+  upsertAnimeSourceBinding(binding: AnimeSourceBinding): Promise<AnimeSourceBinding[]>;
+  removeAnimeSourceBinding(animeId: string, sourceId: string): Promise<AnimeSourceBinding[]>;
   listDownloads(): Promise<DownloadTask[]>;
   listEpisodes(animeId: string): Promise<Episode[]>;
   upsertEpisode(episode: Episode): Promise<Episode[]>;

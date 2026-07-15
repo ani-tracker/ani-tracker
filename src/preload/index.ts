@@ -11,7 +11,9 @@ import type {
 import type {
   AddDownloadUrlInput,
   AddReleaseDownloadInput,
+  AnimeReleaseQuery,
   AnimeDiscoveryQuery,
+  ConfirmAnimeSourceBindingInput,
   ReleaseQuery,
   RssSubscriptionReleaseQuery
 } from "@shared/contracts";
@@ -55,7 +57,14 @@ const api = {
   listSources: () => ipcRenderer.invoke("sources:list"),
   setSourceEnabled: (sourceId: string, enabled: boolean) => ipcRenderer.invoke("sources:setEnabled", sourceId, enabled),
   upsertSource: (source: ReleaseSourceConfig) => ipcRenderer.invoke("sources:upsert", source),
+  getAnimeSourceBindingState: (animeId: string, discoverCandidates = true) =>
+    ipcRenderer.invoke("animeSourceBindings:getState", animeId, discoverCandidates),
+  confirmAnimeSourceBinding: (input: ConfirmAnimeSourceBindingInput) =>
+    ipcRenderer.invoke("animeSourceBindings:confirm", input),
+  removeAnimeSourceBinding: (animeId: string, sourceId: string) =>
+    ipcRenderer.invoke("animeSourceBindings:remove", animeId, sourceId),
   searchReleases: (query: ReleaseQuery) => ipcRenderer.invoke("releases:search", query),
+  searchAnimeReleases: (query: AnimeReleaseQuery) => ipcRenderer.invoke("releases:searchAnime", query),
   searchRssSubscriptionReleases: (query: RssSubscriptionReleaseQuery) =>
     ipcRenderer.invoke("releases:searchRssSubscription", query),
   getSettings: () => ipcRenderer.invoke("settings:get"),

@@ -1,4 +1,4 @@
-import { CalendarDays, ChevronDown, ChevronRight, Download, ImageOff, MoreHorizontal, Plus, RefreshCw, Save, Search, SlidersHorizontal, Star, Trash2, X } from "lucide-react";
+import { CalendarDays, Check, ChevronDown, ChevronRight, Download, ImageOff, Link2, MoreHorizontal, Plus, RefreshCw, Save, Search, SlidersHorizontal, Star, Trash2, Unlink, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
@@ -9,7 +9,7 @@ import { cn } from "@/lib/cn";
 import { formatBytes, formatMonth, formatPercent } from "@/lib/format";
 import { buildAnimeReleaseSearchTerms } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
-import type { AddReleaseDownloadInput, EpisodeReleasePreview, ReleaseSearchResult, RssSubscriptionReleaseResult } from "@shared/contracts";
+import type { AddReleaseDownloadInput, AnimeSourceBindingState, AnimeSourceCandidate, EpisodeReleasePreview, ReleaseSearchResult, RssSubscriptionReleaseResult } from "@shared/contracts";
 import type {
   AnimeRssSubscription,
   AnimeStatus,
@@ -106,6 +106,9 @@ export function MyAnimePage() {
   const [downloadResourceTab, setDownloadResourceTab] = useState<DownloadResourceTab>("rss");
   const [animeReleaseFansubId, setAnimeReleaseFansubId] = useState("");
   const [animeReleaseLoading, setAnimeReleaseLoading] = useState(false);
+  const [sourceBindingState, setSourceBindingState] = useState<AnimeSourceBindingState | null>(null);
+  const [sourceBindingLoading, setSourceBindingLoading] = useState(false);
+  const [sourceBindingActionKey, setSourceBindingActionKey] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [episodeLoading, setEpisodeLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -407,6 +410,7 @@ export function MyAnimePage() {
     setDownloadTarget(target);
     setDownloadResourceTab(nextTab);
     setAnimeReleaseFansubId(target.defaultFansubGroupId ?? "");
+    void refreshAnimeSourceBindings(target.anime.id);
     if (nextTab === "rss") {
       await searchAnimeRssReleases(target);
     } else {
@@ -420,6 +424,8 @@ export function MyAnimePage() {
     setAnimeReleaseErrors([]);
     setAnimeRssReleaseGroups([]);
     setAnimeReleaseFansubId("");
+    setSourceBindingState(null);
+    setSourceBindingActionKey(null);
   }
 
   /** 打开某部追番的下载任务明细抽屉。 */
@@ -447,34 +453,22 @@ export function MyAnimePage() {
       return;
     }
 
-    const terms = buildSearchTerms(target);
-    if (terms.length === 0) {
-      setAnimeReleases([]);
-      setAnimeReleaseErrors([]);
-      return;
-    }
-
     setAnimeReleaseLoading(true);
     try {
-      const results = await Promise.all(
-        terms.map((keyword) =>
-          appApi.searchReleases({
-            keyword,
-            animeId: target.anime.id,
-            preferredResolution: target.preferredResolution,
-            limit: 80,
-            cacheTtlMs: releaseSearchCacheTtlMs,
-            forceRefresh: options.forceRefresh
-          })
-        )
-      );
+      const result = await appApi.searchAnimeReleases({
+        animeId: target.anime.id,
+        preferredResolution: target.preferredResolution,
+        limit: 200,
+        cacheTtlMs: releaseSearchCacheTtlMs,
+        forceRefresh: options.forceRefresh
+      });
       const releases = sortReleases(
-        dedupeReleases(results.flatMap((result) => result.releases)).map((release) => ({
+        dedupeReleases(result.releases).map((release) => ({
           ...release,
           animeId: target.anime.id
         }))
       );
-      const errors = dedupeReleaseErrors(results.flatMap((result) => result.errors));
+      const errors = dedupeReleaseErrors(result.errors);
       setAnimeReleases(releases);
       setAnimeReleaseErrors(errors);
       setMessage({
@@ -493,6 +487,56 @@ export function MyAnimePage() {
       });
     } finally {
       setAnimeReleaseLoading(false);
+    }
+  }
+
+  /** 读取精确来源绑定和待确认候选。 */
+  async function refreshAnimeSourceBindings(animeId: string) {
+    setSourceBindingLoading(true);
+    try {
+      setSourceBindingState(await appApi.getAnimeSourceBindingState(animeId, true));
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "读取来源匹配失败" });
+    } finally {
+      setSourceBindingLoading(false);
+    }
+  }
+
+  /** 确认来源候选并重新读取精确资源。 */
+  async function confirmAnimeSourceCandidate(candidate: AnimeSourceCandidate) {
+    if (!downloadTarget) return;
+    setSourceBindingActionKey(`${candidate.sourceId}:${candidate.sourceAnimeId}`);
+    try {
+      const state = await appApi.confirmAnimeSourceBinding({
+        animeId: downloadTarget.anime.id,
+        sourceId: candidate.sourceId,
+        sourceAnimeId: candidate.sourceAnimeId,
+        sourceAnimeTitle: candidate.title,
+        sourceUrl: candidate.sourceUrl,
+        confidence: candidate.score / 100
+      });
+      setSourceBindingState(state);
+      await searchAnimeReleases(downloadTarget, { forceRefresh: true });
+      setMessage({ tone: "success", text: `已绑定 ${candidate.sourceName}：${candidate.title}` });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "确认来源匹配失败" });
+    } finally {
+      setSourceBindingActionKey(null);
+    }
+  }
+
+  /** 移除来源绑定并重新发现候选。 */
+  async function removeAnimeSourceBinding(sourceId: string) {
+    if (!downloadTarget) return;
+    setSourceBindingActionKey(sourceId);
+    try {
+      setSourceBindingState(await appApi.removeAnimeSourceBinding(downloadTarget.anime.id, sourceId));
+      setAnimeReleases((current) => current.filter((release) => release.sourceId !== sourceId));
+      setMessage({ tone: "success", text: "已移除来源绑定，请重新确认候选" });
+    } catch (error) {
+      setMessage({ tone: "error", text: error instanceof Error ? error.message : "移除来源绑定失败" });
+    } finally {
+      setSourceBindingActionKey(null);
     }
   }
 
@@ -516,23 +560,13 @@ export function MyAnimePage() {
           appApi.searchRssSubscriptionReleases({
             animeId: target.anime.id,
             subscriptionId: subscription.id,
-            subscriptionName: subscription.name,
-            rssUrl: subscription.url,
             preferredResolution: target.preferredResolution,
             limit: 200
           })
         )
       );
-      const groups = results.map((result) => ({
-        subscription: subscriptions.find((subscription) => subscription.id === result.query.subscriptionId) ?? {
-          id: result.query.subscriptionId,
-          myAnimeId: target.id,
-          name: result.query.subscriptionName,
-          url: result.query.rssUrl,
-          enabled: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString()
-        },
+      const groups = results.map((result, index) => ({
+        subscription: subscriptions.find((subscription) => subscription.id === result.query.subscriptionId) ?? subscriptions[index],
         releases: sortReleases(
           dedupeReleases(result.releases).map((release) => ({
             ...release,
@@ -757,11 +791,17 @@ export function MyAnimePage() {
             rssGroups={animeRssReleaseGroups}
             rssLoading={animeRssReleaseLoading}
             selectedFansubId={animeReleaseFansubId}
+            sourceBindingActionKey={sourceBindingActionKey}
+            sourceBindingLoading={sourceBindingLoading}
+            sourceBindingState={sourceBindingState}
             target={downloadTarget}
             onAddRelease={(release) => void addAnimeReleaseDownload(release)}
             onAddSelected={(releases) => void addAnimeReleaseDownloads(releases)}
             onClose={closeAnimeDownloads}
             onFansubChange={setAnimeReleaseFansubId}
+            onConfirmSourceCandidate={(candidate) => void confirmAnimeSourceCandidate(candidate)}
+            onRemoveSourceBinding={(sourceId) => void removeAnimeSourceBinding(sourceId)}
+            onRefreshSourceBindings={() => void refreshAnimeSourceBindings(downloadTarget.anime.id)}
             onRefreshRss={() => void searchAnimeRssReleases(downloadTarget)}
             onRefresh={() => void searchAnimeReleases()}
             onForceRefresh={() => void searchAnimeReleases(downloadTarget, { forceRefresh: true })}
@@ -1539,9 +1579,15 @@ function AnimeDownloadPanel({
   rssLoading,
   addingReleaseId,
   batchAdding,
+  sourceBindingState,
+  sourceBindingLoading,
+  sourceBindingActionKey,
   panelClassName,
   listClassName,
   onTabChange,
+  onConfirmSourceCandidate,
+  onRemoveSourceBinding,
+  onRefreshSourceBindings,
   onFansubChange,
   onRefreshRss,
   onRefresh,
@@ -1563,9 +1609,15 @@ function AnimeDownloadPanel({
   rssLoading: boolean;
   addingReleaseId: string | null;
   batchAdding: boolean;
+  sourceBindingState: AnimeSourceBindingState | null;
+  sourceBindingLoading: boolean;
+  sourceBindingActionKey: string | null;
   panelClassName?: string;
   listClassName?: string;
   onTabChange: (tab: DownloadResourceTab) => void;
+  onConfirmSourceCandidate: (candidate: AnimeSourceCandidate) => void;
+  onRemoveSourceBinding: (sourceId: string) => void;
+  onRefreshSourceBindings: () => void;
   onFansubChange: (fansubGroupId: string) => void;
   onRefreshRss: () => void;
   onRefresh: () => void;
@@ -1737,15 +1789,26 @@ function AnimeDownloadPanel({
           </button>
         </div>
 
+        {activeTab === "search" && (
+          <AnimeSourceBindingPanel
+            actionKey={sourceBindingActionKey}
+            loading={sourceBindingLoading}
+            state={sourceBindingState}
+            onConfirm={onConfirmSourceCandidate}
+            onRefresh={onRefreshSourceBindings}
+            onRemove={onRemoveSourceBinding}
+          />
+        )}
+
         <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3">
           <select
             className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
             value={selectedFansubId}
             onChange={(event) => onFansubChange(event.target.value)}
           >
-            <option value="">全部字幕组（{releases.length}）</option>
+            <option value="">全部字幕组（{tabReleases.length}）</option>
             {fansubs.map((group) => {
-              const count = countReleasesByFansub(releases, group.id);
+              const count = countReleasesByFansub(tabReleases, group.id);
               return (
                 <option key={group.id} value={group.id}>
                   {group.name}
@@ -1971,6 +2034,157 @@ function ReleaseDownloadRow({
       </div>
     </div>
   );
+}
+
+/** 展示精确下载源的绑定状态和待确认候选。 */
+function AnimeSourceBindingPanel({
+  state,
+  loading,
+  actionKey,
+  onConfirm,
+  onRemove,
+  onRefresh
+}: {
+  state: AnimeSourceBindingState | null;
+  loading: boolean;
+  actionKey: string | null;
+  onConfirm: (candidate: AnimeSourceCandidate) => void;
+  onRemove: (sourceId: string) => void;
+  onRefresh: () => void;
+}) {
+  const groupedCandidates = groupSourceCandidates(state?.candidates ?? []);
+  const confirmedBindings = state?.bindings.filter((binding) => binding.confirmed) ?? [];
+  const hasContent = Boolean(confirmedBindings.length || groupedCandidates.length || state?.errors.length);
+
+  return (
+    <section className="overflow-hidden rounded-md border bg-background">
+      <div className="flex items-center justify-between border-b bg-muted/50 px-3 py-2">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Link2 className="h-4 w-4 text-muted-foreground" />
+          来源匹配
+        </div>
+        <Button variant="ghost" onClick={onRefresh} disabled={loading} title="重新读取来源候选" aria-label="重新读取来源候选">
+          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+        </Button>
+      </div>
+      {loading && !hasContent ? (
+        <div className="px-3 py-4 text-sm text-muted-foreground">正在匹配来源番剧...</div>
+      ) : hasContent ? (
+        <div className="max-h-72 divide-y overflow-y-auto">
+          {confirmedBindings.map((binding) => (
+            <div key={binding.sourceId} className="flex items-center justify-between gap-3 px-3 py-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Badge tone="green"><Check className="mr-1 h-3 w-3" />已绑定</Badge>
+                  <span className="truncate text-sm font-medium">{binding.sourceAnimeTitle ?? binding.sourceId}</span>
+                </div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">
+                  {binding.sourceId} · ID {binding.sourceAnimeId} · {getBindingMethodText(binding.matchMethod)}
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={() => onRemove(binding.sourceId)}
+                disabled={actionKey === binding.sourceId}
+                title="移除来源绑定"
+                aria-label="移除来源绑定"
+              >
+                <Unlink className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+          {groupedCandidates.map((group) => (
+            <div key={group.sourceId} className="px-3 py-3">
+              <div className="mb-2 flex items-center justify-between gap-2">
+                <div className="text-sm font-medium">{group.sourceName}</div>
+                <Badge tone="amber">待确认</Badge>
+              </div>
+              <div className="space-y-2">
+                {group.candidates.slice(0, 1).map((candidate) => {
+                  const candidateKey = `${candidate.sourceId}:${candidate.sourceAnimeId}`;
+                  return (
+                    <div key={candidateKey} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm" title={candidate.title}>{candidate.title}</div>
+                        <div className="mt-1 truncate text-xs text-muted-foreground">
+                          ID {candidate.sourceAnimeId} · {candidate.reasons.join(" · ")}
+                        </div>
+                      </div>
+                      <Button
+                        variant="outline"
+                        onClick={() => onConfirm(candidate)}
+                        disabled={actionKey === candidateKey}
+                      >
+                        <Check className="h-4 w-4" />
+                        {candidate.score} 分
+                      </Button>
+                    </div>
+                  );
+                })}
+                {group.candidates.length > 1 && (
+                  <details>
+                    <summary className="cursor-pointer py-1 text-xs text-muted-foreground hover:text-foreground">
+                      其他候选（{group.candidates.length - 1}）
+                    </summary>
+                    <div className="mt-2 space-y-2">
+                      {group.candidates.slice(1).map((candidate) => {
+                        const candidateKey = `${candidate.sourceId}:${candidate.sourceAnimeId}`;
+                        return (
+                          <div key={candidateKey} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                            <div className="min-w-0">
+                              <div className="truncate text-sm" title={candidate.title}>{candidate.title}</div>
+                              <div className="mt-1 truncate text-xs text-muted-foreground">
+                                ID {candidate.sourceAnimeId} · {candidate.reasons.join(" · ")}
+                              </div>
+                            </div>
+                            <Button
+                              variant="outline"
+                              onClick={() => onConfirm(candidate)}
+                              disabled={actionKey === candidateKey}
+                            >
+                              <Check className="h-4 w-4" />
+                              {candidate.score} 分
+                            </Button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                )}
+              </div>
+            </div>
+          ))}
+          {state?.errors.map((error) => (
+            <div key={`${error.sourceId}:${error.message}`} className="px-3 py-2 text-xs text-amber-700">
+              {error.sourceId}: {error.message}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="px-3 py-4 text-sm text-muted-foreground">没有启用支持精确匹配的来源。</div>
+      )}
+    </section>
+  );
+}
+
+function groupSourceCandidates(candidates: AnimeSourceCandidate[]) {
+  const groups = new Map<string, { sourceId: string; sourceName: string; candidates: AnimeSourceCandidate[] }>();
+  for (const candidate of candidates) {
+    const group = groups.get(candidate.sourceId) ?? {
+      sourceId: candidate.sourceId,
+      sourceName: candidate.sourceName,
+      candidates: []
+    };
+    group.candidates.push(candidate);
+    groups.set(candidate.sourceId, group);
+  }
+  return [...groups.values()];
+}
+
+function getBindingMethodText(method: "manual" | "external_id" | "scored"): string {
+  if (method === "manual") return "人工确认";
+  if (method === "external_id") return "外部ID";
+  return "评分缓存";
 }
 
 function DownloadMetric({ label, value }: { label: string; value: number }) {
@@ -2407,8 +2621,13 @@ function findReleaseDownloadTask(tasks: DownloadTask[], release: Release): Downl
       return true;
     }
 
-    return task.episodeNo !== undefined && task.episodeNo === release.episodeNo &&
-      (task.fansubGroupId ?? task.fansubName) === (release.fansubGroupId ?? release.fansubName);
+    const releaseFansubKey = release.fansubGroupId ?? release.fansubName;
+    return Boolean(
+      releaseFansubKey &&
+      task.episodeNo !== undefined &&
+      task.episodeNo === release.episodeNo &&
+      (task.fansubGroupId ?? task.fansubName) === releaseFansubKey
+    );
   });
 }
 

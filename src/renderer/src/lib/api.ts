@@ -14,10 +14,13 @@ import type {
 import type {
   AddDownloadUrlInput,
   AddReleaseDownloadInput,
+  AnimeReleaseQuery,
+  AnimeSourceBindingState,
   AnimeDiscoveryQuery,
   AnimeDiscoveryResult,
   AutomationRunResult,
   AutomationSchedulerStatus,
+  ConfirmAnimeSourceBindingInput,
   EpisodeReleasePreview,
   MediaScanResult,
   QbittorrentManagedStatus,
@@ -78,7 +81,14 @@ export const appApi = {
   setSourceEnabled: (sourceId: string, enabled: boolean): Promise<ReleaseSourceConfig[]> =>
     bridge().setSourceEnabled(sourceId, enabled),
   upsertSource: (source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]> => bridge().upsertSource(source),
+  getAnimeSourceBindingState: (animeId: string, discoverCandidates = true): Promise<AnimeSourceBindingState> =>
+    bridge().getAnimeSourceBindingState(animeId, discoverCandidates),
+  confirmAnimeSourceBinding: (input: ConfirmAnimeSourceBindingInput): Promise<AnimeSourceBindingState> =>
+    bridge().confirmAnimeSourceBinding(input),
+  removeAnimeSourceBinding: (animeId: string, sourceId: string): Promise<AnimeSourceBindingState> =>
+    bridge().removeAnimeSourceBinding(animeId, sourceId),
   searchReleases: (query: ReleaseQuery): Promise<ReleaseSearchResult> => bridge().searchReleases(query),
+  searchAnimeReleases: (query: AnimeReleaseQuery): Promise<ReleaseSearchResult> => bridge().searchAnimeReleases(query),
   searchRssSubscriptionReleases: (query: RssSubscriptionReleaseQuery): Promise<RssSubscriptionReleaseResult> =>
     bridge().searchRssSubscriptionReleases(query),
   getSettings: (): Promise<AppSettings> => bridge().getSettings(),

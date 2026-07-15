@@ -1,5 +1,6 @@
 import type {
   Anime,
+  AnimeSourceBinding,
   AppSettings,
   DownloadTask,
   Episode,
@@ -42,6 +43,16 @@ export interface ReleaseQuery {
   forceRefresh?: boolean;
 }
 
+export interface AnimeReleaseQuery {
+  animeId: string;
+  episodeNo?: number;
+  fansubGroupId?: string;
+  preferredResolution?: string;
+  limit?: number;
+  cacheTtlMs?: number;
+  forceRefresh?: boolean;
+}
+
 export interface ReleaseSearchResult {
   query: ReleaseQuery;
   releases: Release[];
@@ -52,11 +63,43 @@ export interface ReleaseSearchResult {
   }>;
 }
 
+export interface AnimeSourceCandidate {
+  sourceId: string;
+  sourceName: string;
+  sourceAnimeId: string;
+  title: string;
+  originalTitle?: string;
+  aliases: string[];
+  premiereYear?: number;
+  premiereMonth?: number;
+  episodeCount?: number;
+  sourceUrl?: string;
+  score: number;
+  reasons: string[];
+}
+
+export interface AnimeSourceBindingState {
+  animeId: string;
+  bindings: AnimeSourceBinding[];
+  candidates: AnimeSourceCandidate[];
+  errors: Array<{
+    sourceId: string;
+    message: string;
+  }>;
+}
+
+export interface ConfirmAnimeSourceBindingInput {
+  animeId: string;
+  sourceId: string;
+  sourceAnimeId: string;
+  sourceAnimeTitle?: string;
+  sourceUrl?: string;
+  confidence?: number;
+}
+
 export interface RssSubscriptionReleaseQuery {
-  animeId?: string;
+  animeId: string;
   subscriptionId: string;
-  subscriptionName: string;
-  rssUrl: string;
   preferredResolution?: string;
   limit?: number;
 }

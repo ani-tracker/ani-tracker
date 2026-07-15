@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import type {
+  AnimeSourceBinding,
   AppSettings,
   DownloadTask,
   Episode,
@@ -185,6 +186,10 @@ class FakeSchedulerRepository {
 
   async listSources(): Promise<ReleaseSourceConfig[]> {
     return this.sources;
+  }
+
+  async listAnimeSourceBindings(): Promise<AnimeSourceBinding[]> {
+    return [];
   }
 
   async listEpisodes(animeId: string): Promise<Episode[]> {

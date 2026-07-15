@@ -85,6 +85,22 @@ export interface AnimeRssSubscription {
   updatedAt: string;
 }
 
+export type AnimeSourceBindingMatchMethod = "manual" | "external_id" | "scored";
+
+export interface AnimeSourceBinding {
+  id: string;
+  animeId: string;
+  sourceId: string;
+  sourceAnimeId: string;
+  sourceAnimeTitle?: string;
+  sourceUrl?: string;
+  matchMethod: AnimeSourceBindingMatchMethod;
+  confidence: number;
+  confirmed: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Episode {
   id: string;
   animeId: string;
