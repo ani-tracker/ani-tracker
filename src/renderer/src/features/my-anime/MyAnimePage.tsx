@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Drawer } from "@/components/ui/drawer";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatMonth, formatPercent } from "@/lib/format";
@@ -613,40 +614,29 @@ export function MyAnimePage() {
       )}
 
       {downloadTarget && (
-        <div
-          className="fixed inset-0 z-50 flex justify-end bg-foreground/35"
-          role="presentation"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              closeAnimeDownloads();
-            }
-          }}
+        <Drawer
+          ariaLabel="资源下载"
+          className="max-w-5xl overflow-hidden"
+          onClose={closeAnimeDownloads}
         >
-          <aside
-            aria-label="资源下载"
-            aria-modal="true"
-            className="animate-slide-in-right h-full w-full max-w-5xl border-l bg-card shadow-xl"
-            role="dialog"
-          >
-            <AnimeDownloadPanel
-              addingReleaseId={addingReleaseId}
-              downloadTasks={downloadTasks}
-              errors={animeReleaseErrors}
-              fansubNames={fansubNames}
-              fansubs={fansubs}
-              listClassName="max-h-[calc(100vh-22rem)] overflow-y-auto pr-1"
-              loading={animeReleaseLoading}
-              panelClassName="h-full overflow-hidden rounded-none border-0 shadow-none"
-              releases={animeReleases}
-              selectedFansubId={animeReleaseFansubId}
-              target={downloadTarget}
-              onAddRelease={(release) => void addAnimeReleaseDownload(release)}
-              onClose={closeAnimeDownloads}
-              onFansubChange={setAnimeReleaseFansubId}
-              onRefresh={() => void searchAnimeReleases()}
-            />
-          </aside>
-        </div>
+          <AnimeDownloadPanel
+            addingReleaseId={addingReleaseId}
+            downloadTasks={downloadTasks}
+            errors={animeReleaseErrors}
+            fansubNames={fansubNames}
+            fansubs={fansubs}
+            listClassName="max-h-[calc(100vh-22rem)] overflow-y-auto pr-1"
+            loading={animeReleaseLoading}
+            panelClassName="h-full overflow-hidden rounded-none border-0 shadow-none"
+            releases={animeReleases}
+            selectedFansubId={animeReleaseFansubId}
+            target={downloadTarget}
+            onAddRelease={(release) => void addAnimeReleaseDownload(release)}
+            onClose={closeAnimeDownloads}
+            onFansubChange={setAnimeReleaseFansubId}
+            onRefresh={() => void searchAnimeReleases()}
+          />
+        </Drawer>
       )}
 
       {downloadDetail && (
@@ -854,51 +844,40 @@ function RulesDrawer({
   onAddRelease: (episode: Episode, release: Release) => void;
 }) {
   return (
-    <div
-      className="fixed inset-0 z-50 flex justify-end bg-foreground/35"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onCancel();
-        }
-      }}
+    <Drawer
+      ariaLabel="追番规则"
+      className="max-w-3xl overflow-y-auto bg-background p-4"
+      onClose={onCancel}
     >
-      <aside
-        aria-label="追番规则"
-        aria-modal="true"
-        className="animate-slide-in-right h-full w-full max-w-3xl overflow-y-auto border-l bg-background p-4 shadow-xl"
-        role="dialog"
-      >
-        <div className="space-y-4">
-          <RulesPanel
-            draft={draft}
-            fansubs={fansubs}
-            saving={saving}
-            onChange={onChange}
-            onCancel={onCancel}
-            onSave={onSave}
-          />
-          <EpisodeRulesPanel
-            draft={draft}
-            persisted={draftPersisted}
-            episodes={episodes}
-            episodePreferences={episodePreferences}
-            downloadTasks={downloadTasks}
-            releasePreviews={releasePreviews}
-            fansubs={fansubs}
-            fansubNames={fansubNames}
-            loading={episodeLoading}
-            previewingEpisodeId={previewingEpisodeId}
-            addingReleaseId={addingReleaseId}
-            onAddEpisode={onAddEpisode}
-            onStatusChange={onStatusChange}
-            onFansubChange={onFansubChange}
-            onPreviewReleases={onPreviewReleases}
-            onAddRelease={onAddRelease}
-          />
-        </div>
-      </aside>
-    </div>
+      <div className="space-y-4">
+        <RulesPanel
+          draft={draft}
+          fansubs={fansubs}
+          saving={saving}
+          onChange={onChange}
+          onCancel={onCancel}
+          onSave={onSave}
+        />
+        <EpisodeRulesPanel
+          draft={draft}
+          persisted={draftPersisted}
+          episodes={episodes}
+          episodePreferences={episodePreferences}
+          downloadTasks={downloadTasks}
+          releasePreviews={releasePreviews}
+          fansubs={fansubs}
+          fansubNames={fansubNames}
+          loading={episodeLoading}
+          previewingEpisodeId={previewingEpisodeId}
+          addingReleaseId={addingReleaseId}
+          onAddEpisode={onAddEpisode}
+          onStatusChange={onStatusChange}
+          onFansubChange={onFansubChange}
+          onPreviewReleases={onPreviewReleases}
+          onAddRelease={onAddRelease}
+        />
+      </div>
+    </Drawer>
   );
 }
 
@@ -925,67 +904,56 @@ function AnimeDownloadDetailDrawer({
   };
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex justify-end bg-foreground/35"
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
-          onClose();
-        }
-      }}
+    <Drawer
+      ariaLabel="下载明细"
+      className="flex max-w-2xl flex-col"
+      onClose={onClose}
     >
-      <aside
-        aria-label="下载明细"
-        aria-modal="true"
-        className="animate-slide-in-right flex h-full w-full max-w-2xl flex-col border-l bg-card shadow-xl"
-        role="dialog"
-      >
-        <div className="flex items-start justify-between gap-4 border-b p-5">
-          <div className="min-w-0">
-            <h2 className="truncate text-lg font-semibold tracking-normal">{titleDisplay.title}</h2>
-            <p className="mt-1 truncate text-sm text-muted-foreground">{titleDisplay.subtitle ?? "下载任务明细"}</p>
-          </div>
-          <Button variant="ghost" onClick={onClose} aria-label="关闭下载明细" title="关闭下载明细">
-            <X className="h-4 w-4" />
-          </Button>
+      <div className="flex items-start justify-between gap-4 border-b p-5">
+        <div className="min-w-0">
+          <h2 className="truncate text-lg font-semibold tracking-normal">{titleDisplay.title}</h2>
+          <p className="mt-1 truncate text-sm text-muted-foreground">{titleDisplay.subtitle ?? "下载任务明细"}</p>
         </div>
+        <Button variant="ghost" onClick={onClose} aria-label="关闭下载明细" title="关闭下载明细">
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
 
-        <div className="border-b p-4">
-          <div className="grid h-9 grid-cols-3 overflow-hidden rounded-md border bg-background" role="group" aria-label="筛选下载任务">
-            {downloadDetailFilters.map((filter) => (
-              <button
-                key={filter.value}
-                aria-pressed={detail.filter === filter.value}
-                className={[
-                  "border-r px-3 text-sm transition-colors last:border-r-0",
-                  detail.filter === filter.value
-                    ? "bg-primary font-medium text-primary-foreground"
-                    : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                ].join(" ")}
-                type="button"
-                onClick={() => onFilterChange(filter.value)}
-              >
-                {filter.label} {counts[filter.value]}
-              </button>
+      <div className="border-b p-4">
+        <div className="grid h-9 grid-cols-3 overflow-hidden rounded-md border bg-background" role="group" aria-label="筛选下载任务">
+          {downloadDetailFilters.map((filter) => (
+            <button
+              key={filter.value}
+              aria-pressed={detail.filter === filter.value}
+              className={[
+                "border-r px-3 text-sm transition-colors last:border-r-0",
+                detail.filter === filter.value
+                  ? "bg-primary font-medium text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              ].join(" ")}
+              type="button"
+              onClick={() => onFilterChange(filter.value)}
+            >
+              {filter.label} {counts[filter.value]}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+        {visibleTasks.length > 0 ? (
+          <div className="space-y-3">
+            {visibleTasks.map((task) => (
+              <DownloadDetailTaskCard key={task.id} task={task} fansubNames={fansubNames} />
             ))}
           </div>
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          {visibleTasks.length > 0 ? (
-            <div className="space-y-3">
-              {visibleTasks.map((task) => (
-                <DownloadDetailTaskCard key={task.id} task={task} fansubNames={fansubNames} />
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-              当前筛选下没有下载任务。
-            </div>
-          )}
-        </div>
-      </aside>
-    </div>
+        ) : (
+          <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
+            当前筛选下没有下载任务。
+          </div>
+        )}
+      </div>
+    </Drawer>
   );
 }
 
