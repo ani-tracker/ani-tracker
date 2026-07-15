@@ -1,6 +1,8 @@
 import type { ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
 import type { FansubGroup, ReleaseSourceConfig } from "@shared/domain";
+import { createHash } from "node:crypto";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
+import { logger } from "../logger";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { AcgnxReleaseSource } from "./acgnx-source";
 import { AniBtReleaseSource } from "./anibt-source";
@@ -8,6 +10,9 @@ import { DmhyReleaseSource } from "./dmhy-source";
 import { MikanReleaseSource, type ReleaseHttpClient } from "./mikan-source";
 import { RssReleaseSource } from "./rss-source";
 import { TorznabReleaseSource } from "./torznab-source";
+
+const MAX_RELEASE_SEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const releaseSearchCache = new Map<string, { expiresAt: number; result: ReleaseSearchResult }>();
 
 export class ReleaseSourceService {
   constructor(
@@ -17,6 +22,22 @@ export class ReleaseSourceService {
   ) {}
 
   async search(query: ReleaseQuery): Promise<ReleaseSearchResult> {
+    const cacheKey = this.buildCacheKey(query);
+    if (cacheKey && !query.forceRefresh) {
+      const cached = releaseSearchCache.get(cacheKey);
+      if (cached && cached.expiresAt > Date.now()) {
+        logger.info("下载资源搜索命中缓存", {
+          animeId: query.animeId,
+          keyword: query.keyword,
+          releaseCount: cached.result.releases.length
+        });
+        return cloneSearchResult(cached.result, query);
+      }
+      if (cached) {
+        releaseSearchCache.delete(cacheKey);
+      }
+    }
+
     const sources = this.configs
       .filter((config) => config.enabled)
       .map((config) => createReleaseSource(config, this.httpClient))
@@ -40,12 +61,65 @@ export class ReleaseSourceService {
       .flat()
       .map((release) => enrichReleaseFromTitle(release, this.fansubs));
 
-    return {
+    const result = {
       query,
       releases: dedupeReleases(releases).slice(0, query.limit ?? 100),
       searchedSourceIds: sources.map((source) => source.config.id),
       errors
     };
+
+    if (cacheKey) {
+      releaseSearchCache.set(cacheKey, {
+        expiresAt: Date.now() + normalizeCacheTtlMs(query.cacheTtlMs),
+        result: cloneSearchResult(result)
+      });
+      logger.info("下载资源搜索结果已缓存", {
+        animeId: query.animeId,
+        keyword: query.keyword,
+        releaseCount: result.releases.length
+      });
+    }
+
+    return result;
+  }
+
+  /** 生成资源搜索缓存键，绑定查询条件、启用下载源和字幕组配置。 */
+  private buildCacheKey(query: ReleaseQuery): string | null {
+    if (!query.cacheTtlMs || query.cacheTtlMs <= 0) {
+      return null;
+    }
+
+    const sourceSignature = this.configs
+      .filter((config) => config.enabled)
+      .map((config) => ({
+        id: config.id,
+        name: config.name,
+        kind: config.kind,
+        baseUrl: config.baseUrl,
+        rssUrl: config.rssUrl,
+        tags: config.tags,
+        apiKeyHash: config.apiKey ? hashValue(config.apiKey) : undefined
+      }));
+    const fansubSignature = this.fansubs.map((group) => ({
+      id: group.id,
+      name: group.name,
+      aliases: group.aliases,
+      sourceIds: group.sourceIds
+    }));
+    const cacheInput = {
+      query: {
+        keyword: query.keyword,
+        animeId: query.animeId,
+        episodeNo: query.episodeNo,
+        fansubGroupId: query.fansubGroupId,
+        preferredResolution: query.preferredResolution,
+        limit: query.limit
+      },
+      sourceSignature,
+      fansubSignature
+    };
+
+    return hashValue(JSON.stringify(cacheInput));
   }
 }
 
@@ -130,4 +204,28 @@ function formatReleaseSourceError(error: unknown): string {
   }
 
   return message;
+}
+
+/** 规范化资源搜索缓存时间，避免超过 1 天。 */
+function normalizeCacheTtlMs(value: number | undefined): number {
+  if (!value || !Number.isFinite(value)) {
+    return 0;
+  }
+
+  return Math.max(1, Math.min(MAX_RELEASE_SEARCH_CACHE_TTL_MS, Math.round(value)));
+}
+
+/** 克隆资源搜索结果，防止缓存对象被外部修改。 */
+function cloneSearchResult(result: ReleaseSearchResult, queryOverride?: ReleaseQuery): ReleaseSearchResult {
+  return {
+    query: { ...(queryOverride ?? result.query) },
+    releases: result.releases.map((release) => ({ ...release })),
+    searchedSourceIds: [...result.searchedSourceIds],
+    errors: result.errors.map((error) => ({ ...error }))
+  };
+}
+
+/** 计算缓存键和敏感字段签名。 */
+function hashValue(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }

@@ -38,6 +38,8 @@ export interface ReleaseQuery {
   fansubGroupId?: string;
   preferredResolution?: string;
   limit?: number;
+  cacheTtlMs?: number;
+  forceRefresh?: boolean;
 }
 
 export interface ReleaseSearchResult {

@@ -6,7 +6,7 @@ import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
 import { AniBtReleaseSource, createAniBtHeaders, parseAniBtRss } from "../anibt-source";
 import { parseDmhyList } from "../dmhy-source";
 import { MikanReleaseSource, parseMikanReleaseList, type ReleaseHttpClient } from "../mikan-source";
-import { createReleaseSource } from "../release-source-service";
+import { createReleaseSource, ReleaseSourceService } from "../release-source-service";
 import { RssReleaseSource } from "../rss-source";
 import { TorznabReleaseSource } from "../torznab-source";
 import { parseXml, textValue, toArray } from "../xml";
@@ -358,6 +358,42 @@ test("RssReleaseSource 解析 RSS item 的下载地址、体积和媒体字段",
   assert.equal(releases[0].resolution, "1080p");
   assert.equal(releases[0].normalizedVideoCodec, "H.265/HEVC");
   assert.equal(releases[0].subtitle, "cht");
+});
+
+test("ReleaseSourceService 在缓存有效期内复用资源搜索结果并支持强制刷新", async (t) => {
+  let fetchCount = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    fetchCount += 1;
+    return new Response(
+      `
+        <rss>
+          <channel>
+            <item>
+              <title>[字幕组] 缓存测试番 - 01 [1080p]</title>
+              <link>magnet:?xt=urn:btih:CACHE${fetchCount}&amp;dn=test</link>
+              <guid>cache-guid-${fetchCount}</guid>
+            </item>
+          </channel>
+        </rss>
+      `,
+      { status: 200, statusText: "OK" }
+    );
+  });
+
+  const service = new ReleaseSourceService([{ ...rssConfig, id: "rss-cache-test" }]);
+  const first = await service.search({ keyword: "缓存测试番", limit: 10, cacheTtlMs: 24 * 60 * 60 * 1000 });
+  const cached = await service.search({ keyword: "缓存测试番", limit: 10, cacheTtlMs: 24 * 60 * 60 * 1000 });
+  const refreshed = await service.search({
+    keyword: "缓存测试番",
+    limit: 10,
+    cacheTtlMs: 24 * 60 * 60 * 1000,
+    forceRefresh: true
+  });
+
+  assert.equal(fetchCount, 2);
+  assert.equal(first.releases[0].id, "rss-cache-test:cache-guid-1");
+  assert.equal(cached.releases[0].id, "rss-cache-test:cache-guid-1");
+  assert.equal(refreshed.releases[0].id, "rss-cache-test:cache-guid-2");
 });
 
 test("TorznabReleaseSource 解析 torznab attr、enclosure 和查询参数", async (t) => {
