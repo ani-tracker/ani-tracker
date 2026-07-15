@@ -818,7 +818,7 @@ function MyAnimeCard({
   const ratingText = item.anime.rating ? item.anime.rating.score.toFixed(1) : "暂无";
 
   return (
-    <article className="group relative overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
+    <article className="relative overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
       <div className="relative aspect-[16/9] bg-muted">
         {item.anime.coverUrl ? (
           <img
@@ -838,7 +838,7 @@ function MyAnimeCard({
           {ratingText}
         </div>
 
-        <div className="absolute right-3 top-3 z-10 flex justify-end">
+        <div className="group/actions absolute right-3 top-3 z-10 flex justify-end">
           <button
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background/95 text-muted-foreground shadow-sm"
             type="button"
@@ -847,7 +847,7 @@ function MyAnimeCard({
           >
             <MoreHorizontal className="h-4 w-4" />
           </button>
-          <div className="pointer-events-none absolute right-0 top-10 w-28 translate-y-1 rounded-md border bg-background/95 p-1 opacity-0 shadow-lg transition-all group-hover:pointer-events-auto group-hover:translate-y-0 group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:translate-y-0 group-focus-within:opacity-100">
+          <div className="pointer-events-none absolute right-0 top-10 w-28 translate-y-1 rounded-md border bg-background/95 p-1 opacity-0 shadow-lg transition-all group-hover/actions:pointer-events-auto group-hover/actions:translate-y-0 group-hover/actions:opacity-100 group-focus-within/actions:pointer-events-auto group-focus-within/actions:translate-y-0 group-focus-within/actions:opacity-100">
             <CardActionButton label="下载资源" onClick={onOpenDownloads} />
             <CardActionButton label="规则" onClick={onOpenRules} />
             <button
@@ -866,7 +866,7 @@ function MyAnimeCard({
           <h2 className="truncate text-sm font-semibold" title={titleDisplay.title}>
             {titleDisplay.title}
           </h2>
-          <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle}>
+          <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle ?? "无原名"}>
             {titleDisplay.subtitle ?? "无原名"}
           </p>
         </div>
@@ -880,7 +880,7 @@ function MyAnimeCard({
           <Badge tone={item.autoDownload ? "green" : "neutral"}>{item.autoDownload ? "自动" : "手动"}</Badge>
         </div>
 
-        <p className="line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground">
+        <p className="line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground" title={item.anime.summary ?? "暂无简介"}>
           {item.anime.summary ?? "暂无简介"}
         </p>
 
