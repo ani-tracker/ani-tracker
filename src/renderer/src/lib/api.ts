@@ -76,7 +76,7 @@ export const appApi = {
     bridge().setDownloadFilePriority(taskId, fileIndexes, priority),
   addDownloadUrl: (input: AddDownloadUrlInput): Promise<DownloadTask[]> => bridge().addDownloadUrl(input),
   addReleaseDownload: (input: AddReleaseDownloadInput): Promise<DownloadTask[]> => bridge().addReleaseDownload(input),
-  listFansubs: (): Promise<FansubGroup[]> => bridge().listFansubs(),
+  listFansubs: (animeId?: string): Promise<FansubGroup[]> => bridge().listFansubs(animeId),
   listSources: (): Promise<ReleaseSourceConfig[]> => bridge().listSources(),
   setSourceEnabled: (sourceId: string, enabled: boolean): Promise<ReleaseSourceConfig[]> =>
     bridge().setSourceEnabled(sourceId, enabled),

@@ -102,8 +102,10 @@ export class AutomationRunService {
             preference?.fansubGroupId
           );
           const preferredFansubGroupId = preference?.fansubGroupId ?? anime.defaultFansubGroupId;
+          const releases = dedupeReleases(searchResults.flatMap((item) => item.releases));
+          await this.repository.observeAnimeFansubs(anime.anime.id, releases);
           const ranked = rankReleases(
-            dedupeReleases(searchResults.flatMap((item) => item.releases)),
+            releases,
             {
               anime,
               episodeNo: episode.episodeNo,
@@ -165,8 +167,8 @@ export class AutomationRunService {
             episodeId: episode.id,
             animeTitle: anime.anime.title,
             episodeNo: episode.episodeNo,
-            fansubGroupId: best.fansubGroupId ?? preferredFansubGroupId,
-            fansubName: best.fansubName ?? fansubs.find((item) => item.id === preferredFansubGroupId)?.name,
+            fansubGroupId: best.fansubGroupId,
+            fansubName: best.fansubName,
             name: best.title
           });
           await this.repository.upsertEpisode({

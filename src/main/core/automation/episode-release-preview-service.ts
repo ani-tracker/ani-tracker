@@ -14,7 +14,7 @@ export class EpisodeReleasePreviewService {
       this.repository.listMyAnime(),
       this.repository.listEpisodes(animeId),
       this.repository.listEpisodePreferences(animeId),
-      this.repository.listFansubs(),
+      this.repository.listFansubs(animeId),
       this.repository.listSources(),
       this.repository.getSettings()
     ]);
@@ -46,6 +46,7 @@ export class EpisodeReleasePreviewService {
       animeId,
       episodeNo: release.episodeNo ?? episode.episodeNo
     }));
+    await this.repository.observeAnimeFansubs(animeId, releases);
 
     return {
       animeId,

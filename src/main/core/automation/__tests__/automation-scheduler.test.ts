@@ -10,6 +10,7 @@ import type {
   FansubGroup,
   MyAnime,
   NotificationRecord,
+  Release,
   ReleaseSourceConfig
 } from "@shared/domain";
 import type { AutomationRunResult } from "@shared/contracts";
@@ -181,6 +182,10 @@ class FakeSchedulerRepository {
   }
 
   async listFansubs(): Promise<FansubGroup[]> {
+    return this.fansubs;
+  }
+
+  async observeAnimeFansubs(_animeId: string, _releases: Release[]): Promise<FansubGroup[]> {
     return this.fansubs;
   }
 

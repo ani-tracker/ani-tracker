@@ -28,6 +28,8 @@ import { resolveAnimeDownloadPath } from "./core/downloads/download-path-resolve
 import { RssReleaseSource } from "./core/sources/rss-source";
 import { AnimeSourceBindingService } from "./core/source-bindings/anime-source-binding-service";
 import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
+import { AnimeFansubDiscoveryService } from "./core/fansubs/anime-fansub-discovery-service";
+import { enrichReleaseFromTitle } from "./core/releases/release-title-parser";
 
 export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
@@ -51,7 +53,14 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   ipcMain.handle("notifications:markAllRead", () => repository.markAllNotificationsRead());
   ipcMain.handle("notifications:clear", () => repository.clearNotifications());
   ipcMain.handle("myAnime:list", () => repository.listMyAnime());
-  ipcMain.handle("myAnime:upsert", (_event, item: MyAnime) => repository.upsertMyAnime(item));
+  ipcMain.handle("myAnime:upsert", async (_event, item: MyAnime) => {
+    const existed = (await repository.listMyAnime()).some((entry) => entry.id === item.id);
+    const items = await repository.upsertMyAnime(item);
+    if (!existed) {
+      new AnimeFansubDiscoveryService(repository).discoverInBackground(item);
+    }
+    return items;
+  });
   ipcMain.handle("myAnime:remove", (_event, itemId: string) => repository.removeMyAnime(itemId));
   ipcMain.handle("animeCatalog:list", (_event, year?: number, month?: number) =>
     new AnimeDiscoveryService(repository).listCatalog(year, month)
@@ -198,8 +207,11 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     });
   });
   ipcMain.handle("downloads:addRelease", async (_event, input: AddReleaseDownloadInput) => {
-    const settings = await repository.getSettings();
-    const release = input.release;
+    const [settings, knownFansubs] = await Promise.all([
+      repository.getSettings(),
+      repository.listFansubs(input.animeId ?? input.release.animeId)
+    ]);
+    const release = enrichReleaseFromTitle(input.release, knownFansubs);
     const url = release.magnetUrl ?? release.torrentUrl;
     if (!url) {
       throw new Error("资源没有 magnet 或 torrent 地址，无法添加下载");
@@ -207,13 +219,18 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
 
     const animeId = input.animeId ?? release.animeId;
     const episodeNo = input.episodeNo ?? release.episodeNo;
-    const fansubGroupId = input.fansubGroupId ?? release.fansubGroupId;
+    const fansubGroupId = release.fansubName
+      ? release.fansubGroupId
+      : release.fansubGroupId ?? input.fansubGroupId;
     const [followedAnime, fansubs] = await Promise.all([
       findMyAnime(animeId),
       repository.listFansubs()
     ]);
     const fansubName =
       release.fansubName ?? fansubs.find((item) => item.id === fansubGroupId)?.name;
+    if (animeId) {
+      await repository.observeAnimeFansubs(animeId, [release]);
+    }
     const duplicate = findDuplicateReleaseDownload(await repository.listDownloads(), {
       releaseId: release.id,
       animeId,
@@ -266,7 +283,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
 
     return downloads;
   });
-  ipcMain.handle("fansubs:list", () => repository.listFansubs());
+  ipcMain.handle("fansubs:list", (_event, animeId?: string) => repository.listFansubs(animeId));
   ipcMain.handle("sources:list", () => repository.listSources());
   ipcMain.handle("sources:setEnabled", (_event, sourceId: string, enabled: boolean) =>
     repository.updateSourceEnabled(sourceId, enabled)
@@ -299,7 +316,15 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       repository.listFansubs(),
       repository.getSettings()
     ]);
-    return new ReleaseSourceService(sources, fansubs, new MetadataHttpClient(settings.network.metadataProxy)).search(query);
+    const result = await new ReleaseSourceService(
+      sources,
+      fansubs,
+      new MetadataHttpClient(settings.network.metadataProxy)
+    ).search(query);
+    if (query.animeId && await findMyAnime(query.animeId)) {
+      await repository.observeAnimeFansubs(query.animeId, result.releases);
+    }
+    return result;
   });
   ipcMain.handle("releases:searchAnime", async (_event, query: AnimeReleaseQuery) => {
     const followedAnime = await findMyAnime(query.animeId);
@@ -308,16 +333,18 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     }
     const [sources, fansubs, settings] = await Promise.all([
       repository.listSources(),
-      repository.listFansubs(),
+      repository.listFansubs(query.animeId),
       repository.getSettings()
     ]);
     const httpClient = new MetadataHttpClient(settings.network.metadataProxy);
     const bindingState = await new AnimeSourceBindingService(repository, httpClient).getState(query.animeId, false);
-    return new ReleaseSourceService(sources, fansubs, httpClient).searchAnime(
+    const result = await new ReleaseSourceService(sources, fansubs, httpClient).searchAnime(
       followedAnime.anime,
       query,
       bindingState.bindings
     );
+    await repository.observeAnimeFansubs(query.animeId, result.releases);
+    return result;
   });
   ipcMain.handle("releases:searchRssSubscription", (_event, query: RssSubscriptionReleaseQuery) =>
     searchRssSubscriptionReleases(query)
@@ -471,6 +498,12 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
     const relevantReleases = isExactMikanSubscription(rssUrl, followedAnime)
       ? releases
       : releases.filter((release) => matchesAnimeReleaseTitle(release.title, searchTerms));
+    const knownFansubs = await repository.listFansubs(query.animeId);
+    const normalizedReleases = relevantReleases.map((release) => ({
+      ...enrichReleaseFromTitle(release, knownFansubs),
+      animeId: query.animeId
+    }));
+    await repository.observeAnimeFansubs(query.animeId, normalizedReleases);
     logger.info("RSS 订阅资源搜索完成", {
       animeId: query.animeId,
       subscriptionId: query.subscriptionId,
@@ -479,10 +512,7 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
     });
     return {
       query,
-      releases: relevantReleases.map((release) => ({
-        ...release,
-        animeId: query.animeId
-      })),
+      releases: normalizedReleases,
       errors: []
     };
   } catch (error) {

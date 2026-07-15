@@ -65,7 +65,7 @@ declare global {
       setDownloadFilePriority: (taskId: string, fileIndexes: number[], priority: number) => Promise<DownloadTask[]>;
       addDownloadUrl: (input: AddDownloadUrlInput) => Promise<DownloadTask[]>;
       addReleaseDownload: (input: AddReleaseDownloadInput) => Promise<DownloadTask[]>;
-      listFansubs: () => Promise<FansubGroup[]>;
+      listFansubs: (animeId?: string) => Promise<FansubGroup[]>;
       listSources: () => Promise<ReleaseSourceConfig[]>;
       setSourceEnabled: (sourceId: string, enabled: boolean) => Promise<ReleaseSourceConfig[]>;
       upsertSource: (source: ReleaseSourceConfig) => Promise<ReleaseSourceConfig[]>;

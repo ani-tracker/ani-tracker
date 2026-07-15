@@ -1,4 +1,5 @@
 import type { FansubGroup, NormalizedVideoCodec, Release, SubtitlePreference } from "@shared/domain";
+import { createHash } from "node:crypto";
 import { normalizeVideoCodec } from "../media-extraction";
 
 export interface ParsedReleaseTitle {
@@ -49,14 +50,20 @@ export function enrichReleaseFromTitle(release: Release, groups: FansubGroup[] =
   const fansubName = release.fansubName ?? parsed.fansubName;
   const fansubGroup = fansubName
     ? groups.find((group) =>
-        [group.name, ...group.aliases].some((alias) => alias.toLowerCase() === fansubName.toLowerCase())
+        [group.name, ...group.aliases].some((alias) => normalizeFansubName(alias) === normalizeFansubName(fansubName))
       )
     : undefined;
+  const discoveredFansubGroupId = fansubName && isMeaningfulFansubName(fansubName)
+    ? createDiscoveredFansubId(fansubName)
+    : undefined;
+  const existingFansubGroupId = release.fansubGroupId?.startsWith("fansub-auto-")
+    ? undefined
+    : release.fansubGroupId;
 
   return {
     ...release,
     episodeNo: release.episodeNo ?? parsed.episodeNo,
-    fansubGroupId: release.fansubGroupId ?? fansubGroup?.id,
+    fansubGroupId: existingFansubGroupId ?? fansubGroup?.id ?? release.fansubGroupId ?? discoveredFansubGroupId,
     fansubName,
     resolution: release.resolution ?? parsed.resolution,
     declaredVideoCodec: release.declaredVideoCodec ?? parsed.declaredVideoCodec,
@@ -65,6 +72,29 @@ export function enrichReleaseFromTitle(release: Release, groups: FansubGroup[] =
       (parsed.normalizedVideoCodec === "Unknown" ? undefined : parsed.normalizedVideoCodec),
     subtitle: release.subtitle ?? parsed.subtitle
   };
+}
+
+/** 生成跨搜索和重启保持稳定的动态字幕组 ID。 */
+export function createDiscoveredFansubId(name: string): string {
+  const digest = createHash("sha256").update(normalizeFansubName(name)).digest("hex").slice(0, 16);
+  return `fansub-auto-${digest}`;
+}
+
+/** 规范化字幕组名称，用于保守合并大小写和全半角差异。 */
+export function normalizeFansubName(name: string): string {
+  return name.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+/** 排除分辨率、编码和占位文字，避免把技术标签保存成字幕组。 */
+export function isMeaningfulFansubName(name: string): boolean {
+  const normalized = normalizeFansubName(name);
+  if (!normalized || normalized.length > 80) {
+    return false;
+  }
+  if (["字幕组", "压制组", "fansub", "unknown", "未知", "未识别字幕组"].includes(normalized)) {
+    return false;
+  }
+  return !/^(?:\d{1,4}(?:\.\d+)?|\d{3,4}p|4k|8k|x26[45]|h\.?26[45]|avc|hevc|av1|vp9|web-?dl|bdrip|webrip|mkv|mp4|简体|繁体|简繁|chs|cht|multi)$/i.test(normalized);
 }
 
 function detectFansubName(title: string, groups: FansubGroup[]): string | undefined {

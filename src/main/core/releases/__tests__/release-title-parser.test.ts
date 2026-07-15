@@ -83,3 +83,38 @@ test("enrichReleaseFromTitle 保留已有字段并补充字幕组匹配", () => 
   assert.equal(enriched.normalizedVideoCodec, "AV1");
   assert.equal(enriched.subtitle, "eng");
 });
+
+test("enrichReleaseFromTitle 为新字幕组生成稳定 ID", () => {
+  const release: Release = {
+    id: "release-dynamic",
+    title: "[Nix-Raws] 测试番 - 02 [1080p]",
+    sourceId: "rss",
+    sourceName: "RSS",
+    publishedAt: "2026-07-15T12:00:00.000Z"
+  };
+
+  const first = enrichReleaseFromTitle(release);
+  const second = enrichReleaseFromTitle({ ...release, title: "[nix-raws] 测试番 - 03 [1080p]" });
+  assert.match(first.fansubGroupId ?? "", /^fansub-auto-/);
+  assert.equal(first.fansubGroupId, second.fansubGroupId);
+});
+
+test("enrichReleaseFromTitle 不把技术标签和占位文字保存成字幕组", () => {
+  const technical = enrichReleaseFromTitle({
+    id: "release-technical",
+    title: "[1080p] 测试番 - 02 [HEVC]",
+    sourceId: "rss",
+    sourceName: "RSS",
+    publishedAt: "2026-07-15T12:00:00.000Z"
+  });
+  const placeholder = enrichReleaseFromTitle({
+    id: "release-placeholder",
+    title: "[字幕组] 测试番 - 02 [1080p]",
+    sourceId: "rss",
+    sourceName: "RSS",
+    publishedAt: "2026-07-15T12:00:00.000Z"
+  });
+
+  assert.equal(technical.fansubGroupId, undefined);
+  assert.equal(placeholder.fansubGroupId, undefined);
+});

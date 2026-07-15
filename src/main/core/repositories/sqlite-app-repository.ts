@@ -13,6 +13,7 @@ import type {
   MediaFile,
   MyAnime,
   NotificationRecord,
+  Release,
   ReleaseSourceConfig,
   TorrentFile
 } from "@shared/domain";
@@ -20,7 +21,7 @@ import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import { logger } from "../logger";
 import { mergeAnimeMetadataBatches } from "../metadata/metadata-provider";
-import { sourceConfigs } from "../mock-data";
+import { defaultSourceConfigs } from "../sources/default-source-configs";
 import { createDefaultSettingsProvider, type DefaultSettingsProvider } from "../platform/default-settings-provider";
 import { createSeedData } from "../storage/seed-data";
 import { SQLITE_SCHEMA, SQLITE_SCHEMA_VERSION } from "../storage/sqlite-schema";
@@ -422,13 +423,57 @@ export class SqliteAppRepository implements AppRepository {
     return this.listMediaFiles();
   }
 
-  async listFansubs(): Promise<FansubGroup[]> {
-    return this.all("SELECT * FROM fansub_group ORDER BY name").map(mapFansub);
+  async listFansubs(animeId?: string): Promise<FansubGroup[]> {
+    if (!animeId) {
+      return this.all("SELECT * FROM fansub_group ORDER BY name").map(mapFansub);
+    }
+
+    return this.all(
+      `SELECT fansub_group.*
+       FROM fansub_group
+       INNER JOIN anime_fansub_group ON anime_fansub_group.fansub_group_id = fansub_group.id
+       WHERE anime_fansub_group.anime_id = @animeId
+       ORDER BY anime_fansub_group.last_seen_at DESC, fansub_group.name`,
+      { animeId }
+    ).map(mapFansub);
+  }
+
+  /** 合并资源中识别到的字幕组，并记录其所属番剧。 */
+  async observeAnimeFansubs(animeId: string, releases: Release[]): Promise<FansubGroup[]> {
+    const discovered = collectDiscoveredFansubs(releases);
+    if (!discovered.length) {
+      return this.listFansubs(animeId);
+    }
+
+    const existingById = new Map((await this.listFansubs()).map((group) => [group.id, group]));
+    const timestamp = nowIso();
+    this.transaction(() => {
+      for (const candidate of discovered) {
+        const existing = existingById.get(candidate.id);
+        const merged: FansubGroup = {
+          id: candidate.id,
+          name: existing?.name ?? candidate.name,
+          aliases: uniqueStrings([
+            ...(existing?.aliases ?? []),
+            ...candidate.aliases,
+            ...(existing && existing.name !== candidate.name ? [candidate.name] : [])
+          ]),
+          sourceIds: uniqueStrings([...(existing?.sourceIds ?? []), ...candidate.sourceIds])
+        };
+        this.upsertFansub(merged);
+        this.linkAnimeFansub(animeId, merged.id, timestamp);
+      }
+    });
+    logger.info("Anime fansub groups observed", {
+      animeId,
+      groupIds: discovered.map((group) => group.id)
+    });
+    return this.listFansubs(animeId);
   }
 
   async listSources(): Promise<ReleaseSourceConfig[]> {
     const current = this.all("SELECT * FROM release_source ORDER BY name").map(mapSource);
-    const missing = sourceConfigs.filter((source) => !current.some((item) => item.id === source.id));
+    const missing = defaultSourceConfigs.filter((source) => !current.some((item) => item.id === source.id));
     if (missing.length) {
       this.transaction(() => missing.forEach((source) => this.upsertSourceRow(source)));
       logger.info("Default release sources added to SQLite", { sourceIds: missing.map((source) => source.id) });
@@ -504,6 +549,19 @@ export class SqliteAppRepository implements AppRepository {
     }
     this.migrateSchema(currentSchemaVersion);
     this.setMeta("schema_version", String(SQLITE_SCHEMA_VERSION));
+    const currentAppDataVersion = this.getAppDataVersion();
+    if (currentAppDataVersion !== undefined) {
+      if (currentAppDataVersion > APP_DATA_VERSION) {
+        throw new Error(`App data version ${currentAppDataVersion} is newer than supported ${APP_DATA_VERSION}`);
+      }
+      if (currentAppDataVersion < APP_DATA_VERSION) {
+        this.setMeta("app_data_version", String(APP_DATA_VERSION));
+        logger.info("SQLite app data version migrated", {
+          fromVersion: currentAppDataVersion,
+          toVersion: APP_DATA_VERSION
+        });
+      }
+    }
     logger.info("SQLite repository initialized", { path: this.databasePath, schemaVersion: SQLITE_SCHEMA_VERSION });
   }
 
@@ -551,6 +609,37 @@ export class SqliteAppRepository implements AppRepository {
 
         CREATE INDEX IF NOT EXISTS idx_anime_source_binding_source
           ON anime_source_binding (source_id, source_anime_id);
+      `);
+    }
+
+    if (currentSchemaVersion < 5) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS anime_fansub_group (
+          anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
+          fansub_group_id TEXT NOT NULL REFERENCES fansub_group(id) ON DELETE CASCADE,
+          first_seen_at TEXT NOT NULL,
+          last_seen_at TEXT NOT NULL,
+          PRIMARY KEY (anime_id, fansub_group_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_anime_fansub_group_anime
+          ON anime_fansub_group (anime_id, last_seen_at DESC);
+
+        INSERT OR IGNORE INTO anime_fansub_group (anime_id, fansub_group_id, first_seen_at, last_seen_at)
+        SELECT anime_id, default_fansub_group_id, updated_at, updated_at
+        FROM my_anime
+        WHERE default_fansub_group_id IS NOT NULL;
+
+        INSERT OR IGNORE INTO anime_fansub_group (anime_id, fansub_group_id, first_seen_at, last_seen_at)
+        SELECT anime_id, fansub_group_id, updated_at, updated_at
+        FROM episode_preference
+        WHERE fansub_group_id IS NOT NULL;
+
+        INSERT OR IGNORE INTO anime_fansub_group (anime_id, fansub_group_id, first_seen_at, last_seen_at)
+        SELECT anime_id, fansub_group_id, created_at, updated_at
+        FROM download_task
+        WHERE anime_id IS NOT NULL AND fansub_group_id IS NOT NULL
+          AND fansub_group_id IN (SELECT id FROM fansub_group);
       `);
     }
   }
@@ -660,7 +749,7 @@ export class SqliteAppRepository implements AppRepository {
   private clearAllData(): void {
     for (const table of [
       "notification", "media_file", "torrent_file", "download_task", "episode_preference", "episode",
-      "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_alias", "release", "anime_catalog", "fansub_group",
+      "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_fansub_group", "anime_alias", "release", "anime_catalog", "fansub_group",
       "release_source", "app_settings", "app_state", "app_meta"
     ]) {
       this.database.exec(`DELETE FROM ${table}`);
@@ -715,6 +804,16 @@ export class SqliteAppRepository implements AppRepository {
     );
   }
 
+  /** 记录某部番剧曾出现过的字幕组，并刷新最近发现时间。 */
+  private linkAnimeFansub(animeId: string, fansubGroupId: string, timestamp = nowIso()): void {
+    this.run(
+      `INSERT INTO anime_fansub_group (anime_id, fansub_group_id, first_seen_at, last_seen_at)
+       VALUES (@animeId, @fansubGroupId, @timestamp, @timestamp)
+       ON CONFLICT(anime_id, fansub_group_id) DO UPDATE SET last_seen_at = excluded.last_seen_at`,
+      { animeId, fansubGroupId, timestamp }
+    );
+  }
+
   private upsertMyAnimeRow(item: MyAnime): void {
     this.run(
       `INSERT INTO my_anime (
@@ -737,6 +836,9 @@ export class SqliteAppRepository implements AppRepository {
         addedAt: item.addedAt, updatedAt: item.updatedAt
       }
     );
+    if (item.defaultFansubGroupId) {
+      this.linkAnimeFansub(item.anime.id, item.defaultFansubGroupId, item.updatedAt || nowIso());
+    }
     this.replaceMyAnimeRssSubscriptions(item);
   }
 
@@ -787,6 +889,9 @@ export class SqliteAppRepository implements AppRepository {
         fansubGroupId: preference.fansubGroupId ?? null, releaseId: preference.releaseId ?? null,
         isManualOverride: toInteger(preference.isManualOverride), updatedAt: nowIso() }
     );
+    if (preference.fansubGroupId) {
+      this.linkAnimeFansub(preference.animeId, preference.fansubGroupId);
+    }
   }
 
   private upsertSourceRow(source: ReleaseSourceConfig): void {
@@ -1036,6 +1141,40 @@ function mapEpisodePreference(row: SqliteRow): EpisodePreference {
 function mapFansub(row: SqliteRow): FansubGroup {
   return { id: asString(row.id), name: asString(row.name), aliases: fromJson<string[]>(asString(row.aliases_json)),
     sourceIds: fromJson<string[]>(asString(row.source_ids_json)) };
+}
+
+/** 从已归一化资源中汇总可持久化的字幕组。 */
+function collectDiscoveredFansubs(releases: Release[]): FansubGroup[] {
+  const groups = new Map<string, FansubGroup>();
+  for (const release of releases) {
+    const id = release.fansubGroupId?.trim();
+    const name = release.fansubName?.trim();
+    if (!id || !name) {
+      continue;
+    }
+
+    const current = groups.get(id) ?? { id, name, aliases: [], sourceIds: [] };
+    current.aliases = uniqueStrings([
+      ...current.aliases,
+      ...(current.name !== name ? [name] : [])
+    ]);
+    current.sourceIds = uniqueStrings([...current.sourceIds, release.sourceId]);
+    groups.set(id, current);
+  }
+  return [...groups.values()];
+}
+
+/** 按不区分大小写的文本键去重，同时保留原始展示值。 */
+function uniqueStrings(values: string[]): string[] {
+  const seen = new Set<string>();
+  return values.filter((value) => {
+    const key = value.trim().toLocaleLowerCase();
+    if (!key || seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
 
 function mapSource(row: SqliteRow): ReleaseSourceConfig {

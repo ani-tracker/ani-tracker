@@ -53,7 +53,7 @@ const api = {
     ipcRenderer.invoke("downloads:setFilePriority", taskId, fileIndexes, priority),
   addDownloadUrl: (input: AddDownloadUrlInput) => ipcRenderer.invoke("downloads:addUrl", input),
   addReleaseDownload: (input: AddReleaseDownloadInput) => ipcRenderer.invoke("downloads:addRelease", input),
-  listFansubs: () => ipcRenderer.invoke("fansubs:list"),
+  listFansubs: (animeId?: string) => ipcRenderer.invoke("fansubs:list", animeId),
   listSources: () => ipcRenderer.invoke("sources:list"),
   setSourceEnabled: (sourceId: string, enabled: boolean) => ipcRenderer.invoke("sources:setEnabled", sourceId, enabled),
   upsertSource: (source: ReleaseSourceConfig) => ipcRenderer.invoke("sources:upsert", source),

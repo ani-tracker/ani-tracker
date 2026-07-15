@@ -1,5 +1,5 @@
 import { CalendarDays, Check, ChevronDown, ChevronRight, Download, ImageOff, Link2, MoreHorizontal, Plus, RefreshCw, Save, Search, SlidersHorizontal, Star, Trash2, Unlink, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -92,6 +92,7 @@ const releaseSearchCacheTtlMs = 24 * 60 * 60 * 1000;
 export function MyAnimePage() {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
+  const [animeFansubs, setAnimeFansubs] = useState<FansubGroup[]>([]);
   const [draft, setDraft] = useState<MyAnime | null>(null);
   const [downloadTarget, setDownloadTarget] = useState<MyAnime | null>(null);
   const [downloadDetail, setDownloadDetail] = useState<AnimeDownloadDetailState | null>(null);
@@ -148,8 +149,35 @@ export function MyAnimePage() {
     };
   }, []);
 
-  const fansubNames = useMemo(() => new Map(fansubs.map((group) => [group.id, group.name])), [fansubs]);
+  const fansubNames = useMemo(
+    () => new Map(mergeFansubGroups(fansubs, animeFansubs).map((group) => [group.id, group.name])),
+    [fansubs, animeFansubs]
+  );
   const draftPersisted = Boolean(draft && items.some((item) => item.id === draft.id));
+  const activeFansubAnimeId = draft && draftPersisted ? draft.anime.id : downloadTarget?.anime.id;
+
+  useEffect(() => {
+    let active = true;
+    if (!activeFansubAnimeId) {
+      setAnimeFansubs([]);
+      return;
+    }
+
+    appApi.listFansubs(activeFansubAnimeId)
+      .then((groups) => {
+        if (!active) return;
+        setAnimeFansubs(groups);
+        setFansubs((current) => mergeFansubGroups(current, groups));
+      })
+      .catch((error) => {
+        if (active) {
+          setMessage({ tone: "error", text: error instanceof Error ? error.message : "加载番剧字幕组失败" });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [activeFansubAnimeId]);
 
   useEffect(() => {
     if (!downloadTarget) {
@@ -275,6 +303,13 @@ export function MyAnimePage() {
     }
   }
 
+  /** 刷新某部番剧已从真实资源发现的字幕组。 */
+  async function refreshAnimeFansubs(animeId: string) {
+    const groups = await appApi.listFansubs(animeId);
+    setAnimeFansubs(groups);
+    setFansubs((current) => mergeFansubGroups(current, groups));
+  }
+
   async function removeItem(item: MyAnime) {
     const titleDisplay = resolveAnimeTitleDisplay(item.anime);
     const confirmed = window.confirm(`确认从我的追番移除「${titleDisplay.title}」？`);
@@ -380,6 +415,7 @@ export function MyAnimePage() {
     setPreviewingEpisodeId(episode.id);
     try {
       const preview = await appApi.previewEpisodeReleases(episode.animeId, episode.id);
+      await refreshAnimeFansubs(episode.animeId);
       setReleasePreviews((current) => ({
         ...current,
         [episode.id]: preview
@@ -471,6 +507,7 @@ export function MyAnimePage() {
       const errors = dedupeReleaseErrors(result.errors);
       setAnimeReleases(releases);
       setAnimeReleaseErrors(errors);
+      await refreshAnimeFansubs(target.anime.id);
       setMessage({
         tone: releases.length === 0 && errors.length > 0 ? "error" : "success",
         text:
@@ -578,6 +615,7 @@ export function MyAnimePage() {
       const releaseCount = groups.reduce((sum, group) => sum + group.releases.length, 0);
       const errorCount = groups.reduce((sum, group) => sum + group.errors.length, 0);
       setAnimeRssReleaseGroups(groups);
+      await refreshAnimeFansubs(target.anime.id);
       setMessage({
         tone: releaseCount === 0 && errorCount > 0 ? "error" : "success",
         text:
@@ -599,13 +637,12 @@ export function MyAnimePage() {
   async function addEpisodeReleaseDownload(episode: Episode, release: Release) {
     setAddingReleaseId(release.id);
     try {
-      const preference = episodePreferences.find((item) => item.episodeId === episode.id);
       const updatedDownloads = await appApi.addReleaseDownload({
         release,
         animeId: episode.animeId,
         episodeId: episode.id,
         episodeNo: episode.episodeNo,
-        fansubGroupId: preference?.fansubGroupId ?? release.fansubGroupId ?? draft?.defaultFansubGroupId
+        fansubGroupId: release.fansubGroupId
       });
       const [updatedEpisodes, updatedPreferences] = await Promise.all([
         appApi.listEpisodes(episode.animeId),
@@ -633,7 +670,7 @@ export function MyAnimePage() {
     setAddingReleaseId(release.id);
     try {
       const updatedDownloads = await appApi.addReleaseDownload(
-        buildAnimeReleaseDownloadInput(release, downloadTarget, animeReleaseFansubId)
+        buildAnimeReleaseDownloadInput(release, downloadTarget)
       );
       setDownloadTasks(updatedDownloads);
       setMessage({ tone: "success", text: "已添加到下载队列" });
@@ -670,7 +707,7 @@ export function MyAnimePage() {
     for (const release of candidates) {
       try {
         latestDownloads = await appApi.addReleaseDownload(
-          buildAnimeReleaseDownloadInput(release, downloadTarget, animeReleaseFansubId)
+          buildAnimeReleaseDownloadInput(release, downloadTarget)
         );
         successCount += 1;
       } catch (error) {
@@ -755,7 +792,7 @@ export function MyAnimePage() {
           episodePreferences={episodePreferences}
           episodes={episodes}
           fansubNames={fansubNames}
-          fansubs={fansubs}
+          fansubs={animeFansubs}
           previewingEpisodeId={previewingEpisodeId}
           releasePreviews={releasePreviews}
           saving={saving}
@@ -783,8 +820,8 @@ export function MyAnimePage() {
             downloadTasks={downloadTasks}
             errors={animeReleaseErrors}
             fansubNames={fansubNames}
-            fansubs={fansubs}
-            listClassName="max-h-[calc(100vh-22rem)] overflow-y-auto pr-1"
+            fansubs={animeFansubs}
+            listClassName="min-h-0 flex-1 overflow-y-auto pr-1"
             loading={animeReleaseLoading}
             panelClassName="h-full overflow-hidden rounded-none border-0 shadow-none"
             releases={animeReleases}
@@ -856,6 +893,71 @@ function MyAnimeCard({
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(item.anime);
   const ratingText = item.anime.rating ? item.anime.rating.score.toFixed(1) : "暂无";
+  const [actionsOpen, setActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  /** 取消菜单延迟关闭计时。 */
+  function cancelCloseTimer() {
+    if (closeTimerRef.current) {
+      clearTimeout(closeTimerRef.current);
+      closeTimerRef.current = null;
+    }
+  }
+
+  /** 立即打开菜单，重新进入操作区时保持可操作。 */
+  function openActions() {
+    cancelCloseTimer();
+    setActionsOpen(true);
+  }
+
+  /** 离开操作区一秒后关闭菜单。 */
+  function scheduleActionsClose() {
+    cancelCloseTimer();
+    closeTimerRef.current = setTimeout(() => {
+      setActionsOpen(false);
+      closeTimerRef.current = null;
+    }, 1_000);
+  }
+
+  /** 立即关闭菜单并清理计时。 */
+  function closeActions() {
+    cancelCloseTimer();
+    setActionsOpen(false);
+  }
+
+  /** 执行菜单操作前关闭浮层。 */
+  function runAction(action: () => void) {
+    closeActions();
+    action();
+  }
+
+  useEffect(() => {
+    if (!actionsOpen) {
+      return;
+    }
+
+    function closeOnOutsidePointer(event: PointerEvent) {
+      if (!actionsRef.current?.contains(event.target as Node)) {
+        closeActions();
+      }
+    }
+
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        closeActions();
+      }
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [actionsOpen]);
+
+  useEffect(() => () => cancelCloseTimer(), []);
 
   return (
     <article className="relative overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
@@ -878,22 +980,45 @@ function MyAnimeCard({
           {ratingText}
         </div>
 
-        <div className="group/actions absolute right-3 top-3 z-10 flex justify-end">
+        <div
+          ref={actionsRef}
+          className="absolute right-3 top-3 z-10 flex justify-end"
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+              scheduleActionsClose();
+            }
+          }}
+          onFocus={openActions}
+          onPointerEnter={openActions}
+          onPointerLeave={scheduleActionsClose}
+        >
           <button
             className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background/95 text-muted-foreground shadow-sm"
             type="button"
             aria-label="显示操作"
+            aria-expanded={actionsOpen}
+            aria-haspopup="menu"
             title="显示操作"
+            onClick={openActions}
           >
             <MoreHorizontal className="h-4 w-4" />
           </button>
-          <div className="pointer-events-none absolute right-0 top-10 w-28 translate-y-1 rounded-md border bg-background/95 p-1 opacity-0 shadow-lg transition-all group-hover/actions:pointer-events-auto group-hover/actions:translate-y-0 group-hover/actions:opacity-100 group-focus-within/actions:pointer-events-auto group-focus-within/actions:translate-y-0 group-focus-within/actions:opacity-100">
-            <CardActionButton label="下载资源" onClick={onOpenDownloads} />
-            <CardActionButton label="规则" onClick={onOpenRules} />
+          <div
+            className={cn(
+              "absolute right-0 top-9 w-28 rounded-md border bg-background/95 p-1 shadow-lg transition-all",
+              actionsOpen
+                ? "pointer-events-auto translate-y-0 opacity-100"
+                : "pointer-events-none translate-y-1 opacity-0"
+            )}
+            role="menu"
+          >
+            <CardActionButton label="下载资源" onClick={() => runAction(onOpenDownloads)} />
+            <CardActionButton label="规则" onClick={() => runAction(onOpenRules)} />
             <button
               className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-medium text-rose-700 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-200"
               type="button"
-              onClick={onRemove}
+              role="menuitem"
+              onClick={() => runAction(onRemove)}
             >
               删除
             </button>
@@ -958,6 +1083,7 @@ function CardActionButton({ label, onClick }: { label: string; onClick: () => vo
     <button
       className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-medium text-foreground hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary/25"
       type="button"
+      role="menuitem"
       onClick={onClick}
     >
       {label}
@@ -1641,16 +1767,11 @@ function AnimeDownloadPanel({
   const sourceFailed = tabReleases.length === 0 && visibleErrors.length > 0;
   const linkedTasks = downloadTasks.filter((task) => task.animeId === target.anime.id);
   const releaseSignature = tabReleases.map(releaseKey).join("|");
-  const linkedEpisodeCount = new Set(linkedTasks.map((task) => task.episodeNo).filter((value) => value !== undefined)).size;
-  const completedEpisodeCount = new Set(
-    linkedTasks
-      .filter((task) => task.status === "completed" || task.status === "seeding")
-      .map((task) => task.episodeNo)
-      .filter((value) => value !== undefined)
-  ).size;
   const selectedReleases = visibleReleases.filter((release) => selectedReleaseKeys.has(releaseKey(release)));
   const selectedDownloadableReleases = selectedReleases.filter((release) => isReleaseSelectable(release, linkedTasks));
   const selectableVisibleReleases = visibleReleases.filter((release) => isReleaseSelectable(release, linkedTasks));
+  const allSelectableVisibleSelected = selectableVisibleReleases.length > 0 &&
+    selectableVisibleReleases.every((release) => selectedReleaseKeys.has(releaseKey(release)));
 
   useEffect(() => {
     setSelectedReleaseKeys(new Set());
@@ -1732,7 +1853,10 @@ function AnimeDownloadPanel({
 
   return (
     <Panel
-      className={cn("flex flex-col", panelClassName)}
+      className={cn(
+        "flex min-h-0 flex-col p-3 sm:p-4 [&>div:first-child]:mb-3 [@media(max-height:760px)]:p-2 [@media(max-height:760px)]:[&>div:first-child]:mb-2",
+        panelClassName
+      )}
       title="资源下载"
       action={
         <Button variant="ghost" onClick={onClose} aria-label="关闭下载" title="关闭下载">
@@ -1740,53 +1864,51 @@ function AnimeDownloadPanel({
         </Button>
       }
     >
-      <div className="space-y-4">
-        <div>
-          <div className="truncate text-sm font-medium" title={titleDisplay.title}>
-            {titleDisplay.title}
-          </div>
-          {titleDisplay.subtitle && (
-            <div className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle}>
-              {titleDisplay.subtitle}
+      <div className="flex min-h-0 flex-1 flex-col gap-3 [@media(max-height:760px)]:gap-2">
+        <div className="grid shrink-0 items-center gap-2 md:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium" title={titleDisplay.title}>
+              {titleDisplay.title}
             </div>
-          )}
-        </div>
-
-        <div className="grid grid-cols-3 gap-3 border-y py-3">
-          <DownloadMetric label="已关联集数" value={linkedEpisodeCount} />
-          <DownloadMetric label="已完成" value={completedEpisodeCount} />
-          <DownloadMetric label="下载任务" value={linkedTasks.length} />
-        </div>
-
-        <div className="grid h-9 grid-cols-2 overflow-hidden rounded-md border bg-background" role="tablist" aria-label="资源获取方式">
-          <button
-            aria-selected={activeTab === "rss"}
-            className={cn(
-              "border-r px-3 text-sm transition-colors",
-              activeTab === "rss"
-                ? "bg-primary font-medium text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+            {titleDisplay.subtitle && (
+              <div
+                className="mt-1 truncate text-xs text-muted-foreground [@media(max-height:760px)]:hidden"
+                title={titleDisplay.subtitle}
+              >
+                {titleDisplay.subtitle}
+              </div>
             )}
-            role="tab"
-            type="button"
-            onClick={() => onTabChange("rss")}
-          >
-            RSS订阅
-          </button>
-          <button
-            aria-selected={activeTab === "search"}
-            className={cn(
-              "px-3 text-sm transition-colors",
-              activeTab === "search"
-                ? "bg-primary font-medium text-primary-foreground"
-                : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-            )}
-            role="tab"
-            type="button"
-            onClick={() => onTabChange("search")}
-          >
-            资源搜索
-          </button>
+          </div>
+          <div className="grid h-9 grid-cols-2 overflow-hidden rounded-md border bg-background" role="tablist" aria-label="资源获取方式">
+            <button
+              aria-selected={activeTab === "rss"}
+              className={cn(
+                "border-r px-3 text-sm transition-colors",
+                activeTab === "rss"
+                  ? "bg-primary font-medium text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+              role="tab"
+              type="button"
+              onClick={() => onTabChange("rss")}
+            >
+              RSS订阅
+            </button>
+            <button
+              aria-selected={activeTab === "search"}
+              className={cn(
+                "px-3 text-sm transition-colors",
+                activeTab === "search"
+                  ? "bg-primary font-medium text-primary-foreground"
+                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+              )}
+              role="tab"
+              type="button"
+              onClick={() => onTabChange("search")}
+            >
+              资源搜索
+            </button>
+          </div>
         </div>
 
         {activeTab === "search" && (
@@ -1800,9 +1922,9 @@ function AnimeDownloadPanel({
           />
         )}
 
-        <div className="grid grid-cols-[minmax(0,1fr)_auto_auto] gap-3">
+        <div className="flex shrink-0 flex-wrap items-center gap-2">
           <select
-            className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+            className="h-9 min-w-48 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
             value={selectedFansubId}
             onChange={(event) => onFansubChange(event.target.value)}
           >
@@ -1819,43 +1941,42 @@ function AnimeDownloadPanel({
             {unknownFansubCount > 0 && <option value={unknownFansubFilter}>未识别字幕组（{unknownFansubCount}）</option>}
           </select>
           {activeTab === "rss" ? (
-            <Button variant="outline" onClick={onRefreshRss} disabled={rssLoading}>
+            <Button className="shrink-0" variant="outline" onClick={onRefreshRss} disabled={rssLoading}>
               <RefreshCw className="h-4 w-4" />
               {rssLoading ? "读取中" : "刷新RSS"}
             </Button>
           ) : (
             <>
-              <Button variant="outline" onClick={onRefresh} disabled={loading}>
+              <Button className="shrink-0" variant="outline" onClick={onRefresh} disabled={loading}>
                 <Search className="h-4 w-4" />
                 {loading ? "查询中" : "刷新"}
               </Button>
-              <Button variant="outline" onClick={onForceRefresh} disabled={loading} title="绕过 1 天缓存重新查询下载源">
+              <Button
+                className="shrink-0 px-2 sm:px-3"
+                variant="outline"
+                onClick={onForceRefresh}
+                disabled={loading}
+                aria-label="强制刷新"
+                title="绕过 1 天缓存重新查询下载源"
+              >
                 <RefreshCw className="h-4 w-4" />
-                强制刷新
+                <span className="hidden sm:inline">强制刷新</span>
               </Button>
             </>
           )}
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
-          <div className="flex items-center gap-3">
-            <span>显示 {visibleReleases.length} 条</span>
-            <span>共 {tabReleases.length} 条</span>
-            <span>已选 {selectedDownloadableReleases.length} 条</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button variant="outline" onClick={toggleAllVisibleReleases} disabled={selectableVisibleReleases.length === 0 || activeLoading}>
-              全选可下载
-            </Button>
-            <Button
-              onClick={() => onAddSelected(selectedDownloadableReleases)}
-              disabled={selectedDownloadableReleases.length === 0 || batchAdding || activeLoading}
-            >
-              <Download className="h-4 w-4" />
-              {batchAdding ? "添加中" : "批量下载"}
-            </Button>
-          </div>
-        </div>
+        <BatchDownloadControls
+          allSelected={allSelectableVisibleSelected}
+          batchAdding={batchAdding}
+          disabled={activeLoading}
+          selectedCount={selectedDownloadableReleases.length}
+          selectableCount={selectableVisibleReleases.length}
+          totalCount={tabReleases.length}
+          visibleCount={visibleReleases.length}
+          onAddSelected={() => onAddSelected(selectedDownloadableReleases)}
+          onToggleAll={toggleAllVisibleReleases}
+        />
 
         {activeTab === "search" && visibleErrors.length > 0 && (
           <div className="space-y-2">
@@ -1875,7 +1996,7 @@ function AnimeDownloadPanel({
             {activeTab === "rss" ? "正在读取 RSS 订阅..." : "正在查询发布资源..."}
           </div>
         ) : (
-          <div className={cn("space-y-4", listClassName)}>
+          <div className={cn("space-y-3", listClassName)}>
             {activeTab === "rss"
               ? rssGroups.map((group) => {
                   const groupKey = `rss:${group.subscription.id}`;
@@ -1961,10 +2082,73 @@ function AnimeDownloadPanel({
                       : "没有找到可下载资源。"}
               </div>
             )}
+
+            {visibleReleases.length > 0 && (
+              <div className="rounded-md border bg-background/95 p-2 shadow-sm">
+                <BatchDownloadControls
+                  allSelected={allSelectableVisibleSelected}
+                  batchAdding={batchAdding}
+                  disabled={activeLoading}
+                  selectedCount={selectedDownloadableReleases.length}
+                  selectableCount={selectableVisibleReleases.length}
+                  totalCount={tabReleases.length}
+                  visibleCount={visibleReleases.length}
+                  onAddSelected={() => onAddSelected(selectedDownloadableReleases)}
+                  onToggleAll={toggleAllVisibleReleases}
+                />
+              </div>
+            )}
           </div>
         )}
       </div>
     </Panel>
+  );
+}
+
+/** 复用资源列表顶部和底部的批量选择与下载操作。 */
+function BatchDownloadControls({
+  visibleCount,
+  totalCount,
+  selectedCount,
+  selectableCount,
+  allSelected,
+  batchAdding,
+  disabled,
+  onToggleAll,
+  onAddSelected
+}: {
+  visibleCount: number;
+  totalCount: number;
+  selectedCount: number;
+  selectableCount: number;
+  allSelected: boolean;
+  batchAdding: boolean;
+  disabled: boolean;
+  onToggleAll: () => void;
+  onAddSelected: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span>显示 {visibleCount} 条</span>
+        <span>共 {totalCount} 条</span>
+        <span>已选 {selectedCount} 条</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          className="px-2 sm:px-3"
+          variant="outline"
+          onClick={onToggleAll}
+          disabled={selectableCount === 0 || disabled}
+        >
+          {allSelected ? "取消全选" : "全选可下载"}
+        </Button>
+        <Button onClick={onAddSelected} disabled={selectedCount === 0 || batchAdding || disabled}>
+          <Download className="h-4 w-4" />
+          {batchAdding ? "添加中" : "批量下载"}
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -1989,7 +2173,7 @@ function ReleaseDownloadRow({
   const selectable = canDownload && !linkedTask;
 
   return (
-    <div className="p-3">
+    <div className="p-2 sm:p-3 [@media(max-height:760px)]:p-2">
       <div className="flex items-start justify-between gap-3">
         <label className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
           <input
@@ -2023,13 +2207,17 @@ function ReleaseDownloadRow({
           </div>
         </div>
         <Button
-          className="shrink-0"
+          className="shrink-0 px-2 sm:px-3"
           variant="outline"
           onClick={() => onAddRelease(release)}
           disabled={!canDownload || Boolean(linkedTask) || addingReleaseId === release.id || addingReleaseId === batchAddingReleaseId}
+          aria-label={linkedTask ? "已加入下载" : "添加下载"}
+          title={linkedTask ? "已加入下载" : "添加下载"}
         >
           <Download className="h-4 w-4" />
-          {linkedTask ? "已加入" : addingReleaseId === release.id ? "添加中" : "添加下载"}
+          <span className="hidden sm:inline">
+            {linkedTask ? "已加入" : addingReleaseId === release.id ? "添加中" : "添加下载"}
+          </span>
         </Button>
       </div>
     </div>
@@ -2055,19 +2243,47 @@ function AnimeSourceBindingPanel({
   const groupedCandidates = groupSourceCandidates(state?.candidates ?? []);
   const confirmedBindings = state?.bindings.filter((binding) => binding.confirmed) ?? [];
   const hasContent = Boolean(confirmedBindings.length || groupedCandidates.length || state?.errors.length);
+  const [expanded, setExpanded] = useState(false);
+
+  useEffect(() => {
+    if (!loading && confirmedBindings.length === 0 && (groupedCandidates.length > 0 || state?.errors.length)) {
+      setExpanded(true);
+    }
+  }, [confirmedBindings.length, groupedCandidates.length, loading, state?.errors.length]);
 
   return (
-    <section className="overflow-hidden rounded-md border bg-background">
-      <div className="flex items-center justify-between border-b bg-muted/50 px-3 py-2">
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Link2 className="h-4 w-4 text-muted-foreground" />
-          来源匹配
-        </div>
+    <section className="shrink-0 overflow-hidden rounded-md border bg-background">
+      <div className={cn("flex min-h-10 items-center justify-between bg-muted/50 pl-1 pr-2", expanded && "border-b")}>
+        <button
+          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-sm font-medium"
+          type="button"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded ? (
+            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+          )}
+          <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="shrink-0">来源匹配</span>
+          <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
+            {confirmedBindings.slice(0, 2).map((binding) => (
+              <Badge key={binding.sourceId} className="max-w-32 truncate" tone="green">
+                {binding.sourceId} 已绑定
+              </Badge>
+            ))}
+            {confirmedBindings.length > 2 && <Badge tone="green">+{confirmedBindings.length - 2}</Badge>}
+            {groupedCandidates.length > 0 && <Badge tone="amber">{groupedCandidates.length} 个待确认</Badge>}
+            {!hasContent && !loading && <span className="truncate text-xs font-normal text-muted-foreground">暂无精确匹配</span>}
+            {loading && <span className="truncate text-xs font-normal text-muted-foreground">读取中</span>}
+          </span>
+        </button>
         <Button variant="ghost" onClick={onRefresh} disabled={loading} title="重新读取来源候选" aria-label="重新读取来源候选">
           <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
         </Button>
       </div>
-      {loading && !hasContent ? (
+      {expanded && (loading && !hasContent ? (
         <div className="px-3 py-4 text-sm text-muted-foreground">正在匹配来源番剧...</div>
       ) : hasContent ? (
         <div className="max-h-72 divide-y overflow-y-auto">
@@ -2162,7 +2378,7 @@ function AnimeSourceBindingPanel({
         </div>
       ) : (
         <div className="px-3 py-4 text-sm text-muted-foreground">没有启用支持精确匹配的来源。</div>
-      )}
+      ))}
     </section>
   );
 }
@@ -2185,15 +2401,6 @@ function getBindingMethodText(method: "manual" | "external_id" | "scored"): stri
   if (method === "manual") return "人工确认";
   if (method === "external_id") return "外部ID";
   return "评分缓存";
-}
-
-function DownloadMetric({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="min-w-0 px-2">
-      <div className="text-lg font-semibold">{value}</div>
-      <div className="truncate text-xs text-muted-foreground">{label}</div>
-    </div>
-  );
 }
 
 function EpisodeRulesPanel({
@@ -2493,8 +2700,7 @@ function buildMikanRssUrl(item: MyAnime): string | undefined {
 /** 构造追番资源添加下载时需要的关联参数。 */
 function buildAnimeReleaseDownloadInput(
   release: Release,
-  target: MyAnime,
-  selectedFansubId: string
+  target: MyAnime
 ): AddReleaseDownloadInput {
   return {
     release: {
@@ -2503,12 +2709,18 @@ function buildAnimeReleaseDownloadInput(
     },
     animeId: target.anime.id,
     episodeNo: release.episodeNo,
-    fansubGroupId:
-      release.fansubGroupId ??
-      (selectedFansubId && selectedFansubId !== unknownFansubFilter ? selectedFansubId : undefined) ??
-      target.defaultFansubGroupId,
+    fansubGroupId: release.fansubGroupId,
     savePath: target.downloadDir
   };
+}
+
+/** 按稳定 ID 合并全局名称快照和当前番剧字幕组。 */
+function mergeFansubGroups(...collections: FansubGroup[][]): FansubGroup[] {
+  const groups = new Map<string, FansubGroup>();
+  for (const group of collections.flat()) {
+    groups.set(group.id, group);
+  }
+  return [...groups.values()];
 }
 
 function dedupeReleases(releases: Release[]): Release[] {

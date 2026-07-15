@@ -12,6 +12,7 @@ import type {
   MediaFile,
   MyAnime,
   NotificationRecord,
+  Release,
   ReleaseSourceConfig
 } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
@@ -47,7 +48,8 @@ export interface AppRepository {
   removeDownloadTask(taskId: string): Promise<DownloadTask[]>;
   listMediaFiles(): Promise<MediaFile[]>;
   upsertMediaFiles(mediaFiles: MediaFile[]): Promise<MediaFile[]>;
-  listFansubs(): Promise<FansubGroup[]>;
+  listFansubs(animeId?: string): Promise<FansubGroup[]>;
+  observeAnimeFansubs(animeId: string, releases: Release[]): Promise<FansubGroup[]>;
   listSources(): Promise<ReleaseSourceConfig[]>;
   getSettings(): Promise<AppSettings>;
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;

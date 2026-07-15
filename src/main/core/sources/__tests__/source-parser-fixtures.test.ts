@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { ReleaseSourceConfig } from "@shared/domain";
-import { sourceConfigs } from "../../mock-data";
+import { defaultSourceConfigs } from "../default-source-configs";
 import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
 import { AniBtReleaseSource, createAniBtHeaders, parseAniBtRss } from "../anibt-source";
 import { parseDmhyList } from "../dmhy-source";
@@ -61,8 +61,8 @@ const torznabConfig: ReleaseSourceConfig = {
 };
 
 test("默认下载源包含 AniBT 和 ACGNX 且可创建站点适配器", () => {
-  const anibt = sourceConfigs.find((source) => source.id === "anibt");
-  const acgnx = sourceConfigs.find((source) => source.id === "acgnx");
+  const anibt = defaultSourceConfigs.find((source) => source.id === "anibt");
+  const acgnx = defaultSourceConfigs.find((source) => source.id === "acgnx");
 
   assert.ok(anibt);
   assert.ok(acgnx);

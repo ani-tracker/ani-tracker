@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type Database from "better-sqlite3";
 import * as BetterSqlite3Module from "better-sqlite3";
+import type { MyAnime } from "@shared/domain";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
+import { enrichReleaseFromTitle } from "../../releases/release-title-parser";
 import { createSeedData } from "../../storage/seed-data";
 import { createRepositoryRuntime } from "../repository-runtime";
 
@@ -21,7 +23,6 @@ test("首次启动忽略旧 JSON 并直接初始化 SQLite", async () => {
 
   assert.equal(runtime.getBackend(), "sqlite");
   assert.equal((await runtime.repository.listAnimeCatalog()).length, fixture.data.animeCatalog.length);
-  assert.deepEqual((await runtime.repository.listAnimeCatalog())[0].rating, fixture.data.animeCatalog[0].rating);
   assert.equal((await runtime.repository.listMyAnime()).length, fixture.data.myAnime.length);
   assert.equal((await runtime.repository.listDownloads()).length, fixture.data.downloads.length);
   assert.equal((await runtime.repository.listNotifications()).length, fixture.data.notifications.length);
@@ -29,10 +30,7 @@ test("首次启动忽略旧 JSON 并直接初始化 SQLite", async () => {
   assert.equal((await runtime.repository.listFansubs()).length, fixture.data.fansubGroups.length);
   assert.equal((await runtime.repository.listSources()).length, fixture.data.sources.length);
   assert.equal((await runtime.repository.getSettings()).storage.databasePath, fixture.databasePath);
-  assert.deepEqual(
-    (await runtime.repository.listDownloads())[0].files.map((file) => file.id),
-    fixture.data.downloads[0].files.map((file) => file.id)
-  );
+  assert.deepEqual((await runtime.repository.getDashboard()).pendingActions, []);
 
   runtime.close();
   await access(fixture.databasePath);
@@ -68,7 +66,8 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   const fixture = await createFixture();
   const first = createRepositoryRuntime(fixture.options);
   await first.initialize();
-  const [item] = await first.repository.listMyAnime();
+  const item = createTestMyAnime();
+  await first.repository.upsertMyAnime(item);
   const timestamp = new Date().toISOString();
   await first.repository.upsertMyAnime({
     ...item,
@@ -100,7 +99,8 @@ test("SQLite 保存、替换并恢复番剧来源绑定", async () => {
   const fixture = await createFixture();
   const first = createRepositoryRuntime(fixture.options);
   await first.initialize();
-  const [item] = await first.repository.listMyAnime();
+  const item = createTestMyAnime();
+  await first.repository.upsertMyAnime(item);
   const timestamp = new Date().toISOString();
   await first.repository.upsertAnimeSourceBinding({
     id: "binding-test-mikan",
@@ -139,6 +139,32 @@ test("SQLite 保存、替换并恢复番剧来源绑定", async () => {
   second.close();
 });
 
+test("SQLite 按番剧保存动态发现的字幕组", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const item = createTestMyAnime();
+  await first.repository.upsertMyAnime(item);
+  const release = enrichReleaseFromTitle({
+    id: "release-fansub-observed",
+    title: "[Nix-Raws] 测试番 - 01 [1080p]",
+    sourceId: "rss-test",
+    sourceName: "测试 RSS",
+    publishedAt: new Date().toISOString()
+  });
+  await first.repository.observeAnimeFansubs(item.anime.id, [release]);
+  const observed = await first.repository.listFansubs(item.anime.id);
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].name, "Nix-Raws");
+  assert.deepEqual(observed[0].sourceIds, ["rss-test"]);
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  assert.equal((await second.repository.listFansubs(item.anime.id))[0].id, release.fansubGroupId);
+  second.close();
+});
+
 test("损坏的 SQLite 会阻止启动且不会回退 JSON", async () => {
   const fixture = await createFixture();
   await writeFile(fixture.databasePath, "not a sqlite database", "utf8");
@@ -169,6 +195,28 @@ async function createFixture() {
     databasePath,
     data,
     options: { databasePath, settingsProvider }
+  };
+}
+
+/** 创建不依赖生产 seed 的 SQLite 测试追番。 */
+function createTestMyAnime(): MyAnime {
+  const timestamp = new Date().toISOString();
+  return {
+    id: "my-anime-sqlite-test",
+    anime: {
+      id: "anime-sqlite-test",
+      title: "测试番",
+      originalTitle: "テストアニメ",
+      aliases: [],
+      premiereYear: 2026,
+      premiereMonth: 7,
+      externalIds: {}
+    },
+    status: "watching",
+    autoDownload: false,
+    rssSubscriptions: [],
+    addedAt: timestamp,
+    updatedAt: timestamp
   };
 }
 

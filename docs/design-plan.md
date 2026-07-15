@@ -37,6 +37,7 @@ This keeps source adapters, BT engines, players, and platform behavior independe
 - My anime: followed anime with premiere year/month, status, default fansub, auto-download settings, and optional per-anime download directory.
 - Episodes: episode number, air time, and lifecycle status.
 - Episode preferences: per-episode fansub or release override.
+- Anime fansub groups: groups observed from real releases and scoped to the followed anime for default and per-episode selection.
 - Releases: normalized resources from RSS, Torznab, site adapters, or manual magnet/torrent input.
 - Download tasks: task status, speed, progress, selected files, and engine metadata.
 - Media files: real downloaded files with normalized codec, container, resolution, bit depth, audio tracks, subtitle tracks, and scan time.

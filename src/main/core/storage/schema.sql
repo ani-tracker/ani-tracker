@@ -59,6 +59,17 @@ CREATE TABLE IF NOT EXISTS fansub_group (
   updated_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS anime_fansub_group (
+  anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
+  fansub_group_id TEXT NOT NULL REFERENCES fansub_group(id) ON DELETE CASCADE,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  PRIMARY KEY (anime_id, fansub_group_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_anime_fansub_group_anime
+  ON anime_fansub_group (anime_id, last_seen_at DESC);
+
 CREATE TABLE IF NOT EXISTS my_anime (
   id TEXT PRIMARY KEY,
   anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
