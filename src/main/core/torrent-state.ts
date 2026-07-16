@@ -8,7 +8,9 @@ const qbStateMap: Record<string, DownloadStatus> = {
   stalledDL: "stalled",
   queuedDL: "queued",
   pausedDL: "paused",
+  stoppedDL: "paused",
   checkingDL: "checking",
+  checkingUP: "checking",
   checkingResumeData: "checking",
   moving: "moving",
   uploading: "seeding",
@@ -16,6 +18,7 @@ const qbStateMap: Record<string, DownloadStatus> = {
   stalledUP: "seeding",
   queuedUP: "completed",
   pausedUP: "completed",
+  stoppedUP: "completed",
   missingFiles: "missing_files",
   error: "error",
   unknown: "error"
