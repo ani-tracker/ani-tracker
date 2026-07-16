@@ -1,5 +1,4 @@
 import {
-  CalendarDays,
   Bell,
   Download,
   Home,
@@ -11,7 +10,6 @@ import {
   Subtitles
 } from "lucide-react";
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import {
   Sidebar,
   SidebarContent,
@@ -33,8 +31,6 @@ import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { ReleaseSearchPage } from "@/features/release-search/ReleaseSearchPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
-import { appApi } from "@/lib/api";
-import type { AutomationRunResult } from "@shared/contracts";
 
 type PageId = "home" | "myAnime" | "discovery" | "releaseSearch" | "downloads" | "notifications" | "sources" | "settings";
 
@@ -72,23 +68,6 @@ function renderPage(page: PageId) {
 
 export function App() {
   const [activePage, setActivePage] = useState<PageId>("home");
-  const [automationRunning, setAutomationRunning] = useState(false);
-  const [automationResult, setAutomationResult] = useState<AutomationRunResult | null>(null);
-  const [automationError, setAutomationError] = useState<string | null>(null);
-
-  async function runAutomation() {
-    setAutomationRunning(true);
-    setAutomationError(null);
-    try {
-      const result = await appApi.runAutomationOnce();
-      setAutomationResult(result);
-      setActivePage("home");
-    } catch (error) {
-      setAutomationError(error instanceof Error ? error.message : "扫描更新失败");
-    } finally {
-      setAutomationRunning(false);
-    }
-  }
 
   return (
     <SidebarProvider>
@@ -134,38 +113,6 @@ export function App() {
       </Sidebar>
 
       <SidebarInset>
-        <header className="flex h-16 items-center gap-3 border-b bg-card px-6">
-          <div className="relative min-w-[360px] flex-1">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              className="h-10 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none ring-0 transition focus:border-primary"
-              placeholder="搜索番剧、资源、字幕组"
-            />
-          </div>
-          {(automationResult || automationError) && (
-            <div
-              className={
-                automationError
-                  ? "rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700"
-                  : "rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700"
-              }
-            >
-              {automationError ??
-                `扫描完成：下载 ${automationResult?.downloaded.length ?? 0}，跳过 ${
-                  automationResult?.skipped.length ?? 0
-                }，错误 ${automationResult?.errors.length ?? 0}`}
-            </div>
-          )}
-          <Button variant="outline" onClick={() => void runAutomation()} disabled={automationRunning}>
-            <CalendarDays className="h-4 w-4" />
-            {automationRunning ? "扫描中" : "扫描更新"}
-          </Button>
-          <Button>
-            <Library className="h-4 w-4" />
-            添加追番
-          </Button>
-        </header>
-
         <div className="p-6">{renderPage(activePage)}</div>
       </SidebarInset>
     </SidebarProvider>

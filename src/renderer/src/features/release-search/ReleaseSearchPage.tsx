@@ -4,7 +4,7 @@ import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { appApi } from "@/lib/api";
-import { formatBytes } from "@/lib/format";
+import { formatBytes, formatDateTime } from "@/lib/format";
 import { buildAnimeReleaseSearchTerms } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { ReleaseSearchResult } from "@shared/contracts";
@@ -248,6 +248,21 @@ export function ReleaseSearchPage() {
                           <Badge tone={release.seeders > 0 ? "green" : "neutral"}>{release.seeders} 做种</Badge>
                         )}
                       </div>
+                      <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                        <span title={release.publishedAt}>发布时间：{formatDateTime(release.publishedAt)}</span>
+                        {release.infoHash && (
+                          <>
+                            <span>·</span>
+                            <span title={release.infoHash}>Hash：{release.infoHash.slice(0, 12)}</span>
+                          </>
+                        )}
+                        {(release.magnetUrl || release.torrentUrl) && (
+                          <>
+                            <span>·</span>
+                            <span>{release.magnetUrl ? "磁力链接" : "Torrent 文件"}</span>
+                          </>
+                        )}
+                      </div>
                     </div>
                     <Button variant="outline" onClick={() => void addDownload(release.id)} disabled={addingId === release.id}>
                       <Download className="h-4 w-4" />
@@ -284,7 +299,7 @@ function mergeResults(
   animeId?: string,
   episodeNo?: number
 ): ReleaseSearchResult {
-  const releases = dedupeReleases(results.flatMap((result) => result.releases));
+  const releases = sortReleases(dedupeReleases(results.flatMap((result) => result.releases)));
   const searchedSourceIds = unique(results.flatMap((result) => result.searchedSourceIds));
   const errors = results.flatMap((result) => result.errors);
 
@@ -312,6 +327,25 @@ function dedupeReleases(releases: Release[]): Release[] {
 
     seen.add(key);
     return true;
+  });
+}
+
+/** 按发布时间倒序排列资源，便于优先查看最新结果。 */
+function sortReleases(releases: Release[]): Release[] {
+  return [...releases].sort((left, right) => {
+    const leftTime = new Date(left.publishedAt).getTime();
+    const rightTime = new Date(right.publishedAt).getTime();
+    if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) {
+      return right.publishedAt.localeCompare(left.publishedAt);
+    }
+    if (Number.isNaN(leftTime)) {
+      return 1;
+    }
+    if (Number.isNaN(rightTime)) {
+      return -1;
+    }
+
+    return rightTime - leftTime;
   });
 }
 

@@ -42,3 +42,17 @@ export function formatDuration(seconds?: number): string {
 export function formatMonth(year: number, month: number): string {
   return `${year} 年 ${month} 月`;
 }
+
+/** 格式化日期时间，无法解析时保留原始值方便排查来源数据。 */
+export function formatDateTime(value?: string): string {
+  if (!value) {
+    return "--";
+  }
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return date.toLocaleString();
+}
