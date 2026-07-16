@@ -172,8 +172,8 @@
   - 下载刷新、手动添加下载和自动化扫描会优先连接托管进程的实际 WebUI 地址。
   - 数据版本已升到 11，旧设置会切到新的高位端口默认模板。
   - 已新增 `prepare:qbittorrent` 和 `verify:qbittorrent` 脚本，用于复制和校验项目内置 nox 二进制。
-  - 已预构建并内置 macOS Intel x64 版 `qBittorrent-nox 5.2.3`，路径为 `resources/qbittorrent/darwin-x64/qbittorrent-nox.app`。
-  - macOS x64 产物使用 `libtorrent v2.0.13` 静态链接，并随 bundle 携带 Qt、OpenSSL、zlib 和最小 Qt 插件运行时。
+  - 已预构建并内置 macOS Intel x64 与 Windows x64 版 `qBittorrent Enhanced nox 5.2.1.10`。
+  - 两个平台产物均使用 `libtorrent v2.0.13` 静态链接，并携带 Qt、OpenSSL、zlib 和最小 Qt 插件运行时。
   - 托管启动会在 macOS app bundle 场景下自动设置 `QT_PLUGIN_PATH` 和 `OPENSSL_MODULES`，避免依赖用户 shell 环境。
   - 已确认官方 qBittorrent 5.2.3 只提供 macOS GUI DMG，没有 macOS nox 预构建包；`userdocs/qbittorrent-nox-static` 的 `aarch64` 是 Linux/musl，不适用于 Apple Silicon macOS。
 - 已实现下载队列自动刷新和文件选择 UI。
@@ -272,7 +272,7 @@ git diff --check
 
 - 更多站点专用 source adapter，例如 Nyaa、ACG.RIP 等。
 - 真实内置 BT 核心；当前 `EmbeddedTorrentEngine` 仍是占位实现。
-- qBittorrent-nox 平台二进制还缺 macOS arm64、Windows x64 和 Linux x64；当前已内置 macOS x64。
+- qBittorrent-nox 平台二进制还缺 macOS arm64 和 Linux x64；当前已内置 macOS x64 与 Windows x64。
 - 更完整的新番元数据聚合策略，例如冲突消解、增量刷新、字段来源展示。
 - madVR 播放链路或外部 renderer 集成。
 - Windows 播放状态监控：PotPlayer 子类已预留监控器抽象，待评估 PotPlayer 控制接口或 mpv IPC 替代方案。
