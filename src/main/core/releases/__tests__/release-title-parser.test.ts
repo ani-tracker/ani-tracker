@@ -49,9 +49,19 @@ test("parseReleaseTitle 不把合集范围解析成单集", () => {
   const parsed = parseReleaseTitle("[字幕组] 测试番 [01-12][1080p][HEVC][繁体]");
 
   assert.equal(parsed.episodeNo, undefined);
+  assert.deepEqual(parsed.episodeRange, { start: 1, end: 12 });
   assert.equal(parsed.resolution, "1080p");
   assert.equal(parsed.normalizedVideoCodec, "H.265/HEVC");
   assert.equal(parsed.subtitle, "cht");
+});
+
+test("parseReleaseTitle 解析中文连集范围", () => {
+  const parsed = parseReleaseTitle("[字幕组] 测试番 第01-02集 [1080p][HEVC][简体]");
+
+  assert.equal(parsed.episodeNo, undefined);
+  assert.deepEqual(parsed.episodeRange, { start: 1, end: 2 });
+  assert.equal(parsed.resolution, "1080p");
+  assert.equal(parsed.subtitle, "chs");
 });
 
 test("parseReleaseTitle 不把总集篇和 10bit 误判为集数", () => {

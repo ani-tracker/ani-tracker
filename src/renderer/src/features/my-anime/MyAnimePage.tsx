@@ -85,6 +85,7 @@ interface RssReleaseGroupState {
 interface RssSubscriptionDraft {
   name: string;
   url: string;
+  preferredSubtitle?: SubtitlePreference;
 }
 
 const downloadDetailFilters: Array<{ value: AnimeDownloadDetailFilter; label: string }> = [
@@ -671,6 +672,7 @@ export function MyAnimePage() {
               name: subscriptionDraft.name.trim() || "RSS订阅",
               url,
               enabled: true,
+              preferredSubtitle: subscriptionDraft.preferredSubtitle,
               createdAt: now,
               updatedAt: now
             }
@@ -1721,6 +1723,7 @@ function RssSubscriptionsEditor({
         name: initial?.name ?? "RSS订阅",
         url: initial?.url ?? "",
         enabled: initial?.enabled ?? true,
+        preferredSubtitle: initial?.preferredSubtitle,
         createdAt: now,
         updatedAt: now
       }
@@ -1775,7 +1778,7 @@ function RssSubscriptionsEditor({
       {subscriptions.length > 0 ? (
         <div className="space-y-3">
           {subscriptions.map((subscription) => (
-            <div key={subscription.id} className="grid grid-cols-[auto_minmax(0,0.8fr)_minmax(0,1.4fr)_auto] items-center gap-2 rounded-md bg-muted/40 p-2">
+            <div key={subscription.id} className="grid grid-cols-[auto_minmax(0,0.7fr)_minmax(0,1.2fr)_minmax(7rem,0.45fr)_auto] items-center gap-2 rounded-md bg-muted/40 p-2">
               <label className="flex items-center justify-center" title="启用订阅">
                 <input
                   checked={subscription.enabled}
@@ -1797,6 +1800,22 @@ function RssSubscriptionsEditor({
                 value={subscription.url}
                 onChange={(event) => updateSubscription(subscription.id, { url: event.target.value })}
               />
+              <select
+                className="h-9 min-w-0 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary"
+                title="RSS 语言偏好"
+                value={subscription.preferredSubtitle ?? ""}
+                onChange={(event) =>
+                  updateSubscription(subscription.id, {
+                    preferredSubtitle: (event.target.value || undefined) as AnimeRssSubscription["preferredSubtitle"]
+                  })
+                }
+              >
+                {subtitleOptions.map((value) => (
+                  <option key={value || "follow"} value={value}>
+                    {value ? subtitleText[value] : `跟随追番${draft.preferredSubtitle ? `：${subtitleText[draft.preferredSubtitle]}` : ""}`}
+                  </option>
+                ))}
+              </select>
               <Button variant="ghost" onClick={() => removeSubscription(subscription.id)} aria-label="删除RSS订阅" title="删除RSS订阅">
                 <Trash2 className="h-4 w-4" />
               </Button>
@@ -1877,7 +1896,8 @@ function AnimeDownloadPanel({
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(target.anime);
   const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(() => new Set());
-  const [selectedReleaseKeys, setSelectedReleaseKeys] = useState<Set<string>>(() => new Set());
+  const [selectedFamilyKeys, setSelectedFamilyKeys] = useState<Set<string>>(() => new Set());
+  const [releaseVersionSelections, setReleaseVersionSelections] = useState<Record<string, string>>({});
   const rssReleases = rssGroups.flatMap((group) => group.releases);
   const tabReleases = activeTab === "rss" ? rssReleases : releases;
   const visibleReleases = filterReleasesByFansub(tabReleases, selectedFansubId);
@@ -1890,15 +1910,20 @@ function AnimeDownloadPanel({
   const sourceFailed = tabReleases.length === 0 && visibleErrors.length > 0;
   const linkedTasks = downloadTasks.filter((task) => task.animeId === target.anime.id);
   const releaseSignature = tabReleases.map(releaseKey).join("|");
-  const selectedReleases = visibleReleases.filter((release) => selectedReleaseKeys.has(releaseKey(release)));
+  const tabFamilies = groupReleaseVersions(tabReleases, target.preferredSubtitle, releaseVersionSelections);
+  const visibleFamilies = groupReleaseVersions(visibleReleases, target.preferredSubtitle, releaseVersionSelections);
+  const selectedReleases = visibleFamilies
+    .filter((family) => selectedFamilyKeys.has(family.key))
+    .map((family) => family.selectedRelease);
   const selectedDownloadableReleases = selectedReleases.filter((release) => isReleaseSelectable(release, linkedTasks));
-  const selectableVisibleReleases = visibleReleases.filter((release) => isReleaseSelectable(release, linkedTasks));
-  const allSelectableVisibleSelected = selectableVisibleReleases.length > 0 &&
-    selectableVisibleReleases.every((release) => selectedReleaseKeys.has(releaseKey(release)));
+  const selectableVisibleFamilies = visibleFamilies.filter((family) => isReleaseSelectable(family.selectedRelease, linkedTasks));
+  const allSelectableVisibleSelected = selectableVisibleFamilies.length > 0 &&
+    selectableVisibleFamilies.every((family) => selectedFamilyKeys.has(family.key));
   const existingRssUrls = new Set((target.rssSubscriptions ?? []).map((subscription) => subscription.url.trim()).filter(Boolean));
 
   useEffect(() => {
-    setSelectedReleaseKeys(new Set());
+    setSelectedFamilyKeys(new Set());
+    setReleaseVersionSelections({});
   }, [activeTab, releaseSignature]);
 
   /** 切换字幕组资源分组的折叠状态。 */
@@ -1914,25 +1939,32 @@ function AnimeDownloadPanel({
     });
   }
 
-  /** 切换某个资源的批量选择状态。 */
-  function toggleReleaseSelection(release: Release) {
-    const key = releaseKey(release);
-    setSelectedReleaseKeys((current) => {
+  /** 切换某个资源族的批量选择状态。 */
+  function toggleFamilySelection(family: ReleaseVersionFamily) {
+    setSelectedFamilyKeys((current) => {
       const next = new Set(current);
-      if (next.has(key)) {
-        next.delete(key);
+      if (next.has(family.key)) {
+        next.delete(family.key);
       } else {
-        next.add(key);
+        next.add(family.key);
       }
       return next;
     });
   }
 
+  /** 变更同一资源族内最终下载的语言版本。 */
+  function selectReleaseVersion(familyKey: string, nextReleaseKey: string) {
+    setReleaseVersionSelections((current) => ({
+      ...current,
+      [familyKey]: nextReleaseKey
+    }));
+  }
+
   /** 选择或取消当前筛选下所有可下载资源。 */
   function toggleAllVisibleReleases() {
-    setSelectedReleaseKeys((current) => {
+    setSelectedFamilyKeys((current) => {
       const next = new Set(current);
-      const selectableKeys = selectableVisibleReleases.map(releaseKey);
+      const selectableKeys = selectableVisibleFamilies.map((family) => family.key);
       const allSelected = selectableKeys.length > 0 && selectableKeys.every((key) => next.has(key));
       for (const key of selectableKeys) {
         if (allSelected) {
@@ -1946,11 +1978,11 @@ function AnimeDownloadPanel({
   }
 
   /** 选择或取消指定分组下所有可下载资源。 */
-  function toggleGroupReleases(groupReleases: Release[]) {
-    const selectableKeys = groupReleases
-      .filter((release) => isReleaseSelectable(release, linkedTasks))
-      .map(releaseKey);
-    setSelectedReleaseKeys((current) => {
+  function toggleGroupFamilies(families: ReleaseVersionFamily[]) {
+    const selectableKeys = families
+      .filter((family) => isReleaseSelectable(family.selectedRelease, linkedTasks))
+      .map((family) => family.key);
+    setSelectedFamilyKeys((current) => {
       const next = new Set(current);
       const allSelected = selectableKeys.length > 0 && selectableKeys.every((key) => next.has(key));
       for (const key of selectableKeys) {
@@ -1965,9 +1997,9 @@ function AnimeDownloadPanel({
   }
 
   /** 统计指定分组的可选和已选资源数量。 */
-  function getGroupSelectionState(groupReleases: Release[]) {
-    const selectable = groupReleases.filter((release) => isReleaseSelectable(release, linkedTasks));
-    const selectedCount = selectable.filter((release) => selectedReleaseKeys.has(releaseKey(release))).length;
+  function getGroupSelectionState(families: ReleaseVersionFamily[]) {
+    const selectable = families.filter((family) => isReleaseSelectable(family.selectedRelease, linkedTasks));
+    const selectedCount = selectable.filter((family) => selectedFamilyKeys.has(family.key)).length;
     return {
       selectableCount: selectable.length,
       selectedCount,
@@ -1976,27 +2008,30 @@ function AnimeDownloadPanel({
   }
 
   function renderEpisodeGroups(groupReleases: Release[]) {
-    return groupReleaseEpisodes(groupReleases).map((episodeGroup) => (
+    const families = groupReleaseVersions(groupReleases, target.preferredSubtitle, releaseVersionSelections);
+    return groupReleaseFamilyEpisodes(families).map((episodeGroup) => (
       <section key={episodeGroup.key}>
         <div className="flex items-center justify-between bg-muted/30 px-3 py-2 text-xs">
           <span className="font-medium" title={episodeGroup.label}>
             {episodeGroup.label}
           </span>
-          <span className="text-muted-foreground">{episodeGroup.releases.length} 个版本</span>
+          <span className="text-muted-foreground">{episodeGroup.families.length} 个资源</span>
         </div>
         <div className="divide-y border-t">
-          {episodeGroup.releases.map((release) => {
-            const linkedTask = findReleaseDownloadTask(linkedTasks, release);
+          {episodeGroup.families.map((family) => {
+            const linkedTask = findReleaseDownloadTask(linkedTasks, family.selectedRelease);
             return (
               <ReleaseDownloadRow
-                key={releaseKey(release)}
+                key={family.key}
                 addingReleaseId={addingReleaseId}
                 fansubNames={fansubNames}
+                family={family}
                 linkedTask={linkedTask}
-                release={release}
-                selected={selectedReleaseKeys.has(releaseKey(release))}
+                preferredSubtitle={target.preferredSubtitle}
+                selected={selectedFamilyKeys.has(family.key)}
                 onAddRelease={onAddRelease}
-                onToggleSelected={toggleReleaseSelection}
+                onToggleSelected={toggleFamilySelection}
+                onVersionChange={selectReleaseVersion}
               />
             );
           })}
@@ -2125,9 +2160,9 @@ function AnimeDownloadPanel({
           batchAdding={batchAdding}
           disabled={activeLoading}
           selectedCount={selectedDownloadableReleases.length}
-          selectableCount={selectableVisibleReleases.length}
-          totalCount={tabReleases.length}
-          visibleCount={visibleReleases.length}
+          selectableCount={selectableVisibleFamilies.length}
+          totalCount={tabFamilies.length}
+          visibleCount={visibleFamilies.length}
           onAddSelected={() => onAddSelected(selectedDownloadableReleases)}
           onToggleAll={toggleAllVisibleReleases}
         />
@@ -2155,14 +2190,15 @@ function AnimeDownloadPanel({
               ? rssGroups.map((group) => {
                   const groupKey = `rss:${group.subscription.id}`;
                   const groupReleases = filterReleasesByFansub(group.releases, selectedFansubId);
-                  const selection = getGroupSelectionState(groupReleases);
+                  const groupFamilies = groupReleaseVersions(groupReleases, target.preferredSubtitle, releaseVersionSelections);
+                  const selection = getGroupSelectionState(groupFamilies);
                   return (
                     <section key={group.subscription.id} className="overflow-hidden rounded-md border bg-background">
                       <ReleaseGroupHeader
                         allSelected={selection.allSelected}
-                        badgeText={`${groupReleases.length} 个资源`}
+                        badgeText={`${groupFamilies.length} 个资源`}
                         collapsed={collapsedGroupKeys.has(groupKey)}
-                        episodeCount={countEpisodes(groupReleases)}
+                        episodeCount={countReleaseFamilyEpisodes(groupFamilies)}
                         name={group.subscription.name}
                         rssSubscribed={false}
                         selectableCount={selection.selectableCount}
@@ -2170,7 +2206,7 @@ function AnimeDownloadPanel({
                         title={group.subscription.url}
                         onAddRssSubscription={onAddRssSubscription}
                         onToggleCollapsed={() => toggleGroup(groupKey)}
-                        onToggleSelected={() => toggleGroupReleases(groupReleases)}
+                        onToggleSelected={() => toggleGroupFamilies(groupFamilies)}
                       />
                       {!collapsedGroupKeys.has(groupKey) && (
                         <div>
@@ -2197,16 +2233,17 @@ function AnimeDownloadPanel({
                   );
                 })
               : releaseGroups.map((group) => {
-                  const selection = getGroupSelectionState(group.releases);
+                  const groupFamilies = groupReleaseVersions(group.releases, target.preferredSubtitle, releaseVersionSelections);
+                  const selection = getGroupSelectionState(groupFamilies);
                   const rssCandidate = buildMikanGroupRssSubscription(group, target);
                   const rssSubscribed = Boolean(rssCandidate && existingRssUrls.has(rssCandidate.url));
                   return (
                     <section key={group.key} className="overflow-hidden rounded-md border bg-background">
                       <ReleaseGroupHeader
                         allSelected={selection.allSelected}
-                        badgeText={`${group.releases.length} 个资源`}
+                        badgeText={`${groupFamilies.length} 个资源`}
                         collapsed={collapsedGroupKeys.has(group.key)}
-                        episodeCount={countEpisodes(group.releases)}
+                        episodeCount={countReleaseFamilyEpisodes(groupFamilies)}
                         name={group.name}
                         rssCandidate={rssCandidate}
                         rssSubscribed={rssSubscribed}
@@ -2215,7 +2252,7 @@ function AnimeDownloadPanel({
                         title={group.name}
                         onAddRssSubscription={onAddRssSubscription}
                         onToggleCollapsed={() => toggleGroup(group.key)}
-                        onToggleSelected={() => toggleGroupReleases(group.releases)}
+                        onToggleSelected={() => toggleGroupFamilies(groupFamilies)}
                       />
                       {!collapsedGroupKeys.has(group.key) && <div className="divide-y">{renderEpisodeGroups(group.releases)}</div>}
                     </section>
@@ -2268,9 +2305,9 @@ function BatchDownloadControls({
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span>显示 {visibleCount} 条</span>
-        <span>共 {totalCount} 条</span>
-        <span>已选 {selectedCount} 条</span>
+        <span>显示 {visibleCount} 组</span>
+        <span>共 {totalCount} 组</span>
+        <span>已选 {selectedCount} 组</span>
       </div>
       <div className="flex items-center gap-2">
         <Button
@@ -2365,23 +2402,43 @@ function ReleaseGroupHeader({
   );
 }
 
+interface ReleaseVersionFamily {
+  key: string;
+  releases: Release[];
+  selectedRelease: Release;
+  episodeKey: string;
+  episodeLabel: string;
+}
+
+interface ReleaseEpisodeFamilyGroup {
+  key: string;
+  label: string;
+  families: ReleaseVersionFamily[];
+}
+
+/** 渲染合并后的资源族行，并提供语言版本选择。 */
 function ReleaseDownloadRow({
-  release,
+  family,
   linkedTask,
   fansubNames,
+  preferredSubtitle,
   selected,
   addingReleaseId,
   onToggleSelected,
-  onAddRelease
+  onAddRelease,
+  onVersionChange
 }: {
-  release: Release;
+  family: ReleaseVersionFamily;
   linkedTask?: DownloadTask;
   fansubNames: Map<string, string>;
+  preferredSubtitle?: SubtitlePreference;
   selected: boolean;
   addingReleaseId: string | null;
-  onToggleSelected: (release: Release) => void;
+  onToggleSelected: (family: ReleaseVersionFamily) => void;
   onAddRelease: (release: Release) => void;
+  onVersionChange: (familyKey: string, releaseKey: string) => void;
 }) {
+  const release = family.selectedRelease;
   const canDownload = Boolean(release.magnetUrl ?? release.torrentUrl);
   const selectable = canDownload && !linkedTask;
 
@@ -2395,28 +2452,52 @@ function ReleaseDownloadRow({
             className="h-4 w-4 rounded border"
             disabled={!selectable}
             type="checkbox"
-            onChange={() => onToggleSelected(release)}
+            onChange={() => onToggleSelected(family)}
           />
         </label>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium" title={release.title}>
-            {release.title}
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium" title={release.title}>
+              {release.title}
+            </div>
+            <div className="mt-1 flex flex-wrap gap-2">
+              <Badge tone="blue">{release.sourceName}</Badge>
+              <Badge>{getReleaseFansubName(release, fansubNames)}</Badge>
+              <Badge>{family.episodeLabel}</Badge>
+              {release.resolution && <Badge>{release.resolution}</Badge>}
+              {release.normalizedVideoCodec && <Badge tone="green">{release.normalizedVideoCodec}</Badge>}
+              {release.subtitle && <Badge>{subtitleText[release.subtitle]}</Badge>}
+              {release.size && <Badge>{formatBytes(release.size)}</Badge>}
+              {linkedTask && (
+                <Badge tone={isCompletedDownload(linkedTask) ? "green" : "amber"}>
+                  {downloadStatusText[linkedTask.status]}
+                </Badge>
+              )}
+            </div>
           </div>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <Badge tone="blue">{release.sourceName}</Badge>
-            <Badge>{getReleaseFansubName(release, fansubNames)}</Badge>
-            {release.resolution && <Badge>{release.resolution}</Badge>}
-            {release.normalizedVideoCodec && <Badge tone="green">{release.normalizedVideoCodec}</Badge>}
-            {release.subtitle && <Badge>{subtitleText[release.subtitle]}</Badge>}
-            {release.size && <Badge>{formatBytes(release.size)}</Badge>}
-            {linkedTask && (
-              <Badge tone={isCompletedDownload(linkedTask) ? "green" : "amber"}>
-                {downloadStatusText[linkedTask.status]}
-              </Badge>
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <span title={release.publishedAt}>{formatReleaseDate(release.publishedAt)}</span>
+            {family.releases.length > 1 && (
+              <>
+                <span>·</span>
+                <span>语言版本</span>
+                <select
+                  className="h-8 rounded-md border bg-background px-2 text-xs outline-none focus:border-primary"
+                  value={releaseKey(release)}
+                  onChange={(event) => onVersionChange(family.key, event.target.value)}
+                  title="选择对应语言版本"
+                >
+                  {family.releases.map((item) => {
+                    const itemKey = releaseKey(item);
+                    return (
+                      <option key={itemKey} value={itemKey}>
+                        {getReleaseVersionLabel(item, preferredSubtitle, releaseKey(item) === releaseKey(release))}
+                      </option>
+                    );
+                  })}
+                </select>
+              </>
             )}
-          </div>
-          <div className="mt-2 text-xs text-muted-foreground">
-            {formatReleaseDate(release.publishedAt)}
           </div>
         </div>
         <Button
@@ -2435,6 +2516,186 @@ function ReleaseDownloadRow({
       </div>
     </div>
   );
+}
+
+/** 按 episode 将已合并的资源族再次归组。 */
+function groupReleaseFamilyEpisodes(families: ReleaseVersionFamily[]): ReleaseEpisodeFamilyGroup[] {
+  const groups = new Map<string, ReleaseEpisodeFamilyGroup>();
+  for (const family of families) {
+    const group = groups.get(family.episodeKey) ?? {
+      key: family.episodeKey,
+      label: family.episodeLabel,
+      families: []
+    };
+    group.families.push(family);
+    groups.set(family.episodeKey, group);
+  }
+
+  return [...groups.values()];
+}
+
+/** 统计资源族覆盖的唯一集数或连集范围数量。 */
+function countReleaseFamilyEpisodes(families: ReleaseVersionFamily[]): number {
+  return new Set(families.map((family) => family.episodeKey)).size;
+}
+
+/** 将同一集数、字幕组、分辨率和编码下仅语言不同的资源合并为一个版本族。 */
+function groupReleaseVersions(
+  releases: Release[],
+  preferredSubtitle?: SubtitlePreference,
+  selections: Record<string, string> = {}
+): ReleaseVersionFamily[] {
+  const families = new Map<string, ReleaseVersionFamily>();
+  for (const release of releases) {
+    const key = buildReleaseFamilyKey(release);
+    const family = families.get(key) ?? createReleaseVersionFamily(key, release);
+    family.releases.push(release);
+    families.set(key, family);
+  }
+
+  return [...families.values()]
+    .map((family) => {
+      const ordered = sortReleaseVersions(family.releases, preferredSubtitle);
+      const selectedRelease =
+        family.releases.find((item) => releaseKey(item) === selections[family.key]) ?? ordered[0] ?? family.releases[0];
+      return {
+        ...family,
+        releases: ordered,
+        selectedRelease
+      };
+    })
+    .sort((left, right) => {
+      const leftEpisode = releaseEpisodeOrder(left.selectedRelease);
+      const rightEpisode = releaseEpisodeOrder(right.selectedRelease);
+      if (leftEpisode !== rightEpisode) {
+        return rightEpisode - leftEpisode;
+      }
+
+      return right.selectedRelease.publishedAt.localeCompare(left.selectedRelease.publishedAt);
+    });
+}
+
+/** 创建资源族初始结构，后续同类 release 会追加到 releases。 */
+function createReleaseVersionFamily(key: string, release: Release): ReleaseVersionFamily {
+  return {
+    key,
+    releases: [],
+    selectedRelease: release,
+    episodeKey: getReleaseEpisodeKey(release),
+    episodeLabel: getReleaseEpisodeLabel(release)
+  };
+}
+
+/** 构造忽略字幕语言差异的资源族键。 */
+function buildReleaseFamilyKey(release: Release): string {
+  return [
+    release.sourceId,
+    release.fansubGroupId ?? normalizeFamilyText(release.fansubName ?? ""),
+    getReleaseEpisodeKey(release),
+    release.resolution ?? "",
+    release.normalizedVideoCodec ?? "",
+    normalizeFamilyText(stripSubtitleTokens(release.title))
+  ].join("|");
+}
+
+/** 生成单集或连集范围的稳定分组键。 */
+function getReleaseEpisodeKey(release: Release): string {
+  if (release.episodeRange) {
+    return `range:${release.episodeRange.start}-${release.episodeRange.end}`;
+  }
+  if (release.episodeNo === undefined) {
+    return "unknown";
+  }
+  return `episode:${release.episodeNo}`;
+}
+
+/** 生成资源行展示用的单集或连集范围文案。 */
+function getReleaseEpisodeLabel(release: Release): string {
+  if (release.episodeRange) {
+    return `第 ${formatEpisodeNumber(release.episodeRange.start)}-${formatEpisodeNumber(release.episodeRange.end)} 集`;
+  }
+  if (release.episodeNo === undefined) {
+    return "未识别集数";
+  }
+  return `第 ${formatEpisodeNumber(release.episodeNo)} 集`;
+}
+
+/** 将单集或连集范围转换为排序用的数值。 */
+function releaseEpisodeOrder(release: Release): number {
+  if (release.episodeRange) {
+    return release.episodeRange.end;
+  }
+  return release.episodeNo ?? -1;
+}
+
+/** 按语言偏好和发布时间排列同一资源族内的版本。 */
+function sortReleaseVersions(releases: Release[], preferredSubtitle?: SubtitlePreference): Release[] {
+  return [...releases].sort((left, right) => {
+    const leftScore = getReleaseVersionRank(left, preferredSubtitle);
+    const rightScore = getReleaseVersionRank(right, preferredSubtitle);
+    if (leftScore !== rightScore) {
+      return leftScore - rightScore;
+    }
+
+    const leftDate = right.publishedAt.localeCompare(left.publishedAt);
+    if (leftDate !== 0) {
+      return leftDate;
+    }
+
+    return releaseKey(left).localeCompare(releaseKey(right));
+  });
+}
+
+/** 计算单个语言版本在当前偏好下的优先级。 */
+function getReleaseVersionRank(release: Release, preferredSubtitle?: SubtitlePreference): number {
+  if (preferredSubtitle && release.subtitle === preferredSubtitle) {
+    return 0;
+  }
+  if (preferredSubtitle && release.subtitle === "multi") {
+    return 1;
+  }
+  if (release.subtitle) {
+    return 2;
+  }
+  return 3;
+}
+
+/** 生成语言版本下拉框中的选项文案。 */
+function getReleaseVersionLabel(release: Release, preferredSubtitle?: SubtitlePreference, active = false): string {
+  const subtitleLabel = release.subtitle ? subtitleText[release.subtitle] : "未标记";
+  const preferredText = preferredSubtitle && release.subtitle === preferredSubtitle ? "偏好" : "";
+  const parts = [
+    subtitleLabel,
+    release.resolution ?? "",
+    release.normalizedVideoCodec ?? "",
+    release.sourceName
+  ].filter(Boolean);
+  return `${active ? "当前" : ""}${parts.join(" · ")}${preferredText ? ` · ${preferredText}` : ""}`;
+}
+
+/** 归一化资源族键中的标题片段。 */
+function normalizeFamilyText(value: string): string {
+  return value
+    .normalize("NFKC")
+    .toLocaleLowerCase()
+    .replace(/[\s_./\-]+/g, " ")
+    .replace(/\[(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)\]/gi, "")
+    .replace(/[【\[][^】\]]*(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)[^】\]]*[】\]]/gi, "")
+    .replace(/(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** 去除标题中仅表示字幕语言的标记。 */
+function stripSubtitleTokens(value: string): string {
+  return value
+    .replace(/[\[【(（][^\]】)）]*(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)[^\]】)）]*[\]】)）]/gi, "")
+    .replace(/(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)/gi, "");
+}
+
+/** 格式化集数，整数补齐两位，小数保持原样。 */
+function formatEpisodeNumber(value: number): string {
+  return Number.isInteger(value) ? String(value).padStart(2, "0") : String(value);
 }
 
 /** 展示精确下载源的绑定状态和待确认候选。 */
@@ -2922,6 +3183,7 @@ function normalizeRssSubscriptions(item: MyAnime, timestamp: string): AnimeRssSu
       myAnimeId: item.id,
       name: subscription.name.trim() || `RSS订阅 ${index + 1}`,
       url: subscription.url.trim(),
+      preferredSubtitle: subscription.preferredSubtitle,
       createdAt: subscription.createdAt || timestamp,
       updatedAt: timestamp
     }))
@@ -3053,32 +3315,6 @@ function buildMikanGroupRssSubscription(group: ReleaseFansubGroup, target: MyAni
       release.sourceMeta?.rssUrl ??
       `https://mikanani.me/RSS/Bangumi?bangumiId=${encodeURIComponent(mikanBangumiId)}&subgroupid=${encodeURIComponent(mikanSubgroupId)}`
   };
-}
-
-function countEpisodes(releases: Release[]): number {
-  return new Set(releases.map((release) => release.episodeNo).filter((value) => value !== undefined)).size;
-}
-
-interface ReleaseEpisodeGroup {
-  key: string;
-  label: string;
-  releases: Release[];
-}
-
-function groupReleaseEpisodes(releases: Release[]): ReleaseEpisodeGroup[] {
-  const groups = new Map<string, ReleaseEpisodeGroup>();
-  for (const release of releases) {
-    const key = release.episodeNo === undefined ? "unknown" : String(release.episodeNo);
-    const group = groups.get(key) ?? {
-      key,
-      label: release.episodeNo === undefined ? "未识别集数" : `第 ${release.episodeNo} 集`,
-      releases: []
-    };
-    group.releases.push(release);
-    groups.set(key, group);
-  }
-
-  return [...groups.values()];
 }
 
 function findReleaseDownloadTask(tasks: DownloadTask[], release: Release): DownloadTask | undefined {

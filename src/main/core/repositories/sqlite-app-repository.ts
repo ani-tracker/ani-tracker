@@ -654,6 +654,10 @@ export class SqliteAppRepository implements AppRepository {
           AND fansub_group_id IN (SELECT id FROM fansub_group);
       `);
     }
+
+    if (currentSchemaVersion < 6) {
+      this.ensureColumn("my_anime_rss_subscription", "preferred_subtitle", "preferred_subtitle TEXT");
+    }
   }
 
   /** 将首次启动快照写入各业务表。 */
@@ -738,6 +742,7 @@ export class SqliteAppRepository implements AppRepository {
         name: asString(row.name),
         url: asString(row.url),
         enabled: toBoolean(row.enabled),
+        preferredSubtitle: optionalString(row.preferred_subtitle) as MyAnime["preferredSubtitle"],
         createdAt: asString(row.created_at),
         updatedAt: asString(row.updated_at)
       });
@@ -861,9 +866,9 @@ export class SqliteAppRepository implements AppRepository {
       const timestamp = nowIso();
       this.run(
         `INSERT INTO my_anime_rss_subscription (
-          id, my_anime_id, name, url, enabled, created_at, updated_at
+          id, my_anime_id, name, url, enabled, preferred_subtitle, created_at, updated_at
         ) VALUES (
-          @id, @myAnimeId, @name, @url, @enabled, @createdAt, @updatedAt
+          @id, @myAnimeId, @name, @url, @enabled, @preferredSubtitle, @createdAt, @updatedAt
         )`,
         {
           id: subscription.id,
@@ -871,6 +876,7 @@ export class SqliteAppRepository implements AppRepository {
           name: subscription.name,
           url: subscription.url,
           enabled: toInteger(subscription.enabled),
+          preferredSubtitle: subscription.preferredSubtitle ?? null,
           createdAt: subscription.createdAt || timestamp,
           updatedAt: subscription.updatedAt || timestamp
         }

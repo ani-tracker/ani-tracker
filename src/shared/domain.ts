@@ -81,6 +81,7 @@ export interface AnimeRssSubscription {
   name: string;
   url: string;
   enabled: boolean;
+  preferredSubtitle?: SubtitlePreference;
   createdAt: string;
   updatedAt: string;
 }
@@ -145,11 +146,17 @@ export interface ReleaseSourceMeta {
   mikanSubgroupName?: string;
 }
 
+export interface ReleaseEpisodeRange {
+  start: number;
+  end: number;
+}
+
 export interface Release {
   id: string;
   title: string;
   animeId?: string;
   episodeNo?: number;
+  episodeRange?: ReleaseEpisodeRange;
   fansubGroupId?: string;
   fansubName?: string;
   sourceId: string;

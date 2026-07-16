@@ -37,6 +37,9 @@ export function scoreRelease(release: Release, context: ReleaseMatchContext): Re
   if (context.episodeNo && release.episodeNo === context.episodeNo) {
     score += 35;
     reasons.push("集数精确匹配");
+  } else if (context.episodeNo && isEpisodeInRange(context.episodeNo, release.episodeRange)) {
+    score += 20;
+    reasons.push("集数范围覆盖");
   }
 
   const preferredFansubId = context.episodeFansubOverrideId ?? context.anime.defaultFansubGroupId;
@@ -73,6 +76,10 @@ export function scoreRelease(release: Release, context: ReleaseMatchContext): Re
     score,
     reasons
   };
+}
+
+function isEpisodeInRange(episodeNo: number, range: Release["episodeRange"]): boolean {
+  return Boolean(range && episodeNo >= range.start && episodeNo <= range.end);
 }
 
 function matchesAnimeAlias(title: string, myAnime: MyAnime): boolean {

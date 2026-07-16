@@ -1,5 +1,13 @@
 import { ipcMain, shell } from "electron";
-import type { AppSettings, Episode, EpisodePreference, MyAnime, ReleaseSourceConfig } from "@shared/domain";
+import type {
+  AppSettings,
+  Episode,
+  EpisodePreference,
+  MyAnime,
+  Release,
+  ReleaseSourceConfig,
+  SubtitlePreference
+} from "@shared/domain";
 import type { AppRepository } from "./core/repositories/app-repository";
 import { createRepositoryRuntime } from "./core/repositories/repository-runtime";
 import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
@@ -479,7 +487,8 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
   logger.info("RSS 订阅资源搜索开始", {
     animeId: query.animeId,
     subscriptionId: query.subscriptionId,
-    subscriptionName: subscription.name
+    subscriptionName: subscription.name,
+    preferredSubtitle: subscription.preferredSubtitle ?? followedAnime.preferredSubtitle
   });
   try {
     const rssUrl = validateRssUrl(subscription.url);
@@ -504,10 +513,14 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
       ? releases
       : releases.filter((release) => matchesAnimeReleaseTitle(release.title, searchTerms));
     const knownFansubs = await repository.listFansubs(query.animeId);
-    const normalizedReleases = relevantReleases.map((release) => ({
-      ...enrichReleaseFromTitle(release, knownFansubs),
-      animeId: query.animeId
-    }));
+    const preferredSubtitle = subscription.preferredSubtitle ?? followedAnime.preferredSubtitle;
+    const normalizedReleases = sortRssSubscriptionReleases(
+      relevantReleases.map((release) => ({
+        ...enrichReleaseFromTitle(release, knownFansubs),
+        animeId: query.animeId
+      })),
+      preferredSubtitle
+    );
     await repository.observeAnimeFansubs(query.animeId, normalizedReleases);
     logger.info("RSS 订阅资源搜索完成", {
       animeId: query.animeId,
@@ -533,6 +546,36 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
       errors: [{ sourceId: query.subscriptionId, message }]
     };
   }
+}
+
+/** 按订阅语言偏好和发布时间排列 RSS 资源，空偏好时保持时间优先。 */
+function sortRssSubscriptionReleases(releases: Release[], preferredSubtitle?: SubtitlePreference): Release[] {
+  return [...releases].sort((left, right) => {
+    const leftRank = getSubtitleSortRank(left.subtitle, preferredSubtitle);
+    const rightRank = getSubtitleSortRank(right.subtitle, preferredSubtitle);
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+
+    return (right.publishedAt ?? "").localeCompare(left.publishedAt ?? "");
+  });
+}
+
+/** 计算 RSS 资源在当前语言偏好下的排序等级。 */
+function getSubtitleSortRank(subtitle?: SubtitlePreference, preferredSubtitle?: SubtitlePreference): number {
+  if (!preferredSubtitle) {
+    return 0;
+  }
+  if (subtitle === preferredSubtitle) {
+    return 0;
+  }
+  if (subtitle === "multi") {
+    return 1;
+  }
+  if (subtitle) {
+    return 2;
+  }
+  return 3;
 }
 
 /** 校验用户保存的 RSS 地址，主进程只允许 HTTP(S)。 */

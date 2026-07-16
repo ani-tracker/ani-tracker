@@ -1,10 +1,11 @@
-import type { FansubGroup, NormalizedVideoCodec, Release, SubtitlePreference } from "@shared/domain";
+import type { FansubGroup, NormalizedVideoCodec, Release, ReleaseEpisodeRange, SubtitlePreference } from "@shared/domain";
 import { createHash } from "node:crypto";
 import { normalizeVideoCodec } from "../media-extraction";
 
 export interface ParsedReleaseTitle {
   fansubName?: string;
   episodeNo?: number;
+  episodeRange?: ReleaseEpisodeRange;
   resolution?: "720p" | "1080p" | "2160p";
   declaredVideoCodec?: string;
   normalizedVideoCodec: NormalizedVideoCodec;
@@ -25,6 +26,12 @@ const subtitlePatterns: Array<{ pattern: RegExp; value: SubtitlePreference }> = 
   { pattern: /(?:\beng\b|英文)/i, value: "eng" }
 ];
 
+const episodeRangePatterns = [
+  /(?:^|[\s_-])s\d{1,2}e(\d{1,3}(?:\.\d)?)\s*[-~]\s*(\d{1,3}(?:\.\d)?)(?:[\s_.\-[\]]|$)/i,
+  /\[\s*(\d{1,3}(?:\.\d)?)\s*[-~]\s*(\d{1,3}(?:\.\d)?)\s*]/,
+  /(?:^|[\s_-])(?:ep|episode|第)?\s*(\d{1,3}(?:\.\d)?)\s*[-~]\s*(\d{1,3}(?:\.\d)?)(?:\s*话|\s*集)?(?:[\s_.\-[\]]|$)/i
+];
+
 const episodePatterns = [
   /(?:^|[\s_-])s\d{1,2}e(\d{1,3}(?:\.\d)?)(?:[\s_.\-[\]]|$)/i,
   /\[\s*(\d{1,3}(?:\.\d)?)\s*]/,
@@ -34,10 +41,12 @@ const episodePatterns = [
 
 export function parseReleaseTitle(title: string, groups: FansubGroup[] = []): ParsedReleaseTitle {
   const normalizedVideoCodec = normalizeVideoCodec(title);
+  const episodeRange = detectEpisodeRange(title);
 
   return {
     fansubName: detectFansubName(title, groups),
-    episodeNo: detectEpisodeNo(title),
+    episodeNo: episodeRange ? undefined : detectEpisodeNo(title),
+    episodeRange,
     resolution: resolutionPatterns.find((item) => item.pattern.test(title))?.value,
     declaredVideoCodec: detectCodecLabel(title),
     normalizedVideoCodec,
@@ -63,6 +72,7 @@ export function enrichReleaseFromTitle(release: Release, groups: FansubGroup[] =
   return {
     ...release,
     episodeNo: release.episodeNo ?? parsed.episodeNo,
+    episodeRange: release.episodeRange ?? parsed.episodeRange,
     fansubGroupId: existingFansubGroupId ?? fansubGroup?.id ?? release.fansubGroupId ?? discoveredFansubGroupId,
     fansubName,
     resolution: release.resolution ?? parsed.resolution,
@@ -95,6 +105,24 @@ export function isMeaningfulFansubName(name: string): boolean {
     return false;
   }
   return !/^(?:\d{1,4}(?:\.\d+)?|\d{3,4}p|4k|8k|x26[45]|h\.?26[45]|avc|hevc|av1|vp9|web-?dl|bdrip|webrip|mkv|mp4|简体|繁体|简繁|chs|cht|multi)$/i.test(normalized);
+}
+
+/** 从标题识别 `[01-02]`、`第01-02集` 等连集范围。 */
+function detectEpisodeRange(title: string): ReleaseEpisodeRange | undefined {
+  for (const pattern of episodeRangePatterns) {
+    const match = title.match(pattern);
+    if (!match?.[1] || !match?.[2]) {
+      continue;
+    }
+
+    const start = Number(match[1]);
+    const end = Number(match[2]);
+    if (Number.isFinite(start) && Number.isFinite(end) && end > start) {
+      return { start, end };
+    }
+  }
+
+  return undefined;
 }
 
 function detectFansubName(title: string, groups: FansubGroup[]): string | undefined {

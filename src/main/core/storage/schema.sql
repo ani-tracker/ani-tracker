@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS my_anime_rss_subscription (
   name TEXT NOT NULL,
   url TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
+  preferred_subtitle TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
