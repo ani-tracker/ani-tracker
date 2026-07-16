@@ -91,6 +91,15 @@ The stored codec should be normalized to:
 
 Raw labels like x265, HEVC, H265, hvc1, AVC, or x264 should also be retained where useful.
 
+## Playback Progress Strategy
+
+- `PlayerAdapter` 定义播放器匹配、启动和播放监控器创建能力。
+- `BasePlayerAdapter` 负责统一启动流程，各平台子类只实现差异化能力。
+- macOS IINA 通过 `--mpv-input-ipc-server` 接入本地 JSON IPC，监听 `percent-pos`。
+- 播放进度首次达到 90% 时，将关联 `Episode.status` 更新为 `watched`。
+- IPC 仅使用本地 Unix Socket，不开放网络端口，播放结束后清理 Socket。
+- Windows PotPlayer 监控暂不实现；后续在 PotPlayer 控制接口和改用 mpv IPC 之间评估，保持现有抽象接口不变。
+
 ## UI Pages
 
 - Home: today's updates, pending actions, active downloads, recent completed files, weekly schedule, source health.

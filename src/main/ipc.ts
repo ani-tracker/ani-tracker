@@ -30,6 +30,7 @@ import { AnimeSourceBindingService } from "./core/source-bindings/anime-source-b
 import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
 import { AnimeFansubDiscoveryService } from "./core/fansubs/anime-fansub-discovery-service";
 import { enrichReleaseFromTitle } from "./core/releases/release-title-parser";
+import { PlaybackStatusService } from "./core/media/playback-status-service";
 
 export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
@@ -38,6 +39,7 @@ export const automationScheduler = new AutomationScheduler(repository, undefined
   getQbittorrentBaseUrl: (settings) => qbittorrentManagedService.getRuntimeBaseUrl(settings)
 });
 const completedDownloadMediaAutoScanner = new CompletedDownloadMediaAutoScanner(repository);
+const playbackStatusService = new PlaybackStatusService(repository);
 
 interface RegisterIpcHandlersOptions {
   onSettingsUpdated?: (settings: AppSettings) => void | Promise<void>;
@@ -415,7 +417,9 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   });
   ipcMain.handle("media:play", async (_event, filePath: string, profileId?: string) => {
     const settings = await repository.getSettings();
-    await new PlayerLauncherService(settings).play(filePath, profileId);
+    await new PlayerLauncherService(settings, {
+      onPlaybackProgress: (progress) => playbackStatusService.handleProgress(progress)
+    }).play(filePath, profileId);
   });
   ipcMain.handle("media:reveal", async (_event, filePath: string) => {
     const settings = await repository.getSettings();

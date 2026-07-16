@@ -3,12 +3,24 @@ import { shell } from "electron";
 import type { PlayerService } from "@shared/contracts";
 import type { AppSettings, PlayerProfile } from "@shared/domain";
 import { PlayerAdapterFactory } from "./player-adapter";
+import type { PlaybackProgressListener } from "./playback-monitor";
+
+export interface PlayerLauncherOptions {
+  adapterFactory?: PlayerAdapterFactory;
+  onPlaybackProgress?: PlaybackProgressListener;
+}
 
 export class PlayerLauncherService implements PlayerService {
+  private readonly adapterFactory: PlayerAdapterFactory;
+  private readonly onPlaybackProgress?: PlaybackProgressListener;
+
   constructor(
     private readonly settings: AppSettings,
-    private readonly adapterFactory = new PlayerAdapterFactory()
-  ) {}
+    options: PlayerLauncherOptions = {}
+  ) {
+    this.adapterFactory = options.adapterFactory ?? new PlayerAdapterFactory();
+    this.onPlaybackProgress = options.onPlaybackProgress;
+  }
 
   /** 校验媒体文件并通过配置的播放器启动播放。 */
   async play(filePath: string, profileId?: string): Promise<void> {
@@ -27,7 +39,7 @@ export class PlayerLauncherService implements PlayerService {
       return;
     }
 
-    await this.adapterFactory.resolve(profile).play(profile, filePath);
+    await this.adapterFactory.resolve(profile).play(profile, filePath, this.onPlaybackProgress);
   }
 
   /** 在系统文件管理器中定位媒体文件。 */

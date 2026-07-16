@@ -178,7 +178,13 @@
   - 已确认官方 qBittorrent 5.2.3 只提供 macOS GUI DMG，没有 macOS nox 预构建包；`userdocs/qbittorrent-nox-static` 的 `aarch64` 是 Linux/musl，不适用于 Apple Silicon macOS。
 - 已实现下载队列自动刷新和文件选择 UI。
 - 已保留 EmbeddedTorrentEngine 占位实现。
+- 已实现播放器公共接口、抽象基类和 IINA、PotPlayer、mpv、通用播放器子类。
 - 已实现播放器调用和 reveal file IPC。
+- 已实现 IINA 播放进度回写：
+  - 通过 IINA 的 mpv JSON IPC 监听 `percent-pos`。
+  - 播放进度达到 90% 后将关联单集标记为 `watched`。
+  - 优先使用 MediaFile 关联，缺失时回退下载任务关联。
+  - 播放结束后清理本地 IPC Socket。
 - 已实现媒体信息提取链：
   - release title。
   - 文件名。
@@ -269,6 +275,7 @@ git diff --check
 - qBittorrent-nox 平台二进制还缺 macOS arm64、Windows x64 和 Linux x64；当前已内置 macOS x64。
 - 更完整的新番元数据聚合策略，例如冲突消解、增量刷新、字段来源展示。
 - madVR 播放链路或外部 renderer 集成。
+- Windows 播放状态监控：PotPlayer 子类已预留监控器抽象，待评估 PotPlayer 控制接口或 mpv IPC 替代方案。
 
 ## 下一步建议
 3. 为后续 SQLite schema 变更补充分版本 migration 脚本。
