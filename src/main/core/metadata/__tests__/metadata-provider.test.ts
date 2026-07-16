@@ -1,8 +1,10 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import type { Anime } from "@shared/domain";
+import type { Anime, Release, ReleaseContentKind } from "@shared/domain";
 import {
   buildAnimeReleaseSearchTerms,
+  classifyAnimeRelease,
+  detectSeriesSeasonNo,
   matchesAnimeReleaseTitle,
   normalizeReleaseSearchText
 } from "../../../../shared/anime-release-search";
@@ -52,6 +54,19 @@ test("buildAnimeReleaseSearchTerms 移除季数后缀并过滤其他作品标题
     matchesAnimeReleaseTitle("[黑ネズミたち] 出租女友 第五季 / Kanojo, Okarishimasu 5th Season - 60", terms),
     false
   );
+});
+
+test("classifyAnimeRelease 区分当前季、旧季和季度未知合集", () => {
+  const anime = createAnime({
+    id: "anime-season-4",
+    title: "欢迎来到实力至上主义的教室 第四季",
+    originalTitle: "Youkoso Jitsuryoku Shijou Shugi no Kyoushitsu e 4th Season"
+  });
+
+  assert.equal(detectSeriesSeasonNo(anime.title), 4);
+  assert.equal(classifyAnimeRelease(createRelease("S04E02", 4, "episode"), anime), "current");
+  assert.equal(classifyAnimeRelease(createRelease("[S3 Fin]", 3, "batch"), anime), "mismatch");
+  assert.equal(classifyAnimeRelease(createRelease("完结全集", undefined, "batch"), anime), "other");
 });
 
 test("uniqueByNormalizedTitle 按标题、原名和别名去重并合并 external id", () => {
@@ -403,6 +418,19 @@ function createAnime(overrides: Partial<Anime> & { id: string; title: string }):
     coverUrl: overrides.coverUrl,
     rating: overrides.rating,
     externalIds: overrides.externalIds ?? {}
+  };
+}
+
+/** 创建资源季度分类测试使用的最小发布记录。 */
+function createRelease(title: string, seriesSeasonNo: number | undefined, contentKind: ReleaseContentKind): Release {
+  return {
+    id: `release-${title}`,
+    title,
+    seriesSeasonNo,
+    contentKind,
+    sourceId: "test-source",
+    sourceName: "测试来源",
+    publishedAt: "2026-07-16T00:00:00.000Z"
   };
 }
 

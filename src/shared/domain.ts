@@ -31,6 +31,8 @@ export type SourceKind = "rss" | "torznab" | "site_adapter" | "manual";
 
 export type TorrentEngineKind = "embedded" | "qbittorrent";
 
+export type ReleaseContentKind = "episode" | "range" | "batch" | "unknown";
+
 export interface Anime {
   id: string;
   title: string;
@@ -157,6 +159,8 @@ export interface Release {
   animeId?: string;
   episodeNo?: number;
   episodeRange?: ReleaseEpisodeRange;
+  seriesSeasonNo?: number;
+  contentKind?: ReleaseContentKind;
   fansubGroupId?: string;
   fansubName?: string;
   sourceId: string;

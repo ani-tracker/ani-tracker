@@ -35,7 +35,7 @@ import { logger } from "./core/logger";
 import { resolveAnimeDownloadPath } from "./core/downloads/download-path-resolver";
 import { RssReleaseSource } from "./core/sources/rss-source";
 import { AnimeSourceBindingService } from "./core/source-bindings/anime-source-binding-service";
-import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
+import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
 import { AnimeFansubDiscoveryService } from "./core/fansubs/anime-fansub-discovery-service";
 import { enrichReleaseFromTitle } from "./core/releases/release-title-parser";
 import { PlaybackStatusService } from "./core/media/playback-status-service";
@@ -237,7 +237,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       repository.listFansubs()
     ]);
     const fansubName =
-      release.fansubName ?? fansubs.find((item) => item.id === fansubGroupId)?.name;
+      fansubs.find((item) => item.id === fansubGroupId)?.name ?? release.fansubName;
     if (animeId) {
       await repository.observeAnimeFansubs(animeId, [release]);
     }
@@ -508,25 +508,25 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
       preferredResolution: query.preferredResolution,
       limit: query.limit
     });
-    const searchTerms = buildAnimeReleaseSearchTerms(followedAnime.anime);
-    const relevantReleases = isExactMikanSubscription(rssUrl, followedAnime)
-      ? releases
-      : releases.filter((release) => matchesAnimeReleaseTitle(release.title, searchTerms));
     const knownFansubs = await repository.listFansubs(query.animeId);
+    const searchTerms = buildAnimeReleaseSearchTerms(followedAnime.anime);
+    const enrichedReleases = releases.map((release) => ({
+      ...enrichReleaseFromTitle(release, knownFansubs),
+      animeId: query.animeId
+    }));
+    const relevantReleases = enrichedReleases.filter((release) => {
+      const titleMatched = isExactMikanSubscription(rssUrl, followedAnime) ||
+        matchesAnimeReleaseTitle(release.title, searchTerms);
+      return titleMatched && classifyAnimeRelease(release, followedAnime.anime) !== "mismatch";
+    });
     const preferredSubtitle = subscription.preferredSubtitle ?? followedAnime.preferredSubtitle;
-    const normalizedReleases = sortRssSubscriptionReleases(
-      relevantReleases.map((release) => ({
-        ...enrichReleaseFromTitle(release, knownFansubs),
-        animeId: query.animeId
-      })),
-      preferredSubtitle
-    );
+    const normalizedReleases = sortRssSubscriptionReleases(relevantReleases, preferredSubtitle);
     await repository.observeAnimeFansubs(query.animeId, normalizedReleases);
     logger.info("RSS 订阅资源搜索完成", {
       animeId: query.animeId,
       subscriptionId: query.subscriptionId,
       releaseCount: relevantReleases.length,
-      filteredCount: releases.length - relevantReleases.length
+      filteredCount: enrichedReleases.length - relevantReleases.length
     });
     return {
       query,

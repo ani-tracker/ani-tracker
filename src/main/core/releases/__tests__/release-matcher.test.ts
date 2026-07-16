@@ -18,6 +18,19 @@ test("rankReleases 连集范围命中低于单集精确命中", () => {
   assert.ok(ranked[1].reasons.includes("集数范围覆盖"));
 });
 
+test("rankReleases 自动匹配排除旧季度和无目标集数的合集", () => {
+  const anime = createMyAnime();
+  anime.anime.title = "测试番 第四季";
+  anime.anime.originalTitle = "Test Anime 4th Season";
+  const current = createRelease("current", "[字幕组] 测试番 S04E02 [1080p]");
+  const oldBatch = createRelease("old-batch", "[字幕组] 测试番 10-bit 1080p [S3 Fin]");
+  const unknownBatch = createRelease("unknown-batch", "[字幕组] 测试番 完结全集 [1080p]");
+
+  const ranked = rankReleases([oldBatch, unknownBatch, current], { anime, episodeNo: 2 });
+
+  assert.deepEqual(ranked.map((item) => item.release.id), ["current"]);
+});
+
 /** 创建匹配器测试用追番。 */
 function createMyAnime(): MyAnime {
   const timestamp = "2026-07-16T00:00:00.000Z";

@@ -22,6 +22,7 @@ import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import { logger } from "../logger";
 import { inferDownloadTaskEpisodeNo } from "../downloads/download-episode-resolver";
 import { mergeAnimeMetadataBatches } from "../metadata/metadata-provider";
+import { normalizeFansubName } from "../releases/release-title-parser";
 import { defaultSourceConfigs } from "../sources/default-source-configs";
 import { createDefaultSettingsProvider, type DefaultSettingsProvider } from "../platform/default-settings-provider";
 import { createSeedData } from "../storage/seed-data";
@@ -104,6 +105,7 @@ export class SqliteAppRepository implements AppRepository {
       this.clearAllData();
       this.writeSnapshot(data);
     });
+    this.maintainStoredData();
     logger.info("SQLite repository seeded", { path: this.databasePath, counts: getSnapshotCounts(data) });
     return true;
   }
@@ -572,9 +574,16 @@ export class SqliteAppRepository implements AppRepository {
           toVersion: APP_DATA_VERSION
         });
       }
-      this.repairStoredDownloadEpisodeMetadata();
+      this.maintainStoredData();
     }
     logger.info("SQLite repository initialized", { path: this.databasePath, schemaVersion: SQLITE_SCHEMA_VERSION });
+  }
+
+  /** 维护历史与首启数据中的字幕组引用及下载集数元数据。 */
+  private maintainStoredData(): void {
+    this.mergeDuplicateFansubGroups();
+    this.normalizeFansubGroupData();
+    this.repairStoredDownloadEpisodeMetadata();
   }
 
   /** 补齐已存在 SQLite 数据库缺少的新列。 */
@@ -1108,6 +1117,120 @@ export class SqliteAppRepository implements AppRepository {
     this.transaction(() => snapshot.episodes.forEach((episode) => this.upsertEpisodeRow(episode)));
   }
 
+  /** 按规范名称合并历史重复字幕组，并重写所有关联引用。 */
+  private mergeDuplicateFansubGroups(): void {
+    const groups = this.all("SELECT * FROM fansub_group ORDER BY created_at, id").map(mapFansub);
+    const clusters = buildFansubMergeClusters(groups).filter((cluster) => cluster.length > 1);
+    if (clusters.length === 0) {
+      return;
+    }
+
+    let mergedCount = 0;
+    this.transaction(() => {
+      for (const cluster of clusters) {
+        const canonical = selectCanonicalFansub(cluster);
+        const duplicates = cluster.filter((group) => group.id !== canonical.id);
+        const merged: FansubGroup = {
+          ...canonical,
+          aliases: uniqueStrings(cluster.flatMap((group) => [
+            ...group.aliases,
+            ...(group.id === canonical.id ? [] : [group.name])
+          ])).filter((alias) => normalizeFansubDisplayName(alias) !== normalizeFansubDisplayName(canonical.name)),
+          sourceIds: uniqueStrings(cluster.flatMap((group) => group.sourceIds))
+        };
+        this.upsertFansub(merged);
+
+        for (const duplicate of duplicates) {
+          this.replaceFansubReferences(duplicate.id, canonical.id, canonical.name);
+          this.run("DELETE FROM fansub_group WHERE id = @duplicateId", { duplicateId: duplicate.id });
+          mergedCount += 1;
+        }
+      }
+    });
+    logger.info("Duplicate fansub groups merged", { clusterCount: clusters.length, mergedCount });
+  }
+
+  /** 将一个重复字幕组的业务引用迁移到规范字幕组。 */
+  private replaceFansubReferences(duplicateId: string, canonicalId: string, canonicalName: string): void {
+    const links = this.all(
+      "SELECT anime_id, first_seen_at, last_seen_at FROM anime_fansub_group WHERE fansub_group_id = @duplicateId",
+      { duplicateId }
+    );
+    for (const link of links) {
+      const animeId = asString(link.anime_id);
+      const existing = this.get(
+        "SELECT first_seen_at, last_seen_at FROM anime_fansub_group WHERE anime_id = @animeId AND fansub_group_id = @canonicalId",
+        { animeId, canonicalId }
+      );
+      if (existing) {
+        this.run(
+          `UPDATE anime_fansub_group
+           SET first_seen_at = @firstSeenAt, last_seen_at = @lastSeenAt
+           WHERE anime_id = @animeId AND fansub_group_id = @canonicalId`,
+          {
+            animeId,
+            canonicalId,
+            firstSeenAt: [asString(existing.first_seen_at), asString(link.first_seen_at)].sort()[0],
+            lastSeenAt: [asString(existing.last_seen_at), asString(link.last_seen_at)].sort().at(-1) ?? nowIso()
+          }
+        );
+      } else {
+        this.run(
+          `INSERT INTO anime_fansub_group (anime_id, fansub_group_id, first_seen_at, last_seen_at)
+           VALUES (@animeId, @canonicalId, @firstSeenAt, @lastSeenAt)`,
+          {
+            animeId,
+            canonicalId,
+            firstSeenAt: asString(link.first_seen_at),
+            lastSeenAt: asString(link.last_seen_at)
+          }
+        );
+      }
+    }
+
+    this.run("UPDATE my_anime SET default_fansub_group_id = @canonicalId WHERE default_fansub_group_id = @duplicateId", { canonicalId, duplicateId });
+    this.run("UPDATE episode_preference SET fansub_group_id = @canonicalId WHERE fansub_group_id = @duplicateId", { canonicalId, duplicateId });
+    this.run("UPDATE release SET fansub_group_id = @canonicalId WHERE fansub_group_id = @duplicateId", { canonicalId, duplicateId });
+    this.run(
+      `UPDATE download_task
+       SET fansub_group_id = @canonicalId, fansub_name = @canonicalName
+       WHERE fansub_group_id = @duplicateId`,
+      { canonicalId, canonicalName, duplicateId }
+    );
+    this.run("DELETE FROM anime_fansub_group WHERE fansub_group_id = @duplicateId", { duplicateId });
+  }
+
+  /** 清理字幕组自别名，并统一已关联下载任务的展示名称。 */
+  private normalizeFansubGroupData(): void {
+    const groups = this.all("SELECT * FROM fansub_group ORDER BY id").map(mapFansub);
+    let aliasGroupCount = 0;
+    let downloadTaskCount = 0;
+
+    this.transaction(() => {
+      for (const group of groups) {
+        const aliases = uniqueStrings(group.aliases)
+          .filter((alias) => normalizeFansubDisplayName(alias) !== normalizeFansubDisplayName(group.name));
+        if (aliases.length !== group.aliases.length || aliases.some((alias, index) => alias !== group.aliases[index])) {
+          this.upsertFansub({ ...group, aliases });
+          aliasGroupCount += 1;
+        }
+
+        const result = this.run(
+          `UPDATE download_task
+           SET fansub_name = @fansubName
+           WHERE fansub_group_id = @fansubGroupId
+             AND (fansub_name IS NULL OR fansub_name <> @fansubName)`,
+          { fansubGroupId: group.id, fansubName: group.name }
+        );
+        downloadTaskCount += result.changes;
+      }
+    });
+
+    if (aliasGroupCount > 0 || downloadTaskCount > 0) {
+      logger.info("Fansub group data normalized", { aliasGroupCount, downloadTaskCount });
+    }
+  }
+
   private getMeta(key: string): string | undefined {
     const row = this.get("SELECT value FROM app_meta WHERE key = @key", { key });
     return row ? asString(row.value) : undefined;
@@ -1251,6 +1374,75 @@ function collectDiscoveredFansubs(releases: Release[]): FansubGroup[] {
     groups.set(id, current);
   }
   return [...groups.values()];
+}
+
+/** 按名称和别名规范键构建应被合并的字幕组集合。 */
+function buildFansubMergeClusters(groups: FansubGroup[]): FansubGroup[][] {
+  const parents = new Map(groups.map((group) => [group.id, group.id]));
+  const keyOwners = new Map<string, string>();
+
+  /** 查找并压缩字幕组并查集根节点。 */
+  function find(groupId: string): string {
+    const parent = parents.get(groupId) ?? groupId;
+    if (parent === groupId) {
+      return groupId;
+    }
+    const root = find(parent);
+    parents.set(groupId, root);
+    return root;
+  }
+
+  /** 合并两个共享规范名称的字幕组节点。 */
+  function union(leftId: string, rightId: string): void {
+    const leftRoot = find(leftId);
+    const rightRoot = find(rightId);
+    if (leftRoot !== rightRoot) {
+      parents.set(rightRoot, leftRoot);
+    }
+  }
+
+  for (const group of groups) {
+    const keys = new Set([group.name, ...group.aliases].map(normalizeFansubName).filter(Boolean));
+    for (const key of keys) {
+      const ownerId = keyOwners.get(key);
+      if (ownerId) {
+        union(group.id, ownerId);
+      } else {
+        keyOwners.set(key, group.id);
+      }
+    }
+  }
+
+  const clusters = new Map<string, FansubGroup[]>();
+  for (const group of groups) {
+    const root = find(group.id);
+    clusters.set(root, [...(clusters.get(root) ?? []), group]);
+  }
+  return [...clusters.values()];
+}
+
+/** 优先选择人工配置且展示名已采用规范字符的字幕组作为合并目标。 */
+function selectCanonicalFansub(groups: FansubGroup[]): FansubGroup {
+  return [...groups].sort((left, right) => {
+    const manualDifference = Number(left.id.startsWith("fansub-auto-")) - Number(right.id.startsWith("fansub-auto-"));
+    if (manualDifference !== 0) {
+      return manualDifference;
+    }
+
+    const displayDifference = getFansubDisplayPenalty(left.name) - getFansubDisplayPenalty(right.name);
+    return displayDifference || left.id.localeCompare(right.id);
+  })[0];
+}
+
+/** 判断展示名是否仍包含会被规范键折叠的异体字符。 */
+function getFansubDisplayPenalty(name: string): number {
+  const displayKey = normalizeFansubDisplayName(name);
+  return displayKey === normalizeFansubName(name) ? 0 : 1;
+}
+
+/** 规范展示文本格式，但保留简繁和日文异体差异。 */
+function normalizeFansubDisplayName(name: string): string {
+  return name.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
 
 /** 按不区分大小写的文本键去重，同时保留原始展示值。 */

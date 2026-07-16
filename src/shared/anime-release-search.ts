@@ -1,4 +1,4 @@
-import type { Anime } from "./domain";
+import type { Anime, Release } from "./domain";
 
 const bracketPairPattern = /[「『《【\[(（]([^」』》】\])）]{2,80})[」』》】\])）]/g;
 const separatorPattern = /[|｜／/]+|(?:\s+-\s+)|(?:\s+–\s+)|(?:\s+—\s+)|[:：]/g;
@@ -9,6 +9,14 @@ const seasonSuffixPatterns = [
   /\s+(?:season|part)\s*\d+\s*$/i,
   /\s+s\d+\s*$/i
 ];
+const seriesSeasonPatterns = [
+  /第\s*([〇零一二三四五六七八九十百两\d]+)\s*(?:季|期|部)/u,
+  /\b(\d{1,2})(?:st|nd|rd|th)\s+season\b/i,
+  /\bseason\s*0*(\d{1,2})\b/i,
+  /(?:^|[^a-z0-9])s0*(\d{1,2})(?=(?:e\d{1,3})|[^a-z0-9]|$)/i
+];
+
+export type AnimeReleaseCompatibility = "current" | "other" | "mismatch";
 
 export function buildAnimeReleaseSearchTerms(anime: Anime, extraTerms: string[] = [], limit = 12): string[] {
   const rawTerms = [
@@ -43,6 +51,42 @@ export function matchesAnimeReleaseTitle(releaseTitle: string, animeTitleTerms: 
     const compactTerm = term.replace(/\s+/g, "");
     return normalizedTitle.includes(term) || compactTitle.includes(compactTerm);
   });
+}
+
+/** 从标题中的中文季数、Season N、Nth Season 或 Sxx 标记解析系列季度。 */
+export function detectSeriesSeasonNo(value: string): number | undefined {
+  for (const pattern of seriesSeasonPatterns) {
+    const matched = value.match(pattern)?.[1];
+    if (!matched) {
+      continue;
+    }
+    const seasonNo = parseSeasonNumber(matched);
+    if (seasonNo !== undefined && seasonNo > 0) {
+      return seasonNo;
+    }
+  }
+  return undefined;
+}
+
+/** 从番剧标题、原名和别名中解析当前作品的系列季度。 */
+export function resolveAnimeSeriesSeasonNo(anime: Anime): number | undefined {
+  return [anime.title, anime.originalTitle, ...anime.aliases.map((alias) => alias.alias)]
+    .filter((value): value is string => Boolean(value))
+    .map(detectSeriesSeasonNo)
+    .find((value) => value !== undefined);
+}
+
+/** 判断资源属于当前季度、待确认的其他资源，或明确冲突的旧季度。 */
+export function classifyAnimeRelease(release: Release, anime: Anime): AnimeReleaseCompatibility {
+  const targetSeasonNo = resolveAnimeSeriesSeasonNo(anime);
+  const releaseSeasonNo = release.seriesSeasonNo ?? detectSeriesSeasonNo(release.title);
+  if (targetSeasonNo !== undefined && releaseSeasonNo !== undefined && targetSeasonNo !== releaseSeasonNo) {
+    return "mismatch";
+  }
+  if (release.contentKind === "batch" && (targetSeasonNo === undefined || releaseSeasonNo === undefined)) {
+    return "other";
+  }
+  return "current";
 }
 
 function expandSearchTerm(value: string): string[] {
@@ -101,4 +145,22 @@ function uniqueBySearchKey(values: string[]): string[] {
   }
 
   return unique;
+}
+
+/** 将阿拉伯数字或常见中文数字转换为系列季度编号。 */
+function parseSeasonNumber(value: string): number | undefined {
+  if (/^\d+$/.test(value)) {
+    return Number(value);
+  }
+
+  const normalized = value.replace(/[〇零]/g, "").replace(/两/g, "二");
+  const digits: Record<string, number> = { 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 };
+  if (normalized === "十") {
+    return 10;
+  }
+  if (normalized.includes("十")) {
+    const [tens, ones] = normalized.split("十");
+    return (tens ? digits[tens] : 1) * 10 + (ones ? digits[ones] : 0);
+  }
+  return digits[normalized];
 }

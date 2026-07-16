@@ -1,7 +1,7 @@
 import type { AnimeReleaseQuery, ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
 import type { Anime, AnimeSourceBinding, FansubGroup, Release, ReleaseSourceConfig } from "@shared/domain";
 import { createHash } from "node:crypto";
-import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "../../../shared/anime-release-search";
+import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle } from "../../../shared/anime-release-search";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import { logger } from "../logger";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
@@ -166,7 +166,8 @@ export class ReleaseSourceService {
       const hasConfirmedExactBinding = bindings.some(
         (binding) => binding.sourceId === release.sourceId && binding.confirmed
       );
-      return hasConfirmedExactBinding || matchesAnimeReleaseTitle(release.title, terms);
+      const titleMatched = hasConfirmedExactBinding || matchesAnimeReleaseTitle(release.title, terms);
+      return titleMatched && classifyAnimeRelease(release, anime) !== "mismatch";
     });
 
     logger.info("Anime release search finished", {

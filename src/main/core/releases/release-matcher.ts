@@ -1,4 +1,5 @@
 import type { FansubGroup, MyAnime, Release } from "@shared/domain";
+import { classifyAnimeRelease } from "../../../shared/anime-release-search";
 import { enrichReleaseFromTitle } from "./release-title-parser";
 
 export interface ReleaseMatchContext {
@@ -28,6 +29,17 @@ export function rankReleases(
 export function scoreRelease(release: Release, context: ReleaseMatchContext): ReleaseMatchResult {
   const reasons: string[] = [];
   let score = 0;
+
+  if (classifyAnimeRelease(release, context.anime.anime) !== "current") {
+    return { release, score: 0, reasons: ["资源季度不兼容"] };
+  }
+
+  const episodeMatched = context.episodeNo === undefined ||
+    release.episodeNo === context.episodeNo ||
+    isEpisodeInRange(context.episodeNo, release.episodeRange);
+  if (!episodeMatched) {
+    return { release, score: 0, reasons: ["资源未覆盖目标集数"] };
+  }
 
   if (matchesAnimeAlias(release.title, context.anime)) {
     score += 30;

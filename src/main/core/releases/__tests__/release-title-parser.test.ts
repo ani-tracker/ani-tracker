@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { FansubGroup, Release } from "@shared/domain";
-import { enrichReleaseFromTitle, parseReleaseTitle } from "../release-title-parser";
+import { createDiscoveredFansubId, enrichReleaseFromTitle, normalizeFansubName, parseReleaseTitle } from "../release-title-parser";
 
 const fansubGroups: FansubGroup[] = [
   {
@@ -68,9 +68,34 @@ test("parseReleaseTitle 不把总集篇和 10bit 误判为集数", () => {
   const parsed = parseReleaseTitle("[字幕组] 测试番 总集篇 [1080p][HEVC][10bit][简体]");
 
   assert.equal(parsed.episodeNo, undefined);
+  assert.equal(parsed.contentKind, "batch");
   assert.equal(parsed.resolution, "1080p");
   assert.equal(parsed.normalizedVideoCodec, "H.265/HEVC");
   assert.equal(parsed.subtitle, "chs");
+});
+
+test("parseReleaseTitle 识别无括号 S3 Fin 合集标记", () => {
+  const parsed = parseReleaseTitle("[字幕组] 测试番 10-bit 1080p S3 Fin");
+
+  assert.equal(parsed.episodeNo, undefined);
+  assert.equal(parsed.seriesSeasonNo, 3);
+  assert.equal(parsed.contentKind, "batch");
+});
+
+test("parseReleaseTitle 将 10-bit 与 S3 Fin 识别为第三季合集", () => {
+  const parsed = parseReleaseTitle(
+    "[动漫国字幕组&VCB-Studio] 欢迎来到实力至上主义的教室 10-bit 1080p HEVC BDRip [S3 Fin]"
+  );
+
+  assert.equal(parsed.episodeNo, undefined);
+  assert.equal(parsed.seriesSeasonNo, 3);
+  assert.equal(parsed.contentKind, "batch");
+});
+
+test("字幕组规范键合并简繁和日文异体字符", () => {
+  assert.equal(normalizeFansubName("綠茶字幕組"), normalizeFansubName("绿茶字幕组"));
+  assert.equal(normalizeFansubName("緑茶字幕組"), normalizeFansubName("绿茶字幕组"));
+  assert.equal(createDiscoveredFansubId("桜都字幕组"), createDiscoveredFansubId("樱都字幕组"));
 });
 
 test("enrichReleaseFromTitle 保留已有字段并补充字幕组匹配", () => {

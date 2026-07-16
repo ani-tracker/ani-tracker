@@ -28,6 +28,7 @@ test("首次启动忽略旧 JSON 并直接初始化 SQLite", async () => {
   assert.equal((await runtime.repository.listNotifications()).length, fixture.data.notifications.length);
   assert.equal((await runtime.repository.listMediaFiles()).length, fixture.data.mediaFiles.length);
   assert.equal((await runtime.repository.listFansubs()).length, fixture.data.fansubGroups.length);
+  assert.ok((await runtime.repository.listFansubs()).every((group) => !group.aliases.includes(group.name)));
   assert.equal((await runtime.repository.listSources()).length, fixture.data.sources.length);
   assert.equal((await runtime.repository.getSettings()).storage.databasePath, fixture.databasePath);
   assert.deepEqual((await runtime.repository.getDashboard()).pendingActions, []);
@@ -165,6 +166,114 @@ test("SQLite 按番剧保存动态发现的字幕组", async () => {
   await second.initialize();
   assert.equal((await second.repository.listFansubs(item.anime.id))[0].id, release.fansubGroupId);
   second.close();
+});
+
+test("SQLite 启动时合并简繁异体字幕组并迁移业务引用", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const item = createTestMyAnime();
+  await first.repository.upsertMyAnime(item);
+  await first.repository.upsertDownloadTask({
+    id: "fansub-merge-download",
+    animeId: item.anime.id,
+    fansubGroupId: "fansub-auto-green-traditional",
+    fansubName: "綠茶字幕組",
+    engine: "qbittorrent",
+    name: "字幕组迁移测试",
+    status: "completed",
+    progress: 1,
+    downloadSpeed: 0,
+    uploadSpeed: 0,
+    savePath: "/downloads/anime",
+    files: [],
+    createdAt: "2026-07-16T00:00:00.000Z"
+  });
+  first.close();
+
+  const database = new DatabaseConstructor(fixture.databasePath);
+  try {
+    const timestamp = "2026-07-16T00:00:00.000Z";
+    const insertGroup = database.prepare(
+      `INSERT INTO fansub_group (id, name, aliases_json, source_ids_json, created_at, updated_at)
+       VALUES (@id, @name, '[]', @sourceIds, @timestamp, @timestamp)`
+    );
+    insertGroup.run({ id: "fansub-auto-green-simplified", name: "绿茶字幕组", sourceIds: '["mikan"]', timestamp });
+    insertGroup.run({ id: "fansub-auto-green-traditional", name: "綠茶字幕組", sourceIds: '["anibt"]', timestamp });
+    database.prepare(
+      "UPDATE my_anime SET default_fansub_group_id = @fansubId WHERE id = @itemId"
+    ).run({ fansubId: "fansub-auto-green-traditional", itemId: item.id });
+    const insertLink = database.prepare(
+      `INSERT INTO anime_fansub_group (anime_id, fansub_group_id, first_seen_at, last_seen_at)
+       VALUES (@animeId, @fansubId, @timestamp, @timestamp)`
+    );
+    insertLink.run({ animeId: item.anime.id, fansubId: "fansub-auto-green-simplified", timestamp });
+    insertLink.run({ animeId: item.anime.id, fansubId: "fansub-auto-green-traditional", timestamp });
+  } finally {
+    database.close();
+  }
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const groups = await second.repository.listFansubs(item.anime.id);
+  const restoredItem = (await second.repository.listMyAnime()).find((entry) => entry.id === item.id);
+  const restoredDownload = (await second.repository.listDownloads()).find((task) => task.id === "fansub-merge-download");
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].id, "fansub-auto-green-simplified");
+  assert.ok(groups[0].aliases.includes("綠茶字幕組"));
+  assert.ok(!groups[0].aliases.includes(groups[0].name));
+  assert.deepEqual(groups[0].sourceIds.sort(), ["anibt", "mikan"]);
+  assert.equal(restoredItem?.defaultFansubGroupId, groups[0].id);
+  assert.equal(restoredDownload?.fansubGroupId, groups[0].id);
+  assert.equal(restoredDownload?.fansubName, groups[0].name);
+  second.close();
+  assertDatabaseIntegrity(fixture.databasePath);
+});
+
+test("SQLite 启动时清理字幕组自别名并修正下载任务旧名称", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const item = createTestMyAnime();
+  await first.repository.upsertMyAnime(item);
+  first.close();
+
+  const database = new DatabaseConstructor(fixture.databasePath);
+  try {
+    const timestamp = "2026-07-16T00:00:00.000Z";
+    database.prepare(
+      `INSERT INTO fansub_group (id, name, aliases_json, source_ids_json, created_at, updated_at)
+       VALUES (@id, @name, @aliases, '[]', @timestamp, @timestamp)`
+    ).run({ id: "fansub-sakurato", name: "桜都字幕组", aliases: '["桜都字幕组"]', timestamp });
+    database.prepare(
+      `INSERT INTO download_task (
+        id, anime_id, fansub_group_id, fansub_name, engine, name, status, progress,
+        download_speed, upload_speed, save_path, created_at, updated_at
+      ) VALUES (
+        @id, @animeId, @fansubGroupId, @fansubName, 'qbittorrent', '字幕组名称修复测试',
+        'completed', 1, 0, 0, '/downloads/anime', @timestamp, @timestamp
+      )`
+    ).run({
+      id: "fansub-name-repair-download",
+      animeId: item.anime.id,
+      fansubGroupId: "fansub-sakurato",
+      fansubName: "樱都字幕组",
+      timestamp
+    });
+  } finally {
+    database.close();
+  }
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const group = (await second.repository.listFansubs()).find((fansub) => fansub.id === "fansub-sakurato");
+  const download = (await second.repository.listDownloads()).find((task) => task.id === "fansub-name-repair-download");
+
+  assert.deepEqual(group?.aliases, []);
+  assert.equal(download?.fansubName, "桜都字幕组");
+  second.close();
+  assertDatabaseIntegrity(fixture.databasePath);
 });
 
 test("SQLite 刷新及重启时按文件集数修复同名种子的单集关联", async () => {

@@ -7,7 +7,7 @@ import { Drawer } from "@/components/ui/drawer";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatMonth, formatPercent } from "@/lib/format";
-import { buildAnimeReleaseSearchTerms } from "@shared/anime-release-search";
+import { buildAnimeReleaseSearchTerms, classifyAnimeRelease } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { AddReleaseDownloadInput, AnimeSourceBindingState, AnimeSourceCandidate, EpisodeReleasePreview, ReleaseSearchResult, RssSubscriptionReleaseResult } from "@shared/contracts";
 import type {
@@ -759,7 +759,8 @@ export function MyAnimePage() {
     const linkedTasks = downloadTasks.filter((task) => task.animeId === downloadTarget.anime.id);
     const candidates = dedupeReleases(releases).filter((release) => {
       const canDownload = Boolean(release.magnetUrl ?? release.torrentUrl);
-      return canDownload && !findReleaseDownloadTask(linkedTasks, release);
+      const compatible = classifyAnimeRelease(release, downloadTarget.anime) === "current";
+      return compatible && canDownload && !findReleaseDownloadTask(linkedTasks, release);
     });
     if (candidates.length === 0) {
       setMessage({ tone: "error", text: "选中的资源都已加入或没有可下载地址" });
@@ -1365,7 +1366,7 @@ function DownloadDetailTaskCard({
   task: DownloadTask;
   fansubNames: Map<string, string>;
 }) {
-  const fansubName = task.fansubName ?? (task.fansubGroupId ? fansubNames.get(task.fansubGroupId) : undefined) ?? "未识别字幕组";
+  const fansubName = (task.fansubGroupId ? fansubNames.get(task.fansubGroupId) : undefined) ?? task.fansubName ?? "未识别字幕组";
   const playableFilePath = resolveDownloadTaskFilePath(task, true);
   const revealFilePath = resolveDownloadTaskFilePath(task, false);
   const [activeFileAction, setActiveFileAction] = useState<"play" | "reveal" | null>(null);
@@ -1896,27 +1897,32 @@ function AnimeDownloadPanel({
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(target.anime);
   const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(() => new Set());
+  const [otherResourcesCollapsed, setOtherResourcesCollapsed] = useState(true);
   const [selectedFamilyKeys, setSelectedFamilyKeys] = useState<Set<string>>(() => new Set());
   const [releaseVersionSelections, setReleaseVersionSelections] = useState<Record<string, string>>({});
   const rssReleases = rssGroups.flatMap((group) => group.releases);
   const tabReleases = activeTab === "rss" ? rssReleases : releases;
-  const visibleReleases = filterReleasesByFansub(tabReleases, selectedFansubId);
+  const currentTabReleases = tabReleases.filter((release) => classifyAnimeRelease(release, target.anime) === "current");
+  const otherTabReleases = tabReleases.filter((release) => classifyAnimeRelease(release, target.anime) === "other");
+  const visibleReleases = filterReleasesByFansub(currentTabReleases, selectedFansubId);
+  const visibleOtherReleases = filterReleasesByFansub(otherTabReleases, selectedFansubId);
   const releaseGroups = groupReleasesByFansub(visibleReleases, fansubNames);
   const visibleErrors = activeTab === "rss"
     ? dedupeReleaseErrors(rssGroups.flatMap((group) => group.errors))
     : dedupeReleaseErrors(errors);
   const unknownFansubCount = tabReleases.filter((release) => !release.fansubGroupId).length;
   const activeLoading = activeTab === "rss" ? rssLoading : loading;
-  const sourceFailed = tabReleases.length === 0 && visibleErrors.length > 0;
+  const sourceFailed = currentTabReleases.length === 0 && otherTabReleases.length === 0 && visibleErrors.length > 0;
   const linkedTasks = downloadTasks.filter((task) => task.animeId === target.anime.id);
   const releaseSignature = tabReleases.map(releaseKey).join("|");
-  const tabFamilies = groupReleaseVersions(tabReleases, target.preferredSubtitle, releaseVersionSelections);
+  const tabFamilies = groupReleaseVersions(currentTabReleases, target.preferredSubtitle, releaseVersionSelections);
   const visibleFamilies = groupReleaseVersions(visibleReleases, target.preferredSubtitle, releaseVersionSelections);
+  const visibleOtherFamilies = groupReleaseVersions(visibleOtherReleases, target.preferredSubtitle, releaseVersionSelections);
   const selectedReleases = visibleFamilies
     .filter((family) => selectedFamilyKeys.has(family.key))
     .map((family) => family.selectedRelease);
-  const selectedDownloadableReleases = selectedReleases.filter((release) => isReleaseSelectable(release, linkedTasks));
-  const selectableVisibleFamilies = visibleFamilies.filter((family) => isReleaseSelectable(family.selectedRelease, linkedTasks));
+  const selectedDownloadableReleases = selectedReleases.filter((release) => isReleaseSelectable(release, linkedTasks, target.anime));
+  const selectableVisibleFamilies = visibleFamilies.filter((family) => isReleaseSelectable(family.selectedRelease, linkedTasks, target.anime));
   const allSelectableVisibleSelected = selectableVisibleFamilies.length > 0 &&
     selectableVisibleFamilies.every((family) => selectedFamilyKeys.has(family.key));
   const existingRssUrls = new Set((target.rssSubscriptions ?? []).map((subscription) => subscription.url.trim()).filter(Boolean));
@@ -1980,7 +1986,7 @@ function AnimeDownloadPanel({
   /** 选择或取消指定分组下所有可下载资源。 */
   function toggleGroupFamilies(families: ReleaseVersionFamily[]) {
     const selectableKeys = families
-      .filter((family) => isReleaseSelectable(family.selectedRelease, linkedTasks))
+      .filter((family) => isReleaseSelectable(family.selectedRelease, linkedTasks, target.anime))
       .map((family) => family.key);
     setSelectedFamilyKeys((current) => {
       const next = new Set(current);
@@ -1998,7 +2004,7 @@ function AnimeDownloadPanel({
 
   /** 统计指定分组的可选和已选资源数量。 */
   function getGroupSelectionState(families: ReleaseVersionFamily[]) {
-    const selectable = families.filter((family) => isReleaseSelectable(family.selectedRelease, linkedTasks));
+    const selectable = families.filter((family) => isReleaseSelectable(family.selectedRelease, linkedTasks, target.anime));
     const selectedCount = selectable.filter((family) => selectedFamilyKeys.has(family.key)).length;
     return {
       selectableCount: selectable.length,
@@ -2007,7 +2013,7 @@ function AnimeDownloadPanel({
     };
   }
 
-  function renderEpisodeGroups(groupReleases: Release[]) {
+  function renderEpisodeGroups(groupReleases: Release[], batchSelectable = true) {
     const families = groupReleaseVersions(groupReleases, target.preferredSubtitle, releaseVersionSelections);
     return groupReleaseFamilyEpisodes(families).map((episodeGroup) => (
       <section key={episodeGroup.key}>
@@ -2024,6 +2030,7 @@ function AnimeDownloadPanel({
               <ReleaseDownloadRow
                 key={family.key}
                 addingReleaseId={addingReleaseId}
+                batchSelectable={batchSelectable}
                 fansubNames={fansubNames}
                 family={family}
                 linkedTask={linkedTask}
@@ -2189,7 +2196,10 @@ function AnimeDownloadPanel({
             {activeTab === "rss"
               ? rssGroups.map((group) => {
                   const groupKey = `rss:${group.subscription.id}`;
-                  const groupReleases = filterReleasesByFansub(group.releases, selectedFansubId);
+                  const groupReleases = filterReleasesByFansub(
+                    group.releases.filter((release) => classifyAnimeRelease(release, target.anime) === "current"),
+                    selectedFansubId
+                  );
                   const groupFamilies = groupReleaseVersions(groupReleases, target.preferredSubtitle, releaseVersionSelections);
                   const selection = getGroupSelectionState(groupFamilies);
                   return (
@@ -2259,7 +2269,7 @@ function AnimeDownloadPanel({
                   );
                 })}
 
-            {visibleReleases.length === 0 && (
+            {visibleReleases.length === 0 && visibleOtherReleases.length === 0 && (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
                 {sourceFailed
                   ? activeTab === "rss"
@@ -2271,6 +2281,26 @@ function AnimeDownloadPanel({
                       ? "没有找到 RSS 订阅资源，或尚未配置启用的 RSS 订阅。"
                       : "没有找到可下载资源。"}
               </div>
+            )}
+
+            {visibleOtherReleases.length > 0 && (
+              <section className="overflow-hidden rounded-md border bg-background">
+                <button
+                  className="flex min-h-11 w-full items-center justify-between gap-3 bg-muted/50 px-3 py-2 text-left"
+                  type="button"
+                  onClick={() => setOtherResourcesCollapsed((current) => !current)}
+                >
+                  <span className="flex min-w-0 items-center gap-2">
+                    {otherResourcesCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+                    <span className="font-medium">其他资源</span>
+                    <Badge>{visibleOtherFamilies.length} 个资源</Badge>
+                  </span>
+                  <span className="text-xs text-muted-foreground">季度待确认</span>
+                </button>
+                {!otherResourcesCollapsed && (
+                  <div className="divide-y border-t">{renderEpisodeGroups(visibleOtherReleases, false)}</div>
+                )}
+              </section>
             )}
 
           </div>
@@ -2420,6 +2450,7 @@ interface ReleaseEpisodeFamilyGroup {
 function ReleaseDownloadRow({
   family,
   linkedTask,
+  batchSelectable,
   fansubNames,
   preferredSubtitle,
   selected,
@@ -2430,6 +2461,7 @@ function ReleaseDownloadRow({
 }: {
   family: ReleaseVersionFamily;
   linkedTask?: DownloadTask;
+  batchSelectable: boolean;
   fansubNames: Map<string, string>;
   preferredSubtitle?: SubtitlePreference;
   selected: boolean;
@@ -2440,7 +2472,7 @@ function ReleaseDownloadRow({
 }) {
   const release = family.selectedRelease;
   const canDownload = Boolean(release.magnetUrl ?? release.torrentUrl);
-  const selectable = canDownload && !linkedTask;
+  const selectable = canDownload && !linkedTask && batchSelectable;
 
   return (
     <div className="p-2 sm:p-3 [@media(max-height:760px)]:p-2">
@@ -2464,6 +2496,7 @@ function ReleaseDownloadRow({
               <Badge tone="blue">{release.sourceName}</Badge>
               <Badge>{getReleaseFansubName(release, fansubNames)}</Badge>
               <Badge>{family.episodeLabel}</Badge>
+              {!batchSelectable && <Badge tone="amber">季度待确认</Badge>}
               {release.resolution && <Badge>{release.resolution}</Badge>}
               {release.normalizedVideoCodec && <Badge tone="green">{release.normalizedVideoCodec}</Badge>}
               {release.subtitle && <Badge>{subtitleText[release.subtitle]}</Badge>}
@@ -2604,7 +2637,7 @@ function getReleaseEpisodeKey(release: Release): string {
     return `range:${release.episodeRange.start}-${release.episodeRange.end}`;
   }
   if (release.episodeNo === undefined) {
-    return "unknown";
+    return release.contentKind === "batch" ? `batch:${release.seriesSeasonNo ?? "unknown"}` : "unknown";
   }
   return `episode:${release.episodeNo}`;
 }
@@ -2615,7 +2648,7 @@ function getReleaseEpisodeLabel(release: Release): string {
     return `第 ${formatEpisodeNumber(release.episodeRange.start)}-${formatEpisodeNumber(release.episodeRange.end)} 集`;
   }
   if (release.episodeNo === undefined) {
-    return "未识别集数";
+    return release.contentKind === "batch" ? "合集" : "未识别集数";
   }
   return `第 ${formatEpisodeNumber(release.episodeNo)} 集`;
 }
@@ -3334,8 +3367,10 @@ function findReleaseDownloadTask(tasks: DownloadTask[], release: Release): Downl
 }
 
 /** 判断资源是否可被批量选择下载。 */
-function isReleaseSelectable(release: Release, linkedTasks: DownloadTask[]): boolean {
-  return Boolean(release.magnetUrl ?? release.torrentUrl) && !findReleaseDownloadTask(linkedTasks, release);
+function isReleaseSelectable(release: Release, linkedTasks: DownloadTask[], anime: MyAnime["anime"]): boolean {
+  return classifyAnimeRelease(release, anime) === "current" &&
+    Boolean(release.magnetUrl ?? release.torrentUrl) &&
+    !findReleaseDownloadTask(linkedTasks, release);
 }
 
 function isCompletedDownload(task: DownloadTask): boolean {

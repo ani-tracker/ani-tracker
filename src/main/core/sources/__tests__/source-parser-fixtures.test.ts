@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import type { ReleaseSourceConfig } from "@shared/domain";
+import type { Anime, AnimeSourceBinding, ReleaseSourceConfig } from "@shared/domain";
 import { defaultSourceConfigs } from "../default-source-configs";
 import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
 import { AniBtReleaseSource, createAniBtHeaders, parseAniBtRss } from "../anibt-source";
@@ -339,6 +339,48 @@ test("ReleaseSourceService 过滤 AniBT BGM 搜索返回的其他番剧", async 
 
   assert.equal(result.releases.length, 1);
   assert.match(result.releases[0].title, /凡人修仙传/);
+});
+
+test("ReleaseSourceService 精确来源绑定也会过滤显式旧季度合集", async () => {
+  const httpClient: ReleaseHttpClient = {
+    async fetch() {
+      return new Response(
+        `<rss><channel>
+          <item><title>[字幕组] 测试番 S04E02 [1080p]</title><guid>current-season</guid></item>
+          <item><title>[字幕组] 测试番 10-bit 1080p [S3 Fin]</title><guid>old-season</guid></item>
+        </channel></rss>`
+      );
+    }
+  };
+  const anime: Anime = {
+    id: "anime-season-4",
+    title: "测试番 第四季",
+    originalTitle: "Test Anime 4th Season",
+    aliases: [],
+    premiereYear: 2026,
+    premiereMonth: 4,
+    externalIds: {}
+  };
+  const binding: AnimeSourceBinding = {
+    id: "binding-rss-season-4",
+    animeId: anime.id,
+    sourceId: rssConfig.id,
+    sourceAnimeId: "season-4",
+    sourceAnimeTitle: anime.title,
+    matchMethod: "manual",
+    confidence: 1,
+    confirmed: true,
+    createdAt: "2026-07-16T00:00:00.000Z",
+    updatedAt: "2026-07-16T00:00:00.000Z"
+  };
+
+  const result = await new ReleaseSourceService([rssConfig], [], httpClient).searchAnime(
+    anime,
+    { animeId: anime.id, limit: 10 },
+    [binding]
+  );
+
+  assert.deepEqual(result.releases.map((release) => release.id), [`${rssConfig.id}:current-season`]);
 });
 
 test("parseAcgnxApiResponse 兼容 ACGNX JSON/API 风格响应", () => {

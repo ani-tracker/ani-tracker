@@ -43,8 +43,7 @@ export class EpisodeReleasePreviewService {
     }, bindingState.bindings)];
     const releases = dedupeReleases(searchResults.flatMap((result) => result.releases)).map((release) => ({
       ...release,
-      animeId,
-      episodeNo: release.episodeNo ?? episode.episodeNo
+      animeId
     }));
     await this.repository.observeAnimeFansubs(animeId, releases);
 
