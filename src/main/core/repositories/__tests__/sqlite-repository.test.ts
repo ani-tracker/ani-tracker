@@ -165,6 +165,61 @@ test("SQLite 按番剧保存动态发现的字幕组", async () => {
   second.close();
 });
 
+test("SQLite 刷新及重启时按文件集数修复同名种子的单集关联", async () => {
+  const fixture = await createFixture();
+  const runtime = createRepositoryRuntime(fixture.options);
+  await runtime.initialize();
+  const item = createTestMyAnime();
+  await runtime.repository.upsertMyAnime(item);
+  for (const episodeNo of [1, 2, 3]) {
+    await runtime.repository.upsertEpisode({
+      id: `episode-${item.anime.id}-${episodeNo}`,
+      animeId: item.anime.id,
+      episodeNo,
+      status: "aired"
+    });
+  }
+
+  for (const hash of ["hash-01", "hash-02", "hash-03"]) {
+    await runtime.repository.upsertDownloadTask(createDownloadTask(item.anime.id, hash, 1));
+  }
+  const refreshed = await runtime.repository.mergeDownloadTasksFromEngine(
+    [1, 2, 3].map((episodeNo) => createDownloadTask(item.anime.id, `hash-0${episodeNo}`, undefined, episodeNo))
+  );
+
+  assert.deepEqual(
+    refreshed
+      .map((task) => ({ hash: task.torrentHash, episodeId: task.episodeId, episodeNo: task.episodeNo }))
+      .sort((left, right) => (left.episodeNo ?? 0) - (right.episodeNo ?? 0)),
+    [
+      { hash: "hash-01", episodeId: `episode-${item.anime.id}-1`, episodeNo: 1 },
+      { hash: "hash-02", episodeId: `episode-${item.anime.id}-2`, episodeNo: 2 },
+      { hash: "hash-03", episodeId: `episode-${item.anime.id}-3`, episodeNo: 3 }
+    ]
+  );
+
+  for (const episodeNo of [1, 2, 3]) {
+    await runtime.repository.upsertDownloadTask(
+      createDownloadTask(item.anime.id, `hash-0${episodeNo}`, 1, episodeNo)
+    );
+  }
+  runtime.close();
+
+  const reopened = createRepositoryRuntime(fixture.options);
+  await reopened.initialize();
+  assert.deepEqual(
+    (await reopened.repository.listDownloads())
+      .map((task) => ({ hash: task.torrentHash, episodeId: task.episodeId, episodeNo: task.episodeNo }))
+      .sort((left, right) => (left.episodeNo ?? 0) - (right.episodeNo ?? 0)),
+    [
+      { hash: "hash-01", episodeId: `episode-${item.anime.id}-1`, episodeNo: 1 },
+      { hash: "hash-02", episodeId: `episode-${item.anime.id}-2`, episodeNo: 2 },
+      { hash: "hash-03", episodeId: `episode-${item.anime.id}-3`, episodeNo: 3 }
+    ]
+  );
+  reopened.close();
+});
+
 test("损坏的 SQLite 会阻止启动且不会回退 JSON", async () => {
   const fixture = await createFixture();
   await writeFile(fixture.databasePath, "not a sqlite database", "utf8");
@@ -217,6 +272,42 @@ function createTestMyAnime(): MyAnime {
     rssSubscriptions: [],
     addedAt: timestamp,
     updatedAt: timestamp
+  };
+}
+
+/** 创建同根目录名但文件集数不同的 qBittorrent 任务。 */
+function createDownloadTask(
+  animeId: string,
+  hash: string,
+  episodeNo?: number,
+  fileEpisodeNo = episodeNo ?? 1
+) {
+  return {
+    id: hash,
+    animeId,
+    episodeId: episodeNo === undefined ? undefined : `episode-${animeId}-${episodeNo}`,
+    episodeNo,
+    correlationTag: "ani-tracker-shared-tag",
+    engine: "qbittorrent" as const,
+    torrentHash: hash,
+    name: "Same torrent root name",
+    status: "seeding" as const,
+    progress: 1,
+    downloadSpeed: 0,
+    uploadSpeed: 0,
+    savePath: "/downloads/anime",
+    files: [
+      {
+        id: `${hash}:0`,
+        index: 0,
+        name: `Same torrent root name/Series S03E0${fileEpisodeNo}.mkv`,
+        size: 1024,
+        progress: 1,
+        priority: 1,
+        selected: true
+      }
+    ],
+    createdAt: "2026-07-16T00:00:00.000Z"
   };
 }
 

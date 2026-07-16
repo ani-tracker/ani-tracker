@@ -20,6 +20,7 @@ import type {
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import { logger } from "../logger";
+import { inferDownloadTaskEpisodeNo } from "../downloads/download-episode-resolver";
 import { mergeAnimeMetadataBatches } from "../metadata/metadata-provider";
 import { defaultSourceConfigs } from "../sources/default-source-configs";
 import { createDefaultSettingsProvider, type DefaultSettingsProvider } from "../platform/default-settings-provider";
@@ -375,22 +376,32 @@ export class SqliteAppRepository implements AppRepository {
   async mergeDownloadTasksFromEngine(tasks: DownloadTask[]): Promise<DownloadTask[]> {
     const current = await this.listDownloads();
     const merged = tasks.map((task) => {
-      const existing = findExistingDownloadTask(current, task);
+      const inferredEpisodeNo = inferDownloadTaskEpisodeNo(task);
+      const engineTask = inferredEpisodeNo === undefined ? task : { ...task, episodeNo: inferredEpisodeNo };
+      const existing = findExistingDownloadTask(current, engineTask);
+      if (existing && inferredEpisodeNo !== undefined && existing.episodeNo !== inferredEpisodeNo) {
+        logger.info("Download task episode corrected from torrent files", {
+          taskId: task.id,
+          torrentHash: task.torrentHash,
+          previousEpisodeNo: existing.episodeNo,
+          inferredEpisodeNo
+        });
+      }
       return existing
         ? {
-            ...task,
+            ...engineTask,
             releaseId: existing.releaseId,
             animeId: existing.animeId,
             episodeId: existing.episodeId,
             animeTitle: existing.animeTitle,
-            episodeNo: existing.episodeNo,
+            episodeNo: inferredEpisodeNo ?? existing.episodeNo,
             fansubGroupId: existing.fansubGroupId,
             fansubName: existing.fansubName,
-            correlationTag: existing.correlationTag ?? task.correlationTag,
+            correlationTag: task.correlationTag ?? existing.correlationTag,
             createdAt: existing.createdAt,
             completedAt: task.completedAt ?? existing.completedAt
           }
-        : task;
+        : engineTask;
     });
     const inactive = current.filter((task) => !isEngineTaskCovered(merged, task));
     await this.replaceDownloadsAndSyncEpisodes([...merged, ...inactive]);
@@ -561,6 +572,7 @@ export class SqliteAppRepository implements AppRepository {
           toVersion: APP_DATA_VERSION
         });
       }
+      this.repairStoredDownloadEpisodeMetadata();
     }
     logger.info("SQLite repository initialized", { path: this.databasePath, schemaVersion: SQLITE_SCHEMA_VERSION });
   }
@@ -1001,8 +1013,9 @@ export class SqliteAppRepository implements AppRepository {
 
   private async replaceDownloadsAndSyncEpisodes(downloads: DownloadTask[]): Promise<void> {
     this.transaction(() => {
-      downloads.forEach((task) => this.upsertDownload(task));
-      const keepIds = new Set(downloads.map((task) => task.id));
+      const normalizedDownloads = downloads.map((task) => this.normalizeDownloadEpisodeLink(task));
+      normalizedDownloads.forEach((task) => this.upsertDownload(task));
+      const keepIds = new Set(normalizedDownloads.map((task) => task.id));
       for (const row of this.all("SELECT id FROM download_task")) {
         const id = asString(row.id);
         if (!keepIds.has(id)) {
@@ -1011,6 +1024,76 @@ export class SqliteAppRepository implements AppRepository {
       }
     });
     await this.syncEpisodesFromCurrentDownloads();
+  }
+
+  /** 启动时根据已保存的视频文件名修复历史下载任务的错误集数关联。 */
+  private repairStoredDownloadEpisodeMetadata(): void {
+    const current = this.readDownloadsSync();
+    let repairedCount = 0;
+
+    this.transaction(() => {
+      for (const task of current) {
+        const inferredEpisodeNo = inferDownloadTaskEpisodeNo(task);
+        if (!task.animeId || inferredEpisodeNo === undefined) {
+          continue;
+        }
+
+        const normalized = this.normalizeDownloadEpisodeLink({ ...task, episodeNo: inferredEpisodeNo });
+        if (task.episodeNo === normalized.episodeNo && task.episodeId === normalized.episodeId) {
+          continue;
+        }
+
+        this.upsertDownload(normalized);
+        repairedCount += 1;
+      }
+    });
+
+    if (repairedCount > 0) {
+      const snapshot = this.readSnapshot();
+      syncEpisodeStatusesFromDownloads(snapshot);
+      this.transaction(() => snapshot.episodes.forEach((episode) => this.upsertEpisodeRow(episode)));
+      logger.info("Stored download episode metadata repaired", { repairedCount });
+    }
+  }
+
+  /** 根据番剧和集数修正下载任务的单集关联，缺失单集时自动补建。 */
+  private normalizeDownloadEpisodeLink(task: DownloadTask): DownloadTask {
+    if (!task.animeId || task.episodeNo === undefined) {
+      return task;
+    }
+
+    const episodeByNumber = this.get(
+      "SELECT id FROM episode WHERE anime_id = @animeId AND episode_no = @episodeNo",
+      { animeId: task.animeId, episodeNo: task.episodeNo }
+    );
+    if (episodeByNumber) {
+      const episodeId = asString(episodeByNumber.id);
+      if (task.episodeId !== episodeId) {
+        logger.info("Download task episode link repaired", {
+          taskId: task.id,
+          animeId: task.animeId,
+          previousEpisodeId: task.episodeId,
+          episodeId,
+          episodeNo: task.episodeNo
+        });
+      }
+      return { ...task, episodeId };
+    }
+
+    const episodeId = createDownloadEpisodeId(task.animeId, task.episodeNo);
+    this.upsertEpisodeRow({
+      id: episodeId,
+      animeId: task.animeId,
+      episodeNo: task.episodeNo,
+      status: resolveEpisodeStatusFromDownload(task.status)
+    });
+    logger.info("Episode created from download task metadata", {
+      taskId: task.id,
+      animeId: task.animeId,
+      episodeId,
+      episodeNo: task.episodeNo
+    });
+    return { ...task, episodeId };
   }
 
   private async syncEpisodesFromCurrentDownloads(): Promise<void> {
@@ -1198,6 +1281,16 @@ function mapTorrentFile(row: SqliteRow): { downloadTaskId: string; file: Torrent
   return { downloadTaskId: asString(row.download_task_id), file: { id: asString(row.id), index: Number(row.file_index),
     name: asString(row.name), size: Number(row.size), progress: Number(row.progress), priority: Number(row.priority),
     selected: toBoolean(row.selected) } };
+}
+
+/** 为下载任务自动补建的单集生成稳定 ID。 */
+function createDownloadEpisodeId(animeId: string, episodeNo: number): string {
+  return `episode-${animeId}-${String(episodeNo).replace(".", "-")}`;
+}
+
+/** 根据当前下载状态设置新建单集的初始状态。 */
+function resolveEpisodeStatusFromDownload(status: DownloadStatus): Episode["status"] {
+  return status === "completed" || status === "seeding" ? "downloaded" : "downloading";
 }
 
 function mapMediaFile(row: SqliteRow): MediaFile {

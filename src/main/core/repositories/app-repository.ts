@@ -65,36 +65,61 @@ export function findExistingDownloadTask(
   existingTasks: DownloadTask[],
   incoming: DownloadTask
 ): DownloadTask | undefined {
-  return existingTasks.find((task) => {
-    if (incoming.correlationTag && task.correlationTag === incoming.correlationTag) {
-      return true;
+  if (incoming.torrentHash) {
+    const hashMatch = existingTasks.find((task) => task.torrentHash === incoming.torrentHash);
+    if (hashMatch) {
+      return hashMatch;
     }
+  }
 
-    if (incoming.torrentHash && task.torrentHash === incoming.torrentHash) {
-      return true;
+  const idMatch = existingTasks.find((task) => task.id === incoming.id);
+  if (idMatch) {
+    return idMatch;
+  }
+
+  if (incoming.correlationTag) {
+    const correlationMatch = findUniqueDownloadTask(
+      existingTasks,
+      (task) => task.correlationTag === incoming.correlationTag && canUseWeakDownloadIdentity(task, incoming)
+    );
+    if (correlationMatch) {
+      return correlationMatch;
     }
+  }
 
-    if (task.id === incoming.id) {
-      return true;
+  const sameNameTasks = existingTasks.filter(
+    (task) => task.name === incoming.name && canUseWeakDownloadIdentity(task, incoming)
+  );
+  if (incoming.episodeNo !== undefined) {
+    const episodeMatch = findUniqueDownloadTask(
+      sameNameTasks,
+      (task) => task.episodeNo === incoming.episodeNo
+    );
+    if (episodeMatch) {
+      return episodeMatch;
     }
+  }
 
-    return task.name === incoming.name;
-  });
+  return sameNameTasks.length === 1 ? sameNameTasks[0] : undefined;
 }
 
 /** 判断本地任务是否仍被下载引擎结果覆盖。 */
 export function isEngineTaskCovered(engineTasks: DownloadTask[], existing: DownloadTask): boolean {
-  return engineTasks.some((task) => {
-    if (existing.correlationTag && task.correlationTag === existing.correlationTag) {
-      return true;
-    }
+  return findExistingDownloadTask(engineTasks, existing) !== undefined;
+}
 
-    if (existing.torrentHash && task.torrentHash === existing.torrentHash) {
-      return true;
-    }
+/** 按条件查找唯一下载任务，避免非唯一弱标识串联不同种子。 */
+function findUniqueDownloadTask(
+  tasks: DownloadTask[],
+  predicate: (task: DownloadTask) => boolean
+): DownloadTask | undefined {
+  const matches = tasks.filter(predicate);
+  return matches.length === 1 ? matches[0] : undefined;
+}
 
-    return task.id === existing.id || task.name === existing.name;
-  });
+/** 仅允许尚未获得哈希的一侧使用标签或名称完成首次关联。 */
+function canUseWeakDownloadIdentity(left: DownloadTask, right: DownloadTask): boolean {
+  return !left.torrentHash || !right.torrentHash;
 }
 
 /** 下载引擎刷新后同步关联单集的生命周期状态。 */
