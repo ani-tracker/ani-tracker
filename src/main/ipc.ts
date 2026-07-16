@@ -418,7 +418,8 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     await new PlayerLauncherService(settings).play(filePath, profileId);
   });
   ipcMain.handle("media:reveal", async (_event, filePath: string) => {
-    PlayerLauncherService.reveal(filePath);
+    const settings = await repository.getSettings();
+    await new PlayerLauncherService(settings).reveal(filePath);
   });
   ipcMain.handle("platform:openExternal", (_event, url: string) => shell.openExternal(url));
 }

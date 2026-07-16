@@ -30,7 +30,7 @@ test("MacDefaultSettingsProvider 生成 macOS 默认目录和 IINA 播放器模�
     id: "iina",
     name: "IINA",
     executablePath: "/Applications/IINA.app/Contents/MacOS/iina-cli",
-    argumentTemplate: "\"{file}\"",
+    argumentTemplate: "--no-stdin \"{file}\"",
     supportsMadVr: false,
     platform: "macos"
   });

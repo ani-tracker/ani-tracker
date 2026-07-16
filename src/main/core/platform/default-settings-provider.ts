@@ -99,7 +99,7 @@ export class MacDefaultSettingsProvider extends DefaultSettingsProvider {
         id: "iina",
         name: "IINA",
         executablePath: "/Applications/IINA.app/Contents/MacOS/iina-cli",
-        argumentTemplate: "\"{file}\"",
+        argumentTemplate: "--no-stdin \"{file}\"",
         supportsMadVr: false,
         platform: "macos"
       },
