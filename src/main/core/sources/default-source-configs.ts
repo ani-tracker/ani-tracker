@@ -6,7 +6,7 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     id: "mikan",
     name: "蜜柑计划 RSS",
     kind: "rss",
-    enabled: true,
+    enabled: false,
     rssUrl: "https://mikanani.me/RSS/Bangumi",
     tags: ["anime", "rss"]
   },
@@ -30,7 +30,7 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     id: "anibt",
     name: "AniBT",
     kind: "site_adapter",
-    enabled: false,
+    enabled: true,
     baseUrl: "https://anibt.net/",
     tags: ["anime", "bt", "anibt", "rss"]
   },

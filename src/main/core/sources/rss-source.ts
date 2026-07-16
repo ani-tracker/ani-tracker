@@ -100,6 +100,7 @@ export class RssReleaseSource implements ReleaseSource {
     const torrentLink = textValue(item.torrent?.link);
     const magnetUrl = [link, enclosureUrl, torrentLink].find(isMagnet);
     const torrentUrl = [enclosureUrl, torrentLink, link].find(isTorrentDownloadUrl);
+    const sourceMeta = buildRssSourceMeta(this.config.rssUrl, link);
 
     return {
       id: `${this.config.id}:${textValue(item.guid) ?? magnetUrl ?? torrentUrl ?? link ?? title}`,
@@ -114,8 +115,47 @@ export class RssReleaseSource implements ReleaseSource {
         textValue(item.published) ??
         textValue(item.updated) ??
         textValue(item.torrent?.pubDate) ??
-        new Date().toISOString()
+        new Date().toISOString(),
+      sourceMeta
     };
+  }
+}
+
+/** 根据 RSS 地址保留可复用的来源元信息。 */
+function buildRssSourceMeta(rssUrl?: string, sourceUrl?: string): Release["sourceMeta"] {
+  if (!rssUrl && !sourceUrl) {
+    return undefined;
+  }
+
+  const mikanMeta = parseMikanRssMeta(rssUrl);
+  return {
+    sourceUrl,
+    rssUrl,
+    ...mikanMeta
+  };
+}
+
+function parseMikanRssMeta(rssUrl?: string): Pick<NonNullable<Release["sourceMeta"]>, "mikanBangumiId" | "mikanSubgroupId"> {
+  if (!rssUrl) {
+    return {};
+  }
+
+  try {
+    const url = new URL(rssUrl);
+    const hostname = url.hostname.toLowerCase();
+    if (hostname !== "mikanani.me" && !hostname.endsWith(".mikanani.me")) {
+      return {};
+    }
+    if (!url.pathname.toLowerCase().includes("/rss/bangumi")) {
+      return {};
+    }
+
+    return {
+      mikanBangumiId: url.searchParams.get("bangumiId") ?? undefined,
+      mikanSubgroupId: url.searchParams.get("subgroupid") ?? undefined
+    };
+  } catch {
+    return {};
   }
 }
 

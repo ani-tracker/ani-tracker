@@ -1,7 +1,8 @@
 import type { AnimeSourceCandidate, ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Anime, Release, ReleaseSourceConfig } from "@shared/domain";
-import { enrichReleaseFromTitle } from "../releases/release-title-parser";
+import { enrichReleaseFromTitle, normalizeFansubName } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
+import { logger } from "../logger";
 import { defaultMetadataHttpClient, type MetadataFetchOptions } from "../metadata/metadata-http-client";
 import { parseMikanSeasonHtml } from "../metadata/mikan-metadata-provider";
 import { RssReleaseSource } from "./rss-source";
@@ -11,6 +12,12 @@ const MIKAN_FETCH_TIMEOUT_MS = 10_000;
 
 export interface ReleaseHttpClient {
   fetch(input: string | URL, options?: MetadataFetchOptions): Promise<Response>;
+}
+
+export interface MikanSubgroup {
+  id: string;
+  name: string;
+  rssUrl: string;
 }
 
 export class MikanReleaseSource implements ReleaseSource {
@@ -52,7 +59,9 @@ export class MikanReleaseSource implements ReleaseSource {
       },
       this.httpClient
     );
-    return source.searchReleases({ keyword: "", limit });
+    const releases = await source.searchReleases({ keyword: "", limit });
+    const subgroups = await this.readAnimeSubgroups(sourceAnimeId);
+    return attachMikanSubgroupMeta(releases, sourceAnimeId, subgroups, this.config);
   }
 
   /** 从 Mikan 对应季度目录查找待确认番剧。 */
@@ -71,6 +80,21 @@ export class MikanReleaseSource implements ReleaseSource {
       premiereMonth: getSeasonStartMonth(anime.premiereMonth),
       sourceUrl: candidate.detailUrl
     }));
+  }
+
+  /** 读取番剧详情页中的字幕组 RSS 映射，失败时不阻断资源搜索。 */
+  private async readAnimeSubgroups(sourceAnimeId: string): Promise<MikanSubgroup[]> {
+    const url = new URL(`/Home/Bangumi/${encodeURIComponent(sourceAnimeId)}`, getMikanBaseUrl(this.config));
+    try {
+      const html = await fetchText(url.toString(), this.httpClient);
+      return parseMikanSubgroups(html, this.config, sourceAnimeId);
+    } catch (error) {
+      logger.warn("Mikan 字幕组 RSS 映射读取失败", {
+        sourceAnimeId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+      return [];
+    }
   }
 }
 
@@ -109,6 +133,82 @@ export function parseMikanReleaseList(html: string, config: ReleaseSourceConfig)
   }
 
   return parseMikanReleaseAnchors(html, config).map((release) => enrichReleaseFromTitle(release));
+}
+
+/** 从 Mikan 番剧详情页解析字幕组 ID、名称和对应 RSS 地址。 */
+export function parseMikanSubgroups(html: string, config: ReleaseSourceConfig, sourceAnimeId?: string): MikanSubgroup[] {
+  const groups = new Map<string, MikanSubgroup>();
+  const patterns = [
+    /<a\b[^>]*class=["'][^"']*\bsubgroup-name\b[^"']*\bsubgroup-(\d+)\b[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi,
+    /<div\b[^>]*class=["'][^"']*\bsubgroup-text\b[^"']*["'][^>]*\bid=["'](\d+)["'][^>]*>\s*<a\b[^>]*href=["'][^"']*\/Home\/PublishGroup\/\d+[^"']*["'][^>]*>([\s\S]*?)<\/a>/gi
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of html.matchAll(pattern)) {
+      const id = match[1]?.trim();
+      const name = normalizeText(stripTags(match[2] ?? ""));
+      if (!id || !name || groups.has(id)) {
+        continue;
+      }
+
+      groups.set(id, {
+        id,
+        name,
+        rssUrl: buildMikanSubgroupRssUrl(config, sourceAnimeId ?? parseMikanBangumiId(html), id)
+      });
+    }
+  }
+
+  return [...groups.values()];
+}
+
+/** 给 Mikan RSS 资源补充番剧和字幕组级订阅元信息。 */
+function attachMikanSubgroupMeta(
+  releases: Release[],
+  sourceAnimeId: string,
+  subgroups: MikanSubgroup[],
+  config: ReleaseSourceConfig
+): Release[] {
+  const subgroupByName = new Map(
+    subgroups.map((group) => [normalizeFansubName(group.name), group])
+  );
+  const animeRssUrl = buildMikanAnimeRssUrl(config, sourceAnimeId);
+
+  return releases.map((release) => {
+    const subgroup = release.fansubName
+      ? subgroupByName.get(normalizeFansubName(release.fansubName))
+      : undefined;
+    return {
+      ...release,
+      sourceMeta: {
+        ...release.sourceMeta,
+        rssUrl: subgroup?.rssUrl ?? release.sourceMeta?.rssUrl ?? animeRssUrl,
+        mikanBangumiId: sourceAnimeId,
+        mikanSubgroupId: subgroup?.id,
+        mikanSubgroupName: subgroup?.name
+      }
+    };
+  });
+}
+
+function buildMikanAnimeRssUrl(config: ReleaseSourceConfig, sourceAnimeId: string): string {
+  const url = new URL("/RSS/Bangumi", getMikanBaseUrl(config));
+  url.searchParams.set("bangumiId", sourceAnimeId);
+  return url.toString();
+}
+
+function buildMikanSubgroupRssUrl(config: ReleaseSourceConfig, sourceAnimeId: string | undefined, subgroupId: string): string {
+  const url = new URL("/RSS/Bangumi", getMikanBaseUrl(config));
+  if (sourceAnimeId) {
+    url.searchParams.set("bangumiId", sourceAnimeId);
+  }
+  url.searchParams.set("subgroupid", subgroupId);
+  return url.toString();
+}
+
+function parseMikanBangumiId(html: string): string | undefined {
+  return html.match(/data-bangumiid=["'](\d+)["']/i)?.[1] ??
+    html.match(/\/RSS\/Bangumi\?[^"']*\bbangumiId=(\d+)/i)?.[1];
 }
 
 function parseMikanReleaseRow(row: string, config: ReleaseSourceConfig, index: number): Release | null {

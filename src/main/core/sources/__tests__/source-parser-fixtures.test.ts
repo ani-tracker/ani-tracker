@@ -5,7 +5,7 @@ import { defaultSourceConfigs } from "../default-source-configs";
 import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
 import { AniBtReleaseSource, createAniBtHeaders, parseAniBtRss } from "../anibt-source";
 import { parseDmhyList } from "../dmhy-source";
-import { MikanReleaseSource, parseMikanReleaseList, type ReleaseHttpClient } from "../mikan-source";
+import { MikanReleaseSource, parseMikanReleaseList, parseMikanSubgroups, type ReleaseHttpClient } from "../mikan-source";
 import { createReleaseSource, ReleaseSourceService } from "../release-source-service";
 import { RssReleaseSource } from "../rss-source";
 import { TorznabReleaseSource } from "../torznab-source";
@@ -66,7 +66,7 @@ test("默认下载源包含 AniBT 和 ACGNX 且可创建站点适配器", () => 
 
   assert.ok(anibt);
   assert.ok(acgnx);
-  assert.equal(anibt.enabled, false);
+  assert.equal(anibt.enabled, true);
   assert.equal(acgnx.enabled, false);
   assert.equal(createReleaseSource(anibt)?.config.id, "anibt");
   assert.equal(createReleaseSource(acgnx)?.config.id, "acgnx");
@@ -144,6 +144,26 @@ test("parseMikanReleaseList 在只有 Episode 链接时兜底生成 torrent 地�
   assert.equal(releases[0].torrentUrl, "https://mikanani.me/Download/789.torrent");
   assert.equal(releases[0].episodeNo, 3);
   assert.equal(releases[0].resolution, "720p");
+});
+
+test("parseMikanSubgroups 解析番剧页字幕组 RSS 地址", () => {
+  const groups = parseMikanSubgroups(
+    `
+      <p class="bangumi-title">测试番 <a href="/RSS/Bangumi?bangumiId=3941" class="mikan-rss"></a></p>
+      <a class="subgroup-name subgroup-370" data-anchor="#370">LoliHouse</a>
+      <div class="subgroup-text" id="382">
+        <a href="/Home/PublishGroup/233">喵萌奶茶屋</a>
+        <a href="/RSS/Bangumi?bangumiId=3941&subgroupid=382" class="mikan-rss"></a>
+      </div>
+    `,
+    mikanConfig,
+    "3941"
+  );
+
+  assert.equal(groups.length, 2);
+  assert.deepEqual(groups.map((group) => group.id), ["370", "382"]);
+  assert.equal(groups[0].rssUrl, "https://mikanani.me/RSS/Bangumi?bangumiId=3941&subgroupid=370");
+  assert.equal(groups[1].name, "喵萌奶茶屋");
 });
 
 test("MikanReleaseSource 使用注入 HTTP client 请求搜索页", async () => {
@@ -277,13 +297,19 @@ test("Mikan 按已绑定番组 ID 精确读取 RSS", async () => {
   const httpClient: ReleaseHttpClient = {
     async fetch(input) {
       inputs.push(String(input));
-      return new Response("<rss><channel><item><title>测试番 - 01</title><guid>mikan-exact-1</guid></item></channel></rss>");
+      if (String(input).includes("/Home/Bangumi/3941")) {
+        return new Response('<a class="subgroup-name subgroup-382" data-anchor="#382">喵萌奶茶屋</a>');
+      }
+      return new Response("<rss><channel><item><title>[喵萌奶茶屋] 测试番 - 01</title><guid>mikan-exact-1</guid></item></channel></rss>");
     }
   };
 
   const releases = await new MikanReleaseSource(mikanConfig, httpClient).listReleasesByAnimeId("3941", 25);
   assert.equal(inputs[0], "https://mikanani.me/RSS/Bangumi?bangumiId=3941");
   assert.equal(releases.length, 1);
+  assert.equal(releases[0].sourceMeta?.mikanBangumiId, "3941");
+  assert.equal(releases[0].sourceMeta?.mikanSubgroupId, "382");
+  assert.equal(releases[0].sourceMeta?.rssUrl, "https://mikanani.me/RSS/Bangumi?bangumiId=3941&subgroupid=382");
 });
 
 test("ReleaseSourceService 过滤 AniBT BGM 搜索返回的其他番剧", async (t) => {

@@ -137,6 +137,14 @@ export interface ReleaseSourceConfig {
   tags?: string[];
 }
 
+export interface ReleaseSourceMeta {
+  sourceUrl?: string;
+  rssUrl?: string;
+  mikanBangumiId?: string;
+  mikanSubgroupId?: string;
+  mikanSubgroupName?: string;
+}
+
 export interface Release {
   id: string;
   title: string;
@@ -156,6 +164,7 @@ export interface Release {
   subtitle?: SubtitlePreference;
   publishedAt: string;
   seeders?: number;
+  sourceMeta?: ReleaseSourceMeta;
 }
 
 export interface TorrentFile {

@@ -367,7 +367,10 @@ function normalizeCacheTtlMs(value: number | undefined): number {
 function cloneSearchResult(result: ReleaseSearchResult, queryOverride?: ReleaseQuery): ReleaseSearchResult {
   return {
     query: { ...(queryOverride ?? result.query) },
-    releases: result.releases.map((release) => ({ ...release })),
+    releases: result.releases.map((release) => ({
+      ...release,
+      sourceMeta: release.sourceMeta ? { ...release.sourceMeta } : undefined
+    })),
     searchedSourceIds: [...result.searchedSourceIds],
     errors: result.errors.map((error) => ({ ...error }))
   };

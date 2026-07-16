@@ -1,4 +1,4 @@
-import { CalendarDays, Check, ChevronDown, ChevronRight, Download, ImageOff, Link2, MoreHorizontal, Plus, RefreshCw, Save, Search, SlidersHorizontal, Star, Trash2, Unlink, X } from "lucide-react";
+import { CalendarDays, Check, ChevronDown, ChevronRight, Download, FolderOpen, ImageOff, Link2, MoreHorizontal, Play, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Star, Trash2, Unlink, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Panel } from "@/components/panel";
 import { Badge } from "@/components/ui/badge";
@@ -80,6 +80,11 @@ interface RssReleaseGroupState {
   subscription: AnimeRssSubscription;
   releases: Release[];
   errors: RssSubscriptionReleaseResult["errors"];
+}
+
+interface RssSubscriptionDraft {
+  name: string;
+  url: string;
 }
 
 const downloadDetailFilters: Array<{ value: AnimeDownloadDetailFilter; label: string }> = [
@@ -634,6 +639,65 @@ export function MyAnimePage() {
     }
   }
 
+  /** 将资源分组推导出的 RSS 地址保存到当前追番。 */
+  async function addAnimeRssSubscription(subscriptionDraft: RssSubscriptionDraft) {
+    if (!downloadTarget) {
+      return;
+    }
+
+    const url = subscriptionDraft.url.trim();
+    if (!url) {
+      setMessage({ tone: "error", text: "RSS 地址为空，无法订阅" });
+      return;
+    }
+
+    const existingSubscriptions = downloadTarget.rssSubscriptions ?? [];
+    if (existingSubscriptions.some((subscription) => subscription.url.trim() === url)) {
+      setMessage({ tone: "success", text: "该 RSS 已在当前追番订阅中" });
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const nextTarget: MyAnime = {
+      ...downloadTarget,
+      rssSubscriptions: normalizeRssSubscriptions(
+        {
+          ...downloadTarget,
+          rssSubscriptions: [
+            ...existingSubscriptions,
+            {
+              id: createId("rss"),
+              myAnimeId: downloadTarget.id,
+              name: subscriptionDraft.name.trim() || "RSS订阅",
+              url,
+              enabled: true,
+              createdAt: now,
+              updatedAt: now
+            }
+          ]
+        },
+        now
+      ),
+      updatedAt: now
+    };
+
+    try {
+      const updatedItems = await appApi.upsertMyAnime(nextTarget);
+      const savedTarget = updatedItems.find((item) => item.id === downloadTarget.id) ?? nextTarget;
+      setItems(updatedItems);
+      setDownloadTarget(cloneMyAnime(savedTarget));
+      setMessage({ tone: "success", text: `已添加 RSS 订阅：${subscriptionDraft.name}` });
+      if (downloadResourceTab === "rss") {
+        void searchAnimeRssReleases(savedTarget);
+      }
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "添加 RSS 订阅失败"
+      });
+    }
+  }
+
   async function addEpisodeReleaseDownload(episode: Episode, release: Release) {
     setAddingReleaseId(release.id);
     try {
@@ -833,6 +897,7 @@ export function MyAnimePage() {
             sourceBindingState={sourceBindingState}
             target={downloadTarget}
             onAddRelease={(release) => void addAnimeReleaseDownload(release)}
+            onAddRssSubscription={(subscription) => void addAnimeRssSubscription(subscription)}
             onAddSelected={(releases) => void addAnimeReleaseDownloads(releases)}
             onClose={closeAnimeDownloads}
             onFansubChange={setAnimeReleaseFansubId}
@@ -1299,6 +1364,32 @@ function DownloadDetailTaskCard({
   fansubNames: Map<string, string>;
 }) {
   const fansubName = task.fansubName ?? (task.fansubGroupId ? fansubNames.get(task.fansubGroupId) : undefined) ?? "未识别字幕组";
+  const playableFilePath = resolveDownloadTaskFilePath(task, true);
+  const revealFilePath = resolveDownloadTaskFilePath(task, false);
+  const [activeFileAction, setActiveFileAction] = useState<"play" | "reveal" | null>(null);
+  const [fileActionError, setFileActionError] = useState<string | null>(null);
+
+  /** 播放已完成视频或在文件管理器中定位下载文件。 */
+  async function runFileAction(action: "play" | "reveal") {
+    const filePath = action === "play" ? playableFilePath : revealFilePath;
+    if (!filePath) {
+      return;
+    }
+
+    setActiveFileAction(action);
+    try {
+      if (action === "play") {
+        await appApi.playMedia(filePath);
+      } else {
+        await appApi.revealMedia(filePath);
+      }
+      setFileActionError(null);
+    } catch (error) {
+      setFileActionError(error instanceof Error ? error.message : action === "play" ? "播放失败" : "打开目录失败");
+    } finally {
+      setActiveFileAction(null);
+    }
+  }
 
   return (
     <article className="rounded-md border bg-background p-4">
@@ -1327,6 +1418,36 @@ function DownloadDetailTaskCard({
         <DownloadDetailMeta label="下载速度" value={formatSpeedText(task.downloadSpeed)} />
         <DownloadDetailMeta label="上传速度" value={formatSpeedText(task.uploadSpeed)} />
       </dl>
+
+      {isCompletedDownload(task) && (
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+          <span className="min-w-0 text-xs text-rose-600">{fileActionError}</span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              className="h-8 px-2 text-xs"
+              variant="outline"
+              aria-label="播放已完成视频"
+              title={playableFilePath ? "播放已完成视频" : "未找到可播放的视频文件"}
+              disabled={!playableFilePath || activeFileAction !== null}
+              onClick={() => void runFileAction("play")}
+            >
+              <Play className="h-3.5 w-3.5" />
+              播放
+            </Button>
+            <Button
+              className="h-8 px-2 text-xs"
+              variant="outline"
+              aria-label="打开文件目录"
+              title={revealFilePath ? "打开文件所在目录" : "未找到已完成文件"}
+              disabled={!revealFilePath || activeFileAction !== null}
+              onClick={() => void runFileAction("reveal")}
+            >
+              <FolderOpen className="h-3.5 w-3.5" />
+              打开目录
+            </Button>
+          </div>
+        </div>
+      )}
     </article>
   );
 }
@@ -1719,6 +1840,7 @@ function AnimeDownloadPanel({
   onRefresh,
   onForceRefresh,
   onAddRelease,
+  onAddRssSubscription,
   onAddSelected,
   onClose
 }: {
@@ -1749,6 +1871,7 @@ function AnimeDownloadPanel({
   onRefresh: () => void;
   onForceRefresh: () => void;
   onAddRelease: (release: Release) => void;
+  onAddRssSubscription: (subscription: RssSubscriptionDraft) => void;
   onAddSelected: (releases: Release[]) => void;
   onClose: () => void;
 }) {
@@ -1772,6 +1895,7 @@ function AnimeDownloadPanel({
   const selectableVisibleReleases = visibleReleases.filter((release) => isReleaseSelectable(release, linkedTasks));
   const allSelectableVisibleSelected = selectableVisibleReleases.length > 0 &&
     selectableVisibleReleases.every((release) => selectedReleaseKeys.has(releaseKey(release)));
+  const existingRssUrls = new Set((target.rssSubscriptions ?? []).map((subscription) => subscription.url.trim()).filter(Boolean));
 
   useEffect(() => {
     setSelectedReleaseKeys(new Set());
@@ -1819,6 +1943,36 @@ function AnimeDownloadPanel({
       }
       return next;
     });
+  }
+
+  /** 选择或取消指定分组下所有可下载资源。 */
+  function toggleGroupReleases(groupReleases: Release[]) {
+    const selectableKeys = groupReleases
+      .filter((release) => isReleaseSelectable(release, linkedTasks))
+      .map(releaseKey);
+    setSelectedReleaseKeys((current) => {
+      const next = new Set(current);
+      const allSelected = selectableKeys.length > 0 && selectableKeys.every((key) => next.has(key));
+      for (const key of selectableKeys) {
+        if (allSelected) {
+          next.delete(key);
+        } else {
+          next.add(key);
+        }
+      }
+      return next;
+    });
+  }
+
+  /** 统计指定分组的可选和已选资源数量。 */
+  function getGroupSelectionState(groupReleases: Release[]) {
+    const selectable = groupReleases.filter((release) => isReleaseSelectable(release, linkedTasks));
+    const selectedCount = selectable.filter((release) => selectedReleaseKeys.has(releaseKey(release))).length;
+    return {
+      selectableCount: selectable.length,
+      selectedCount,
+      allSelected: selectable.length > 0 && selectedCount === selectable.length
+    };
   }
 
   function renderEpisodeGroups(groupReleases: Release[]) {
@@ -2001,26 +2155,23 @@ function AnimeDownloadPanel({
               ? rssGroups.map((group) => {
                   const groupKey = `rss:${group.subscription.id}`;
                   const groupReleases = filterReleasesByFansub(group.releases, selectedFansubId);
+                  const selection = getGroupSelectionState(groupReleases);
                   return (
                     <section key={group.subscription.id} className="overflow-hidden rounded-md border bg-background">
-                      <button
-                        className="flex w-full items-center justify-between border-b bg-muted/70 px-3 py-2 text-left hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/25"
-                        type="button"
-                        onClick={() => toggleGroup(groupKey)}
-                        aria-expanded={!collapsedGroupKeys.has(groupKey)}
+                      <ReleaseGroupHeader
+                        allSelected={selection.allSelected}
+                        badgeText={`${groupReleases.length} 个资源`}
+                        collapsed={collapsedGroupKeys.has(groupKey)}
+                        episodeCount={countEpisodes(groupReleases)}
+                        name={group.subscription.name}
+                        rssSubscribed={false}
+                        selectableCount={selection.selectableCount}
+                        selectedCount={selection.selectedCount}
                         title={group.subscription.url}
-                      >
-                        <div className="flex min-w-0 items-center gap-2">
-                          {collapsedGroupKeys.has(groupKey) ? (
-                            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          ) : (
-                            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                          )}
-                          <span className="truncate text-sm font-semibold">{group.subscription.name}</span>
-                          <Badge>{groupReleases.length} 个资源</Badge>
-                        </div>
-                        <span className="text-xs text-muted-foreground">{countEpisodes(groupReleases)} 集</span>
-                      </button>
+                        onAddRssSubscription={onAddRssSubscription}
+                        onToggleCollapsed={() => toggleGroup(groupKey)}
+                        onToggleSelected={() => toggleGroupReleases(groupReleases)}
+                      />
                       {!collapsedGroupKeys.has(groupKey) && (
                         <div>
                           {group.errors.length > 0 && (
@@ -2045,29 +2196,31 @@ function AnimeDownloadPanel({
                     </section>
                   );
                 })
-              : releaseGroups.map((group) => (
-                  <section key={group.key} className="overflow-hidden rounded-md border bg-background">
-                    <button
-                      className="flex w-full items-center justify-between border-b bg-muted/70 px-3 py-2 text-left hover:bg-muted focus:outline-none focus:ring-2 focus:ring-primary/25"
-                      type="button"
-                      onClick={() => toggleGroup(group.key)}
-                      aria-expanded={!collapsedGroupKeys.has(group.key)}
-                      title={group.name}
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        {collapsedGroupKeys.has(group.key) ? (
-                          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        ) : (
-                          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-                        )}
-                        <span className="truncate text-sm font-semibold">{group.name}</span>
-                        <Badge>{group.releases.length} 个资源</Badge>
-                      </div>
-                      <span className="text-xs text-muted-foreground">{countEpisodes(group.releases)} 集</span>
-                    </button>
-                    {!collapsedGroupKeys.has(group.key) && <div className="divide-y">{renderEpisodeGroups(group.releases)}</div>}
-                  </section>
-                ))}
+              : releaseGroups.map((group) => {
+                  const selection = getGroupSelectionState(group.releases);
+                  const rssCandidate = buildMikanGroupRssSubscription(group, target);
+                  const rssSubscribed = Boolean(rssCandidate && existingRssUrls.has(rssCandidate.url));
+                  return (
+                    <section key={group.key} className="overflow-hidden rounded-md border bg-background">
+                      <ReleaseGroupHeader
+                        allSelected={selection.allSelected}
+                        badgeText={`${group.releases.length} 个资源`}
+                        collapsed={collapsedGroupKeys.has(group.key)}
+                        episodeCount={countEpisodes(group.releases)}
+                        name={group.name}
+                        rssCandidate={rssCandidate}
+                        rssSubscribed={rssSubscribed}
+                        selectableCount={selection.selectableCount}
+                        selectedCount={selection.selectedCount}
+                        title={group.name}
+                        onAddRssSubscription={onAddRssSubscription}
+                        onToggleCollapsed={() => toggleGroup(group.key)}
+                        onToggleSelected={() => toggleGroupReleases(group.releases)}
+                      />
+                      {!collapsedGroupKeys.has(group.key) && <div className="divide-y">{renderEpisodeGroups(group.releases)}</div>}
+                    </section>
+                  );
+                })}
 
             {visibleReleases.length === 0 && (
               <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
@@ -2083,21 +2236,6 @@ function AnimeDownloadPanel({
               </div>
             )}
 
-            {visibleReleases.length > 0 && (
-              <div className="rounded-md border bg-background/95 p-2 shadow-sm">
-                <BatchDownloadControls
-                  allSelected={allSelectableVisibleSelected}
-                  batchAdding={batchAdding}
-                  disabled={activeLoading}
-                  selectedCount={selectedDownloadableReleases.length}
-                  selectableCount={selectableVisibleReleases.length}
-                  totalCount={tabReleases.length}
-                  visibleCount={visibleReleases.length}
-                  onAddSelected={() => onAddSelected(selectedDownloadableReleases)}
-                  onToggleAll={toggleAllVisibleReleases}
-                />
-              </div>
-            )}
           </div>
         )}
       </div>
@@ -2105,7 +2243,7 @@ function AnimeDownloadPanel({
   );
 }
 
-/** 复用资源列表顶部和底部的批量选择与下载操作。 */
+/** 渲染资源列表顶部的整体批量选择与下载操作。 */
 function BatchDownloadControls({
   visibleCount,
   totalCount,
@@ -2147,6 +2285,81 @@ function BatchDownloadControls({
           <Download className="h-4 w-4" />
           {batchAdding ? "添加中" : "批量下载"}
         </Button>
+      </div>
+    </div>
+  );
+}
+
+/** 渲染资源分组标题，并承载分组全选和可用 RSS 订阅操作。 */
+function ReleaseGroupHeader({
+  name,
+  title,
+  badgeText,
+  episodeCount,
+  selectedCount,
+  selectableCount,
+  allSelected,
+  collapsed,
+  rssCandidate,
+  rssSubscribed,
+  onToggleCollapsed,
+  onToggleSelected,
+  onAddRssSubscription
+}: {
+  name: string;
+  title: string;
+  badgeText: string;
+  episodeCount: number;
+  selectedCount: number;
+  selectableCount: number;
+  allSelected: boolean;
+  collapsed: boolean;
+  rssCandidate?: RssSubscriptionDraft;
+  rssSubscribed: boolean;
+  onToggleCollapsed: () => void;
+  onToggleSelected: () => void;
+  onAddRssSubscription: (subscription: RssSubscriptionDraft) => void;
+}) {
+  return (
+    <div className="flex w-full flex-wrap items-center gap-2 border-b bg-muted/70 px-3 py-2">
+      <button
+        className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/25"
+        type="button"
+        onClick={onToggleCollapsed}
+        aria-expanded={!collapsed}
+        title={title}
+      >
+        {collapsed ? (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )}
+        <span className="truncate text-sm font-semibold">{name}</span>
+        <Badge>{badgeText}</Badge>
+      </button>
+      <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
+        <span className="text-xs text-muted-foreground">已选 {selectedCount}/{selectableCount}</span>
+        {rssCandidate && (
+          <Button
+            className="h-7 px-2 text-xs"
+            variant="outline"
+            onClick={() => onAddRssSubscription(rssCandidate)}
+            disabled={rssSubscribed}
+            title={rssSubscribed ? "该字幕组 RSS 已订阅" : rssCandidate.url}
+          >
+            <Rss className="h-3.5 w-3.5" />
+            {rssSubscribed ? "已订阅" : "订阅RSS"}
+          </Button>
+        )}
+        <Button
+          className="h-7 px-2 text-xs"
+          variant="outline"
+          onClick={onToggleSelected}
+          disabled={selectableCount === 0}
+        >
+          {allSelected ? "取消全选" : "全选"}
+        </Button>
+        <span className="min-w-8 text-right text-xs text-muted-foreground">{episodeCount} 集</span>
       </div>
     </div>
   );
@@ -2668,6 +2881,30 @@ function getProgressWidth(progress: number): number {
   return Math.max(0, Math.min(100, Math.round(progress * 100)));
 }
 
+/** 选择任务中的完整视频文件，并生成播放器或文件管理器可用的绝对路径。 */
+function resolveDownloadTaskFilePath(task: DownloadTask, videoOnly: boolean): string | undefined {
+  const completedFiles = task.files.filter((file) => file.selected && file.progress >= 1);
+  const videoFile = completedFiles.find((file) => /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i.test(file.name));
+  const targetFile = videoOnly ? videoFile : videoFile ?? completedFiles[0];
+  if (!targetFile) {
+    return undefined;
+  }
+
+  return joinDownloadFilePath(task.savePath, targetFile.name);
+}
+
+/** 按任务保存路径的格式拼接 qBittorrent 返回的相对文件名。 */
+function joinDownloadFilePath(savePath: string, fileName: string): string {
+  if (/^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(fileName)) {
+    return fileName;
+  }
+
+  const separator = savePath.includes("\\") ? "\\" : "/";
+  const basePath = savePath.replace(/[\\/]+$/, "");
+  const relativePath = fileName.replace(/^[\\/]+/, "").replace(/[\\/]+/g, separator);
+  return `${basePath}${separator}${relativePath}`;
+}
+
 function buildSearchTerms(item: MyAnime): string[] {
   return buildAnimeReleaseSearchTerms(item.anime, [], 8);
 }
@@ -2799,6 +3036,23 @@ function groupReleasesByFansub(releases: Release[], fansubNames: Map<string, str
   }
 
   return [...groups.values()].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+}
+
+/** 从 Mikan 资源元信息生成字幕组级 RSS 订阅候选。 */
+function buildMikanGroupRssSubscription(group: ReleaseFansubGroup, target: MyAnime): RssSubscriptionDraft | undefined {
+  const release = group.releases.find((item) => item.sourceMeta?.mikanSubgroupId);
+  const mikanBangumiId = release?.sourceMeta?.mikanBangumiId ?? target.anime.externalIds.mikan?.trim();
+  const mikanSubgroupId = release?.sourceMeta?.mikanSubgroupId;
+  if (!mikanBangumiId || !mikanSubgroupId) {
+    return undefined;
+  }
+
+  return {
+    name: `蜜柑 · ${release.sourceMeta?.mikanSubgroupName ?? group.name}`,
+    url:
+      release.sourceMeta?.rssUrl ??
+      `https://mikanani.me/RSS/Bangumi?bangumiId=${encodeURIComponent(mikanBangumiId)}&subgroupid=${encodeURIComponent(mikanSubgroupId)}`
+  };
 }
 
 function countEpisodes(releases: Release[]): number {
