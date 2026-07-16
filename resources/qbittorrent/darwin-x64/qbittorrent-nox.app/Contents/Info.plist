@@ -79,7 +79,7 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>5.2.3</string>
+	<string>5.2.1</string>
 	<key>CFBundleExecutable</key>
 	<string>qbittorrent-nox</string>
 	<key>CFBundleIdentifier</key>
