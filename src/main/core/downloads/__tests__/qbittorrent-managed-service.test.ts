@@ -142,6 +142,61 @@ test("QbittorrentClient adds the Ani Tracker correlation tag", async (t) => {
   assert.equal(addedBody?.get("tags"), "ani-tracker-test");
 });
 
+test("QbittorrentClient uses qBittorrent 5 start and stop action endpoints", async (t) => {
+  const requestedPaths: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+
+    requestedPaths.push(path);
+    return new Response("Ok", { status: 200 });
+  });
+
+  const client = new QbittorrentClient({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin",
+    password: "ani-tracker"
+  });
+  await client.login();
+  await client.pause("test-hash");
+  await client.resume("test-hash");
+
+  assert.deepEqual(requestedPaths, ["/api/v2/torrents/stop", "/api/v2/torrents/start"]);
+});
+
+test("QbittorrentClient falls back to qBittorrent 4 pause and resume endpoints", async (t) => {
+  const requestedPaths: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+
+    requestedPaths.push(path);
+    return new Response(path === "/api/v2/torrents/stop" || path === "/api/v2/torrents/start" ? "Not Found" : "Ok", {
+      status: path === "/api/v2/torrents/stop" || path === "/api/v2/torrents/start" ? 404 : 200
+    });
+  });
+
+  const client = new QbittorrentClient({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin",
+    password: "ani-tracker"
+  });
+  await client.login();
+  await client.pause("test-hash");
+  await client.resume("test-hash");
+
+  assert.deepEqual(requestedPaths, [
+    "/api/v2/torrents/stop",
+    "/api/v2/torrents/pause",
+    "/api/v2/torrents/start",
+    "/api/v2/torrents/resume"
+  ]);
+});
+
 test("QbittorrentClient applies global transfer speed limits", async (t) => {
   const requestBodies = new Map<string, URLSearchParams>();
   t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {

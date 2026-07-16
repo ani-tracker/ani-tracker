@@ -175,11 +175,11 @@ export class QbittorrentClient {
   }
 
   async pause(hash: string): Promise<void> {
-    await this.torrentAction("/api/v2/torrents/pause", hash);
+    await this.torrentAction("/api/v2/torrents/stop", hash, "/api/v2/torrents/pause");
   }
 
   async resume(hash: string): Promise<void> {
-    await this.torrentAction("/api/v2/torrents/resume", hash);
+    await this.torrentAction("/api/v2/torrents/start", hash, "/api/v2/torrents/resume");
   }
 
   async remove(hash: string, deleteFiles: boolean): Promise<void> {
@@ -197,18 +197,27 @@ export class QbittorrentClient {
     });
   }
 
-  private async torrentAction(path: string, hash: string): Promise<void> {
+  /** 调用 qBittorrent 5 任务动作端点，并在 404 时回退到 qBittorrent 4 端点。 */
+  private async torrentAction(path: string, hash: string, legacyPath?: string): Promise<void> {
     const body = new URLSearchParams({
       hashes: hash
     });
-
-    await this.requestText(path, {
+    const request: RequestInit = {
       method: "POST",
       body,
       headers: {
         "Content-Type": "application/x-www-form-urlencoded"
       }
-    });
+    };
+    const response = await this.requestRaw(path, request);
+    if (response.status === 404 && legacyPath) {
+      await this.requestText(legacyPath, request);
+      return;
+    }
+    if (!response.ok) {
+      throw new Error(`qBittorrent request failed: ${response.status} ${response.statusText}`);
+    }
+    await response.text();
   }
 
   /** 调用 qBittorrent transfer API 设置单个全局速度限制。 */
