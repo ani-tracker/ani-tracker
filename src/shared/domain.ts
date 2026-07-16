@@ -84,6 +84,8 @@ export interface AnimeRssSubscription {
   url: string;
   enabled: boolean;
   preferredSubtitle?: SubtitlePreference;
+  refreshIntervalMinutes?: number;
+  lastFetchedAt?: string;
   createdAt: string;
   updatedAt: string;
 }

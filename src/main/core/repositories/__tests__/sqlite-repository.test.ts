@@ -80,6 +80,8 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
         url: "https://mikanani.me/RSS/Bangumi?bangumiId=3941",
         enabled: true,
         preferredSubtitle: "cht",
+        refreshIntervalMinutes: 20,
+        lastFetchedAt: timestamp,
         createdAt: timestamp,
         updatedAt: timestamp
       }
@@ -95,6 +97,8 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   assert.equal(restored?.rssSubscriptions?.[0].url, "https://mikanani.me/RSS/Bangumi?bangumiId=3941");
   assert.equal(restored?.rssSubscriptions?.[0].enabled, true);
   assert.equal(restored?.rssSubscriptions?.[0].preferredSubtitle, "cht");
+  assert.equal(restored?.rssSubscriptions?.[0].refreshIntervalMinutes, 20);
+  assert.equal(restored?.rssSubscriptions?.[0].lastFetchedAt, timestamp);
   second.close();
 });
 

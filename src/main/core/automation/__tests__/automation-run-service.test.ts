@@ -69,6 +69,95 @@ test("AutomationRunService 使用单集字幕组覆盖选择最佳资源并写�
   assert.equal(repository.episodes[0].status, "downloading");
 });
 
+test("AutomationRunService 优先使用追番 RSS 且命中后不请求全局源", async (t) => {
+  const requestedUrls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url === "https://example.test/personal.xml") {
+      return createRssResponse([
+        {
+          title: "[默认字幕组] 测试番 - 01 [1080p][HEVC][简体]",
+          guid: "personal-release",
+          magnet: "magnet:?xt=urn:btih:PERSONAL01&dn=personal"
+        }
+      ]);
+    }
+
+    throw new Error(`不应请求全局源：${url}`);
+  });
+
+  const repository = new FakeAutomationRepository({
+    settings: defaultSettings,
+    myAnime: [
+      createMyAnime({
+        defaultFansubGroupId: "fansub-default",
+        rssSubscriptions: [
+          createRssSubscription({
+            id: "rss-personal",
+            url: "https://example.test/personal.xml"
+          })
+        ]
+      })
+    ],
+    episodes: [createEpisode()],
+    fansubs: createFansubs(),
+    sources: [createRssSource()]
+  });
+
+  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+
+  assert.deepEqual(requestedUrls, ["https://example.test/personal.xml"]);
+  assert.equal(result.downloaded.length, 1);
+  assert.equal(result.downloaded[0].releaseId, "rss-subscription:rss-personal:personal-release");
+  assert.equal(repository.downloads[0].releaseId, "rss-subscription:rss-personal:personal-release");
+  assert.equal(repository.myAnime[0].rssSubscriptions?.[0].refreshIntervalMinutes, 20);
+  assert.match(repository.myAnime[0].rssSubscriptions?.[0].lastFetchedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
+});
+
+test("AutomationRunService 在 RSS 刷新间隔内复用订阅缓存", async (t) => {
+  let fetchCount = 0;
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    assert.equal(String(input), "https://example.test/cache.xml");
+    fetchCount += 1;
+    return createRssResponse([
+      {
+        title: "[默认字幕组] 测试番 - 01 [1080p][HEVC][简体]",
+        guid: "cache-release",
+        magnet: "magnet:?xt=urn:btih:CACHE01&dn=cache"
+      }
+    ]);
+  });
+
+  const repository = new FakeAutomationRepository({
+    settings: defaultSettings,
+    myAnime: [
+      createMyAnime({
+        defaultFansubGroupId: "fansub-default",
+        rssSubscriptions: [
+          createRssSubscription({
+            id: "rss-cache",
+            url: "https://example.test/cache.xml",
+            refreshIntervalMinutes: 20
+          })
+        ]
+      })
+    ],
+    episodes: [createEpisode()],
+    fansubs: createFansubs(),
+    sources: []
+  });
+
+  const first = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  repository.downloads = [];
+  repository.episodes = [{ ...createEpisode(), status: "aired" }];
+  const second = await new AutomationRunService(repository.asAppRepository()).runOnce();
+
+  assert.equal(fetchCount, 1);
+  assert.equal(first.downloaded.length, 1);
+  assert.equal(second.downloaded.length, 1);
+});
+
 test("AutomationRunService 遇到已有下载任务时跳过单集且不搜索来源", async (t) => {
   let fetchCount = 0;
   t.mock.method(globalThis, "fetch", async () => {
@@ -239,6 +328,17 @@ class FakeAutomationRepository {
     return this.myAnime;
   }
 
+  async upsertMyAnime(item: MyAnime): Promise<MyAnime[]> {
+    const index = this.myAnime.findIndex((entry) => entry.id === item.id);
+    if (index >= 0) {
+      this.myAnime[index] = item;
+    } else {
+      this.myAnime.push(item);
+    }
+
+    return this.myAnime;
+  }
+
   async listDownloads(): Promise<DownloadTask[]> {
     return [...this.downloads];
   }
@@ -313,10 +413,25 @@ function createMyAnime(overrides: Partial<MyAnime>): MyAnime {
     status: "watching",
     defaultFansubGroupId: "fansub-default",
     autoDownload: true,
+    rssSubscriptions: [],
     preferredResolution: "1080p",
     preferredCodec: "H.265/HEVC",
     preferredSubtitle: "chs",
     addedAt: "2026-07-13T00:00:00.000Z",
+    updatedAt: "2026-07-13T00:00:00.000Z",
+    ...overrides
+  };
+}
+
+function createRssSubscription(overrides: Partial<NonNullable<MyAnime["rssSubscriptions"]>[number]>) {
+  return {
+    id: "rss-personal",
+    myAnimeId: "my-anime-1",
+    name: "个人 RSS",
+    url: "https://example.test/personal.xml",
+    enabled: true,
+    refreshIntervalMinutes: 20,
+    createdAt: "2026-07-13T00:00:00.000Z",
     updatedAt: "2026-07-13T00:00:00.000Z",
     ...overrides
   };
@@ -376,26 +491,37 @@ function mockRssFeed(
   t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
     assert.equal(String(input), "https://example.test/feed.xml");
 
-    return new Response(
-      `
-        <rss>
-          <channel>
-            ${items
-              .map(
-                (item) => `
-                  <item>
-                    <title>${item.title}</title>
-                    <link>${item.magnet.replaceAll("&", "&amp;")}</link>
-                    <guid>${item.guid}</guid>
-                    <pubDate>Mon, 13 Jul 2026 12:30:00 GMT</pubDate>
-                  </item>
-                `
-              )
-              .join("")}
-          </channel>
-        </rss>
-      `,
-      { status: 200, statusText: "OK" }
-    );
+    return createRssResponse(items);
   });
+}
+
+/** 构造测试用 RSS 响应。 */
+function createRssResponse(
+  items: Array<{
+    title: string;
+    guid: string;
+    magnet: string;
+  }>
+): Response {
+  return new Response(
+    `
+      <rss>
+        <channel>
+          ${items
+            .map(
+              (item) => `
+                <item>
+                  <title>${item.title}</title>
+                  <link>${item.magnet.replaceAll("&", "&amp;")}</link>
+                  <guid>${item.guid}</guid>
+                  <pubDate>Mon, 13 Jul 2026 12:30:00 GMT</pubDate>
+                </item>
+              `
+            )
+            .join("")}
+        </channel>
+      </rss>
+    `,
+    { status: 200, statusText: "OK" }
+  );
 }

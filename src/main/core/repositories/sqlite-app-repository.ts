@@ -667,6 +667,11 @@ export class SqliteAppRepository implements AppRepository {
     if (currentSchemaVersion < 6) {
       this.ensureColumn("my_anime_rss_subscription", "preferred_subtitle", "preferred_subtitle TEXT");
     }
+
+    if (currentSchemaVersion < 7) {
+      this.ensureColumn("my_anime_rss_subscription", "refresh_interval_minutes", "refresh_interval_minutes INTEGER");
+      this.ensureColumn("my_anime_rss_subscription", "last_fetched_at", "last_fetched_at TEXT");
+    }
   }
 
   /** 将首次启动快照写入各业务表。 */
@@ -752,6 +757,8 @@ export class SqliteAppRepository implements AppRepository {
         url: asString(row.url),
         enabled: toBoolean(row.enabled),
         preferredSubtitle: optionalString(row.preferred_subtitle) as MyAnime["preferredSubtitle"],
+        refreshIntervalMinutes: optionalNumber(row.refresh_interval_minutes),
+        lastFetchedAt: optionalString(row.last_fetched_at),
         createdAt: asString(row.created_at),
         updatedAt: asString(row.updated_at)
       });
@@ -875,9 +882,11 @@ export class SqliteAppRepository implements AppRepository {
       const timestamp = nowIso();
       this.run(
         `INSERT INTO my_anime_rss_subscription (
-          id, my_anime_id, name, url, enabled, preferred_subtitle, created_at, updated_at
+          id, my_anime_id, name, url, enabled, preferred_subtitle,
+          refresh_interval_minutes, last_fetched_at, created_at, updated_at
         ) VALUES (
-          @id, @myAnimeId, @name, @url, @enabled, @preferredSubtitle, @createdAt, @updatedAt
+          @id, @myAnimeId, @name, @url, @enabled, @preferredSubtitle,
+          @refreshIntervalMinutes, @lastFetchedAt, @createdAt, @updatedAt
         )`,
         {
           id: subscription.id,
@@ -886,6 +895,8 @@ export class SqliteAppRepository implements AppRepository {
           url: subscription.url,
           enabled: toInteger(subscription.enabled),
           preferredSubtitle: subscription.preferredSubtitle ?? null,
+          refreshIntervalMinutes: subscription.refreshIntervalMinutes ?? null,
+          lastFetchedAt: subscription.lastFetchedAt ?? null,
           createdAt: subscription.createdAt || timestamp,
           updatedAt: subscription.updatedAt || timestamp
         }

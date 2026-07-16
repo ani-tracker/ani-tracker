@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS my_anime_rss_subscription (
   url TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   preferred_subtitle TEXT,
+  refresh_interval_minutes INTEGER,
+  last_fetched_at TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

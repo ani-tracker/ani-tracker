@@ -70,6 +70,7 @@ const unknownFansubFilter = "__unknown__";
 const batchAddingReleaseId = "__batch__";
 type DownloadResourceTab = "rss" | "search";
 type AnimeDownloadDetailFilter = "all" | "active" | "completed";
+const defaultRssRefreshIntervalMinutes = 20;
 
 interface AnimeDownloadDetailState {
   item: MyAnime;
@@ -670,12 +671,13 @@ export function MyAnimePage() {
               id: createId("rss"),
               myAnimeId: downloadTarget.id,
               name: subscriptionDraft.name.trim() || "RSS订阅",
-              url,
-              enabled: true,
-              preferredSubtitle: subscriptionDraft.preferredSubtitle,
-              createdAt: now,
-              updatedAt: now
-            }
+            url,
+            enabled: true,
+            preferredSubtitle: subscriptionDraft.preferredSubtitle,
+            refreshIntervalMinutes: defaultRssRefreshIntervalMinutes,
+            createdAt: now,
+            updatedAt: now
+          }
           ]
         },
         now
@@ -1725,6 +1727,7 @@ function RssSubscriptionsEditor({
         url: initial?.url ?? "",
         enabled: initial?.enabled ?? true,
         preferredSubtitle: initial?.preferredSubtitle,
+        refreshIntervalMinutes: initial?.refreshIntervalMinutes ?? defaultRssRefreshIntervalMinutes,
         createdAt: now,
         updatedAt: now
       }
@@ -1779,7 +1782,7 @@ function RssSubscriptionsEditor({
       {subscriptions.length > 0 ? (
         <div className="space-y-3">
           {subscriptions.map((subscription) => (
-            <div key={subscription.id} className="grid grid-cols-[auto_minmax(0,0.7fr)_minmax(0,1.2fr)_minmax(7rem,0.45fr)_auto] items-center gap-2 rounded-md bg-muted/40 p-2">
+            <div key={subscription.id} className="grid grid-cols-[auto_minmax(0,0.65fr)_minmax(0,1.05fr)_minmax(7rem,0.45fr)_minmax(5.5rem,0.32fr)_auto] items-center gap-2 rounded-md bg-muted/40 p-2">
               <label className="flex items-center justify-center" title="启用订阅">
                 <input
                   checked={subscription.enabled}
@@ -1817,6 +1820,24 @@ function RssSubscriptionsEditor({
                   </option>
                 ))}
               </select>
+              <div className="relative min-w-0">
+                <input
+                  className="h-9 w-full rounded-md border bg-background px-2 pr-6 text-sm outline-none focus:border-primary"
+                  aria-label="RSS 自动下载刷新间隔"
+                  min={1}
+                  title="自动下载刷新间隔（分钟）"
+                  type="number"
+                  value={subscription.refreshIntervalMinutes ?? defaultRssRefreshIntervalMinutes}
+                  onChange={(event) =>
+                    updateSubscription(subscription.id, {
+                      refreshIntervalMinutes: normalizeRssRefreshInterval(Number(event.target.value))
+                    })
+                  }
+                />
+                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
+                  分
+                </span>
+              </div>
               <Button variant="ghost" onClick={() => removeSubscription(subscription.id)} aria-label="删除RSS订阅" title="删除RSS订阅">
                 <Trash2 className="h-4 w-4" />
               </Button>
@@ -3217,10 +3238,21 @@ function normalizeRssSubscriptions(item: MyAnime, timestamp: string): AnimeRssSu
       name: subscription.name.trim() || `RSS订阅 ${index + 1}`,
       url: subscription.url.trim(),
       preferredSubtitle: subscription.preferredSubtitle,
+      refreshIntervalMinutes: normalizeRssRefreshInterval(subscription.refreshIntervalMinutes),
+      lastFetchedAt: subscription.lastFetchedAt,
       createdAt: subscription.createdAt || timestamp,
       updatedAt: timestamp
     }))
     .filter((subscription) => subscription.url);
+}
+
+/** 规范化 RSS 自动下载刷新间隔，空值使用默认 20 分钟。 */
+function normalizeRssRefreshInterval(value?: number): number {
+  if (!Number.isFinite(value) || !value || value <= 0) {
+    return defaultRssRefreshIntervalMinutes;
+  }
+
+  return Math.max(1, Math.round(value));
 }
 
 /** 根据番剧的 Mikan 外部 ID 生成蜜柑计划 RSS 地址。 */
