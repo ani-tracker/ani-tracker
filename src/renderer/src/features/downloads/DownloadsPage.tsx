@@ -86,7 +86,7 @@ export function DownloadsPage() {
       setTasks(updated);
       setDownloadUrl("");
       setError(null);
-      setScanMessage("已添加到下载队列");
+      setScanMessage("下载引擎已确认添加成功");
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "添加下载失败");
     } finally {

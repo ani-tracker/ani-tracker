@@ -6,6 +6,7 @@ export interface QbittorrentClientOptions {
   baseUrl: string;
   username: string;
   password?: string;
+  requestTimeoutMs?: number;
 }
 
 export interface QbittorrentTorrentInfo {
@@ -35,6 +36,8 @@ export interface QbittorrentSeedingLimits {
   ratioLimit: number;
   timeLimitMinutes: number;
 }
+
+const DEFAULT_QBITTORRENT_REQUEST_TIMEOUT_MS = 15_000;
 
 export class QbittorrentClient {
   private cookie = "";
@@ -88,7 +91,7 @@ export class QbittorrentClient {
       body.set("tags", correlationTag);
     }
 
-    await this.requestText("/api/v2/torrents/add", {
+    await this.requestAddTorrent({
       method: "POST",
       body,
       headers: {
@@ -99,15 +102,26 @@ export class QbittorrentClient {
 
   async addTorrentFile(filePath: string, savePath: string, paused = false, correlationTag?: string): Promise<void> {
     const buffer = await readFile(filePath);
+    await this.addTorrentData(buffer, basename(filePath), savePath, paused, correlationTag);
+  }
+
+  /** 将内存中的 torrent 元数据通过 multipart 上传到 qBittorrent。 */
+  async addTorrentData(
+    data: Uint8Array,
+    fileName: string,
+    savePath: string,
+    paused = false,
+    correlationTag?: string
+  ): Promise<void> {
     const formData = new FormData();
-    formData.append("torrents", new Blob([buffer]), basename(filePath));
+    formData.append("torrents", new Blob([Buffer.from(data)]), fileName);
     formData.append("savepath", savePath);
     formData.append("paused", paused ? "true" : "false");
     if (correlationTag) {
       formData.append("tags", correlationTag);
     }
 
-    await this.requestText("/api/v2/torrents/add", {
+    await this.requestAddTorrent({
       method: "POST",
       body: formData
     });
@@ -115,6 +129,13 @@ export class QbittorrentClient {
 
   async listTorrents(): Promise<QbittorrentTorrentInfo[]> {
     return this.requestJson<QbittorrentTorrentInfo[]>("/api/v2/torrents/info");
+  }
+
+  /** 按 Ani Tracker 关联标签查询已被 qBittorrent 接收的任务。 */
+  async listTorrentsByTag(tag: string): Promise<QbittorrentTorrentInfo[]> {
+    return this.requestJson<QbittorrentTorrentInfo[]>(
+      `/api/v2/torrents/info?tag=${encodeURIComponent(tag)}`
+    );
   }
 
   async getTorrent(hash: string): Promise<QbittorrentTorrentInfo | undefined> {
@@ -249,17 +270,39 @@ export class QbittorrentClient {
     return response.text();
   }
 
+  /** 校验添加接口的文本结果，避免把 HTTP 200 的 `Fails.` 误判为成功。 */
+  private async requestAddTorrent(init: RequestInit): Promise<void> {
+    const result = (await this.requestText("/api/v2/torrents/add", init)).trim();
+    if (result && !result.toLowerCase().startsWith("ok")) {
+      throw new Error(`qBittorrent add torrent failed: ${result}`);
+    }
+  }
+
+  /** 请求本地 qBittorrent Web API，并在超时后主动终止连接。 */
   private async requestRaw(path: string, init?: RequestInit): Promise<Response> {
     const url = new URL(path, this.options.baseUrl);
     const headers = new Headers(init?.headers);
+    const controller = new AbortController();
+    const requestTimeoutMs = normalizeRequestTimeoutMs(this.options.requestTimeoutMs);
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
     if (this.cookie) {
       headers.set("Cookie", this.cookie);
     }
 
-    return fetch(url, {
-      ...init,
-      headers
-    });
+    try {
+      return await fetch(url, {
+        ...init,
+        headers,
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`qBittorrent request timeout after ${requestTimeoutMs}ms: ${init?.method ?? "GET"} ${path}`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -277,4 +320,12 @@ function normalizeRatioLimit(value: number): number {
 
 function normalizeTimeLimitMinutes(value: number): number {
   return value >= 0 && Number.isFinite(value) ? Math.max(1, Math.round(value)) : -1;
+}
+
+function normalizeRequestTimeoutMs(value: number | undefined): number {
+  if (!value || !Number.isFinite(value)) {
+    return DEFAULT_QBITTORRENT_REQUEST_TIMEOUT_MS;
+  }
+
+  return Math.max(1_000, Math.min(60_000, Math.round(value)));
 }
