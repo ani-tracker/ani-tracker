@@ -211,17 +211,10 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       paused: input.paused
     });
 
-    const downloads = await repository.upsertDownloadTask({
+    return repository.upsertDownloadTask({
       ...task,
       name: input.name?.trim() || getManualDownloadName(url)
     });
-    await addDownloadSuccessNotification({
-      taskId: task.id,
-      title: input.name?.trim() || task.name,
-      body: task.engine === "qbittorrent" ? "qBittorrent 已确认添加任务。" : "下载引擎已确认添加任务。"
-    });
-    logger.info("Manual download add persisted", { taskId: task.id, torrentHash: task.torrentHash });
-    return downloads;
   });
   ipcMain.handle("downloads:addRelease", async (_event, input: AddReleaseDownloadInput) => {
     const [settings, knownFansubs] = await Promise.all([
@@ -262,11 +255,12 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
           : "该资源已在下载队列中"
       );
     }
+    const episode = await resolveDownloadEpisode(animeId, input.episodeId, episodeNo);
     const savePath = input.savePath?.trim() || resolveAnimeDownloadPath(settings, followedAnime);
     logger.info("Release download add requested", {
       engine: settings.download.defaultTorrentEngine,
       animeId,
-      episodeId: input.episodeId,
+      episodeId: episode?.id,
       episodeNo,
       fansubGroupId,
       savePath,
@@ -279,7 +273,6 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       savePath,
       paused: input.paused
     });
-    const episode = await resolveDownloadEpisode(animeId, input.episodeId, episodeNo);
     const downloads = await repository.upsertDownloadTask({
       ...task,
       releaseId: release.id,
@@ -295,22 +288,6 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       animeId,
       episodeId: episode?.id,
       fansubGroupId,
-      releaseId: release.id
-    });
-    await addDownloadSuccessNotification({
-      taskId: task.id,
-      title: followedAnime?.anime.title ?? release.title,
-      body: episodeNo !== undefined
-        ? `第 ${episodeNo} 集已由 qBittorrent 确认添加。`
-        : "qBittorrent 已确认添加任务。",
-      animeId,
-      episodeId: episode?.id
-    });
-    logger.info("Release download add persisted", {
-      taskId: task.id,
-      torrentHash: task.torrentHash,
-      animeId,
-      episodeId: episode?.id,
       releaseId: release.id
     });
 
@@ -739,33 +716,4 @@ function formatReleaseSearchError(error: unknown): string {
   }
 
   return message;
-}
-
-/** 在 qBittorrent 确认且下载任务持久化后写入成功通知。 */
-async function addDownloadSuccessNotification(input: {
-  taskId: string;
-  title: string;
-  body: string;
-  animeId?: string;
-  episodeId?: string;
-}): Promise<void> {
-  const createdAt = new Date().toISOString();
-  try {
-    await repository.addNotifications([{
-      id: `notification-download-${createdAt}-${input.taskId}`,
-      kind: "download",
-      title: `下载已添加：${input.title}`,
-      body: input.body,
-      severity: "success",
-      animeId: input.animeId,
-      episodeId: input.episodeId,
-      downloadTaskId: input.taskId,
-      createdAt
-    }]);
-  } catch (error) {
-    logger.warn("Download success notification persist failed", {
-      taskId: input.taskId,
-      message: error instanceof Error ? error.message : String(error)
-    });
-  }
 }

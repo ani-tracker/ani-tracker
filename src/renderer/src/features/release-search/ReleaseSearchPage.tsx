@@ -110,7 +110,7 @@ export function ReleaseSearchPage() {
         episodeNo: releaseForDownload.episodeNo,
         fansubGroupId: releaseForDownload.fansubGroupId
       });
-      setMessage({ tone: "success", text: "下载引擎已确认添加成功" });
+      setMessage({ tone: "success", text: "已添加到下载队列" });
     } catch (error) {
       setMessage({
         tone: "error",

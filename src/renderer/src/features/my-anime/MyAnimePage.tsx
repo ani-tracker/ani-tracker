@@ -719,7 +719,7 @@ export function MyAnimePage() {
       setDownloadTasks(updatedDownloads);
       setEpisodes(updatedEpisodes);
       setEpisodePreferences(updatedPreferences);
-      setMessage({ tone: "success", text: "下载引擎已确认添加成功" });
+      setMessage({ tone: "success", text: "已添加到下载队列" });
     } catch (error) {
       setMessage({
         tone: "error",
@@ -741,7 +741,7 @@ export function MyAnimePage() {
         buildAnimeReleaseDownloadInput(release, downloadTarget)
       );
       setDownloadTasks(updatedDownloads);
-      setMessage({ tone: "success", text: "下载引擎已确认添加成功" });
+      setMessage({ tone: "success", text: "已添加到下载队列" });
     } catch (error) {
       setMessage({
         tone: "error",
@@ -791,7 +791,7 @@ export function MyAnimePage() {
       tone: failed.length > 0 ? "error" : "success",
       text: failed.length > 0
         ? `批量下载完成：成功 ${successCount} 个，失败 ${failed.length} 个`
-        : `下载引擎已确认添加 ${successCount} 个下载任务`
+        : `已批量添加 ${successCount} 个下载任务`
     });
   }
 

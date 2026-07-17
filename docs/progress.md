@@ -156,9 +156,6 @@
 
 - 已实现 qBittorrent Web API 兼容引擎：
   - 添加 URL/torrent。
-  - HTTP(S) torrent URL 先复用 Ani Tracker 元数据代理下载并校验，再通过 multipart 上传到 qBittorrent，避免 qB 直连资源站超时。
-  - 添加后按 Ani Tracker 唯一标签确认真实 qBittorrent 任务，确认成功后才写入下载队列、更新单集状态并生成成功通知。
-  - qBittorrent Web API 请求带超时，`Fails.`、无效 torrent 和确认超时会返回明确失败且不持久化占位任务。
   - 列出任务。
   - 下载进度、速度、ETA。
   - 文件列表。
