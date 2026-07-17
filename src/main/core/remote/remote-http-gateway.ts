@@ -288,9 +288,11 @@ export class RemoteHttpGateway {
     if (!isPathInsideDirectory(rendererRoot, candidate)) {
       throw new HttpGatewayError(403, "PATH_FORBIDDEN", "静态资源路径无效");
     }
-    const selectedPath = existsSync(candidate) && statSync(candidate).isFile()
-      ? candidate
-      : join(rendererRoot, "index.html");
+    const candidateExists = existsSync(candidate) && statSync(candidate).isFile();
+    if (!candidateExists && extname(relativePath)) {
+      throw new HttpGatewayError(404, "ASSET_NOT_FOUND", "静态资源不存在");
+    }
+    const selectedPath = candidateExists ? candidate : join(rendererRoot, "index.html");
     if (!existsSync(selectedPath) || !statSync(selectedPath).isFile()) {
       throw new HttpGatewayError(404, "PWA_NOT_BUILT", "PWA 静态资源尚未构建");
     }

@@ -1,7 +1,9 @@
 import { strict as assert } from "node:assert";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer as createNetServer, connect } from "node:net";
 import { test } from "node:test";
-import { win32 } from "node:path";
+import { tmpdir } from "node:os";
+import { join, win32 } from "node:path";
 import type { DashboardData } from "@shared/domain";
 import { RemoteDeviceAuth } from "../remote-device-auth";
 import { RemoteHttpGateway, isPathInsideDirectory } from "../remote-http-gateway";
@@ -175,15 +177,36 @@ test("静态目录边界判断兼容 Windows 分隔符", () => {
   assert.equal(isPathInsideDirectory("C:\\app\\renderer", "D:\\secret.js", operations), false);
 });
 
+test("缺失静态资源返回 404 且前端路由回退入口页面", async (context) => {
+  const rendererDirectory = await mkdtemp(join(tmpdir(), "ani-remote-renderer-"));
+  await writeFile(join(rendererDirectory, "index.html"), "<!doctype html><title>Ani Tracker</title>", "utf8");
+  const gateway = await startGateway({ rendererDirectory });
+  context.after(async () => {
+    await gateway.stop();
+    await rm(rendererDirectory, { recursive: true, force: true });
+  });
+
+  const missingAsset = await fetch(`${gateway.getStatus().baseUrl}/sw.js`);
+  assert.equal(missingAsset.status, 404);
+  assert.equal((await missingAsset.json() as { code: string }).code, "ASSET_NOT_FOUND");
+
+  const frontendRoute = await fetch(`${gateway.getStatus().baseUrl}/notifications`);
+  assert.equal(frontendRoute.status, 200);
+  assert.match(frontendRoute.headers.get("content-type") ?? "", /^text\/html/);
+  assert.match(await frontendRoute.text(), /Ani Tracker/);
+});
+
 interface GatewayFixtureOptions {
   auth?: RemoteDeviceAuth;
+  rendererDirectory?: string;
 }
 
 /** 在随机端口启动测试网关。 */
 async function startGateway(options: GatewayFixtureOptions = {}): Promise<RemoteHttpGateway> {
   const gateway = new RemoteHttpGateway(createRemoteMethodRegistry(createHandlers()), {
     port: 0,
-    auth: options.auth
+    auth: options.auth,
+    rendererDirectory: options.rendererDirectory
   });
   await gateway.start();
   return gateway;

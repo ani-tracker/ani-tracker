@@ -1,4 +1,4 @@
-const CACHE_NAME = "ani-tracker-shell-v2";
+const CACHE_NAME = "ani-tracker-shell-v3";
 const APP_SHELL = [
   "/manifest.webmanifest",
   "/icons/ani-tracker.svg",
@@ -7,6 +7,7 @@ const APP_SHELL = [
   "/icons/apple-touch-icon.png"
 ];
 
+/** 缓存构建后的入口、哈希资源和 PWA 基础文件。 */
 async function cacheBuiltAppShell() {
   const cache = await caches.open(CACHE_NAME);
   const indexResponse = await fetch("/", { cache: "no-cache" });
@@ -35,7 +36,12 @@ self.addEventListener("activate", (event) => {
 });
 
 self.addEventListener("fetch", (event) => {
-  if (event.request.method !== "GET" || new URL(event.request.url).origin !== self.location.origin) {
+  const requestUrl = new URL(event.request.url);
+  if (
+    event.request.method !== "GET" ||
+    requestUrl.origin !== self.location.origin ||
+    requestUrl.pathname.startsWith("/api/")
+  ) {
     return;
   }
 

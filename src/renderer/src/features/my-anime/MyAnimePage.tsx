@@ -1036,7 +1036,7 @@ function MyAnimeCard({
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button
-              className="absolute right-3 top-3 size-11 p-0 shadow-sm md:min-h-8 md:size-8"
+              className="absolute right-3 top-3 z-10 size-11 p-0 shadow-sm md:min-h-8 md:size-8"
               type="button"
               variant="outline"
               aria-label="显示操作"

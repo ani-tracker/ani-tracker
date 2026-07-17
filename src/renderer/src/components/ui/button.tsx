@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from "react";
+import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 
 type ButtonVariant = "primary" | "secondary" | "ghost" | "outline" | "destructive";
@@ -16,9 +16,10 @@ const variants: Record<ButtonVariant, string> = {
 };
 
 /** 渲染统一尺寸、状态和图标规则的命令按钮。 */
-export function Button({ className, variant = "primary", ...props }: ButtonProps) {
-  return (
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, variant = "primary", ...props }, ref) => (
     <button
+      ref={ref}
       className={cn(
         "inline-flex min-h-11 items-center justify-center gap-2 rounded-md px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 md:min-h-9 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
         variants[variant],
@@ -26,5 +27,7 @@ export function Button({ className, variant = "primary", ...props }: ButtonProps
       )}
       {...props}
     />
-  );
-}
+  )
+);
+
+Button.displayName = "Button";

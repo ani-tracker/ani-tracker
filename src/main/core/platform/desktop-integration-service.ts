@@ -1,4 +1,5 @@
-import { app, BrowserWindow, Menu, nativeImage, Tray } from "electron";
+import { app, BrowserWindow, Menu, nativeImage, Tray, type NativeImage } from "electron";
+import { join } from "node:path";
 import type { AppSettings } from "@shared/domain";
 import { logger } from "../logger";
 
@@ -153,7 +154,20 @@ export class DesktopIntegrationService {
   }
 }
 
-function createTrayIcon() {
+/** 优先从应用资源加载跨平台托盘图标，并在缺失时回退内嵌图像。 */
+function createTrayIcon(): NativeImage {
+  const fileCandidates = [
+    join(__dirname, "../../../renderer/icons/ani-tracker-192.png"),
+    join(app.getAppPath(), "src/renderer/public/icons/ani-tracker-192.png")
+  ];
+  for (const [index, candidate] of fileCandidates.entries()) {
+    const fileImage = nativeImage.createFromPath(candidate);
+    if (!fileImage.isEmpty()) {
+      return resizeTrayIcon(fileImage);
+    }
+    logger.warn("Tray icon file candidate is empty", { candidateIndex: index });
+  }
+
   const svg = [
     '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">',
     '<rect width="32" height="32" rx="7" fill="#111827"/>',
@@ -162,6 +176,11 @@ function createTrayIcon() {
   ].join("");
   const image = nativeImage.createFromDataURL(`data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`);
 
+  return resizeTrayIcon(image);
+}
+
+/** 按平台生成托盘所需尺寸，并为 macOS 标记模板图像。 */
+function resizeTrayIcon(image: NativeImage): NativeImage {
   if (process.platform === "darwin") {
     image.setTemplateImage(true);
   }
