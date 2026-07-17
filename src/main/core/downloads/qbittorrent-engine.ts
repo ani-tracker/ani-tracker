@@ -2,17 +2,16 @@ import type { AddTorrentOptions, TorrentEngine } from "@shared/contracts";
 import type { DownloadTask, TorrentFile } from "@shared/domain";
 import { randomUUID } from "node:crypto";
 import { qbStateToStatus, QbittorrentClient, type QbittorrentClientOptions, type QbittorrentTorrentInfo } from "./qbittorrent-client";
-import {
-  downloadTorrentData,
-  isHttpTorrentUrl,
-  safeHost,
-  type TorrentHttpClient
-} from "./torrent-file-downloader";
-import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
+import { defaultMetadataHttpClient, type MetadataFetchOptions } from "../metadata/metadata-http-client";
 import { logger } from "../logger";
 
+const MAX_TORRENT_FILE_BYTES = 20 * 1024 * 1024;
 const DEFAULT_ADD_CONFIRMATION_TIMEOUT_MS = 10_000;
 const DEFAULT_ADD_CONFIRMATION_POLL_INTERVAL_MS = 250;
+
+export interface TorrentHttpClient {
+  fetch(input: string | URL, options?: MetadataFetchOptions): Promise<Response>;
+}
 
 export interface QbittorrentEngineOptions extends QbittorrentClientOptions {
   torrentHttpClient?: TorrentHttpClient;
@@ -45,14 +44,13 @@ export class QbittorrentEngine implements TorrentEngine {
     this.connected = true;
   }
 
-  /** 添加 magnet；兼容历史调用中传入的 torrent URL。 */
   async addMagnet(magnetUrl: string, options: AddTorrentOptions): Promise<DownloadTask> {
     await this.ensureConnected();
     const correlationTag = options.correlationTag ?? createCorrelationTag();
 
     try {
       if (isHttpTorrentUrl(magnetUrl)) {
-        const torrent = await downloadTorrentData(magnetUrl, this.torrentHttpClient);
+        const torrent = await this.downloadTorrentFile(magnetUrl);
         await this.client.addTorrentData(
           torrent.data,
           torrent.fileName,
@@ -85,7 +83,6 @@ export class QbittorrentEngine implements TorrentEngine {
     }
   }
 
-  /** 上传本地 torrent 文件到 qBittorrent。 */
   async addTorrentFile(filePath: string, options: AddTorrentOptions): Promise<DownloadTask> {
     await this.ensureConnected();
     const correlationTag = options.correlationTag ?? createCorrelationTag();
@@ -185,6 +182,32 @@ export class QbittorrentEngine implements TorrentEngine {
     }
   }
 
+  /** 使用 Ani Tracker 的网络代理下载并校验 torrent 元数据。 */
+  private async downloadTorrentFile(url: string): Promise<{ data: Uint8Array; fileName: string }> {
+    logger.info("Torrent file proxy download started", { host: safeHost(url) });
+    const response = await this.torrentHttpClient.fetch(url, {
+      source: "torrent-download",
+      headers: {
+        Accept: "application/x-bittorrent, application/octet-stream;q=0.9, */*;q=0.1"
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Torrent file download failed: ${response.status} ${response.statusText}`);
+    }
+
+    const declaredSize = Number(response.headers.get("content-length"));
+    if (Number.isFinite(declaredSize) && declaredSize > MAX_TORRENT_FILE_BYTES) {
+      throw new Error(`Torrent file exceeds ${MAX_TORRENT_FILE_BYTES} bytes`);
+    }
+
+    const data = new Uint8Array(await response.arrayBuffer());
+    validateTorrentData(data);
+    return {
+      data,
+      fileName: resolveTorrentFileName(url)
+    };
+  }
+
   private async mapTorrent(torrent: QbittorrentTorrentInfo): Promise<DownloadTask> {
     const files = await this.getFiles(torrent.hash);
 
@@ -230,6 +253,41 @@ function extractInfoHash(value: string): string | undefined {
 
   const match = value.match(/xt=urn:btih:([a-z0-9]+)/i);
   return match?.[1]?.toLowerCase();
+}
+
+function isHttpTorrentUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+/** 校验响应大小和 bencode 字典特征，避免把错误页上传给 qBittorrent。 */
+function validateTorrentData(data: Uint8Array): void {
+  if (!data.byteLength) {
+    throw new Error("Torrent file is empty");
+  }
+  if (data.byteLength > MAX_TORRENT_FILE_BYTES) {
+    throw new Error(`Torrent file exceeds ${MAX_TORRENT_FILE_BYTES} bytes`);
+  }
+  if (data[0] !== 0x64 || data[data.byteLength - 1] !== 0x65 || !Buffer.from(data).includes(Buffer.from("4:info"))) {
+    throw new Error("Torrent file response is not valid bencode metadata");
+  }
+}
+
+function resolveTorrentFileName(value: string): string {
+  try {
+    const pathName = new URL(value).pathname;
+    const candidate = decodeURIComponent(pathName.split("/").at(-1) ?? "").trim();
+    return candidate.toLowerCase().endsWith(".torrent") ? candidate : "download.torrent";
+  } catch {
+    return "download.torrent";
+  }
+}
+
+function safeHost(value: string): string | undefined {
+  try {
+    return new URL(value).host;
+  } catch {
+    return undefined;
+  }
 }
 
 function getErrorMessage(error: unknown): string {
