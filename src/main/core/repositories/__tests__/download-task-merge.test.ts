@@ -28,6 +28,30 @@ test("重复标签和名称不覆盖稳定标识不同的任务", () => {
   assert.equal(findExistingDownloadTask(existingTasks, createTask("hash-new", 2)), undefined);
 });
 
+test("首次刷新优先用关联标签合并 pending 任务", () => {
+  const correlationTag = "ani-tracker-396aba3c-a2e8-421a-896b-2a08536ce38e";
+  const pending = {
+    ...createTask("pending-task", 1),
+    id: "pending-task",
+    torrentHash: undefined,
+    correlationTag,
+    releaseId: "release-01",
+    episodeId: "episode-anime-1-1"
+  };
+  const staleEngineTask = {
+    ...createTask("real-hash"),
+    correlationTag: `${correlationTag}\r\n------formdata-undici-boundary--`
+  };
+  const refreshedEngineTask = {
+    ...createTask("real-hash"),
+    correlationTag
+  };
+
+  assert.equal(findExistingDownloadTask([staleEngineTask, pending], refreshedEngineTask)?.id, pending.id);
+  assert.equal(isEngineTaskCovered([refreshedEngineTask], pending), true);
+  assert.equal(isEngineTaskCovered([refreshedEngineTask], staleEngineTask), true);
+});
+
 test("单一视频文件按 SxxExx 解析集数", () => {
   const task = createTask("hash-02");
   task.files = [createFile(0, "Series/Series S03E02 [1080p].mkv")];

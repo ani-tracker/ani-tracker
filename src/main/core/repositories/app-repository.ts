@@ -65,6 +65,16 @@ export function findExistingDownloadTask(
   existingTasks: DownloadTask[],
   incoming: DownloadTask
 ): DownloadTask | undefined {
+  if (incoming.correlationTag) {
+    const correlationMatch = findUniqueDownloadTask(
+      existingTasks,
+      (task) => task.correlationTag === incoming.correlationTag && canUseWeakDownloadIdentity(task, incoming)
+    );
+    if (correlationMatch) {
+      return correlationMatch;
+    }
+  }
+
   if (incoming.torrentHash) {
     const hashMatch = existingTasks.find((task) => task.torrentHash === incoming.torrentHash);
     if (hashMatch) {
@@ -75,16 +85,6 @@ export function findExistingDownloadTask(
   const idMatch = existingTasks.find((task) => task.id === incoming.id);
   if (idMatch) {
     return idMatch;
-  }
-
-  if (incoming.correlationTag) {
-    const correlationMatch = findUniqueDownloadTask(
-      existingTasks,
-      (task) => task.correlationTag === incoming.correlationTag && canUseWeakDownloadIdentity(task, incoming)
-    );
-    if (correlationMatch) {
-      return correlationMatch;
-    }
   }
 
   const sameNameTasks = existingTasks.filter(

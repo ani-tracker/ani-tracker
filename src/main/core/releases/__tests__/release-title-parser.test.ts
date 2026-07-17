@@ -36,6 +36,14 @@ test("parseReleaseTitle 解析 AniBT 常见前缀字幕组标题", () => {
   assert.equal(parsed.subtitle, "multi");
 });
 
+test("parseReleaseTitle 优先使用分隔符后的集数而非续作编号", () => {
+  const parsed = parseReleaseTitle(
+    "[LoliHouse] Otome Game Sekai wa Mob ni Kibishii Sekai desu 2 - 01 [WebRip 1080p HEVC-10bit AAC SRTx2]"
+  );
+
+  assert.equal(parsed.episodeNo, 1);
+});
+
 test("parseReleaseTitle 解析中文第 N 话和小数集数", () => {
   const parsed = parseReleaseTitle("[字幕组] 测试番 第12.5话 [1920x1080][AVC][简日]");
 

@@ -6,6 +6,7 @@ export interface QbittorrentClientOptions {
   baseUrl: string;
   username: string;
   password?: string;
+  requestTimeoutMs?: number;
 }
 
 export interface QbittorrentTorrentInfo {
@@ -35,6 +36,15 @@ export interface QbittorrentSeedingLimits {
   ratioLimit: number;
   timeLimitMinutes: number;
 }
+
+export interface QbittorrentAddResult {
+  torrentIds: string[];
+  successCount: number;
+  pendingCount: number;
+  failureCount: number;
+}
+
+const DEFAULT_QBITTORRENT_REQUEST_TIMEOUT_MS = 15_000;
 
 export class QbittorrentClient {
   private cookie = "";
@@ -78,7 +88,7 @@ export class QbittorrentClient {
     }
   }
 
-  async addUrl(url: string, savePath: string, paused = false, correlationTag?: string): Promise<void> {
+  async addUrl(url: string, savePath: string, paused = false, correlationTag?: string): Promise<QbittorrentAddResult> {
     const body = new URLSearchParams({
       urls: url,
       savepath: savePath,
@@ -88,7 +98,7 @@ export class QbittorrentClient {
       body.set("tags", correlationTag);
     }
 
-    await this.requestText("/api/v2/torrents/add", {
+    return this.requestAddTorrent({
       method: "POST",
       body,
       headers: {
@@ -97,7 +107,12 @@ export class QbittorrentClient {
     });
   }
 
-  async addTorrentFile(filePath: string, savePath: string, paused = false, correlationTag?: string): Promise<void> {
+  async addTorrentFile(
+    filePath: string,
+    savePath: string,
+    paused = false,
+    correlationTag?: string
+  ): Promise<QbittorrentAddResult> {
     const buffer = await readFile(filePath);
     const formData = new FormData();
     formData.append("torrents", new Blob([buffer]), basename(filePath));
@@ -107,9 +122,14 @@ export class QbittorrentClient {
       formData.append("tags", correlationTag);
     }
 
-    await this.requestText("/api/v2/torrents/add", {
+    const multipart = await serializeMultipartFormData(formData);
+
+    return this.requestAddTorrent({
       method: "POST",
-      body: formData
+      body: multipart.body,
+      headers: {
+        "Content-Type": multipart.contentType
+      }
     });
   }
 
@@ -249,17 +269,37 @@ export class QbittorrentClient {
     return response.text();
   }
 
+  /** 解析经典版与 Enhanced 版添加结果，避免把 HTTP 200 的失败正文误判为成功。 */
+  private async requestAddTorrent(init: RequestInit): Promise<QbittorrentAddResult> {
+    const result = (await this.requestText("/api/v2/torrents/add", init)).trim();
+    return parseAddTorrentResponse(result);
+  }
+
+  /** 调用 qBittorrent Web API，并为本地服务异常增加超时保护。 */
   private async requestRaw(path: string, init?: RequestInit): Promise<Response> {
     const url = new URL(path, this.options.baseUrl);
     const headers = new Headers(init?.headers);
+    const controller = new AbortController();
+    const requestTimeoutMs = normalizeRequestTimeoutMs(this.options.requestTimeoutMs);
+    const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
     if (this.cookie) {
       headers.set("Cookie", this.cookie);
     }
 
-    return fetch(url, {
-      ...init,
-      headers
-    });
+    try {
+      return await fetch(url, {
+        ...init,
+        headers,
+        signal: controller.signal
+      });
+    } catch (error) {
+      if (controller.signal.aborted) {
+        throw new Error(`qBittorrent request timeout after ${requestTimeoutMs}ms: ${init?.method ?? "GET"} ${path}`);
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeout);
+    }
   }
 }
 
@@ -277,4 +317,69 @@ function normalizeRatioLimit(value: number): number {
 
 function normalizeTimeLimitMinutes(value: number): number {
   return value >= 0 && Number.isFinite(value) ? Math.max(1, Math.round(value)) : -1;
+}
+
+function normalizeRequestTimeoutMs(value: number | undefined): number {
+  if (!value || !Number.isFinite(value)) {
+    return DEFAULT_QBITTORRENT_REQUEST_TIMEOUT_MS;
+  }
+
+  return Math.max(1_000, Math.min(60_000, Math.round(value)));
+}
+
+/** 使用标准 FormData 编码并补齐结尾 CRLF，兼容 qBittorrent Enhanced 的 multipart 解析。 */
+async function serializeMultipartFormData(
+  formData: FormData
+): Promise<{ body: Uint8Array; contentType: string }> {
+  const request = new Request("http://127.0.0.1", {
+    method: "POST",
+    body: formData
+  });
+  const contentType = request.headers.get("content-type");
+  if (!contentType) {
+    throw new Error("Multipart content type is missing");
+  }
+
+  const encoded = new Uint8Array(await request.arrayBuffer());
+  const body = new Uint8Array(encoded.byteLength + 2);
+  body.set(encoded);
+  body.set([0x0d, 0x0a], encoded.byteLength);
+  return { body, contentType };
+}
+
+/** 统一 qBittorrent 经典文本响应与 Enhanced JSON 响应。 */
+function parseAddTorrentResponse(result: string): QbittorrentAddResult {
+  const emptyResult: QbittorrentAddResult = {
+    torrentIds: [],
+    successCount: 0,
+    pendingCount: 0,
+    failureCount: 0
+  };
+  if (!result || result.toLowerCase().startsWith("ok")) {
+    return emptyResult;
+  }
+
+  try {
+    const payload = JSON.parse(result) as Record<string, unknown>;
+    const torrentIds = Array.isArray(payload.added_torrent_ids)
+      ? payload.added_torrent_ids.filter((item): item is string => typeof item === "string" && item.length > 0)
+      : [];
+    const parsed = {
+      torrentIds,
+      successCount: toNonNegativeInteger(payload.success_count),
+      pendingCount: toNonNegativeInteger(payload.pending_count),
+      failureCount: toNonNegativeInteger(payload.failure_count)
+    };
+    if (parsed.successCount > 0 || parsed.pendingCount > 0 || parsed.torrentIds.length > 0) {
+      return parsed;
+    }
+  } catch {
+    // 非 JSON 响应继续按 qBittorrent 错误正文处理。
+  }
+
+  throw new Error(`qBittorrent add torrent failed: ${result}`);
+}
+
+function toNonNegativeInteger(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 }

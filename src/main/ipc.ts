@@ -33,6 +33,7 @@ import { MetadataHttpClient } from "./core/metadata/metadata-http-client";
 import { QbittorrentManagedService } from "./core/downloads/qbittorrent-managed-service";
 import { logger } from "./core/logger";
 import { resolveAnimeDownloadPath } from "./core/downloads/download-path-resolver";
+import { addReleaseTorrentToEngine, addTorrentAddressToEngine } from "./core/downloads/torrent-resource-adder";
 import { RssReleaseSource } from "./core/sources/rss-source";
 import { AnimeSourceBindingService } from "./core/source-bindings/anime-source-binding-service";
 import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
@@ -202,13 +203,23 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       engine: settings.download.defaultTorrentEngine,
       hasCustomSavePath: Boolean(input.savePath?.trim())
     });
+    const torrentHttpClient = new MetadataHttpClient(settings.network.metadataProxy);
     const engine = createTorrentEngine(settings, {
-      qbittorrentBaseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings)
+      qbittorrentBaseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
+      torrentHttpClient
     });
     const savePath = input.savePath?.trim() || settings.download.defaultDownloadDir;
-    const task = await engine.addMagnet(url, {
-      savePath,
-      paused: input.paused
+    const task = await addTorrentAddressToEngine({
+      engine,
+      url,
+      options: {
+        savePath,
+        paused: input.paused
+      },
+      torrentHttpClient,
+      context: {
+        source: "manual-url"
+      }
     });
 
     return repository.upsertDownloadTask({
@@ -222,8 +233,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       repository.listFansubs(input.animeId ?? input.release.animeId)
     ]);
     const release = enrichReleaseFromTitle(input.release, knownFansubs);
-    const url = release.magnetUrl ?? release.torrentUrl;
-    if (!url) {
+    if (!release.magnetUrl && !release.torrentUrl) {
       throw new Error("资源没有 magnet 或 torrent 地址，无法添加下载");
     }
 
@@ -266,12 +276,27 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       savePath,
       releaseId: release.id
     });
+    const torrentHttpClient = new MetadataHttpClient(settings.network.metadataProxy);
     const engine = createTorrentEngine(settings, {
-      qbittorrentBaseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings)
+      qbittorrentBaseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
+      torrentHttpClient
     });
-    const task = await engine.addMagnet(url, {
-      savePath,
-      paused: input.paused
+    const task = await addReleaseTorrentToEngine({
+      engine,
+      magnetUrl: release.magnetUrl,
+      torrentUrl: release.torrentUrl,
+      options: {
+        savePath,
+        paused: input.paused
+      },
+      torrentHttpClient,
+      context: {
+        source: "release",
+        animeId,
+        episodeId: episode?.id,
+        episodeNo,
+        releaseId: release.id
+      }
     });
     const downloads = await repository.upsertDownloadTask({
       ...task,

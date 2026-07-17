@@ -5,6 +5,7 @@ import { delimiter, join } from "node:path";
 import { test } from "node:test";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
 import { QbittorrentClient } from "../qbittorrent-client";
+import { QbittorrentEngine } from "../qbittorrent-engine";
 import {
   buildQbittorrentLaunchEnvironment,
   extractManagedTemporaryPassword,
@@ -140,6 +141,178 @@ test("QbittorrentClient adds the Ani Tracker correlation tag", async (t) => {
   await client.addUrl("magnet:?xt=urn:btih:TEST", "/downloads", false, "ani-tracker-test");
 
   assert.equal(addedBody?.get("tags"), "ani-tracker-test");
+});
+
+test("QbittorrentClient 将添加接口的 Fails 响应视为失败", async (t) => {
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+    return new Response("Fails.", { status: 200 });
+  });
+
+  const client = new QbittorrentClient({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin"
+  });
+  await client.login();
+
+  await assert.rejects(
+    client.addUrl("magnet:?xt=urn:btih:TEST", "/downloads"),
+    /qBittorrent add torrent failed: Fails\./
+  );
+});
+
+test("QbittorrentClient 接受 Enhanced JSON 添加成功响应", async (t) => {
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+    return Response.json({
+      added_torrent_ids: ["1e84ac58f835e635e98330dbbf2c77ae95abe6f4"],
+      failure_count: 0,
+      pending_count: 0,
+      success_count: 1
+    });
+  });
+
+  const client = new QbittorrentClient({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin"
+  });
+  await client.login();
+  const result = await client.addUrl("magnet:?xt=urn:btih:TEST", "/downloads");
+
+  assert.deepEqual(result, {
+    torrentIds: ["1e84ac58f835e635e98330dbbf2c77ae95abe6f4"],
+    successCount: 1,
+    pendingCount: 0,
+    failureCount: 0
+  });
+});
+
+test("QbittorrentEngine 使用 Enhanced 返回的 hash 确认无标签任务", async (t) => {
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+    if (path === "/api/v2/torrents/add") {
+      return Response.json({
+        added_torrent_ids: ["confirmed-hash"],
+        failure_count: 0,
+        pending_count: 0,
+        success_count: 1
+      });
+    }
+    if (path === "/api/v2/torrents/info") {
+      return Response.json([createQbittorrentTorrentInfo("")]);
+    }
+    if (path === "/api/v2/torrents/files") {
+      return Response.json([]);
+    }
+    return new Response("Not Found", { status: 404 });
+  });
+
+  const engine = new QbittorrentEngine({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin",
+    addConfirmationTimeoutMs: 20,
+    addConfirmationPollIntervalMs: 1
+  });
+  const task = await engine.addMagnet("magnet:?xt=urn:btih:ABC123", { savePath: "/downloads" });
+
+  assert.equal(task.id, "confirmed-hash");
+  assert.equal(task.torrentHash, "confirmed-hash");
+});
+
+test("QbittorrentClient 为 multipart 请求补齐结尾 CRLF", async (t) => {
+  const root = await mkdtemp(join(tmpdir(), "ani-qbittorrent-multipart-"));
+  const torrentPath = join(root, "test.torrent");
+  await writeFile(torrentPath, "d4:infod4:name4:testee", "utf8");
+  let submittedBody: Uint8Array | undefined;
+  let contentType = "";
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+    submittedBody = init?.body as Uint8Array;
+    contentType = new Headers(init?.headers).get("content-type") ?? "";
+    return new Response("Ok.", { status: 200 });
+  });
+
+  const client = new QbittorrentClient({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin"
+  });
+  await client.login();
+  await client.addTorrentFile(torrentPath, "/downloads", false, "ani-tracker-test");
+
+  assert.match(contentType, /^multipart\/form-data; boundary=/);
+  assert.equal(submittedBody?.at(-2), 0x0d);
+  assert.equal(submittedBody?.at(-1), 0x0a);
+  assert.match(Buffer.from(submittedBody ?? []).toString("utf8"), /ani-tracker-test/);
+});
+
+test("QbittorrentEngine 规范化污染标签并返回真实任务", async (t) => {
+  let correlationTag = "";
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request, init?: RequestInit) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+    if (path === "/api/v2/torrents/add") {
+      correlationTag = (init?.body as URLSearchParams).get("tags") ?? "";
+      return new Response("Ok.", { status: 200 });
+    }
+    if (path === "/api/v2/torrents/info") {
+      return Response.json([createQbittorrentTorrentInfo(`${correlationTag}\r\n------formdata-undici-boundary--`)]);
+    }
+    if (path === "/api/v2/torrents/files") {
+      return Response.json([]);
+    }
+    return new Response("Not Found", { status: 404 });
+  });
+
+  const engine = new QbittorrentEngine({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin",
+    addConfirmationTimeoutMs: 20,
+    addConfirmationPollIntervalMs: 1
+  });
+  const task = await engine.addMagnet("magnet:?xt=urn:btih:ABC123", { savePath: "/downloads" });
+
+  assert.equal(task.id, "confirmed-hash");
+  assert.equal(task.torrentHash, "confirmed-hash");
+  assert.equal(task.correlationTag, correlationTag);
+});
+
+test("QbittorrentEngine 未确认真实任务时不返回占位任务", async (t) => {
+  t.mock.method(globalThis, "fetch", async (input: string | URL | Request) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v2/auth/login") {
+      return new Response(null, { status: 204, headers: { "set-cookie": "SID=test-session" } });
+    }
+    if (path === "/api/v2/torrents/info") {
+      return Response.json([]);
+    }
+    return new Response("Ok.", { status: 200 });
+  });
+
+  const engine = new QbittorrentEngine({
+    baseUrl: "http://127.0.0.1:18080",
+    username: "admin",
+    addConfirmationTimeoutMs: 5,
+    addConfirmationPollIntervalMs: 1
+  });
+
+  await assert.rejects(
+    engine.addMagnet("magnet:?xt=urn:btih:NOTCONFIRMED", { savePath: "/downloads" }),
+    /未在 5ms 内确认新增任务/
+  );
 });
 
 test("QbittorrentClient uses qBittorrent 5 start and stop action endpoints", async (t) => {
@@ -283,6 +456,21 @@ test("toQbittorrentSeedingLimits honors the master switch and per-target switche
     }
   );
 });
+
+/** 创建用于 qBittorrent Engine 确认流程的任务响应。 */
+function createQbittorrentTorrentInfo(tags: string) {
+  return {
+    hash: "confirmed-hash",
+    name: "confirmed torrent",
+    state: "downloading",
+    progress: 0,
+    dlspeed: 0,
+    upspeed: 0,
+    eta: 60,
+    save_path: "/downloads",
+    tags
+  };
+}
 
 test("QbittorrentManagedService 对托管启动避开 10000 以下 WebUI 端口", async () => {
   const service = new QbittorrentManagedService();

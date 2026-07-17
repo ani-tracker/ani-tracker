@@ -12,6 +12,7 @@ import type {
 } from "@shared/domain";
 import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
+import { addReleaseTorrentToEngine } from "../downloads/torrent-resource-adder";
 import { logger } from "../logger";
 import { resolveAnimeDownloadPath } from "../downloads/download-path-resolver";
 import type { AppRepository } from "../repositories/app-repository";
@@ -67,7 +68,8 @@ export class AutomationRunService {
     const httpClient = new MetadataHttpClient(settings.network.metadataProxy);
     const sourceService = new ReleaseSourceService(sources, fansubs, httpClient);
     const engine = createTorrentEngine(settings, {
-      qbittorrentBaseUrl: this.options.getQbittorrentBaseUrl?.(settings)
+      qbittorrentBaseUrl: this.options.getQbittorrentBaseUrl?.(settings),
+      torrentHttpClient: httpClient
     });
 
     for (const anime of myAnimeItems) {
@@ -194,8 +196,7 @@ export class AutomationRunService {
             continue;
           }
 
-          const url = best.magnetUrl ?? best.torrentUrl;
-          if (!url) {
+          if (!best.magnetUrl && !best.torrentUrl) {
             result.skipped.push({
               animeId: anime.anime.id,
               animeTitle: anime.anime.title,
@@ -206,8 +207,21 @@ export class AutomationRunService {
             continue;
           }
 
-          const task = await engine.addMagnet(url, {
-            savePath: resolveAnimeDownloadPath(settings, anime)
+          const task = await addReleaseTorrentToEngine({
+            engine,
+            magnetUrl: best.magnetUrl,
+            torrentUrl: best.torrentUrl,
+            options: {
+              savePath: resolveAnimeDownloadPath(settings, anime)
+            },
+            torrentHttpClient: httpClient,
+            context: {
+              source: "automation",
+              animeId: anime.anime.id,
+              episodeId: episode.id,
+              episodeNo: episode.episodeNo,
+              releaseId: best.id
+            }
           });
           const savedTasks = await this.repository.upsertDownloadTask({
             ...task,

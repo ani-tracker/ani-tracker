@@ -280,6 +280,54 @@ test("SQLite 启动时清理字幕组自别名并修正下载任务旧名称", a
   assertDatabaseIntegrity(fixture.databasePath);
 });
 
+test("SQLite 刷新时合并真实任务与已关联的 pending 任务", async () => {
+  const fixture = await createFixture();
+  const runtime = createRepositoryRuntime(fixture.options);
+  await runtime.initialize();
+  const item = createTestMyAnime();
+  const correlationTag = "ani-tracker-396aba3c-a2e8-421a-896b-2a08536ce38e";
+  await runtime.repository.upsertMyAnime(item);
+  await runtime.repository.upsertEpisode({
+    id: `episode-${item.anime.id}-1`,
+    animeId: item.anime.id,
+    episodeNo: 1,
+    status: "downloading"
+  });
+  await runtime.repository.upsertDownloadTask({
+    ...createDownloadTask(item.anime.id, "pending-task", 1),
+    id: "pending-task",
+    torrentHash: undefined,
+    correlationTag,
+    releaseId: "release-01"
+  });
+  await runtime.repository.upsertDownloadTask({
+    ...createDownloadTask(item.anime.id, "real-hash"),
+    animeId: undefined,
+    episodeId: undefined,
+    episodeNo: undefined,
+    correlationTag: `${correlationTag}\r\n------formdata-undici-boundary--`
+  });
+
+  const refreshed = await runtime.repository.mergeDownloadTasksFromEngine([{
+    ...createDownloadTask(item.anime.id, "real-hash"),
+    animeId: undefined,
+    episodeId: undefined,
+    episodeNo: undefined,
+    correlationTag
+  }]);
+
+  assert.equal(refreshed.length, 1);
+  assert.equal(refreshed[0].id, "real-hash");
+  assert.equal(refreshed[0].torrentHash, "real-hash");
+  assert.equal(refreshed[0].releaseId, "release-01");
+  assert.equal(refreshed[0].animeId, item.anime.id);
+  assert.equal(refreshed[0].episodeId, `episode-${item.anime.id}-1`);
+  assert.equal(refreshed[0].episodeNo, 1);
+  assert.equal(refreshed[0].correlationTag, correlationTag);
+  runtime.close();
+  assertDatabaseIntegrity(fixture.databasePath);
+});
+
 test("SQLite 刷新及重启时按文件集数修复同名种子的单集关联", async () => {
   const fixture = await createFixture();
   const runtime = createRepositoryRuntime(fixture.options);

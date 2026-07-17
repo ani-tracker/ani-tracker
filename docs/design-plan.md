@@ -64,6 +64,15 @@ The qB-compatible state model must include:
 - per-file progress
 - selected file priority
 
+Download submission follows a confirmed-task workflow:
+
+1. Prefer magnet URLs; for HTTP torrent URLs, reuse the application network/proxy layer to download and validate bencode metadata before multipart upload.
+2. Accept both classic qBittorrent empty/`Ok.` responses and qBittorrent Enhanced JSON results.
+3. Confirm the real task by `added_torrent_ids` or the Ani Tracker correlation tag before persisting it.
+4. Merge engine state by real torrent hash while preserving anime, episode, and fansub associations; never persist a synthetic pending task as a successful download.
+
+The compatibility layer must treat `Fails.`, zero-success Enhanced results, request timeouts, and confirmation timeouts as errors. Correlation tags read from qBittorrent are normalized because some Enhanced multipart implementations may append boundary text to the final field.
+
 ## Media Extraction Strategy
 
 Media metadata is extracted through a chain:
@@ -139,7 +148,7 @@ The current repository contains:
 - AniList-backed monthly anime discovery and local anime catalog
 - Media extraction chain and ffprobe media probing
 - qBittorrent state mapping helper
-- qBittorrent Web API adapter with progress, speed, ETA, task actions, and file priority selection
+- qBittorrent Web API adapter with classic/Enhanced add-result parsing, confirmed hash persistence, progress, speed, ETA, task actions, and file priority selection
 - DMHY / 动漫花园, Mikan / 蜜柑计划, AniBT, and ACGNX site adapters
 - Active SQLite schema at `src/main/core/storage/schema.sql`
 - Download engine adapters and monitor service

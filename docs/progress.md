@@ -1,6 +1,6 @@
 # Ani Tracker 进度表
 
-最近更新：2026-07-15
+最近更新：2026-07-17
 
 ## 已完成
 
@@ -129,7 +129,8 @@
   - 视频编码。
   - 已修正中文字幕标签识别，支持 `简体`、`简日`、`繁体`、`繁日` 等无英文单词边界的标签。
   - 已支持 `S02E03` 等多季集数格式。
-  - 已新增边界样例测试，覆盖多季标题、小数集数、合集范围、总集篇和 `10bit` 误判。
+  - 已修正续作编号误判：明确的 `- 01` 集数分隔符优先于标题中的裸数字，例如 `desu 2 - 01` 会解析为第 1 集。
+  - 已新增边界样例测试，覆盖多季标题、小数集数、合集范围、总集篇、续作编号和 `10bit` 误判。
 - 已新增元数据合并边界样例测试：
   - 覆盖标题归一化对全角括号、空白和标点的处理。
   - 覆盖同番标题/别名去重、external id 合并和别名重写。
@@ -148,7 +149,11 @@
 - 已实现下载任务与追番、单集、字幕组的持久关联：
   - 从番剧资源弹窗下载时自动复用或创建对应单集，并同步单集下载状态。
   - 下载任务保存番剧标题、集数和字幕组快照，qBittorrent 状态刷新后继续保留关联。
-  - qBittorrent 任务使用 Ani Tracker 唯一标签回填关联，兼容添加 torrent URL 时无法立即获得 hash 的情况。
+  - qBittorrent 任务使用 Ani Tracker 唯一标签和真实 torrent hash 回填关联。
+  - 添加请求会等待 qBittorrent 返回真实任务后再持久化，不再创建 `pending-*` 占位任务。
+  - 兼容 qBittorrent Enhanced 的 JSON 添加结果，使用 `added_torrent_ids` 直接确认已接收任务，避免“队列已添加但应用报错”导致关联丢失。
+  - 刷新时可按标签合并历史占位任务和真实任务，删除重复记录并保留番剧、单集和字幕组关联。
+  - 已规范化 Enhanced multipart 异常附带的标签边界文本，兼容既有污染标签数据。
   - 资源弹窗按字幕组分组、组内按集数展示，并阻止重复添加同一关联资源。
   - 下载队列按番剧和字幕组归并，展示已关联、下载中、已完成集数。
   - 我的追番列表展示每部番的下载集数概览。
@@ -156,6 +161,9 @@
 
 - 已实现 qBittorrent Web API 兼容引擎：
   - 添加 URL/torrent。
+  - HTTP torrent 地址先通过应用网络层下载并校验 bencode，再使用临时文件上传到 qBittorrent，完成后清理临时目录。
+  - 同时兼容经典空响应/`Ok.` 与 Enhanced JSON 添加结果；`Fails.`、零成功 JSON 和请求超时会作为真实错误返回。
+  - 添加成功后按返回 hash 或 Ani Tracker 标签轮询确认任务，magnet 元数据未就绪时允许文件列表暂时为空。
   - 列出任务。
   - 下载进度、速度、ETA。
   - 文件列表。
@@ -258,15 +266,17 @@
 ```powershell
 pnpm.cmd run typecheck
 pnpm.cmd run test:parsers
+pnpm.cmd build
 git diff --check
 ```
 
 说明：
 
 - `pnpm.cmd run test:parsers` 当前会编译测试到 `out/test-node`，该目录已在 `.gitignore` 中。
-- 本次顺手修正了一个自动化测试中的跨平台路径断言，改为使用默认设置里的下载目录，避免 Windows 路径分隔符导致误报。
-- `git diff --check` 通过；命令输出中仍有 Git 对 CRLF 转换和用户级 ignore 权限的环境警告，不影响代码检查结果。
-- 本次没有重新执行生产 build。
+- Node 测试当前共 `114` 项，覆盖标题集数边界、远程 torrent 上传、经典/Enhanced 添加结果、真实 hash 确认、确认超时和 SQLite 历史任务合并。
+- 主进程和渲染进程 TypeScript 类型检查通过。
+- 生产构建通过，并成功准备 macOS x64 与 Windows x64 qBittorrent 资源。
+- `git diff --check` 通过。
 
 ## 尚未完成
 
