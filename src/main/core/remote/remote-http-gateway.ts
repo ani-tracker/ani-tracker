@@ -1,13 +1,22 @@
 import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { type Socket } from "node:net";
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { RemoteGatewayStatus, RemotePairingChallenge } from "@shared/contracts";
+import type { RemoteAccessSettings } from "@shared/domain";
 import { logger } from "../logger";
 import { RemoteDeviceAuth, RemoteDeviceAuthError } from "./remote-device-auth";
 import { RemoteRpcDispatcher, RemoteRpcError } from "./remote-rpc-dispatcher";
 import type { RemoteMethodRegistry, RemoteRpcEffect, RemoteRpcScope } from "./remote-method-registry";
+import {
+  isTrustedHost,
+  isTrustedOrigin,
+  listPrivateIpv4Addresses,
+  normalizePrivateIpv4Addresses
+} from "./remote-network-policy";
+import type { RemoteTlsCertificateBundle, RemoteTlsCertificateStore } from "./remote-tls-certificate-store";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 18_083;
@@ -28,6 +37,8 @@ export interface RemoteHttpGatewayOptions {
   rendererDirectory?: string;
   auth?: RemoteDeviceAuth;
   clock?: () => number;
+  tlsCertificateStore?: RemoteTlsCertificateStore;
+  privateAddressProvider?: () => string[];
 }
 
 interface RateLimitEntry {
@@ -42,7 +53,7 @@ interface PathBoundaryOperations {
 }
 
 export class RemoteHttpGateway {
-  private readonly host: string;
+  private host: string;
   private readonly configuredPort: number;
   private readonly rendererDirectory?: string;
   private readonly auth: RemoteDeviceAuth;
@@ -53,27 +64,87 @@ export class RemoteHttpGateway {
   private server: Server | undefined;
   private stopping: Promise<void> | undefined;
   private activePort: number;
+  private protocol: "http" | "https" = "http";
+  private lanEnabled = false;
+  private addresses: string[] = [];
+  private certificate: RemoteTlsCertificateBundle | undefined;
   private lastError: string | undefined;
+  private readonly tlsCertificateStore?: RemoteTlsCertificateStore;
+  private readonly privateAddressProvider: () => string[];
 
-  /** 创建仅监听回环地址的远程网关，局域网监听留待 HTTPS 阶段。 */
+  /** 创建默认仅监听回环地址的远程网关。 */
   constructor(
     private readonly registry: RemoteMethodRegistry,
     options: RemoteHttpGatewayOptions = {}
   ) {
     this.host = options.host ?? DEFAULT_HOST;
     if (this.host !== DEFAULT_HOST) {
-      throw new Error("当前阶段远程网关只允许监听 127.0.0.1");
+      throw new Error("HTTP 远程网关只允许监听 127.0.0.1");
     }
     this.configuredPort = options.port ?? DEFAULT_PORT;
     this.activePort = this.configuredPort;
     this.rendererDirectory = options.rendererDirectory ? resolve(options.rendererDirectory) : undefined;
     this.auth = options.auth ?? new RemoteDeviceAuth();
     this.clock = options.clock ?? Date.now;
+    this.tlsCertificateStore = options.tlsCertificateStore;
+    this.privateAddressProvider = options.privateAddressProvider ?? listPrivateIpv4Addresses;
     this.dispatcher = new RemoteRpcDispatcher(registry);
   }
 
   /** 启动 HTTP 网关；重复启动直接返回当前状态。 */
   async start(): Promise<RemoteGatewayStatus> {
+    return this.startServer({
+      host: this.host,
+      port: this.configuredPort,
+      protocol: "http",
+      addresses: []
+    });
+  }
+
+  /** 按设置切换回环 HTTP 或局域网 HTTPS；失败时恢复回环服务。 */
+  async applySettings(settings: RemoteAccessSettings): Promise<RemoteGatewayStatus> {
+    const port = normalizeGatewayPort(settings.port);
+    await this.stop();
+    if (!settings.lanEnabled) {
+      return this.startServer({ host: DEFAULT_HOST, port, protocol: "http", addresses: [] });
+    }
+
+    try {
+      const addresses = normalizePrivateIpv4Addresses(this.privateAddressProvider());
+      if (!addresses.length) {
+        throw new Error("未发现可用的局域网 IPv4 地址");
+      }
+      if (!this.tlsCertificateStore) {
+        throw new Error("局域网 HTTPS 证书仓库未初始化");
+      }
+      const certificate = await this.tlsCertificateStore.loadOrCreate(addresses);
+      return await this.startServer({
+        host: "0.0.0.0",
+        port,
+        protocol: "https",
+        addresses,
+        certificate
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "局域网 HTTPS 启动失败";
+      logger.warn("Remote LAN HTTPS unavailable; restoring loopback gateway", {
+        errorType: error instanceof Error ? error.name : typeof error,
+        message
+      });
+      const fallback = await this.startServer({ host: DEFAULT_HOST, port, protocol: "http", addresses: [] });
+      this.lastError = message;
+      return { ...fallback, lastError: message };
+    }
+  }
+
+  /** 使用指定协议和监听地址启动网关。 */
+  private async startServer(input: {
+    host: string;
+    port: number;
+    protocol: "http" | "https";
+    addresses: string[];
+    certificate?: RemoteTlsCertificateBundle;
+  }): Promise<RemoteGatewayStatus> {
     if (this.stopping) {
       await this.stopping;
     }
@@ -81,9 +152,10 @@ export class RemoteHttpGateway {
       return this.getStatus();
     }
 
-    const server = createServer((request, response) => {
-      void this.handleRequest(request, response);
-    });
+    const requestHandler = (request: IncomingMessage, response: ServerResponse) => void this.handleRequest(request, response);
+    const server = input.protocol === "https" && input.certificate
+      ? createHttpsServer({ key: input.certificate.key, cert: input.certificate.cert }, requestHandler)
+      : createServer(requestHandler);
     server.on("connection", (socket) => {
       this.sockets.add(socket);
       socket.once("close", () => this.sockets.delete(socket));
@@ -99,13 +171,18 @@ export class RemoteHttpGateway {
       };
       server.once("error", handleError);
       server.once("listening", handleListening);
-      server.listen(this.configuredPort, this.host);
+      server.listen(input.port, input.host);
     });
     const address = server.address();
-    this.activePort = typeof address === "object" && address ? address.port : this.configuredPort;
+    this.host = input.host;
+    this.activePort = typeof address === "object" && address ? address.port : input.port;
+    this.protocol = input.protocol;
+    this.lanEnabled = input.protocol === "https";
+    this.addresses = input.addresses;
+    this.certificate = input.certificate;
     this.server = server;
     this.lastError = undefined;
-    logger.info("Remote HTTP gateway started", { host: this.host, port: this.activePort });
+    logger.info("Remote gateway started", { host: this.host, port: this.activePort, protocol: this.protocol });
     return this.getStatus();
   }
 
@@ -137,7 +214,7 @@ export class RemoteHttpGateway {
     try {
       await stopping;
       this.rateLimits.clear();
-      logger.info("Remote HTTP gateway stopped", { host: this.host, port: this.activePort });
+      logger.info("Remote gateway stopped", { host: this.host, port: this.activePort, protocol: this.protocol });
     } finally {
       if (this.stopping === stopping) {
         this.stopping = undefined;
@@ -157,8 +234,16 @@ export class RemoteHttpGateway {
       running: Boolean(this.server),
       host: this.host,
       port: this.activePort,
-      baseUrl: `http://${this.host}:${this.activePort}`,
+      protocol: this.protocol,
+      lanEnabled: this.lanEnabled,
+      baseUrl: this.getBaseUrl(),
+      addresses: this.addresses,
       devices: this.auth.listDevices(),
+      certificate: this.certificate ? {
+        fingerprint: this.certificate.fingerprint,
+        expiresAt: this.certificate.expiresAt,
+        authorityCertificatePath: this.certificate.authorityCertificatePath
+      } : undefined,
       lastError: this.lastError
     };
   }
@@ -181,9 +266,17 @@ export class RemoteHttpGateway {
     const remoteAddress = request.socket.remoteAddress;
     try {
       this.validateHostAndOrigin(request);
-      const url = new URL(request.url ?? "/", this.getStatus().baseUrl);
+      const url = new URL(request.url ?? "/", this.getBaseUrl());
       if (request.method === "GET" && url.pathname === "/api/health") {
         this.writeJson(response, 200, { ok: true });
+        return;
+      }
+      if (request.method === "GET" && url.pathname === "/ani-tracker-ca.crt" && this.certificate) {
+        response.statusCode = 200;
+        response.setHeader("Content-Type", "application/x-x509-ca-cert");
+        response.setHeader("Content-Disposition", "attachment; filename=ani-tracker-ca.crt");
+        response.setHeader("Cache-Control", "no-store");
+        response.end(this.certificate.ca);
         return;
       }
       if (request.method === "POST" && url.pathname === "/api/pair") {
@@ -214,18 +307,20 @@ export class RemoteHttpGateway {
 
   /** 校验 Host 与同源 Origin，阻止 DNS rebinding 和跨站浏览器调用。 */
   private validateHostAndOrigin(request: IncomingMessage): void {
-    const allowedHosts = new Set([`${this.host}:${this.activePort}`, `localhost:${this.activePort}`]);
-    const host = request.headers.host;
-    if (!host || !allowedHosts.has(host.toLowerCase())) {
+    const allowedHostnames = new Set(["127.0.0.1", "localhost", ...this.addresses]);
+    if (!isTrustedHost(request.headers.host, this.activePort, allowedHostnames)) {
       throw new HttpGatewayError(403, "HOST_FORBIDDEN", "请求 Host 不受信任");
     }
     const origin = request.headers.origin;
-    if (origin) {
-      const allowedOrigins = new Set([...allowedHosts].map((value) => `http://${value}`));
-      if (!allowedOrigins.has(origin.toLowerCase())) {
-        throw new HttpGatewayError(403, "ORIGIN_FORBIDDEN", "请求 Origin 不受信任");
-      }
+    if (!isTrustedOrigin(origin, this.protocol, this.activePort, allowedHostnames)) {
+      throw new HttpGatewayError(403, "ORIGIN_FORBIDDEN", "请求 Origin 不受信任");
     }
+  }
+
+  /** 返回可供本机或局域网客户端使用的规范网关地址。 */
+  private getBaseUrl(): string {
+    const publicHost = this.lanEnabled ? this.addresses[0] ?? "127.0.0.1" : "127.0.0.1";
+    return `${this.protocol}://${publicHost}:${this.activePort}`;
   }
 
   /** 使用服务端固定 scopes 完成设备配对，客户端不能自行提权。 */
@@ -447,4 +542,12 @@ export function isPathInsideDirectory(
     relativePath === "" ||
     (!operations.isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${operations.sep}`))
   );
+}
+
+/** 规范远程网关端口，避免绑定特权端口或无效端口。 */
+function normalizeGatewayPort(value: number): number {
+  if (!Number.isInteger(value) || value < 1024 || value > 65_535) {
+    throw new Error("远程网关端口必须为 1024 至 65535 的整数");
+  }
+  return value;
 }

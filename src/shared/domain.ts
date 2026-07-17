@@ -323,8 +323,14 @@ export interface MetadataProxySettings {
   timeoutMs: number;
 }
 
+export interface RemoteAccessSettings {
+  lanEnabled: boolean;
+  port: number;
+}
+
 export interface NetworkSettings {
   metadataProxy: MetadataProxySettings;
+  remoteAccess: RemoteAccessSettings;
 }
 
 export interface AppSettings {

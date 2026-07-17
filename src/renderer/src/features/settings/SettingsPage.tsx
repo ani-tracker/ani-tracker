@@ -1,6 +1,8 @@
 import type { ReactNode } from "react";
 import { useEffect, useId, useState } from "react";
+import { toast } from "sonner";
 import {
+  Copy,
   FileSearch,
   FolderCog,
   HardDrive,
@@ -95,8 +97,10 @@ export function SettingsPage() {
         setRemotePairing(null);
       }
       setRemoteError(null);
+      return status;
     } catch (error) {
       setRemoteError(error instanceof Error ? error.message : "读取远程设备状态失败");
+      return null;
     } finally {
       setRemoteAction("idle");
     }
@@ -131,6 +135,19 @@ export function SettingsPage() {
     }
   }
 
+  /** 复制本地 CA 下载地址，便于在移动设备中安装证书。 */
+  async function copyAuthorityCertificateUrl() {
+    if (!remoteStatus?.certificate) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(`${remoteStatus.baseUrl}/ani-tracker-ca.crt`);
+      toast.success("CA 下载地址已复制");
+    } catch {
+      toast.error("复制失败，请手动复制 CA 下载地址");
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex flex-col gap-4" aria-label="正在加载设置">
@@ -156,12 +173,25 @@ export function SettingsPage() {
     }
 
     setSaveState("saving");
-    const saved = await appApi.updateSettings(draft);
-    setDraft(saved);
-    await refreshSchedulerStatus();
-    await refreshQbittorrentManagedStatus();
-    setSaveState("saved");
-    window.setTimeout(() => setSaveState("idle"), 1200);
+    try {
+      const saved = await appApi.updateSettings(draft);
+      setDraft(saved);
+      const [, , remote] = await Promise.all([
+        refreshSchedulerStatus(),
+        refreshQbittorrentManagedStatus(),
+        refreshRemoteStatus()
+      ]);
+      setSaveState("saved");
+      if (saved.network.remoteAccess.lanEnabled && (!remote?.lanEnabled || remote.lastError)) {
+        toast.warning("设置已保存，但局域网 HTTPS 启动失败，已恢复本机访问");
+      } else {
+        toast.success("设置已保存");
+      }
+      window.setTimeout(() => setSaveState("idle"), 1200);
+    } catch (error) {
+      setSaveState("idle");
+      toast.error(error instanceof Error ? error.message : "设置保存失败");
+    }
   }
 
   async function resetSettingsToDefaults() {
@@ -385,11 +415,52 @@ export function SettingsPage() {
 
       <SettingsSection title="远程设备" description="管理通过一次性配对码登记的浏览器和移动设备。">
         <div className="flex flex-col gap-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <ToggleSetting
+              icon={<Smartphone />}
+              label="局域网 HTTPS"
+              description="显式开启后允许同一私有网络中的设备访问；不会开放裸 HTTP 或公网映射。"
+              checked={draft.network.remoteAccess.lanEnabled}
+              onChange={(value) =>
+                setDraft({
+                  ...draft,
+                  network: {
+                    ...draft.network,
+                    remoteAccess: {
+                      ...draft.network.remoteAccess,
+                      lanEnabled: value
+                    }
+                  }
+                })
+              }
+            />
+            <NumberSetting
+              label="远程服务端口"
+              value={draft.network.remoteAccess.port}
+              min={1024}
+              max={65_535}
+              onChange={(value) =>
+                setDraft({
+                  ...draft,
+                  network: {
+                    ...draft.network,
+                    remoteAccess: {
+                      ...draft.network.remoteAccess,
+                      port: value
+                    }
+                  }
+                })
+              }
+            />
+          </div>
+
           <Alert>
             <Monitor />
-            <AlertTitle>当前仅开放本机回环访问</AlertTitle>
+            <AlertTitle>{remoteStatus?.lanEnabled ? "局域网 HTTPS 已开启" : "当前仅开放本机回环访问"}</AlertTitle>
             <AlertDescription>
-              服务不会监听局域网地址；跨设备 HTTPS 接入将在下一阶段单独审核。设备令牌仅保存在内存中，应用重启后需重新配对。
+              {remoteStatus?.lanEnabled
+                ? "首次连接前需在移动设备中信任 Ani Tracker 本地 CA；设备令牌仅保存在内存中，应用重启后需重新配对。"
+                : "启用局域网 HTTPS 并保存后，移动设备才能通过同一私有网络访问。设备令牌仅保存在内存中。"}
             </AlertDescription>
           </Alert>
 
@@ -433,6 +504,34 @@ export function SettingsPage() {
               </Button>
             </div>
           </div>
+
+          {remoteStatus?.lanEnabled && (
+            <div className="flex flex-col gap-3">
+              <div className="text-sm font-medium">局域网访问地址</div>
+              <div className="flex flex-wrap gap-2">
+                {remoteStatus.addresses.map((address) => (
+                  <Badge key={address}>https://{address}:{remoteStatus.port}</Badge>
+                ))}
+              </div>
+              {remoteStatus.certificate && (
+                <div className="flex flex-col gap-1 text-xs text-muted-foreground">
+                  <div className="flex items-start gap-2">
+                    <span className="min-w-0 flex-1 break-all">CA 下载：{remoteStatus.baseUrl}/ani-tracker-ca.crt</span>
+                    <Button
+                      aria-label="复制 CA 下载地址"
+                      variant="ghost"
+                      className="size-11 shrink-0 p-0 md:size-9"
+                      onClick={() => void copyAuthorityCertificateUrl()}
+                    >
+                      <Copy />
+                    </Button>
+                  </div>
+                  <span className="break-all">证书指纹：{remoteStatus.certificate.fingerprint}</span>
+                  <span>证书到期：{formatDateTime(remoteStatus.certificate.expiresAt)}</span>
+                </div>
+              )}
+            </div>
+          )}
 
           {remotePairing && (
             <Alert>
@@ -1132,6 +1231,7 @@ function NumberSetting({
   value,
   suffix,
   min = 0,
+  max,
   step = 1,
   disabled = false,
   onChange
@@ -1140,6 +1240,7 @@ function NumberSetting({
   value: number;
   suffix?: string;
   min?: number;
+  max?: number;
   step?: number;
   disabled?: boolean;
   onChange: (value: number) => void;
@@ -1155,6 +1256,7 @@ function NumberSetting({
           className="min-w-0 flex-1"
           disabled={disabled}
           min={min}
+          max={max}
           step={step}
           type="number"
           value={value}

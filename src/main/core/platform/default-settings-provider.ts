@@ -78,6 +78,10 @@ export abstract class DefaultSettingsProvider {
         metadataProxy: {
           mode: "off",
           timeoutMs: 15_000
+        },
+        remoteAccess: {
+          lanEnabled: false,
+          port: 18_083
         }
       }
     };

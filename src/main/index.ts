@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog } from "electron";
+import { app, BrowserWindow, dialog, safeStorage } from "electron";
 import { join } from "node:path";
 import { DailyReminderService } from "./core/automation/daily-reminder-service";
 import { logger } from "./core/logger";
@@ -14,6 +14,7 @@ import {
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
 import { createRemoteMethodRegistry } from "./core/remote/remote-method-registry";
 import { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
+import { RemoteTlsCertificateStore } from "./core/remote/remote-tls-certificate-store";
 
 let mainWindow: BrowserWindow | null = null;
 let quitAfterManagedQbittorrentStops = false;
@@ -42,7 +43,12 @@ const remoteMethodRegistry = createRemoteMethodRegistry({
   resumeDownload: (taskId) => downloadTaskControlService.resume(taskId)
 });
 const remoteGateway = new RemoteHttpGateway(remoteMethodRegistry, {
-  rendererDirectory: join(__dirname, "../renderer")
+  rendererDirectory: join(__dirname, "../renderer"),
+  tlsCertificateStore: new RemoteTlsCertificateStore(join(app.getPath("userData"), "remote-tls"), {
+    isAvailable: () => safeStorage.isEncryptionAvailable(),
+    encryptString: (value) => safeStorage.encryptString(value),
+    decryptString: (value) => safeStorage.decryptString(value)
+  })
 });
 
 function createWindow(): void {
@@ -111,12 +117,13 @@ app.whenReady().then(async () => {
   registerIpcHandlers({
     remoteGateway,
     onSettingsUpdated: async (settings) => {
+      await remoteGateway.applySettings(settings.network.remoteAccess);
       desktopIntegration.applySettings(settings);
       await qbittorrentManagedService.applySettings(settings);
     }
   });
   const settings = await repository.getSettings();
-  await remoteGateway.start().catch((error: unknown) => remoteGateway.setStartupError(error));
+  await remoteGateway.applySettings(settings.network.remoteAccess).catch((error: unknown) => remoteGateway.setStartupError(error));
   desktopIntegration.applySettings(settings);
   void qbittorrentManagedService.applySettings(settings);
   createWindow();

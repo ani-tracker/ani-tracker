@@ -57,7 +57,10 @@ function createSettings(): AppSettings {
     },
     media: { ffprobePath: "ffprobe", ffprobeTimeoutSeconds: 20, videoExtensions: [".mkv"] },
     desktop: { minimizeToTray: false, launchAtLogin: false },
-    network: { metadataProxy: { mode: "off", timeoutMs: 15_000 } }
+    network: {
+      metadataProxy: { mode: "off", timeoutMs: 15_000 },
+      remoteAccess: { lanEnabled: false, port: 18_083 }
+    }
   };
 }
 

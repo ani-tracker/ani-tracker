@@ -268,8 +268,16 @@ export interface RemoteGatewayStatus {
   running: boolean;
   host: string;
   port: number;
+  protocol: "http" | "https";
+  lanEnabled: boolean;
   baseUrl: string;
+  addresses: string[];
   devices: RemoteDeviceInfo[];
+  certificate?: {
+    fingerprint: string;
+    expiresAt: string;
+    authorityCertificatePath: string;
+  };
   lastError?: string;
 }
 

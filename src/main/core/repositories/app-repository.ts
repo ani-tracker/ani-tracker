@@ -203,10 +203,20 @@ export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>)
       metadataProxy: {
         ...current.network.metadataProxy,
         ...patch.network?.metadataProxy
+      },
+      remoteAccess: {
+        ...current.network.remoteAccess,
+        ...patch.network?.remoteAccess,
+        port: normalizeRemoteAccessPort(patch.network?.remoteAccess?.port, current.network.remoteAccess.port)
       }
     },
     players: patch.players ?? current.players
   };
+}
+
+/** 仅接受非特权有效端口，非法补丁保留当前配置。 */
+function normalizeRemoteAccessPort(value: number | undefined, current: number): number {
+  return value !== undefined && Number.isInteger(value) && value >= 1024 && value <= 65_535 ? value : current;
 }
 
 /** 根据单集与下载关联生成当日追番摘要。 */

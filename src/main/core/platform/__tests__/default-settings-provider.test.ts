@@ -9,6 +9,7 @@ import {
   createDefaultSettingsProvider,
   type DefaultSettingsPaths
 } from "../default-settings-provider";
+import { mergeSettings } from "../../repositories/app-repository";
 
 const paths: DefaultSettingsPaths = {
   downloads: "/test/Downloads",
@@ -78,6 +79,15 @@ test("createDefaultSettingsProvider 根据 process.platform 兼容值选择子�
   assert.ok(createDefaultSettingsProvider("linux", paths) instanceof GenericDefaultSettingsProvider);
 });
 
+test("mergeSettings 拒绝非法远程端口并接受有效端口", () => {
+  const current = new WindowsDefaultSettingsProvider(paths).getSettings();
+  const invalid = mergeSettings(current, { network: { remoteAccess: { lanEnabled: true, port: 80 } } } as Partial<AppSettings>);
+  const valid = mergeSettings(current, { network: { remoteAccess: { lanEnabled: true, port: 18_183 } } } as Partial<AppSettings>);
+
+  assert.equal(invalid.network.remoteAccess.port, 18_083);
+  assert.equal(valid.network.remoteAccess.port, 18_183);
+});
+
 function assertSharedDefaults(settings: AppSettings): void {
   assert.equal(settings.download.defaultDownloadDir, join(paths.downloads, "Ani Tracker"));
   assert.equal(settings.download.temporaryDownloadDir, join(paths.userData, "incomplete"));
@@ -134,6 +144,10 @@ function assertSharedDefaults(settings: AppSettings): void {
     metadataProxy: {
       mode: "off",
       timeoutMs: 15_000
+    },
+    remoteAccess: {
+      lanEnabled: false,
+      port: 18_083
     }
   });
 }

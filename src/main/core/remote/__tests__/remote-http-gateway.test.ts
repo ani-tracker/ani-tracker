@@ -1,5 +1,6 @@
 import { strict as assert } from "node:assert";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { request as httpsRequest } from "node:https";
 import { createServer as createNetServer, connect } from "node:net";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
@@ -7,6 +8,7 @@ import { join, win32 } from "node:path";
 import type { DashboardData } from "@shared/domain";
 import { RemoteDeviceAuth } from "../remote-device-auth";
 import { RemoteHttpGateway, isPathInsideDirectory } from "../remote-http-gateway";
+import { RemoteTlsCertificateStore, type SecretProtector } from "../remote-tls-certificate-store";
 import { createRemoteMethodRegistry, type RemoteRpcHandlers } from "../remote-method-registry";
 
 const emptyDashboard: DashboardData = {
@@ -35,6 +37,13 @@ test("健康检查返回可用状态", async (context) => {
 
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true });
+});
+
+test("HTTP 网关拒绝监听非回环地址", () => {
+  assert.throws(
+    () => new RemoteHttpGateway(createRemoteMethodRegistry(createHandlers()), { host: "0.0.0.0" }),
+    /只允许监听 127\.0\.0\.1/
+  );
 });
 
 test("配对后可携带 Bearer 令牌调用显式 RPC", async (context) => {
@@ -196,9 +205,96 @@ test("缺失静态资源返回 404 且前端路由回退入口页面", async (co
   assert.match(await frontendRoute.text(), /Ani Tracker/);
 });
 
+test("局域网 HTTPS 使用本地 CA 并限制 Host 与 Origin", async (context) => {
+  const certificateDirectory = await mkdtemp(join(tmpdir(), "ani-remote-gateway-tls-"));
+  const certificateStore = new RemoteTlsCertificateStore(certificateDirectory, createTestProtector());
+  const gateway = await startGateway({
+    certificateStore,
+    privateAddresses: ["192.168.1.20"],
+    start: false
+  });
+  context.after(async () => {
+    await gateway.stop();
+    await rm(certificateDirectory, { recursive: true, force: true });
+  });
+  const status = await gateway.applySettings({ lanEnabled: true, port: 18_183 });
+  assert.equal(status.protocol, "https");
+  assert.equal(status.lanEnabled, true);
+  assert.deepEqual(status.addresses, ["192.168.1.20"]);
+  assert.ok(status.certificate);
+
+  const health = await requestHttps(18_183, "/api/health", status.certificate?.authorityCertificatePath, {
+    host: "192.168.1.20:18183",
+    origin: "https://192.168.1.20:18183"
+  });
+  assert.equal(health.statusCode, 200);
+  assert.deepEqual(JSON.parse(health.body), { ok: true });
+
+  const authority = await requestHttps(18_183, "/ani-tracker-ca.crt", status.certificate?.authorityCertificatePath, {
+    host: "192.168.1.20:18183"
+  });
+  assert.equal(authority.statusCode, 200);
+  assert.match(authority.body, /BEGIN CERTIFICATE/);
+
+  const forbiddenHost = await requestHttps(18_183, "/api/health", status.certificate?.authorityCertificatePath, {
+    host: "attacker.test:18183"
+  });
+  assert.equal(forbiddenHost.statusCode, 403);
+
+  const forbiddenOrigin = await requestHttps(18_183, "/api/health", status.certificate?.authorityCertificatePath, {
+    host: "192.168.1.20:18183",
+    origin: "https://attacker.test:18183"
+  });
+  assert.equal(forbiddenOrigin.statusCode, 403);
+});
+
+test("局域网 HTTPS 初始化失败时恢复回环 HTTP", async (context) => {
+  const certificateDirectory = await mkdtemp(join(tmpdir(), "ani-remote-gateway-tls-"));
+  const protector = createTestProtector();
+  protector.isAvailable = () => false;
+  const gateway = await startGateway({
+    certificateStore: new RemoteTlsCertificateStore(certificateDirectory, protector),
+    privateAddresses: ["192.168.1.20"],
+    start: false
+  });
+  context.after(async () => {
+    await gateway.stop();
+    await rm(certificateDirectory, { recursive: true, force: true });
+  });
+
+  const status = await gateway.applySettings({ lanEnabled: true, port: 18_184 });
+  assert.equal(status.protocol, "http");
+  assert.equal(status.lanEnabled, false);
+  assert.match(status.lastError ?? "", /系统安全存储不可用/);
+  const response = await fetch(status.baseUrl + "/api/health");
+  assert.equal(response.status, 200);
+});
+
+test("局域网模式拒绝只包含公网地址的监听结果", async (context) => {
+  const certificateDirectory = await mkdtemp(join(tmpdir(), "ani-remote-gateway-tls-"));
+  const gateway = await startGateway({
+    certificateStore: new RemoteTlsCertificateStore(certificateDirectory, createTestProtector()),
+    privateAddresses: ["8.8.8.8"],
+    start: false
+  });
+  context.after(async () => {
+    await gateway.stop();
+    await rm(certificateDirectory, { recursive: true, force: true });
+  });
+
+  const status = await gateway.applySettings({ lanEnabled: true, port: 18_185 });
+
+  assert.equal(status.protocol, "http");
+  assert.equal(status.host, "127.0.0.1");
+  assert.match(status.lastError ?? "", /未发现可用的局域网 IPv4 地址/);
+});
+
 interface GatewayFixtureOptions {
   auth?: RemoteDeviceAuth;
   rendererDirectory?: string;
+  certificateStore?: RemoteTlsCertificateStore;
+  privateAddresses?: string[];
+  start?: boolean;
 }
 
 /** 在随机端口启动测试网关。 */
@@ -206,9 +302,13 @@ async function startGateway(options: GatewayFixtureOptions = {}): Promise<Remote
   const gateway = new RemoteHttpGateway(createRemoteMethodRegistry(createHandlers()), {
     port: 0,
     auth: options.auth,
-    rendererDirectory: options.rendererDirectory
+    rendererDirectory: options.rendererDirectory,
+    tlsCertificateStore: options.certificateStore,
+    privateAddressProvider: () => options.privateAddresses ?? []
   });
-  await gateway.start();
+  if (options.start !== false) {
+    await gateway.start();
+  }
   return gateway;
 }
 
@@ -244,6 +344,45 @@ function jsonHeaders(token?: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {})
+  };
+}
+
+/** 使用指定 CA 请求测试 HTTPS 网关并返回完整响应。 */
+async function requestHttps(
+  port: number,
+  path: string,
+  authorityCertificatePath: string | undefined,
+  headers: { host: string; origin?: string }
+): Promise<{ statusCode: number; body: string }> {
+  assert.ok(authorityCertificatePath);
+  const ca = await import("node:fs/promises").then(({ readFile }) => readFile(authorityCertificatePath, "utf8"));
+  return new Promise((resolveRequest, rejectRequest) => {
+    const request = httpsRequest({
+      hostname: "127.0.0.1",
+      port,
+      path,
+      method: "GET",
+      ca,
+      servername: "localhost",
+      headers: { Host: headers.host, ...(headers.origin ? { Origin: headers.origin } : {}) }
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => resolveRequest({
+        statusCode: response.statusCode ?? 0,
+        body: Buffer.concat(chunks).toString("utf8")
+      }));
+    });
+    request.on("error", rejectRequest);
+    request.end();
+  });
+}
+
+function createTestProtector(): SecretProtector {
+  return {
+    isAvailable: () => true,
+    encryptString: (value) => Buffer.from(`encrypted:${Buffer.from(value).toString("base64")}`),
+    decryptString: (value) => Buffer.from(value.toString().replace(/^encrypted:/, ""), "base64").toString()
   };
 }
 
