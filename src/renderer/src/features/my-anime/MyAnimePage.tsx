@@ -1,5 +1,5 @@
 import { AlertTriangle, CalendarDays, Check, ChevronDown, ChevronRight, Download, FolderOpen, ImageOff, Link2, MoreHorizontal, Play, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink, X } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -1012,6 +1012,27 @@ function MyAnimeCard({
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(item.anime);
   const ratingText = item.anime.rating ? item.anime.rating.score.toFixed(1) : "暂无";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuCloseTimerRef = useRef<number>();
+
+  /** 取消操作菜单的延迟关闭，重新进入时从下一次离开重新计时。 */
+  function cancelMenuClose(): void {
+    if (menuCloseTimerRef.current !== undefined) {
+      window.clearTimeout(menuCloseTimerRef.current);
+      menuCloseTimerRef.current = undefined;
+    }
+  }
+
+  /** 鼠标离开菜单交互区后延迟关闭操作菜单。 */
+  function scheduleMenuClose(): void {
+    cancelMenuClose();
+    menuCloseTimerRef.current = window.setTimeout(() => {
+      setMenuOpen(false);
+      menuCloseTimerRef.current = undefined;
+    }, 500);
+  }
+
+  useEffect(() => () => cancelMenuClose(), []);
 
   return (
     <article className="relative overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
@@ -1033,7 +1054,14 @@ function MyAnimeCard({
           {ratingText}
         </Badge>
 
-        <DropdownMenu>
+        <DropdownMenu
+          modal={false}
+          open={menuOpen}
+          onOpenChange={(open) => {
+            cancelMenuClose();
+            setMenuOpen(open);
+          }}
+        >
           <DropdownMenuTrigger asChild>
             <Button
               className="absolute right-3 top-3 z-10 size-11 p-0 shadow-sm md:min-h-8 md:size-8"
@@ -1041,11 +1069,35 @@ function MyAnimeCard({
               variant="outline"
               aria-label="显示操作"
               title="显示操作"
+              onPointerEnter={(event) => {
+                if (event.pointerType === "mouse") {
+                  cancelMenuClose();
+                  setMenuOpen(true);
+                }
+              }}
+              onPointerLeave={(event) => {
+                if (event.pointerType === "mouse") {
+                  scheduleMenuClose();
+                }
+              }}
             >
               <MoreHorizontal />
             </Button>
           </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-32">
+          <DropdownMenuContent
+            align="end"
+            className="w-32"
+            onPointerEnter={(event) => {
+              if (event.pointerType === "mouse") {
+                cancelMenuClose();
+              }
+            }}
+            onPointerLeave={(event) => {
+              if (event.pointerType === "mouse") {
+                scheduleMenuClose();
+              }
+            }}
+          >
             <DropdownMenuGroup>
               <DropdownMenuItem onSelect={onOpenDownloads}>下载资源</DropdownMenuItem>
               <DropdownMenuItem onSelect={onOpenRules}>规则</DropdownMenuItem>
