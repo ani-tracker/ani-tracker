@@ -1,9 +1,22 @@
 import type { ReactNode } from "react";
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import { FileSearch, FolderCog, HardDrive, Languages, Monitor, PlayCircle, Power, RotateCcw, Save } from "lucide-react";
-import { Panel } from "@/components/panel";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Field, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { appApi } from "@/lib/api";
 import { useAsyncData } from "@/lib/use-async-data";
 import type { AutomationSchedulerStatus, QbittorrentManagedStatus } from "@shared/contracts";
@@ -48,11 +61,22 @@ export function SettingsPage() {
   }
 
   if (loading) {
-    return <div className="text-sm text-muted-foreground">正在加载设置...</div>;
+    return (
+      <div className="flex flex-col gap-4" aria-label="正在加载设置">
+        <Skeleton className="h-10 w-48" />
+        <Skeleton className="h-48 w-full" />
+        <Skeleton className="h-64 w-full" />
+      </div>
+    );
   }
 
   if (!data || !draft) {
-    return <div className="text-sm text-rose-600">设置加载失败。</div>;
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>设置加载失败</AlertTitle>
+        <AlertDescription>请重新进入设置页或重启应用后再试。</AlertDescription>
+      </Alert>
+    );
   }
 
   async function saveSettings() {
@@ -142,7 +166,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-normal">设置</h1>
@@ -154,19 +178,19 @@ export function SettingsPage() {
             onClick={() => void resetSettingsToDefaults()}
             disabled={resetState === "resetting" || saveState === "saving"}
           >
-            <RotateCcw className="h-4 w-4" />
+            <RotateCcw data-icon="inline-start" />
             {resetState === "resetting" ? "恢复中" : resetState === "reset" ? "已恢复" : "恢复默认"}
           </Button>
           <Button onClick={saveSettings} disabled={saveState === "saving" || resetState === "resetting"}>
-            <Save className="h-4 w-4" />
+            <Save data-icon="inline-start" />
             {saveState === "saving" ? "保存中" : saveState === "saved" ? "已保存" : "保存"}
           </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-2 gap-5">
-        <Panel title="下载目录" description="支持全局默认目录，后续单部番可以覆盖。">
-          <div className="space-y-4">
+      <div className="grid gap-5 xl:grid-cols-2">
+        <SettingsSection title="下载目录" description="支持全局默认目录，后续单部番可以覆盖。">
+          <div className="flex flex-col gap-4">
             <ToggleSetting
               icon={<FolderCog className="h-4 w-4" />}
               label="创建番剧目录"
@@ -220,10 +244,10 @@ export function SettingsPage() {
               }
             />
           </div>
-        </Panel>
+        </SettingsSection>
 
-        <Panel title="用户数据" description="数据库、缓存、日志和备份都应随用户数据目录迁移。">
-          <div className="space-y-4">
+        <SettingsSection title="用户数据" description="数据库、缓存、日志和备份都应随用户数据目录迁移。">
+          <div className="flex flex-col gap-4">
             <TextSetting
               icon={<HardDrive className="h-4 w-4" />}
               label="用户数据目录"
@@ -242,19 +266,19 @@ export function SettingsPage() {
             <SettingRow label="缓存" value={draft.storage.cacheDir} />
             <SettingRow label="日志" value={draft.storage.logDir} />
           </div>
-        </Panel>
+        </SettingsSection>
       </div>
 
-      <Panel title="语言与标题" description="界面语言保持固定，番剧元数据按当前标题策略展示和检索。">
-        <div className="grid grid-cols-3 gap-4">
+      <SettingsSection title="语言与标题" description="界面语言保持固定，番剧元数据按当前标题策略展示和检索。">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <SettingRow icon={<Languages className="h-4 w-4" />} label="界面语言" value="简体中文" />
           <SettingRow label="标题显示" value="中文优先，副标题显示原名" />
           <SettingRow label="搜索名称" value="标题、原名、罗马音、英文名和自定义别名" />
         </div>
-      </Panel>
+      </SettingsSection>
 
-      <Panel title="桌面集成" description="控制后台运行、系统登录启动等本地桌面行为。">
-        <div className="grid grid-cols-2 gap-4">
+      <SettingsSection title="桌面集成" description="控制后台运行、系统登录启动等本地桌面行为。">
+        <div className="grid gap-4 lg:grid-cols-2">
           <ToggleSetting
             icon={<Monitor className="h-4 w-4" />}
             label="关闭到托盘"
@@ -286,10 +310,10 @@ export function SettingsPage() {
             }
           />
         </div>
-      </Panel>
+      </SettingsSection>
 
-      <Panel title="播放器配置">
-        <div className="grid grid-cols-2 gap-4">
+      <SettingsSection title="播放器配置">
+        <div className="grid gap-4 md:grid-cols-2">
           {draft.players.map((player) => (
             <div key={player.id} className="rounded-md border p-4">
               <div className="flex items-start justify-between gap-4">
@@ -310,10 +334,10 @@ export function SettingsPage() {
             </div>
           ))}
         </div>
-      </Panel>
+      </SettingsSection>
 
-      <Panel title="媒体探测" description="用于读取已下载视频的编码、分辨率、音轨和字幕轨。">
-        <div className="grid grid-cols-[minmax(0,1fr)_180px] gap-4">
+      <SettingsSection title="媒体探测" description="用于读取已下载视频的编码、分辨率、音轨和字幕轨。">
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
           <TextSetting
             icon={<FileSearch className="h-4 w-4" />}
             label="ffprobe 路径"
@@ -359,11 +383,11 @@ export function SettingsPage() {
             }
           />
         </div>
-      </Panel>
+      </SettingsSection>
 
-      <Panel title="下载核心配置">
-        <div className="space-y-4">
-          <div className="space-y-4 rounded-md border p-4">
+      <SettingsSection title="下载核心配置">
+        <div className="flex flex-col gap-4">
+          <div className="flex flex-col gap-4 rounded-md border p-4">
             <div>
               <div className="font-medium">
                 {draft.download.qbittorrent.managed.enabled ? "内置 qBittorrent-nox" : "外部 qBittorrent WebUI"}
@@ -423,7 +447,7 @@ export function SettingsPage() {
                 })
               }
             />
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <SelectSetting
                 label="运行模式"
                 value={draft.download.qbittorrent.managed.enabled ? "managed" : "external"}
@@ -477,7 +501,7 @@ export function SettingsPage() {
                 }
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
               <NumberSetting
                 label="下载限速"
                 value={draft.download.qbittorrent.downloadLimitKiBps ?? 0}
@@ -516,7 +540,7 @@ export function SettingsPage() {
               />
             </div>
             <p className="text-sm text-muted-foreground">限速值填 0 表示不限制。</p>
-            <div className="space-y-3 border-t pt-4">
+            <div className="flex flex-col gap-3 border-t pt-4">
               <ToggleSetting
                 label="启用做种"
                 description="默认关闭；关闭后下载完成即暂停。开启后可按分享率或时长停止，任务和文件始终保留。"
@@ -537,7 +561,7 @@ export function SettingsPage() {
                   })
                 }
               />
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid gap-3 sm:grid-cols-2">
                 <ToggleSetting
                   label="按分享率停止"
                   description="上传量与下载量达到指定比例后停止做种。"
@@ -645,7 +669,10 @@ export function SettingsPage() {
                       二进制：{qbManagedStatus?.binaryPath ?? "未找到项目内置 qBittorrent-nox"}
                     </div>
                     {qbManagedStatus?.lastError && (
-                      <div className="mt-2 text-xs text-rose-600">{qbManagedStatus.lastError}</div>
+                      <Alert className="mt-2" variant="destructive">
+                        <AlertTitle>内置进程异常</AlertTitle>
+                        <AlertDescription className="break-all">{qbManagedStatus.lastError}</AlertDescription>
+                      </Alert>
                     )}
                   </div>
                   <Badge tone={qbManagedStatus?.running ? "green" : "neutral"}>
@@ -678,9 +705,9 @@ export function SettingsPage() {
                 <span
                   className={
                     qbTest.state === "error"
-                      ? "text-sm text-rose-600"
+                      ? "text-sm text-destructive"
                       : qbTest.state === "success"
-                        ? "text-sm text-emerald-700"
+                        ? "text-sm text-primary"
                         : "text-sm text-muted-foreground"
                   }
                 >
@@ -690,10 +717,10 @@ export function SettingsPage() {
             </div>
           </div>
         </div>
-      </Panel>
+      </SettingsSection>
 
-      <Panel title="自动化">
-        <div className="grid grid-cols-5 gap-4">
+      <SettingsSection title="自动化">
+        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <SelectSetting
             label="定时扫描"
             value={draft.automation.scheduledCheckEnabled ? "on" : "off"}
@@ -779,7 +806,7 @@ export function SettingsPage() {
             }
           />
         </div>
-        <div className="mt-4 grid grid-cols-4 gap-3 text-sm">
+        <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
           <SettingRow label="调度状态" value={formatSchedulerState(schedulerStatus)} />
           <SettingRow label="下次扫描" value={formatDateTime(schedulerStatus?.nextRunAt)} />
           <SettingRow label="上次扫描" value={formatDateTime(schedulerStatus?.lastRunAt)} />
@@ -791,7 +818,7 @@ export function SettingsPage() {
             {schedulerStatus.lastResult.skipped.length}，错误 {schedulerStatus.lastResult.errors.length}
           </div>
         )}
-      </Panel>
+      </SettingsSection>
     </div>
   );
 }
@@ -832,6 +859,28 @@ function formatQbittorrentManagedSummary(status: QbittorrentManagedStatus | null
   return `${state}，${status.platform}/${status.arch}，WebUI ${status.webUiUrl}`;
 }
 
+/** 统一设置页分区的标题、说明和内容布局。 */
+function SettingsSection({
+  title,
+  description,
+  children
+}: {
+  title: string;
+  description?: string;
+  children: ReactNode;
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{title}</CardTitle>
+        {description && <CardDescription>{description}</CardDescription>}
+      </CardHeader>
+      <CardContent>{children}</CardContent>
+    </Card>
+  );
+}
+
+/** 渲染文本类设置项。 */
 function TextSetting({
   icon,
   label,
@@ -845,22 +894,25 @@ function TextSetting({
   type?: "text" | "password";
   onChange: (value: string) => void;
 }) {
+  const inputId = useId();
+
   return (
-    <label className="block">
-      <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+    <Field>
+      <FieldLabel htmlFor={inputId}>
         {icon && <span className="text-primary">{icon}</span>}
         {label}
-      </div>
-      <input
-        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+      </FieldLabel>
+      <Input
+        id={inputId}
         type={type}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
-    </label>
+    </Field>
   );
 }
 
+/** 渲染支持触控和键盘操作的开关设置项。 */
 function ToggleSetting({
   icon,
   label,
@@ -876,30 +928,36 @@ function ToggleSetting({
   disabled?: boolean;
   onChange: (value: boolean) => void;
 }) {
+  const switchId = useId();
+  const descriptionId = `${switchId}-description`;
+
   return (
-    <label
-      className={`flex min-h-[104px] items-center justify-between gap-4 rounded-md border p-4 ${
-        disabled ? "cursor-not-allowed opacity-60" : ""
-      }`}
+    <Field
+      className="min-h-[104px] items-center justify-between rounded-md border p-4 data-[disabled=true]:cursor-not-allowed data-[disabled=true]:opacity-60"
+      data-disabled={disabled}
+      orientation="horizontal"
     >
-      <div className="min-w-0">
-        <div className="flex items-center gap-2 text-sm font-medium">
+      <FieldLabel className="min-w-0 flex-1 cursor-pointer flex-col items-start" htmlFor={switchId}>
+        <span className="flex items-center gap-2">
           {icon && <span className="text-primary">{icon}</span>}
           {label}
-        </div>
-        <p className="mt-2 text-sm leading-6 text-muted-foreground">{description}</p>
-      </div>
-      <input
-        className="h-5 w-5 shrink-0 accent-primary"
-        type="checkbox"
+        </span>
+        <span id={descriptionId} className="text-sm font-normal leading-6 text-muted-foreground">
+          {description}
+        </span>
+      </FieldLabel>
+      <Switch
+        aria-describedby={descriptionId}
+        id={switchId}
         checked={checked}
         disabled={disabled}
-        onChange={(event) => onChange(event.target.checked)}
+        onCheckedChange={onChange}
       />
-    </label>
+    </Field>
   );
 }
 
+/** 渲染带单位提示的数值设置项。 */
 function NumberSetting({
   label,
   value,
@@ -917,12 +975,15 @@ function NumberSetting({
   disabled?: boolean;
   onChange: (value: number) => void;
 }) {
+  const inputId = useId();
+
   return (
-    <label className={`block rounded-md border p-4 ${disabled ? "opacity-60" : ""}`}>
-      <div className="text-sm text-muted-foreground">{label}</div>
-      <div className="mt-2 flex items-center gap-2">
-        <input
-          className="h-9 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
+    <Field className="rounded-md border p-4 data-[disabled=true]:opacity-60" data-disabled={disabled}>
+      <FieldLabel htmlFor={inputId}>{label}</FieldLabel>
+      <div className="flex items-center gap-2">
+        <Input
+          id={inputId}
+          className="min-w-0 flex-1"
           disabled={disabled}
           min={min}
           step={step}
@@ -932,10 +993,11 @@ function NumberSetting({
         />
         {suffix && <span className="text-sm text-muted-foreground">{suffix}</span>}
       </div>
-    </label>
+    </Field>
   );
 }
 
+/** 渲染使用 Radix Select 的选项设置项。 */
 function SelectSetting({
   label,
   value,
@@ -949,25 +1011,30 @@ function SelectSetting({
   disabled?: boolean;
   onChange: (value: string) => void;
 }) {
+  const selectId = useId();
+
   return (
-    <label className="block rounded-md border p-4">
-      <div className="text-sm text-muted-foreground">{label}</div>
-      <select
-        className="mt-2 h-9 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
-        disabled={disabled}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        {options.map((option) => (
-          <option key={option.value} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
+    <Field className="rounded-md border p-4" data-disabled={disabled}>
+      <FieldLabel htmlFor={selectId}>{label}</FieldLabel>
+      <Select disabled={disabled} value={value} onValueChange={onChange}>
+        <SelectTrigger id={selectId}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {options.map((option) => (
+              <SelectItem key={option.value} value={option.value}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
   );
 }
 
+/** 展示不可编辑的设置摘要。 */
 function SettingRow({
   icon,
   label,

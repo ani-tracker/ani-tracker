@@ -1,106 +1,67 @@
-import type {
-  Anime,
-  AppSettings,
-  DashboardData,
-  DownloadTask,
-  Episode,
-  EpisodePreference,
-  FansubGroup,
-  MediaFile,
-  MyAnime,
-  NotificationRecord,
-  ReleaseSourceConfig
-} from "@shared/domain";
-import type {
-  AddDownloadUrlInput,
-  AddReleaseDownloadInput,
-  AnimeReleaseQuery,
-  AnimeSourceBindingState,
-  AnimeDiscoveryQuery,
-  AnimeDiscoveryResult,
-  AutomationRunResult,
-  AutomationSchedulerStatus,
-  ConfirmAnimeSourceBindingInput,
-  EpisodeReleasePreview,
-  MediaScanResult,
-  QbittorrentManagedStatus,
-  ReleaseQuery,
-  ReleaseSearchResult,
-  RssSubscriptionReleaseQuery,
-  RssSubscriptionReleaseResult,
-  TorrentConnectionTestResult
-} from "@shared/contracts";
+type AppClient = NonNullable<Window["aniBridge"]>;
 
-function bridge() {
-  if (!window.aniBridge) {
-    throw new Error("Ani bridge is not available. Run the app inside Electron.");
-  }
-
-  return window.aniBridge;
+interface RemoteRpcResponse {
+  result?: unknown;
+  error?: string;
 }
 
-export const appApi = {
-  getDashboard: (): Promise<DashboardData> => bridge().getDashboard(),
-  listNotifications: (): Promise<NotificationRecord[]> => bridge().listNotifications(),
-  getUnreadNotificationCount: (): Promise<number> => bridge().getUnreadNotificationCount(),
-  markNotificationRead: (notificationId: string): Promise<NotificationRecord[]> =>
-    bridge().markNotificationRead(notificationId),
-  markAllNotificationsRead: (): Promise<NotificationRecord[]> => bridge().markAllNotificationsRead(),
-  clearNotifications: (): Promise<NotificationRecord[]> => bridge().clearNotifications(),
-  listMyAnime: (): Promise<MyAnime[]> => bridge().listMyAnime(),
-  upsertMyAnime: (item: MyAnime): Promise<MyAnime[]> => bridge().upsertMyAnime(item),
-  removeMyAnime: (itemId: string): Promise<MyAnime[]> => bridge().removeMyAnime(itemId),
-  listAnimeCatalog: (year?: number, month?: number): Promise<Anime[]> => bridge().listAnimeCatalog(year, month),
-  searchAnimeCatalog: (keyword: string): Promise<Anime[]> => bridge().searchAnimeCatalog(keyword),
-  collectAnimeMonth: (query: AnimeDiscoveryQuery): Promise<AnimeDiscoveryResult> => bridge().collectAnimeMonth(query),
-  listEpisodes: (animeId: string): Promise<Episode[]> => bridge().listEpisodes(animeId),
-  upsertEpisode: (episode: Episode): Promise<Episode[]> => bridge().upsertEpisode(episode),
-  listEpisodePreferences: (animeId: string): Promise<EpisodePreference[]> =>
-    bridge().listEpisodePreferences(animeId),
-  upsertEpisodePreference: (preference: EpisodePreference): Promise<EpisodePreference[]> =>
-    bridge().upsertEpisodePreference(preference),
-  removeEpisodePreference: (episodeId: string): Promise<EpisodePreference[]> =>
-    bridge().removeEpisodePreference(episodeId),
-  previewEpisodeReleases: (animeId: string, episodeId: string): Promise<EpisodeReleasePreview> =>
-    bridge().previewEpisodeReleases(animeId, episodeId),
-  runAutomationOnce: (): Promise<AutomationRunResult> => bridge().runAutomationOnce(),
-  getAutomationSchedulerStatus: (): Promise<AutomationSchedulerStatus> => bridge().getAutomationSchedulerStatus(),
-  restartAutomationScheduler: (): Promise<AutomationSchedulerStatus> => bridge().restartAutomationScheduler(),
-  listDownloads: (): Promise<DownloadTask[]> => bridge().listDownloads(),
-  refreshDownloads: (): Promise<DownloadTask[]> => bridge().refreshDownloads(),
-  pauseDownload: (taskId: string): Promise<DownloadTask[]> => bridge().pauseDownload(taskId),
-  resumeDownload: (taskId: string): Promise<DownloadTask[]> => bridge().resumeDownload(taskId),
-  removeDownload: (taskId: string, deleteFiles: boolean): Promise<DownloadTask[]> =>
-    bridge().removeDownload(taskId, deleteFiles),
-  setDownloadFilePriority: (taskId: string, fileIndexes: number[], priority: number): Promise<DownloadTask[]> =>
-    bridge().setDownloadFilePriority(taskId, fileIndexes, priority),
-  addDownloadUrl: (input: AddDownloadUrlInput): Promise<DownloadTask[]> => bridge().addDownloadUrl(input),
-  addReleaseDownload: (input: AddReleaseDownloadInput): Promise<DownloadTask[]> => bridge().addReleaseDownload(input),
-  listFansubs: (animeId?: string): Promise<FansubGroup[]> => bridge().listFansubs(animeId),
-  listSources: (): Promise<ReleaseSourceConfig[]> => bridge().listSources(),
-  setSourceEnabled: (sourceId: string, enabled: boolean): Promise<ReleaseSourceConfig[]> =>
-    bridge().setSourceEnabled(sourceId, enabled),
-  upsertSource: (source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]> => bridge().upsertSource(source),
-  getAnimeSourceBindingState: (animeId: string, discoverCandidates = true): Promise<AnimeSourceBindingState> =>
-    bridge().getAnimeSourceBindingState(animeId, discoverCandidates),
-  confirmAnimeSourceBinding: (input: ConfirmAnimeSourceBindingInput): Promise<AnimeSourceBindingState> =>
-    bridge().confirmAnimeSourceBinding(input),
-  removeAnimeSourceBinding: (animeId: string, sourceId: string): Promise<AnimeSourceBindingState> =>
-    bridge().removeAnimeSourceBinding(animeId, sourceId),
-  searchReleases: (query: ReleaseQuery): Promise<ReleaseSearchResult> => bridge().searchReleases(query),
-  searchAnimeReleases: (query: AnimeReleaseQuery): Promise<ReleaseSearchResult> => bridge().searchAnimeReleases(query),
-  searchRssSubscriptionReleases: (query: RssSubscriptionReleaseQuery): Promise<RssSubscriptionReleaseResult> =>
-    bridge().searchRssSubscriptionReleases(query),
-  getSettings: (): Promise<AppSettings> => bridge().getSettings(),
-  updateSettings: (patch: Partial<AppSettings>): Promise<AppSettings> => bridge().updateSettings(patch),
-  resetSettingsToDefaults: (): Promise<AppSettings> => bridge().resetSettingsToDefaults(),
-  testQbittorrent: (): Promise<TorrentConnectionTestResult> => bridge().testQbittorrent(),
-  getQbittorrentManagedStatus: (): Promise<QbittorrentManagedStatus> => bridge().getQbittorrentManagedStatus(),
-  startQbittorrentManaged: (): Promise<QbittorrentManagedStatus> => bridge().startQbittorrentManaged(),
-  stopQbittorrentManaged: (): Promise<QbittorrentManagedStatus> => bridge().stopQbittorrentManaged(),
-  listMediaFiles: (): Promise<MediaFile[]> => bridge().listMediaFiles(),
-  scanDownloadMedia: (taskId: string): Promise<MediaScanResult> => bridge().scanDownloadMedia(taskId),
-  playMedia: (filePath: string, profileId?: string): Promise<void> => bridge().playMedia(filePath, profileId),
-  revealMedia: (filePath: string): Promise<void> => bridge().revealMedia(filePath),
-  openExternal: (url: string): Promise<void> => bridge().openExternal(url)
-};
+const REMOTE_TOKEN_STORAGE_KEY = "ani.remoteAccessToken";
+
+/** 调用桌面端暴露的远程 RPC，并统一处理协议错误。 */
+async function invokeRemote(baseUrl: string, method: string, args: unknown[]): Promise<unknown> {
+  const accessToken = window.sessionStorage.getItem(REMOTE_TOKEN_STORAGE_KEY);
+  const response = await fetch(`${baseUrl}/api/rpc`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {})
+    },
+    body: JSON.stringify({ method, args })
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as RemoteRpcResponse;
+  if (!response.ok || payload.error) {
+    throw new Error(payload.error ?? `远程请求失败：${response.status}`);
+  }
+
+  return payload.result;
+}
+
+/** 创建与 Electron bridge 同形的远程客户端代理。 */
+function createRemoteClient(baseUrl: string): AppClient {
+  const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
+
+  return new Proxy({} as AppClient, {
+    get(_target, property) {
+      if (typeof property !== "string") {
+        return undefined;
+      }
+
+      return (...args: unknown[]) => invokeRemote(normalizedBaseUrl, property, args);
+    }
+  });
+}
+
+/** 根据运行环境选择 Electron IPC 或远程 HTTP 客户端。 */
+function createAppClient(): AppClient {
+  if (window.aniBridge) {
+    console.info("[renderer] 使用 Electron IPC 客户端");
+    return window.aniBridge;
+  }
+
+  const remoteUrl = import.meta.env.VITE_ANI_REMOTE_URL?.trim();
+  if (remoteUrl) {
+    console.info("[renderer] 使用远程 HTTP 客户端", { remoteUrl });
+    return createRemoteClient(remoteUrl);
+  }
+
+  return new Proxy({} as AppClient, {
+    get() {
+      return async () => {
+        throw new Error("当前环境未连接 Ani Tracker 桌面端，请配置 VITE_ANI_REMOTE_URL。");
+      };
+    }
+  });
+}
+
+export const appApi: AppClient = createAppClient();

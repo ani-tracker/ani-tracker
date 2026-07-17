@@ -5,16 +5,17 @@ type BadgeTone = "neutral" | "green" | "amber" | "red" | "blue";
 
 const tones: Record<BadgeTone, string> = {
   neutral: "border-border bg-muted text-muted-foreground",
-  green: "border-emerald-200 bg-emerald-50 text-emerald-700",
-  amber: "border-amber-200 bg-amber-50 text-amber-700",
-  red: "border-rose-200 bg-rose-50 text-rose-700",
-  blue: "border-cyan-200 bg-cyan-50 text-cyan-700"
+  green: "border-primary/20 bg-primary/10 text-primary",
+  amber: "border-accent bg-accent text-accent-foreground",
+  red: "border-destructive/20 bg-destructive/10 text-destructive",
+  blue: "border-sidebar-accent bg-sidebar-accent text-sidebar-accent-foreground"
 };
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {
   tone?: BadgeTone;
 }
 
+/** 渲染使用语义颜色的紧凑状态标签。 */
 export function Badge({ className, tone = "neutral", ...props }: BadgeProps) {
   return (
     <span

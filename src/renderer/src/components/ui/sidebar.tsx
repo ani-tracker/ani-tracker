@@ -62,7 +62,7 @@ export function SidebarProvider({
   return (
     <SidebarContext.Provider value={value}>
       <div
-        className={cn("flex min-h-screen w-full bg-background text-foreground", className)}
+        className={cn("flex min-h-screen min-h-dvh w-full bg-background text-foreground", className)}
         data-sidebar-wrapper=""
         style={
           {
@@ -99,7 +99,7 @@ export const Sidebar = forwardRef<HTMLElement, HTMLAttributes<HTMLElement>>(func
     <aside
       ref={ref}
       className={cn(
-        "sticky top-0 flex h-screen max-h-screen w-[var(--sidebar-width)] shrink-0 flex-col self-start border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width]",
+        "sticky top-0 flex h-screen h-dvh max-h-screen max-h-dvh w-[var(--sidebar-width)] shrink-0 flex-col self-start border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width]",
         "data-[state=collapsed]:w-[var(--sidebar-width-icon)]",
         className
       )}
@@ -141,7 +141,7 @@ export const SidebarGroup = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivEle
   { className, ...props },
   ref
 ) {
-  return <div ref={ref} className={cn("space-y-2", className)} {...props} />;
+  return <div ref={ref} className={cn("flex flex-col gap-2", className)} {...props} />;
 });
 
 export const SidebarGroupLabel = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(function SidebarGroupLabel(
@@ -159,7 +159,7 @@ export const SidebarGroupLabel = forwardRef<HTMLDivElement, HTMLAttributes<HTMLD
 
 export const SidebarGroupContent = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
   function SidebarGroupContent({ className, ...props }, ref) {
-    return <div ref={ref} className={cn("space-y-1", className)} {...props} />;
+    return <div ref={ref} className={cn("flex flex-col gap-1", className)} {...props} />;
   }
 );
 
@@ -167,7 +167,7 @@ export const SidebarMenu = forwardRef<HTMLUListElement, HTMLAttributes<HTMLUList
   { className, ...props },
   ref
 ) {
-  return <ul ref={ref} className={cn("space-y-1", className)} {...props} />;
+  return <ul ref={ref} className={cn("flex flex-col gap-1", className)} {...props} />;
 });
 
 export const SidebarMenuItem = forwardRef<HTMLLIElement, HTMLAttributes<HTMLLIElement>>(function SidebarMenuItem(
@@ -183,7 +183,7 @@ type SidebarMenuButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const sidebarMenuButtonSizes: Record<NonNullable<SidebarMenuButtonProps["size"]>, string> = {
-  default: "h-10 px-3",
+  default: "min-h-11 px-3",
   sm: "h-8 px-2",
   lg: "h-12 px-3"
 };
@@ -219,7 +219,7 @@ export const SidebarTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes
         ref={ref}
         aria-label="切换侧边栏"
         className={cn(
-          "inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "inline-flex size-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
           className
         )}
         type={type}
@@ -231,8 +231,65 @@ export const SidebarTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes
         }}
         {...props}
       >
-        <PanelLeft className="h-4 w-4" />
+        <PanelLeft />
       </button>
+    );
+  }
+);
+
+type MobileNavigationButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  isActive?: boolean;
+};
+
+/** 提供移动端固定底部导航容器，并处理设备安全区。 */
+export const MobileNavigation = forwardRef<HTMLElement, HTMLAttributes<HTMLElement>>(function MobileNavigation(
+  { className, ...props },
+  ref
+) {
+  return (
+    <nav
+      ref={ref}
+      className={cn(
+        "fixed inset-x-0 bottom-0 z-40 border-t border-sidebar-border bg-sidebar text-sidebar-foreground",
+        "pb-[var(--safe-area-bottom)] pl-[var(--safe-area-left)] pr-[var(--safe-area-right)] md:hidden",
+        className
+      )}
+      {...props}
+    />
+  );
+});
+
+/** 以等宽网格承载移动端高频入口和更多菜单，避免窄屏横向拖动。 */
+export const MobileNavigationList = forwardRef<HTMLUListElement, HTMLAttributes<HTMLUListElement>>(
+  function MobileNavigationList({ className, ...props }, ref) {
+    return (
+      <ul
+        ref={ref}
+        className={cn("grid min-h-[var(--mobile-navigation-height)] grid-cols-6", className)}
+        {...props}
+      />
+    );
+  }
+);
+
+/** 渲染移动端导航按钮，并向辅助技术暴露当前选中状态。 */
+export const MobileNavigationButton = forwardRef<HTMLButtonElement, MobileNavigationButtonProps>(
+  function MobileNavigationButton({ className, isActive = false, type = "button", ...props }, ref) {
+    return (
+      <button
+        ref={ref}
+        className={cn(
+          "flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-hidden px-1 text-[11px] leading-tight transition-colors [&>span]:max-w-full [&>span]:whitespace-nowrap",
+          "text-sidebar-foreground/70 outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+          "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring",
+          "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground",
+          "[&>svg]:size-5 [&>svg]:shrink-0",
+          className
+        )}
+        data-active={isActive}
+        type={type}
+        {...props}
+      />
     );
   }
 );

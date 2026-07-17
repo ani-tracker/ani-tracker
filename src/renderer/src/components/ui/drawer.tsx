@@ -1,5 +1,5 @@
-import { useEffect, type ReactNode } from "react";
-import { createPortal } from "react-dom";
+import type { ReactNode } from "react";
+import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
 
 interface DrawerProps {
@@ -9,47 +9,21 @@ interface DrawerProps {
   onClose: () => void;
 }
 
-/** 将抽屉挂载到 body，避免页面布局间距和层叠上下文影响全屏遮罩。 */
+/** 使用 Radix Sheet 提供带焦点锁定和焦点恢复的兼容抽屉。 */
 export function Drawer({ ariaLabel, children, className, onClose }: DrawerProps) {
-  useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = previousOverflow;
-    };
-  }, []);
-
-  useEffect(() => {
-    function closeOnEscape(event: KeyboardEvent): void {
-      if (event.key === "Escape") {
-        onClose();
-      }
-    }
-
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [onClose]);
-
-  return createPortal(
-    <div
-      className="fixed inset-0 z-50 flex justify-end bg-foreground/35"
-      data-drawer-overlay=""
-      role="presentation"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) {
+  return (
+    <Sheet
+      open
+      onOpenChange={(open) => {
+        if (!open) {
           onClose();
         }
       }}
     >
-      <aside
-        aria-label={ariaLabel}
-        aria-modal="true"
-        className={cn("animate-slide-in-right h-full w-full border-l bg-card shadow-xl", className)}
-        role="dialog"
-      >
+      <SheetContent className={cn("gap-0 p-0", className)} showCloseButton={false}>
+        <SheetTitle className="sr-only">{ariaLabel}</SheetTitle>
         {children}
-      </aside>
-    </div>,
-    document.body
+      </SheetContent>
+    </Sheet>
   );
 }

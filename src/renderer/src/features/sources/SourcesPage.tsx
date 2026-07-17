@@ -1,9 +1,17 @@
 import { KeyRound, Network, Pencil, PlugZap, Plus, Save, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
-import { Panel } from "@/components/panel";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { appApi } from "@/lib/api";
 import { useAsyncData } from "@/lib/use-async-data";
 import type { AppSettings, MetadataProxySettings, ReleaseSourceConfig, SourceKind } from "@shared/domain";
@@ -16,8 +24,8 @@ const kindText = {
 };
 
 export function SourcesPage() {
-  const { data, loading } = useAsyncData(appApi.listSources, []);
-  const { data: settingsData, loading: settingsLoading } = useAsyncData(appApi.getSettings, []);
+  const { data, error: sourcesError, loading } = useAsyncData(appApi.listSources, []);
+  const { data: settingsData, error: settingsError, loading: settingsLoading } = useAsyncData(appApi.getSettings, []);
   const [sources, setSources] = useState<ReleaseSourceConfig[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
@@ -123,23 +131,55 @@ export function SourcesPage() {
   }
 
   if (loading || settingsLoading) {
-    return <div className="text-sm text-muted-foreground">正在加载下载源...</div>;
+    return (
+      <div className="flex flex-col gap-5" aria-label="正在加载下载源">
+        <div className="flex flex-col gap-2">
+          <Skeleton className="h-7 w-24" />
+          <Skeleton className="h-4 w-72 max-w-full" />
+        </div>
+        <Skeleton className="h-48 w-full" />
+        <Skeleton className="h-56 w-full" />
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <Skeleton className="h-64 w-full" />
+          <Skeleton className="hidden h-64 w-full md:block" />
+          <Skeleton className="hidden h-64 w-full xl:block" />
+        </div>
+      </div>
+    );
+  }
+
+  const loadingError = sourcesError ?? settingsError;
+  if (loadingError) {
+    return (
+      <Alert variant="destructive">
+        <AlertTitle>下载源加载失败</AlertTitle>
+        <AlertDescription>{loadingError.message || "请重新进入下载源页面或重启应用后再试。"}</AlertDescription>
+      </Alert>
+    );
   }
 
   return (
-    <div className="space-y-5">
-      <div>
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal">下载源</h1>
-          <p className="mt-1 text-sm text-muted-foreground">RSS、Torznab 和站点适配器会输出统一资源结构。</p>
-        </div>
+    <div className="flex flex-col gap-5">
+      <div className="min-w-0">
+        <h1 className="text-2xl font-semibold tracking-normal">下载源</h1>
+        <p className="mt-1 text-sm text-muted-foreground">RSS、Torznab 和站点适配器会输出统一资源结构。</p>
       </div>
 
-      <Panel title="元数据代理" description="仅用于新番发现中的 AniList、Bangumi 和 Mikan 元数据采集。">
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="grid min-w-0 flex-1 grid-cols-3 gap-4">
+      <Card>
+        <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <CardTitle>元数据代理</CardTitle>
+            <CardDescription>仅用于新番发现中的 AniList、Bangumi 和 Mikan 元数据采集。</CardDescription>
+          </div>
+          <Button className="w-full sm:w-auto" variant="outline" onClick={startEditProxy} disabled={!settings || proxySaveState === "saving"}>
+            <Pencil data-icon="inline-start" />
+            编辑
+          </Button>
+        </CardHeader>
+        <CardContent>
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
             <ProxySummaryItem
-              icon={<Network className="h-4 w-4" />}
+              icon={<Network className="size-4" />}
               label="代理模式"
               value={formatProxyMode(getMetadataProxySettings(settings).mode)}
             />
@@ -152,157 +192,223 @@ export function SourcesPage() {
               value={`${Math.round(getMetadataProxySettings(settings).timeoutMs / 1000)} 秒`}
             />
           </div>
-          <Button variant="outline" onClick={startEditProxy} disabled={!settings || proxySaveState === "saving"}>
-            <Pencil className="h-4 w-4" />
-            编辑
-          </Button>
-        </div>
 
-        {proxyEditing ? (
-          <div className="mt-4 rounded-md border p-4">
-            <div className="grid grid-cols-[180px_minmax(0,1fr)_140px] gap-3">
-              <label className="block">
-                <div className="mb-2 text-sm font-medium">模式</div>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-                  value={proxyDraft.mode}
-                  onChange={(event) =>
-                    setProxyDraft({
-                      ...proxyDraft,
-                      mode: event.target.value as MetadataProxySettings["mode"]
-                    })
-                  }
-                >
-                  <option value="off">关闭</option>
-                  <option value="system">系统代理</option>
-                  <option value="manual">手动代理</option>
-                </select>
-              </label>
-              <label className="block">
-                <div className="mb-2 text-sm font-medium">代理地址</div>
-                <input
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={proxyDraft.mode !== "manual"}
-                  placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7890"
-                  value={proxyDraft.url ?? ""}
-                  onChange={(event) =>
-                    setProxyDraft({
-                      ...proxyDraft,
-                      url: event.target.value
-                    })
-                  }
-                />
-              </label>
-              <label className="block">
-                <div className="mb-2 text-sm font-medium">超时秒数</div>
-                <input
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-                  min={1}
-                  type="number"
-                  value={Math.round(proxyDraft.timeoutMs / 1000)}
-                  onChange={(event) =>
-                    setProxyDraft({
-                      ...proxyDraft,
-                      timeoutMs: Number(event.target.value) * 1000
-                    })
-                  }
-                />
-              </label>
-            </div>
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <Button onClick={() => void saveMetadataProxy()} disabled={proxySaveState === "saving"}>
-                <Save className="h-4 w-4" />
-                {proxySaveState === "saving" ? "保存中" : proxySaveState === "saved" ? "已保存" : "保存"}
-              </Button>
-              <Button variant="outline" onClick={() => setProxyEditing(false)} disabled={proxySaveState === "saving"}>
-                <X className="h-4 w-4" />
-                取消
-              </Button>
-              {proxyError && <span className="text-sm text-rose-600">{proxyError}</span>}
-            </div>
-          </div>
-        ) : null}
-      </Panel>
-
-      <Panel title="添加下载源" description="支持通用 RSS / Torznab；站点适配器已内置动漫花园、蜜柑计划、AniBT 和 ACGNX 解析。">
-        <div className="grid grid-cols-[1fr_160px_1.4fr_1fr_auto] gap-3">
-          <input
-            className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-            placeholder="名称"
-            value={draft.name}
-            onChange={(event) => setDraft({ ...draft, name: event.target.value })}
-          />
-          <select
-            className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-            value={draft.kind}
-            onChange={(event) => setDraft({ ...draft, kind: event.target.value as SourceKind })}
-          >
-            <option value="rss">RSS</option>
-            <option value="torznab">Torznab</option>
-            <option value="site_adapter">站点适配器</option>
-          </select>
-          <input
-            className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-            placeholder={draft.kind === "rss" ? "RSS 地址" : "服务地址"}
-            value={draft.url}
-            onChange={(event) => setDraft({ ...draft, url: event.target.value })}
-          />
-          <input
-            className="h-10 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-            placeholder={draft.kind === "site_adapter" ? "Token / Cookie" : "API Key"}
-            disabled={draft.kind === "rss"}
-            value={draft.apiKey}
-            onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
-          />
-          <Button onClick={addSource}>
-            <Plus className="h-4 w-4" />
-            保存
-          </Button>
-        </div>
-      </Panel>
-
-      <div className="grid grid-cols-3 gap-4">
-        {sources.map((source) => (
-          <Panel key={source.id}>
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <div className="flex items-center gap-2 font-medium">
-                  <PlugZap className="h-4 w-4 text-primary" />
-                  {source.name}
-                </div>
-                <div className="mt-2 text-sm text-muted-foreground">{source.baseUrl ?? source.rssUrl ?? "本地输入"}</div>
-              </div>
-              <Badge tone={source.enabled ? "green" : "neutral"}>{source.enabled ? "启用" : "停用"}</Badge>
-            </div>
-            <div className="mt-4 flex gap-2">
-              <Badge tone="blue">{kindText[source.kind]}</Badge>
-              {source.tags?.map((tag) => <Badge key={tag}>{tag}</Badge>)}
-            </div>
-            {canUseCredential(source) ? (
-              <div className="mt-4 flex gap-2">
-                <div className="relative flex-1">
-                  <KeyRound className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    className="h-10 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary"
-                    placeholder={source.kind === "site_adapter" ? "Token / Cookie" : "API Key"}
-                    type="password"
-                    value={credentials[source.id] ?? ""}
-                    onChange={(event) => setCredentials({ ...credentials, [source.id]: event.target.value })}
+          {proxyEditing ? (
+            <>
+              <Separator className="my-5" />
+              <FieldGroup className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[180px_minmax(0,1fr)_140px]">
+                <Field>
+                  <FieldLabel htmlFor="metadata-proxy-mode">模式</FieldLabel>
+                  <Select
+                    value={proxyDraft.mode}
+                    onValueChange={(value) =>
+                      setProxyDraft({
+                        ...proxyDraft,
+                        mode: value as MetadataProxySettings["mode"]
+                      })
+                    }
+                  >
+                    <SelectTrigger id="metadata-proxy-mode">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectGroup>
+                        <SelectItem value="off">关闭</SelectItem>
+                        <SelectItem value="system">系统代理</SelectItem>
+                        <SelectItem value="manual">手动代理</SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                </Field>
+                <Field data-disabled={proxyDraft.mode !== "manual"}>
+                  <FieldLabel htmlFor="metadata-proxy-url">代理地址</FieldLabel>
+                  <Input
+                    id="metadata-proxy-url"
+                    disabled={proxyDraft.mode !== "manual"}
+                    placeholder="http://127.0.0.1:7890 或 socks5://127.0.0.1:7890"
+                    value={proxyDraft.url ?? ""}
+                    onChange={(event) =>
+                      setProxyDraft({
+                        ...proxyDraft,
+                        url: event.target.value
+                      })
+                    }
                   />
-                </div>
-                <Button variant="outline" onClick={() => saveCredential(source)}>
-                  <Save className="h-4 w-4" />
-                  保存
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor="metadata-proxy-timeout">超时秒数</FieldLabel>
+                  <Input
+                    id="metadata-proxy-timeout"
+                    min={1}
+                    type="number"
+                    value={Math.round(proxyDraft.timeoutMs / 1000)}
+                    onChange={(event) =>
+                      setProxyDraft({
+                        ...proxyDraft,
+                        timeoutMs: Number(event.target.value) * 1000
+                      })
+                    }
+                  />
+                </Field>
+              </FieldGroup>
+              <div className="mt-4 flex flex-wrap items-center gap-2">
+                <Button onClick={() => void saveMetadataProxy()} disabled={proxySaveState === "saving"}>
+                  <Save data-icon="inline-start" />
+                  {proxySaveState === "saving" ? "保存中" : proxySaveState === "saved" ? "已保存" : "保存"}
+                </Button>
+                <Button variant="outline" onClick={() => setProxyEditing(false)} disabled={proxySaveState === "saving"}>
+                  <X data-icon="inline-start" />
+                  取消
                 </Button>
               </div>
-            ) : null}
-            <div className="mt-4">
-              <Button variant="outline" onClick={() => toggleSource(source)}>
-                {source.enabled ? "停用" : "启用"}
-              </Button>
-            </div>
-          </Panel>
+              {proxyError && (
+                <Alert className="mt-4" variant="destructive">
+                  <AlertTitle>代理设置无效</AlertTitle>
+                  <AlertDescription>{proxyError}</AlertDescription>
+                </Alert>
+              )}
+            </>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>添加下载源</CardTitle>
+          <CardDescription>支持通用 RSS / Torznab；站点适配器已内置动漫花园、蜜柑计划、AniBT 和 ACGNX 解析。</CardDescription>
+        </CardHeader>
+        <CardContent>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              void addSource();
+            }}
+          >
+            <FieldGroup className="grid gap-3 sm:grid-cols-2 xl:grid-cols-[1fr_160px_1.4fr_1fr_auto] xl:items-end">
+              <Field>
+                <FieldLabel htmlFor="source-name">名称</FieldLabel>
+                <Input
+                  id="source-name"
+                  placeholder="名称"
+                  value={draft.name}
+                  onChange={(event) => setDraft({ ...draft, name: event.target.value })}
+                />
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="source-kind">类型</FieldLabel>
+                <Select value={draft.kind} onValueChange={(value) => setDraft({ ...draft, kind: value as SourceKind })}>
+                  <SelectTrigger id="source-kind">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="rss">RSS</SelectItem>
+                      <SelectItem value="torznab">Torznab</SelectItem>
+                      <SelectItem value="site_adapter">站点适配器</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field>
+                <FieldLabel htmlFor="source-url">服务地址</FieldLabel>
+                <Input
+                  id="source-url"
+                  placeholder={draft.kind === "rss" ? "RSS 地址" : "服务地址"}
+                  value={draft.url}
+                  onChange={(event) => setDraft({ ...draft, url: event.target.value })}
+                />
+              </Field>
+              <Field data-disabled={draft.kind === "rss"}>
+                <FieldLabel htmlFor="source-api-key">访问凭据</FieldLabel>
+                <Input
+                  id="source-api-key"
+                  placeholder={draft.kind === "site_adapter" ? "Token / Cookie" : "API Key"}
+                  disabled={draft.kind === "rss"}
+                  value={draft.apiKey}
+                  onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })}
+                />
+              </Field>
+              <Field className="sm:col-span-2 xl:col-span-1">
+                <FieldLabel className="sr-only" htmlFor="save-source">保存下载源</FieldLabel>
+                <Button id="save-source" className="w-full xl:w-auto" type="submit">
+                  <Plus data-icon="inline-start" />
+                  保存
+                </Button>
+              </Field>
+            </FieldGroup>
+          </form>
+        </CardContent>
+      </Card>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {sources.map((source) => (
+          <Card key={source.id} className="min-w-0">
+            <CardHeader>
+              <div className="flex items-start justify-between gap-4">
+                <CardTitle className="flex min-w-0 items-center gap-2">
+                  <PlugZap className="size-4 shrink-0 text-primary" />
+                  <span className="truncate">{source.name}</span>
+                </CardTitle>
+                <Badge tone={source.enabled ? "green" : "neutral"}>{source.enabled ? "启用" : "停用"}</Badge>
+              </div>
+              <CardDescription className="break-all">{source.baseUrl ?? source.rssUrl ?? "本地输入"}</CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-4">
+              <div className="flex flex-wrap gap-2">
+                <Badge tone="blue">{kindText[source.kind]}</Badge>
+                {source.tags?.map((tag) => <Badge key={tag}>{tag}</Badge>)}
+              </div>
+              {canUseCredential(source) ? (
+                <FieldGroup className="gap-3 xl:flex-row xl:items-end">
+                  <Field className="min-w-0 flex-1">
+                    <FieldLabel htmlFor={`source-credential-${source.id}`}>
+                      <KeyRound className="size-4" />
+                      访问凭据
+                    </FieldLabel>
+                    <Input
+                      id={`source-credential-${source.id}`}
+                      placeholder={source.kind === "site_adapter" ? "Token / Cookie" : "API Key"}
+                      type="password"
+                      value={credentials[source.id] ?? ""}
+                      onChange={(event) => setCredentials({ ...credentials, [source.id]: event.target.value })}
+                    />
+                  </Field>
+                  <Field className="xl:w-auto">
+                    <FieldLabel className="sr-only" htmlFor={`save-source-credential-${source.id}`}>保存访问凭据</FieldLabel>
+                    <Button
+                      id={`save-source-credential-${source.id}`}
+                      className="w-full xl:w-auto"
+                      variant="outline"
+                      onClick={() => void saveCredential(source)}
+                    >
+                      <Save data-icon="inline-start" />
+                      保存
+                    </Button>
+                  </Field>
+                </FieldGroup>
+              ) : null}
+            </CardContent>
+            <CardFooter>
+              <Field className="justify-between" orientation="horizontal">
+                <FieldLabel htmlFor={`source-enabled-${source.id}`}>启用下载源</FieldLabel>
+                <Switch
+                  id={`source-enabled-${source.id}`}
+                  checked={source.enabled}
+                  onCheckedChange={() => void toggleSource(source)}
+                />
+              </Field>
+            </CardFooter>
+          </Card>
         ))}
+        {sources.length === 0 && (
+          <Empty className="md:col-span-2 xl:col-span-3">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><PlugZap /></EmptyMedia>
+              <EmptyTitle>暂无下载源</EmptyTitle>
+              <EmptyDescription>添加 RSS、Torznab 或站点适配器后会显示在这里。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        )}
       </div>
     </div>
   );
@@ -353,7 +459,7 @@ function ProxySummaryItem({
   value: string;
 }) {
   return (
-    <div className="min-w-0 rounded-md border p-3">
+    <div className="min-w-0 rounded-md bg-muted p-3">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
         {icon && <span className="text-primary">{icon}</span>}
         {label}

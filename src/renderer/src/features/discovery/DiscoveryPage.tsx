@@ -1,6 +1,8 @@
 import {
+  AlertCircle,
   CalendarDays,
   CalendarPlus,
+  CheckCircle2,
   ExternalLink,
   ImageOff,
   Plus,
@@ -9,9 +11,23 @@ import {
   Star
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Panel } from "@/components/panel";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { appApi } from "@/lib/api";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { Anime, MyAnime, Season } from "@shared/domain";
@@ -227,144 +243,151 @@ export function DiscoveryPage() {
     : `${target.year} ${activeSeason.label} · ${visibleItems.length} 部`;
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-end justify-between gap-4">
-        <div>
+    <div className="flex min-w-0 flex-col gap-5">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-normal">新番发现</h1>
           <p className="mt-1 text-sm text-muted-foreground">按播出季度浏览新番，可按月份缩小范围。</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => void collectSeason(true)} disabled={collecting}>
-            <RotateCcw className="h-4 w-4" />
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Button className="w-full" variant="outline" onClick={() => void collectSeason(true)} disabled={collecting}>
+            <RotateCcw data-icon="inline-start" />
             {collecting ? `刷新中 ${collectProgress}/3` : "强制刷新季度"}
           </Button>
-          <Button onClick={() => void collectSeason(false)} disabled={collecting}>
-            <CalendarPlus className="h-4 w-4" />
+          <Button className="w-full" onClick={() => void collectSeason(false)} disabled={collecting}>
+            <CalendarPlus data-icon="inline-start" />
             {collectingLabel}
           </Button>
         </div>
       </div>
 
       {message && (
-        <div
-          className={
-            message.tone === "success"
-              ? "rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-              : "rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"
-          }
-        >
-          {message.text}
-        </div>
+        <Alert variant={message.tone === "error" ? "destructive" : "default"}>
+          {message.tone === "error" ? <AlertCircle /> : <CheckCircle2 />}
+          <AlertTitle>{message.tone === "error" ? "操作未完成" : "操作完成"}</AlertTitle>
+          <AlertDescription>{message.text}</AlertDescription>
+        </Alert>
       )}
 
-      <Panel className="p-0">
-        <div className="grid grid-cols-[128px_minmax(0,1fr)_140px] items-center gap-3 p-3">
-          <select
-            aria-label="选择年份"
-            className="h-10 rounded-md border bg-background px-3 text-sm font-medium outline-none focus:border-primary"
-            value={target.year}
-            onChange={(event) => setTarget((current) => ({ ...current, year: Number(event.target.value) }))}
-          >
-            {yearOptions.map((year) => (
-              <option key={year} value={year}>
-                {year} 年
-              </option>
-            ))}
-          </select>
-
-          <div className="grid h-10 grid-cols-4 overflow-hidden rounded-md border bg-background" role="group" aria-label="选择季度">
-            {seasonOptions.map((season) => {
-              const selected = target.season === season.value;
-              return (
-                <button
-                  key={season.value}
-                  aria-pressed={selected}
-                  className={[
-                    "border-r px-3 text-sm transition-colors last:border-r-0",
-                    selected
-                      ? "bg-primary font-medium text-primary-foreground"
-                      : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-                  ].join(" ")}
-                  type="button"
-                  onClick={() => selectSeason(season.value)}
-                >
-                  <span className="font-medium">{season.shortLabel}</span>
-                  <span className="ml-1.5 text-xs opacity-80">{season.months[0]}-{season.months[2]}月</span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div className="text-right text-sm font-medium tabular-nums">{resultLabel}</div>
-        </div>
-
-        <div className="grid grid-cols-[auto_160px_minmax(240px,1fr)_auto] items-center gap-3 border-t p-3">
-          <div className="flex h-9 overflow-hidden rounded-md border bg-background" role="group" aria-label="选择月份">
-            <button
-              aria-pressed={selectedMonth === null}
-              className={monthFilterClassName(selectedMonth === null)}
-              type="button"
-              onClick={() => setSelectedMonth(null)}
-            >
-              全部
-            </button>
-            {activeSeason.months.map((month) => (
-              <button
-                key={month}
-                aria-pressed={selectedMonth === month}
-                className={monthFilterClassName(selectedMonth === month)}
-                type="button"
-                onClick={() => setSelectedMonth(month)}
+      <Card className="min-w-0 overflow-hidden">
+        <CardHeader className="border-b">
+          <div className="flex min-w-0 flex-col gap-3 md:grid md:grid-cols-[128px_minmax(0,1fr)_140px] md:items-end">
+            <Field className="min-w-0">
+              <FieldLabel className="sr-only" htmlFor="discovery-year">选择年份</FieldLabel>
+              <Select
+                value={String(target.year)}
+                onValueChange={(value) => setTarget((current) => ({ ...current, year: Number(value) }))}
               >
-                {month} 月
-              </button>
-            ))}
-          </div>
+                <SelectTrigger id="discovery-year">
+                  <SelectValue placeholder="选择年份" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {yearOptions.map((year) => (
+                      <SelectItem key={year} value={String(year)}>
+                        {year} 年
+                      </SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
 
-          <select
-            aria-label="排序方式"
-            className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-            value={sortKey}
-            onChange={(event) => setSortKey(event.target.value as DiscoverySortKey)}
-          >
-            <option value="premiereAsc">发布时间升序</option>
-            <option value="premiereDesc">发布时间降序</option>
-            <option value="ratingDesc">评分降序</option>
-          </select>
+            <Tabs className="min-w-0" value={target.season} onValueChange={(value) => selectSeason(value as Season)}>
+              <TabsList className="grid h-auto w-full grid-cols-4" aria-label="选择季度">
+                {seasonOptions.map((season) => (
+                  <TabsTrigger className="min-w-0 px-2" key={season.value} value={season.value}>
+                    <span>{season.shortLabel}</span>
+                    <span className="hidden lg:inline">{season.months[0]}-{season.months[2]}月</span>
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
 
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <input
-              className="h-9 w-full rounded-md border bg-background pl-9 pr-3 text-sm outline-none focus:border-primary"
-              placeholder="搜索中文名、日文名、罗马音或英文名"
-              value={keyword}
-              onChange={(event) => {
-                const value = event.target.value;
-                setKeyword(value);
-                if (!value) {
-                  setAppliedKeyword("");
-                }
-              }}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") {
-                  searchCatalog();
-                }
-              }}
-            />
+            <div className="text-sm font-medium tabular-nums md:text-right">{resultLabel}</div>
           </div>
-          <Button variant="outline" onClick={searchCatalog} disabled={loading}>
-            <Search className="h-4 w-4" />
-            搜索
-          </Button>
-        </div>
-      </Panel>
+        </CardHeader>
+
+        <CardContent className="pt-4 sm:pt-5">
+          <FieldGroup className="gap-3 lg:grid lg:grid-cols-[minmax(0,auto)_160px_minmax(0,1fr)_auto] lg:items-end">
+            <Field className="min-w-0">
+              <FieldLabel className="sr-only">选择月份</FieldLabel>
+              <Tabs
+                value={selectedMonth === null ? "all" : String(selectedMonth)}
+                onValueChange={(value) => setSelectedMonth(value === "all" ? null : Number(value))}
+              >
+                <TabsList className="grid h-auto w-full grid-cols-4 lg:w-auto" aria-label="选择月份">
+                  <TabsTrigger value="all">全部</TabsTrigger>
+                  {activeSeason.months.map((month) => (
+                    <TabsTrigger key={month} value={String(month)}>{month} 月</TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+            </Field>
+
+            <Field className="min-w-0">
+              <FieldLabel className="sr-only" htmlFor="discovery-sort">排序方式</FieldLabel>
+              <Select value={sortKey} onValueChange={(value) => setSortKey(value as DiscoverySortKey)}>
+                <SelectTrigger id="discovery-sort">
+                  <SelectValue placeholder="排序方式" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="premiereAsc">发布时间升序</SelectItem>
+                    <SelectItem value="premiereDesc">发布时间降序</SelectItem>
+                    <SelectItem value="ratingDesc">评分降序</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+
+            <Field className="min-w-0">
+              <FieldLabel className="sr-only" htmlFor="discovery-keyword">搜索番剧</FieldLabel>
+              <Input
+                id="discovery-keyword"
+                placeholder="搜索中文名、日文名、罗马音或英文名"
+                value={keyword}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setKeyword(value);
+                  if (!value) {
+                    setAppliedKeyword("");
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    searchCatalog();
+                  }
+                }}
+              />
+            </Field>
+
+            <Button className="w-full lg:w-auto" variant="outline" onClick={searchCatalog} disabled={loading}>
+              <Search data-icon="inline-start" />
+              搜索
+            </Button>
+          </FieldGroup>
+        </CardContent>
+      </Card>
 
       {loading ? (
-        <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-          正在加载季度新番目录...
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="正在加载季度新番目录">
+          {Array.from({ length: 6 }, (_, index) => (
+            <Card key={index} className="overflow-hidden">
+              <Skeleton className="aspect-[16/7] w-full rounded-none" />
+              <CardHeader>
+                <Skeleton className="h-5 w-2/3" />
+                <Skeleton className="h-4 w-1/2" />
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2">
+                <Skeleton className="h-4 w-full" />
+                <Skeleton className="h-4 w-5/6" />
+              </CardContent>
+            </Card>
+          ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-4 xl:grid-cols-3">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {visibleItems.map((anime) => {
             const followed = followedIds.has(anime.id);
             const externalIds = buildExternalIdBadges(anime);
@@ -372,51 +395,51 @@ export function DiscoveryPage() {
             const hiddenAliases = titleDisplay.aliases.slice(2);
 
             return (
-              <Panel key={anime.id} className="flex h-full flex-col overflow-hidden p-0">
+              <Card key={anime.id} className="flex h-full min-w-0 flex-col overflow-hidden">
                 {anime.coverUrl ? (
                   <img
                     alt={titleDisplay.title}
-                    className="aspect-[16/5] w-full bg-muted object-cover"
+                    className="aspect-[16/7] w-full bg-muted object-cover"
                     loading="lazy"
                     src={anime.coverUrl}
                   />
                 ) : (
-                  <div className="flex aspect-[16/5] w-full items-center justify-center bg-muted text-muted-foreground">
+                  <div className="flex aspect-[16/7] w-full items-center justify-center bg-muted text-muted-foreground">
                     <ImageOff className="h-6 w-6" />
                   </div>
                 )}
 
-                <div className="flex flex-1 flex-col p-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <div className="truncate font-medium" title={titleDisplay.title}>
-                        {titleDisplay.title}
-                      </div>
-                      <div className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle}>
-                        {titleDisplay.subtitle ?? "无别名"}
-                      </div>
-                    </div>
-                    <Badge className="flex-none" tone={followed ? "green" : "blue"}>
-                      {followed ? "已追番" : `${anime.premiereMonth} 月`}
-                    </Badge>
+                <CardHeader className="flex-row items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <CardTitle className="truncate" title={titleDisplay.title}>
+                      {titleDisplay.title}
+                    </CardTitle>
+                    <CardDescription className="mt-1 truncate" title={titleDisplay.subtitle}>
+                      {titleDisplay.subtitle ?? "无别名"}
+                    </CardDescription>
                   </div>
+                  <Badge className="flex-none" tone={followed ? "green" : "blue"}>
+                    {followed ? "已追番" : `${anime.premiereMonth} 月`}
+                  </Badge>
+                </CardHeader>
 
-                  <div className="mt-3 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
+                <CardContent className="flex flex-1 flex-col gap-3">
+                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                     <CalendarDays className="h-3.5 w-3.5 flex-none" />
                     <span>{formatPremiere(anime)}</span>
                     {anime.season && <span>· {seasonText[anime.season]}</span>}
                     <span className="inline-flex items-center gap-1">
-                      <Star className="h-3.5 w-3.5 flex-none text-amber-500" />
+                      <Star className="h-3.5 w-3.5 flex-none text-primary" />
                       {formatAnimeRating(anime)}
                     </span>
                   </div>
 
-                  <p className="mt-2 line-clamp-2 min-h-12 text-sm leading-6 text-muted-foreground">
+                  <p className="line-clamp-2 min-h-12 text-sm leading-6 text-muted-foreground">
                     {anime.summary ?? "暂无简介"}
                   </p>
 
                   {titleDisplay.aliases.length > 0 && (
-                    <div className="mt-3 flex min-h-6 flex-wrap gap-2">
+                    <div className="flex min-h-6 flex-wrap gap-2">
                       {titleDisplay.aliases.slice(0, 2).map((alias) => (
                         <Badge key={alias.id} className="max-w-[220px] truncate" title={alias.alias}>
                           {alias.alias}
@@ -431,52 +454,79 @@ export function DiscoveryPage() {
                   )}
 
                   {externalIds.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="flex flex-wrap gap-2">
                       {externalIds.map((externalId) =>
                         externalId.url ? (
-                          <button
+                          <Button
                             key={externalId.key}
-                            className={externalId.className}
+                            className="max-w-full"
                             title={`${externalId.label}: ${externalId.value}`}
                             type="button"
+                            variant="outline"
                             onClick={() => void openExternalId(externalId)}
                           >
-                            <span className="truncate">
-                              {externalId.label} {externalId.value}
-                            </span>
-                            <ExternalLink className="h-3 w-3 flex-none" />
-                          </button>
+                            <span className="min-w-0 truncate">{externalId.label} {externalId.value}</span>
+                            <ExternalLink data-icon="inline-end" />
+                          </Button>
                         ) : (
-                          <Badge key={externalId.key} title={`${externalId.label}: ${externalId.value}`}>
+                          <Badge className="max-w-full truncate" key={externalId.key} title={`${externalId.label}: ${externalId.value}`}>
                             {externalId.label} {externalId.value}
                           </Badge>
                         )
                       )}
                     </div>
                   )}
+                </CardContent>
 
-                  <div className="mt-auto pt-4">
-                    <Button
-                      className="w-full"
-                      variant={followed ? "secondary" : "outline"}
-                      disabled={followed || addingAnimeId === anime.id}
-                      onClick={() => void addToMyAnime(anime)}
-                    >
-                      <Plus className="h-4 w-4" />
-                      {followed ? "已在我的追番" : addingAnimeId === anime.id ? "添加中" : "添加追番"}
-                    </Button>
-                  </div>
-                </div>
-              </Panel>
+                <CardFooter className="mt-auto">
+                  <Button
+                    className="w-full"
+                    variant={followed ? "secondary" : "outline"}
+                    disabled={followed || addingAnimeId === anime.id}
+                    onClick={() => void addToMyAnime(anime)}
+                  >
+                    <Plus data-icon="inline-start" />
+                    {followed ? "已在我的追番" : addingAnimeId === anime.id ? "添加中" : "添加追番"}
+                  </Button>
+                </CardFooter>
+              </Card>
             );
           })}
 
           {visibleItems.length === 0 && (
-            <div className="col-span-full rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-              {items.length === 0
-                ? "当前季度没有本地目录。点击采集当前季度获取新番数据。"
-                : "当前筛选条件下没有匹配的新番。"}
-            </div>
+            <Empty className="col-span-full">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  {items.length === 0 ? <CalendarPlus /> : <Search />}
+                </EmptyMedia>
+                <EmptyTitle>{items.length === 0 ? "当前季度暂无本地目录" : "没有匹配的新番"}</EmptyTitle>
+                <EmptyDescription>
+                  {items.length === 0
+                    ? "采集当前季度后即可浏览新番数据。"
+                    : "请调整月份或关键词后重试。"}
+                </EmptyDescription>
+              </EmptyHeader>
+              <EmptyContent>
+                {items.length === 0 ? (
+                  <Button onClick={() => void collectSeason(false)} disabled={collecting}>
+                    <CalendarPlus data-icon="inline-start" />
+                    {collectingLabel}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setKeyword("");
+                      setAppliedKeyword("");
+                      setSelectedMonth(null);
+                    }}
+                  >
+                    <RotateCcw data-icon="inline-start" />
+                    清除筛选
+                  </Button>
+                )}
+              </EmptyContent>
+            </Empty>
           )}
         </div>
       )}
@@ -484,23 +534,11 @@ export function DiscoveryPage() {
   );
 }
 
-const externalIdText: Record<string, { label: string; className: string }> = {
-  bangumi: {
-    label: "Bangumi",
-    className: "border-cyan-200 bg-cyan-50 text-cyan-700 hover:border-cyan-400"
-  },
-  anilist: {
-    label: "AniList",
-    className: "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-400"
-  },
-  mikan: {
-    label: "Mikan",
-    className: "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-400"
-  },
-  mal: {
-    label: "MAL",
-    className: "border-border bg-muted text-muted-foreground hover:border-primary"
-  }
+const externalIdText: Record<string, string> = {
+  bangumi: "Bangumi",
+  anilist: "AniList",
+  mikan: "Mikan",
+  mal: "MAL"
 };
 
 const externalIdOrder = ["bangumi", "anilist", "mikan", "mal"];
@@ -509,7 +547,6 @@ interface ExternalIdBadge {
   key: string;
   label: string;
   value: string;
-  className: string;
   url?: string;
 }
 
@@ -612,16 +649,6 @@ function formatAnimeRating(anime: Anime): string {
   return `${anime.rating.score.toFixed(1)}${countText}`;
 }
 
-/** Returns the active and inactive styles for month filter buttons. */
-function monthFilterClassName(selected: boolean): string {
-  return [
-    "min-w-14 border-r px-3 text-sm transition-colors last:border-r-0",
-    selected
-      ? "bg-accent font-medium text-accent-foreground"
-      : "text-muted-foreground hover:bg-muted hover:text-foreground"
-  ].join(" ");
-}
-
 /** Builds ordered metadata-source badges for an anime entry. */
 function buildExternalIdBadges(anime: Anime): ExternalIdBadge[] {
   return Object.entries(anime.externalIds)
@@ -629,12 +656,8 @@ function buildExternalIdBadges(anime: Anime): ExternalIdBadge[] {
     .sort(([left], [right]) => getExternalIdRank(left) - getExternalIdRank(right))
     .map(([key, value]) => ({
       key,
-      label: externalIdText[key]?.label ?? key,
+      label: externalIdText[key] ?? key,
       value,
-      className: [
-        "inline-flex h-6 max-w-full items-center gap-1 rounded-md border px-2 text-xs font-medium transition focus:outline-none focus:ring-2 focus:ring-primary/30",
-        externalIdText[key]?.className ?? "border-border bg-muted text-muted-foreground"
-      ].join(" "),
       url: buildExternalIdUrl(key, value)
     }));
 }

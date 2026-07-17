@@ -1,5 +1,6 @@
 import type { ErrorInfo, ReactNode } from "react";
 import { Component } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface ErrorBoundaryProps {
   children: ReactNode;
@@ -27,11 +28,11 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   render() {
     if (this.state.message) {
       return (
-        <div className="min-h-screen bg-background p-6 text-sm text-rose-700">
-          <div className="rounded-md border border-rose-200 bg-rose-50 p-4">
-            <div className="font-medium">界面渲染失败</div>
-            <div className="mt-2 break-all">{this.state.message}</div>
-          </div>
+        <div className="min-h-screen bg-background p-4 sm:p-6">
+          <Alert className="mx-auto max-w-2xl" variant="destructive">
+            <AlertTitle>界面渲染失败</AlertTitle>
+            <AlertDescription className="break-all">{this.state.message}</AlertDescription>
+          </Alert>
         </div>
       );
     }

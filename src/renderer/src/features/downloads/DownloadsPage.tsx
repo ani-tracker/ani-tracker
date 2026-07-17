@@ -1,11 +1,19 @@
 import { ChevronDown, ChevronRight, Download as DownloadIcon, FileSearch, Folder, Pause, Play, RotateCcw, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { FormEvent } from "react";
-import { Panel } from "@/components/panel";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { appApi } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format";
 import type { DownloadStatus, DownloadTask, MyAnime } from "@shared/domain";
 
@@ -165,46 +173,82 @@ export function DownloadsPage() {
   }
 
   if (loading) {
-    return <div className="text-sm text-muted-foreground">正在加载下载队列...</div>;
+    return (
+      <div className="flex flex-col gap-5" aria-label="正在加载下载队列">
+        <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-7 w-32" />
+            <Skeleton className="h-4 w-64 max-w-full" />
+          </div>
+          <Skeleton className="h-11 w-28 md:h-9" />
+        </div>
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-56 w-full" />
+      </div>
+    );
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-end justify-between gap-4">
-        <div>
+    <div className="flex flex-col gap-5">
+      <div className="flex flex-col items-start gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-normal">下载队列</h1>
           <p className="mt-1 text-sm text-muted-foreground">按追番和字幕组归并任务，集数、进度和保存目录集中查看。</p>
         </div>
-        <Button variant="outline" onClick={() => void refresh()} disabled={refreshing}>
-          <RotateCcw className="h-4 w-4" />
+        <Button className="w-full sm:w-auto" variant="outline" onClick={() => void refresh()} disabled={refreshing}>
+          <RotateCcw data-icon="inline-start" />
           {refreshing ? "刷新中" : "刷新状态"}
         </Button>
       </div>
 
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>最后刷新：{updatedAt ?? "尚未刷新"}</span>
-        <span className={error ? "text-rose-600" : ""}>{error ?? scanMessage}</span>
+      <div className="flex flex-col gap-3">
+        <span className="text-sm text-muted-foreground">最后刷新：{updatedAt ?? "尚未刷新"}</span>
+        {error && (
+          <Alert variant="destructive">
+            <AlertTitle>下载队列操作失败</AlertTitle>
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
+        {!error && scanMessage && (
+          <Alert>
+            <AlertTitle>操作完成</AlertTitle>
+            <AlertDescription>{scanMessage}</AlertDescription>
+          </Alert>
+        )}
       </div>
 
-      <Panel title="添加下载">
-        <form className="flex flex-col gap-3 md:flex-row" onSubmit={(event) => void addDownload(event)}>
-          <input
-            className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-            placeholder="magnet 或 torrent 地址"
-            value={downloadUrl}
-            onChange={(event) => setDownloadUrl(event.target.value)}
-          />
-          <Button className="shrink-0" type="submit" disabled={addingDownload}>
-            <DownloadIcon className="h-4 w-4" />
-            {addingDownload ? "添加中" : "添加下载"}
-          </Button>
-        </form>
-      </Panel>
+      <Card>
+        <CardHeader>
+          <CardTitle>添加下载</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <form onSubmit={(event) => void addDownload(event)}>
+            <FieldGroup className="gap-3 md:flex-row md:items-end">
+              <Field className="min-w-0 flex-1">
+                <FieldLabel className="sr-only" htmlFor="download-url">magnet 或 torrent 地址</FieldLabel>
+                <Input
+                  id="download-url"
+                  placeholder="magnet 或 torrent 地址"
+                  value={downloadUrl}
+                  onChange={(event) => setDownloadUrl(event.target.value)}
+                />
+              </Field>
+              <Field className="w-full md:w-auto">
+                <FieldLabel className="sr-only" htmlFor="add-download">添加下载</FieldLabel>
+                <Button id="add-download" className="w-full shrink-0 md:w-auto" type="submit" disabled={addingDownload}>
+                  <DownloadIcon data-icon="inline-start" />
+                  {addingDownload ? "添加中" : "添加下载"}
+                </Button>
+              </Field>
+            </FieldGroup>
+          </form>
+        </CardContent>
+      </Card>
 
-      <div className="space-y-5">
+      <div className="flex flex-col gap-5">
           {animeGroups.map((animeGroup) => (
             <section key={animeGroup.key}>
-              <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                 <div className="min-w-0">
                   <h2 className="truncate text-base font-semibold">{animeGroup.title}</h2>
                   <div className="mt-1 flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -214,34 +258,40 @@ export function DownloadsPage() {
                     <span>下载中 {animeGroup.activeEpisodes} 集</span>
                   </div>
                 </div>
-                <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  <Folder className="h-4 w-4 shrink-0" />
-                  <span className="max-w-[420px] truncate" title={animeGroup.savePath}>{animeGroup.savePath}</span>
+                <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground sm:max-w-[45%]">
+                  <Folder className="size-4 shrink-0" />
+                  <span className="truncate" title={animeGroup.savePath}>{animeGroup.savePath}</span>
                 </div>
               </div>
+              <Separator className="mt-3" />
 
-              <div className="mt-3 space-y-3">
+              <div className="mt-3 flex flex-col gap-3">
                 {animeGroup.fansubGroups.map((fansubGroup) => {
                   const collapsed = collapsedGroupKeys.has(fansubGroup.key);
                   return (
-                    <section key={fansubGroup.key} className="overflow-hidden rounded-md border">
-                      <button
-                        className="flex h-11 w-full items-center justify-between gap-3 bg-muted/70 px-3 text-left hover:bg-muted"
-                        type="button"
-                        onClick={() => toggleGroup(fansubGroup.key)}
-                      >
-                        <span className="flex min-w-0 items-center gap-2">
-                          {collapsed ? <ChevronRight className="h-4 w-4 shrink-0" /> : <ChevronDown className="h-4 w-4 shrink-0" />}
-                          <span className="truncate text-sm font-medium">{fansubGroup.name}</span>
-                        </span>
-                        <span className="flex shrink-0 items-center gap-2">
-                          <Badge>{formatEpisodeRange(fansubGroup.tasks)}</Badge>
-                          <span className="text-xs text-muted-foreground">{fansubGroup.tasks.length} 个任务</span>
-                        </span>
-                      </button>
+                    <Card key={fansubGroup.key} className="overflow-hidden shadow-none">
+                      <CardHeader className="p-0 sm:p-0">
+                        <CardTitle>
+                          <Button
+                            className="h-auto w-full justify-between rounded-none px-3 py-2 text-left"
+                            variant="secondary"
+                            type="button"
+                            onClick={() => toggleGroup(fansubGroup.key)}
+                          >
+                            <span className="flex min-w-0 items-center gap-2">
+                              {collapsed ? <ChevronRight data-icon="inline-start" /> : <ChevronDown data-icon="inline-start" />}
+                              <span className="truncate text-sm font-medium">{fansubGroup.name}</span>
+                            </span>
+                            <span className="flex shrink-0 flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
+                              <Badge>{formatEpisodeRange(fansubGroup.tasks)}</Badge>
+                              <span className="text-xs text-muted-foreground">{fansubGroup.tasks.length} 个任务</span>
+                            </span>
+                          </Button>
+                        </CardTitle>
+                      </CardHeader>
 
                       {!collapsed && (
-                        <div className="divide-y">
+                        <CardContent className="divide-y p-0 sm:p-0">
                           {fansubGroup.tasks.map((task) => (
                             <DownloadTaskRow
                               key={task.id}
@@ -254,9 +304,9 @@ export function DownloadsPage() {
                               onToggleFile={toggleFileSelection}
                             />
                           ))}
-                        </div>
+                        </CardContent>
                       )}
-                    </section>
+                    </Card>
                   );
                 })}
               </div>
@@ -264,9 +314,13 @@ export function DownloadsPage() {
           ))}
 
           {tasks.length === 0 && (
-            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-              当前没有下载任务。
-            </div>
+            <Empty>
+              <EmptyHeader>
+                <EmptyMedia variant="icon"><DownloadIcon /></EmptyMedia>
+                <EmptyTitle>当前没有下载任务</EmptyTitle>
+                <EmptyDescription>添加 magnet 或 torrent 地址后，任务会显示在这里。</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           )}
       </div>
     </div>
@@ -291,12 +345,12 @@ function DownloadTaskRow({
   onToggleFile: (task: DownloadTask, file: DownloadTask["files"][number]) => Promise<void>;
 }) {
   return (
-    <div className="p-4">
-              <div className="flex items-start justify-between gap-4">
+    <div className="p-3 sm:p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div className="min-w-0 flex-1">
-                  <div className="flex min-w-0 items-center gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
                     {task.episodeNo !== undefined && <Badge tone="blue">第 {task.episodeNo} 集</Badge>}
-                    <div className="truncate font-medium">{task.name}</div>
+                    <div className="min-w-0 flex-1 truncate font-medium">{task.name}</div>
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                     <Badge tone="blue">{task.engine === "embedded" ? "内置引擎" : "qBittorrent"}</Badge>
@@ -305,43 +359,47 @@ function DownloadTaskRow({
                     <span>剩余 {formatDuration(task.etaSeconds)}</span>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
                   <Badge tone={getDownloadStatusTone(task.status)}>{downloadStatusText[task.status]}</Badge>
                   <Button
+                    className="size-11 p-0 md:size-9"
                     variant="outline"
                     aria-label="暂停下载"
                     title="暂停下载"
                     disabled={mutatingTaskId === task.id}
                     onClick={() => void onMutate(task.id, "pause")}
                   >
-                    <Pause className="h-4 w-4" />
+                    <Pause />
                   </Button>
                   <Button
+                    className="size-11 p-0 md:size-9"
                     variant="outline"
                     aria-label="继续下载"
                     title="继续下载"
                     disabled={mutatingTaskId === task.id}
                     onClick={() => void onMutate(task.id, "resume")}
                   >
-                    <Play className="h-4 w-4" />
+                    <Play />
                   </Button>
                   <Button
+                    className="size-11 p-0 md:size-9"
                     variant="outline"
                     aria-label="扫描媒体信息"
                     title="扫描媒体信息"
                     disabled={scanningTaskId === task.id || !canScanTask(task)}
                     onClick={() => void onScan(task.id)}
                   >
-                    <FileSearch className="h-4 w-4" />
+                    <FileSearch />
                   </Button>
                   <Button
+                    className="size-11 p-0 md:size-9"
                     variant="outline"
                     aria-label="移除任务"
                     title="移除任务"
                     disabled={mutatingTaskId === task.id}
                     onClick={() => void onMutate(task.id, "remove")}
                   >
-                    <Trash2 className="h-4 w-4" />
+                    <Trash2 />
                   </Button>
                 </div>
               </div>
@@ -351,26 +409,31 @@ function DownloadTaskRow({
                 <div className="w-12 text-right text-sm font-medium">{formatPercent(task.progress)}</div>
               </div>
 
-              <div className="mt-4 space-y-2">
+              <div className="mt-4 flex flex-col gap-2">
                 {task.files.map((file) => (
-                  <div key={file.id} className="flex items-center justify-between rounded-md bg-muted px-3 py-2 text-sm">
-                    <label className="flex min-w-0 flex-1 items-center gap-3">
-                      <input
-                        className="h-4 w-4 rounded border-border accent-primary"
-                        type="checkbox"
-                        checked={file.selected}
-                        disabled={mutatingFileId === file.id}
-                        onChange={() => void onToggleFile(task, file)}
-                      />
-                      <span className={file.selected ? "truncate" : "truncate text-muted-foreground line-through"}>
-                        {file.name}
-                      </span>
-                    </label>
-                    <div className="ml-4 flex shrink-0 items-center gap-3 text-muted-foreground">
+                  <Field
+                    key={file.id}
+                    className="flex-wrap rounded-md bg-muted p-3"
+                    data-disabled={mutatingFileId === file.id}
+                    orientation="horizontal"
+                  >
+                    <Checkbox
+                      id={`download-file-${file.id}`}
+                      checked={file.selected}
+                      disabled={mutatingFileId === file.id}
+                      onCheckedChange={() => void onToggleFile(task, file)}
+                    />
+                    <FieldLabel
+                      className={cn("min-w-0 flex-1 font-normal", !file.selected && "text-muted-foreground line-through")}
+                      htmlFor={`download-file-${file.id}`}
+                    >
+                      <span className="truncate">{file.name}</span>
+                    </FieldLabel>
+                    <div className="flex basis-full items-center gap-3 pl-8 text-sm text-muted-foreground sm:basis-auto sm:shrink-0 sm:pl-0">
                       <span>{formatBytes(file.size)}</span>
                       <span>{formatPercent(file.progress)}</span>
                     </div>
-                  </div>
+                  </Field>
                 ))}
               </div>
     </div>

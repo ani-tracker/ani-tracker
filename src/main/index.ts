@@ -19,8 +19,8 @@ function createWindow(): void {
   const window = new BrowserWindow({
     width: 1240,
     height: 820,
-    minWidth: 1024,
-    minHeight: 700,
+    minWidth: 720,
+    minHeight: 560,
     title: "Ani Tracker",
     backgroundColor: "#f8fafc",
     webPreferences: {

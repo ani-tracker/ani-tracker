@@ -1,9 +1,26 @@
-import { CalendarDays, Check, ChevronDown, ChevronRight, Download, FolderOpen, ImageOff, Link2, MoreHorizontal, Play, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Star, Trash2, Unlink, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
-import { Panel } from "@/components/panel";
+import { AlertTriangle, CalendarDays, Check, ChevronDown, ChevronRight, Download, FolderOpen, ImageOff, Link2, MoreHorizontal, Play, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink, X } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Drawer } from "@/components/ui/drawer";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
+import { Input } from "@/components/ui/input";
+import { Progress } from "@/components/ui/progress";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatMonth, formatPercent } from "@/lib/format";
@@ -68,6 +85,7 @@ const subtitleText: Record<SubtitlePreference, string> = {
 };
 const unknownFansubFilter = "__unknown__";
 const batchAddingReleaseId = "__batch__";
+const emptySelectValue = "__empty__";
 type DownloadResourceTab = "rss" | "search";
 type AnimeDownloadDetailFilter = "all" | "active" | "completed";
 const defaultRssRefreshIntervalMinutes = 20;
@@ -96,6 +114,7 @@ const downloadDetailFilters: Array<{ value: AnimeDownloadDetailFilter; label: st
 ];
 const releaseSearchCacheTtlMs = 24 * 60 * 60 * 1000;
 
+/** 渲染追番列表并协调规则、资源下载和任务明细抽屉。 */
 export function MyAnimePage() {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
@@ -796,41 +815,38 @@ export function MyAnimePage() {
   }
 
   if (loading) {
-    return <div className="text-sm text-muted-foreground">正在加载追番列表...</div>;
+    return <MyAnimePageSkeleton />;
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-end justify-between gap-4">
-        <div>
+    <div className="flex min-w-0 flex-col gap-5">
+      <header className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-normal">我的追番</h1>
           <p className="mt-1 text-sm text-muted-foreground">按首播年月管理，默认字幕组会用于自动下载。</p>
         </div>
         <Button
+          className="min-h-11 w-full sm:min-h-9 sm:w-auto"
           onClick={() => {
             closeAnimeDownloads();
             setDraft(createEmptyDraft());
           }}
         >
-          <Plus className="h-4 w-4" />
+          <Plus data-icon="inline-start" />
           添加追番
         </Button>
-      </div>
+      </header>
 
       {message && (
-        <div
-          className={
-            message.tone === "success"
-              ? "rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-              : "rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800"
-          }
-        >
-          {message.text}
-        </div>
+        <Alert variant={message.tone === "error" ? "destructive" : "default"}>
+          {message.tone === "error" && <AlertTriangle />}
+          <AlertTitle>{message.tone === "error" ? "操作失败" : "操作完成"}</AlertTitle>
+          <AlertDescription>{message.text}</AlertDescription>
+        </Alert>
       )}
 
       {items.length > 0 ? (
-        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-4">
+        <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
           {items.map((item) => (
             <MyAnimeCard
               key={item.id}
@@ -846,9 +862,15 @@ export function MyAnimePage() {
           ))}
         </div>
       ) : (
-        <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-          当前还没有追番。
-        </div>
+        <Empty className="min-h-72">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <CalendarDays />
+            </EmptyMedia>
+            <EmptyTitle>暂无追番</EmptyTitle>
+            <EmptyDescription>当前还没有追番。</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       )}
 
       {draft && (
@@ -879,7 +901,7 @@ export function MyAnimePage() {
       {downloadTarget && (
         <Drawer
           ariaLabel="资源下载"
-          className="max-w-5xl overflow-hidden"
+          className="overflow-x-hidden sm:max-w-5xl"
           onClose={closeAnimeDownloads}
         >
           <AnimeDownloadPanel
@@ -941,6 +963,33 @@ export function MyAnimePage() {
   );
 }
 
+/** 渲染追番列表加载中的结构化占位状态。 */
+function MyAnimePageSkeleton() {
+  return (
+    <div className="flex min-w-0 flex-col gap-5" aria-busy="true" aria-label="正在加载追番列表">
+      <div className="flex flex-col gap-2">
+        <Skeleton className="h-7 w-32" />
+        <Skeleton className="h-4 w-72 max-w-full" />
+      </div>
+      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+        {["anime-1", "anime-2", "anime-3", "anime-4"].map((item) => (
+          <Card key={item}>
+            <Skeleton className="aspect-video w-full rounded-b-none" />
+            <CardHeader>
+              <Skeleton className="h-5 w-3/4" />
+              <Skeleton className="h-4 w-1/2" />
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3">
+              <Skeleton className="h-12 w-full" />
+              <Skeleton className="h-8 w-full" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** 渲染我的追番卡片，并承载右上角快捷操作入口。 */
 function MyAnimeCard({
   item,
@@ -963,71 +1012,6 @@ function MyAnimeCard({
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(item.anime);
   const ratingText = item.anime.rating ? item.anime.rating.score.toFixed(1) : "暂无";
-  const [actionsOpen, setActionsOpen] = useState(false);
-  const actionsRef = useRef<HTMLDivElement>(null);
-  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  /** 取消菜单延迟关闭计时。 */
-  function cancelCloseTimer() {
-    if (closeTimerRef.current) {
-      clearTimeout(closeTimerRef.current);
-      closeTimerRef.current = null;
-    }
-  }
-
-  /** 立即打开菜单，重新进入操作区时保持可操作。 */
-  function openActions() {
-    cancelCloseTimer();
-    setActionsOpen(true);
-  }
-
-  /** 离开操作区一秒后关闭菜单。 */
-  function scheduleActionsClose() {
-    cancelCloseTimer();
-    closeTimerRef.current = setTimeout(() => {
-      setActionsOpen(false);
-      closeTimerRef.current = null;
-    }, 1_000);
-  }
-
-  /** 立即关闭菜单并清理计时。 */
-  function closeActions() {
-    cancelCloseTimer();
-    setActionsOpen(false);
-  }
-
-  /** 执行菜单操作前关闭浮层。 */
-  function runAction(action: () => void) {
-    closeActions();
-    action();
-  }
-
-  useEffect(() => {
-    if (!actionsOpen) {
-      return;
-    }
-
-    function closeOnOutsidePointer(event: PointerEvent) {
-      if (!actionsRef.current?.contains(event.target as Node)) {
-        closeActions();
-      }
-    }
-
-    function closeOnEscape(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        closeActions();
-      }
-    }
-
-    document.addEventListener("pointerdown", closeOnOutsidePointer);
-    document.addEventListener("keydown", closeOnEscape);
-    return () => {
-      document.removeEventListener("pointerdown", closeOnOutsidePointer);
-      document.removeEventListener("keydown", closeOnEscape);
-    };
-  }, [actionsOpen]);
-
-  useEffect(() => () => cancelCloseTimer(), []);
 
   return (
     <article className="relative overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
@@ -1045,58 +1029,35 @@ function MyAnimeCard({
           </div>
         )}
 
-        <div className="absolute left-3 top-3 inline-flex h-7 items-center gap-1 rounded-md border border-amber-200 bg-amber-50/95 px-2 text-xs font-medium text-amber-700 shadow-sm">
-          <Star className="h-3.5 w-3.5" />
+        <Badge className="absolute left-3 top-3 shadow-sm" tone="amber">
           {ratingText}
-        </div>
+        </Badge>
 
-        <div
-          ref={actionsRef}
-          className="absolute right-3 top-3 z-10 flex justify-end"
-          onBlur={(event) => {
-            if (!event.currentTarget.contains(event.relatedTarget)) {
-              scheduleActionsClose();
-            }
-          }}
-          onFocus={openActions}
-          onPointerEnter={openActions}
-          onPointerLeave={scheduleActionsClose}
-        >
-          <button
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border bg-background/95 text-muted-foreground shadow-sm"
-            type="button"
-            aria-label="显示操作"
-            aria-expanded={actionsOpen}
-            aria-haspopup="menu"
-            title="显示操作"
-            onClick={openActions}
-          >
-            <MoreHorizontal className="h-4 w-4" />
-          </button>
-          <div
-            className={cn(
-              "absolute right-0 top-9 w-28 rounded-md border bg-background/95 p-1 shadow-lg transition-all",
-              actionsOpen
-                ? "pointer-events-auto translate-y-0 opacity-100"
-                : "pointer-events-none translate-y-1 opacity-0"
-            )}
-            role="menu"
-          >
-            <CardActionButton label="下载资源" onClick={() => runAction(onOpenDownloads)} />
-            <CardActionButton label="规则" onClick={() => runAction(onOpenRules)} />
-            <button
-              className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-medium text-rose-700 hover:bg-rose-50 focus:outline-none focus:ring-2 focus:ring-rose-200"
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              className="absolute right-3 top-3 size-11 p-0 shadow-sm md:min-h-8 md:size-8"
               type="button"
-              role="menuitem"
-              onClick={() => runAction(onRemove)}
+              variant="outline"
+              aria-label="显示操作"
+              title="显示操作"
             >
-              删除
-            </button>
-          </div>
-        </div>
+              <MoreHorizontal />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-32">
+            <DropdownMenuGroup>
+              <DropdownMenuItem onSelect={onOpenDownloads}>下载资源</DropdownMenuItem>
+              <DropdownMenuItem onSelect={onOpenRules}>规则</DropdownMenuItem>
+              <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onRemove}>
+                删除
+              </DropdownMenuItem>
+            </DropdownMenuGroup>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
-      <div className="space-y-3 p-3">
+      <div className="flex flex-col gap-3 p-3">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold" title={titleDisplay.title}>
             {titleDisplay.title}
@@ -1147,20 +1108,6 @@ function MyAnimeCard({
   );
 }
 
-/** 渲染卡片悬停菜单中的单个操作按钮。 */
-function CardActionButton({ label, onClick }: { label: string; onClick: () => void }) {
-  return (
-    <button
-      className="flex h-8 w-full items-center rounded px-2 text-left text-xs font-medium text-foreground hover:bg-accent focus:outline-none focus:ring-2 focus:ring-primary/25"
-      type="button"
-      role="menuitem"
-      onClick={onClick}
-    >
-      {label}
-    </button>
-  );
-}
-
 /** 渲染卡片内的下载统计指标。 */
 function CardMetric({
   label,
@@ -1173,8 +1120,7 @@ function CardMetric({
   tone?: "neutral" | "green" | "blue";
   onClick?: () => void;
 }) {
-  const toneClassName =
-    tone === "green" ? "text-emerald-700" : tone === "blue" ? "text-cyan-700" : "text-foreground";
+  const toneClassName = tone === "neutral" ? "text-foreground" : "text-primary";
   const content = (
     <>
       <div className={cn("text-sm font-semibold tabular-nums", toneClassName)}>{value}</div>
@@ -1184,15 +1130,16 @@ function CardMetric({
 
   if (onClick) {
     return (
-      <button
+      <Button
         aria-label={`查看${label}任务，共 ${value} 集`}
-        className="rounded-md bg-muted/60 px-2 py-1.5 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30"
+        className="h-auto min-h-0 w-full flex-col items-stretch gap-0 px-2 py-1.5 text-left md:min-h-0"
         title={`查看${label}任务`}
         type="button"
+        variant="secondary"
         onClick={onClick}
       >
         {content}
-      </button>
+      </Button>
     );
   }
 
@@ -1250,10 +1197,10 @@ function RulesDrawer({
   return (
     <Drawer
       ariaLabel="追番规则"
-      className="max-w-3xl overflow-y-auto bg-background p-4"
+      className="overflow-x-hidden overflow-y-auto bg-background p-3 sm:max-w-3xl sm:p-4"
       onClose={onCancel}
     >
-      <div className="space-y-4">
+      <div className="flex min-w-0 flex-col gap-4">
         <RulesPanel
           draft={draft}
           fansubs={fansubs}
@@ -1310,51 +1257,51 @@ function AnimeDownloadDetailDrawer({
   return (
     <Drawer
       ariaLabel="下载明细"
-      className="flex max-w-2xl flex-col"
+      className="flex flex-col sm:max-w-2xl"
       onClose={onClose}
     >
-      <div className="flex items-start justify-between gap-4 border-b p-5">
+      <div className="flex items-start justify-between gap-3 border-b p-4 sm:gap-4 sm:p-5">
         <div className="min-w-0">
           <h2 className="truncate text-lg font-semibold tracking-normal">{titleDisplay.title}</h2>
           <p className="mt-1 truncate text-sm text-muted-foreground">{titleDisplay.subtitle ?? "下载任务明细"}</p>
         </div>
         <Button variant="ghost" onClick={onClose} aria-label="关闭下载明细" title="关闭下载明细">
-          <X className="h-4 w-4" />
+          <X data-icon="inline-start" />
         </Button>
       </div>
 
       <div className="border-b p-4">
-        <div className="grid h-9 grid-cols-3 overflow-hidden rounded-md border bg-background" role="group" aria-label="筛选下载任务">
-          {downloadDetailFilters.map((filter) => (
-            <button
-              key={filter.value}
-              aria-pressed={detail.filter === filter.value}
-              className={[
-                "border-r px-3 text-sm transition-colors last:border-r-0",
-                detail.filter === filter.value
-                  ? "bg-primary font-medium text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              ].join(" ")}
-              type="button"
-              onClick={() => onFilterChange(filter.value)}
-            >
-              {filter.label} {counts[filter.value]}
-            </button>
-          ))}
-        </div>
+        <Tabs
+          value={detail.filter}
+          onValueChange={(value) => onFilterChange(value as AnimeDownloadDetailFilter)}
+        >
+          <TabsList className="grid w-full grid-cols-3">
+            {downloadDetailFilters.map((filter) => (
+              <TabsTrigger className="min-w-0 px-2" key={filter.value} value={filter.value}>
+                {filter.label} {counts[filter.value]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         {visibleTasks.length > 0 ? (
-          <div className="space-y-3">
+          <div className="flex min-w-0 flex-col gap-3">
             {visibleTasks.map((task) => (
               <DownloadDetailTaskCard key={task.id} task={task} fansubNames={fansubNames} />
             ))}
           </div>
         ) : (
-          <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-            当前筛选下没有下载任务。
-          </div>
+          <Empty className="min-h-56 p-4 md:p-8">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <Download />
+              </EmptyMedia>
+              <EmptyTitle>暂无下载任务</EmptyTitle>
+              <EmptyDescription>当前筛选下没有下载任务。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
         )}
       </div>
     </Drawer>
@@ -1412,12 +1359,10 @@ function DownloadDetailTaskCard({
         <div className="shrink-0 text-sm font-medium tabular-nums">{formatPercent(task.progress)}</div>
       </div>
 
-      <div className="mt-3 h-2 overflow-hidden rounded-full bg-muted">
-        <div className="h-full rounded-full bg-primary" style={{ width: `${getProgressWidth(task.progress)}%` }} />
-      </div>
+      <Progress className="mt-3" value={getProgressWidth(task.progress)} />
 
-      <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-        <DownloadDetailMeta label="保存路径" value={task.savePath} className="col-span-2" />
+      <dl className="mt-4 grid grid-cols-1 gap-x-4 gap-y-2 text-xs sm:grid-cols-2">
+        <DownloadDetailMeta label="保存路径" value={task.savePath} className="sm:col-span-2" />
         <DownloadDetailMeta label="创建时间" value={formatDateTime(task.createdAt)} />
         <DownloadDetailMeta label="完成时间" value={task.completedAt ? formatDateTime(task.completedAt) : "未完成"} />
         <DownloadDetailMeta label="下载速度" value={formatSpeedText(task.downloadSpeed)} />
@@ -1425,29 +1370,34 @@ function DownloadDetailTaskCard({
       </dl>
 
       {isCompletedDownload(task) && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t pt-3">
-          <span className="min-w-0 text-xs text-rose-600">{fileActionError}</span>
-          <div className="ml-auto flex items-center gap-2">
+        <div className="mt-4 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
+          {fileActionError && (
+            <Alert className="min-w-0 flex-1" variant="destructive">
+              <AlertTitle>文件操作失败</AlertTitle>
+              <AlertDescription>{fileActionError}</AlertDescription>
+            </Alert>
+          )}
+          <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto">
             <Button
-              className="h-8 px-2 text-xs"
+              className="h-11 px-2 text-xs sm:h-8"
               variant="outline"
               aria-label="播放已完成视频"
               title={playableFilePath ? "播放已完成视频" : "未找到可播放的视频文件"}
               disabled={!playableFilePath || activeFileAction !== null}
               onClick={() => void runFileAction("play")}
             >
-              <Play className="h-3.5 w-3.5" />
+              <Play data-icon="inline-start" />
               播放
             </Button>
             <Button
-              className="h-8 px-2 text-xs"
+              className="h-11 px-2 text-xs sm:h-8"
               variant="outline"
               aria-label="打开文件目录"
               title={revealFilePath ? "打开文件所在目录" : "未找到已完成文件"}
               disabled={!revealFilePath || activeFileAction !== null}
               onClick={() => void runFileAction("reveal")}
             >
-              <FolderOpen className="h-3.5 w-3.5" />
+              <FolderOpen data-icon="inline-start" />
               打开目录
             </Button>
           </div>
@@ -1493,207 +1443,221 @@ function RulesPanel({
 }) {
   if (!draft) {
     return (
-      <Panel title="追番规则">
-        <div className="rounded-md border border-dashed p-6 text-sm leading-6 text-muted-foreground">
-          选择一部番剧编辑规则，或添加新的追番。
-        </div>
-      </Panel>
+      <Card>
+        <CardHeader>
+          <CardTitle>追番规则</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Empty className="min-h-40 p-4 md:p-6">
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                <SlidersHorizontal />
+              </EmptyMedia>
+              <EmptyTitle>未选择追番</EmptyTitle>
+              <EmptyDescription>选择一部番剧编辑规则，或添加新的追番。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <Panel
-      title="追番规则"
-      action={
+    <Card>
+      <CardHeader className="flex-row items-start justify-between gap-4">
+        <CardTitle>追番规则</CardTitle>
         <Button variant="ghost" onClick={onCancel} aria-label="关闭编辑" title="关闭编辑">
-          <X className="h-4 w-4" />
+          <X data-icon="inline-start" />
         </Button>
-      }
-    >
-      <div className="space-y-4">
-        <TextField
-          label="番剧名称"
-          value={draft.anime.title}
-          onChange={(value) =>
-            onChange({
-              ...draft,
-              anime: {
-                ...draft.anime,
-                title: value
-              }
-            })
-          }
-        />
-        <TextField
-          label="原语言标题"
-          value={draft.anime.originalTitle ?? ""}
-          onChange={(value) =>
-            onChange({
-              ...draft,
-              anime: {
-                ...draft.anime,
-                originalTitle: value
-              }
-            })
-          }
-        />
-        <div className="grid grid-cols-2 gap-3">
-          <NumberField
-            label="首播年份"
-            value={draft.anime.premiereYear}
-            min={1970}
+      </CardHeader>
+      <CardContent>
+        <FieldGroup className="gap-4">
+          <TextField
+            label="番剧名称"
+            value={draft.anime.title}
             onChange={(value) =>
               onChange({
                 ...draft,
                 anime: {
                   ...draft.anime,
-                  premiereYear: value
+                  title: value
                 }
               })
             }
           />
-          <NumberField
-            label="首播月份"
-            value={draft.anime.premiereMonth}
-            min={1}
-            max={12}
+          <TextField
+            label="原语言标题"
+            value={draft.anime.originalTitle ?? ""}
             onChange={(value) =>
               onChange({
                 ...draft,
                 anime: {
                   ...draft.anime,
-                  premiereMonth: clampMonth(value)
+                  originalTitle: value
                 }
               })
             }
           />
-        </div>
-        <TextareaField
-          label="搜索别名"
-          value={draft.anime.aliases.map((alias) => alias.alias).join("\n")}
-          onChange={(value) =>
-            onChange({
-              ...draft,
-              anime: {
-                ...draft.anime,
-                aliases: value
-                  .split("\n")
-                  .map((item) => item.trim())
-                  .filter(Boolean)
-                  .map((alias, index) => ({
-                    id: `${draft.anime.id}-alias-${index + 1}`,
-                    animeId: draft.anime.id,
-                    alias,
-                    language: "custom",
-                    priority: 50 - index
-                  }))
+          <div className="grid gap-3 sm:grid-cols-2">
+            <NumberField
+              label="首播年份"
+              value={draft.anime.premiereYear}
+              min={1970}
+              onChange={(value) =>
+                onChange({
+                  ...draft,
+                  anime: {
+                    ...draft.anime,
+                    premiereYear: value
+                  }
+                })
               }
-            })
-          }
-        />
-        <SelectField
-          label="状态"
-          value={draft.status}
-          options={statusOptions.map(([value, label]) => ({ value, label }))}
-          onChange={(value) =>
-            onChange({
-              ...draft,
-              status: value as AnimeStatus
-            })
-          }
-        />
-        <SelectField
-          label="默认字幕组"
-          value={draft.defaultFansubGroupId ?? ""}
-          options={[
-            { value: "", label: "未设置" },
-            ...fansubs.map((group) => ({
-              value: group.id,
-              label: group.name
-            }))
-          ]}
-          onChange={(value) =>
-            onChange({
-              ...draft,
-              defaultFansubGroupId: value || undefined
-            })
-          }
-        />
-        <SelectField
-          label="自动下载"
-          value={draft.autoDownload ? "on" : "off"}
-          options={[
-            { value: "on", label: "开启" },
-            { value: "off", label: "关闭" }
-          ]}
-          onChange={(value) =>
-            onChange({
-              ...draft,
-              autoDownload: value === "on"
-            })
-          }
-        />
-        <div className="grid grid-cols-2 gap-3">
+            />
+            <NumberField
+              label="首播月份"
+              value={draft.anime.premiereMonth}
+              min={1}
+              max={12}
+              onChange={(value) =>
+                onChange({
+                  ...draft,
+                  anime: {
+                    ...draft.anime,
+                    premiereMonth: clampMonth(value)
+                  }
+                })
+              }
+            />
+          </div>
+          <TextareaField
+            label="搜索别名"
+            value={draft.anime.aliases.map((alias) => alias.alias).join("\n")}
+            onChange={(value) =>
+              onChange({
+                ...draft,
+                anime: {
+                  ...draft.anime,
+                  aliases: value
+                    .split("\n")
+                    .map((item) => item.trim())
+                    .filter(Boolean)
+                    .map((alias, index) => ({
+                      id: `${draft.anime.id}-alias-${index + 1}`,
+                      animeId: draft.anime.id,
+                      alias,
+                      language: "custom",
+                      priority: 50 - index
+                    }))
+                }
+              })
+            }
+          />
           <SelectField
-            label="偏好分辨率"
-            value={draft.preferredResolution ?? ""}
-            options={resolutionOptions.map((value) => ({
+            label="状态"
+            value={draft.status}
+            options={statusOptions.map(([value, label]) => ({ value, label }))}
+            onChange={(value) =>
+              onChange({
+                ...draft,
+                status: value as AnimeStatus
+              })
+            }
+          />
+          <SelectField
+            label="默认字幕组"
+            value={draft.defaultFansubGroupId ?? ""}
+            options={[
+              { value: "", label: "未设置" },
+              ...fansubs.map((group) => ({
+                value: group.id,
+                label: group.name
+              }))
+            ]}
+            onChange={(value) =>
+              onChange({
+                ...draft,
+                defaultFansubGroupId: value || undefined
+              })
+            }
+          />
+          <SelectField
+            label="自动下载"
+            value={draft.autoDownload ? "on" : "off"}
+            options={[
+              { value: "on", label: "开启" },
+              { value: "off", label: "关闭" }
+            ]}
+            onChange={(value) =>
+              onChange({
+                ...draft,
+                autoDownload: value === "on"
+              })
+            }
+          />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SelectField
+              label="偏好分辨率"
+              value={draft.preferredResolution ?? ""}
+              options={resolutionOptions.map((value) => ({
+                value,
+                label: value || "不限"
+              }))}
+              onChange={(value) =>
+                onChange({
+                  ...draft,
+                  preferredResolution: (value || undefined) as MyAnime["preferredResolution"]
+                })
+              }
+            />
+            <SelectField
+              label="偏好字幕"
+              value={draft.preferredSubtitle ?? ""}
+              options={subtitleOptions.map((value) => ({
+                value,
+                label: value || "不限"
+              }))}
+              onChange={(value) =>
+                onChange({
+                  ...draft,
+                  preferredSubtitle: (value || undefined) as MyAnime["preferredSubtitle"]
+                })
+              }
+            />
+          </div>
+          <SelectField
+            label="偏好编码"
+            value={draft.preferredCodec ?? ""}
+            options={codecOptions.map((value) => ({
               value,
               label: value || "不限"
             }))}
             onChange={(value) =>
               onChange({
                 ...draft,
-                preferredResolution: (value || undefined) as MyAnime["preferredResolution"]
+                preferredCodec: (value || undefined) as MyAnime["preferredCodec"]
               })
             }
           />
-          <SelectField
-            label="偏好字幕"
-            value={draft.preferredSubtitle ?? ""}
-            options={subtitleOptions.map((value) => ({
-              value,
-              label: value || "不限"
-            }))}
+          <TextField
+            label="下载目录覆盖"
+            value={draft.downloadDir ?? ""}
             onChange={(value) =>
               onChange({
                 ...draft,
-                preferredSubtitle: (value || undefined) as MyAnime["preferredSubtitle"]
+                downloadDir: value || undefined
               })
             }
           />
-        </div>
-        <SelectField
-          label="偏好编码"
-          value={draft.preferredCodec ?? ""}
-          options={codecOptions.map((value) => ({
-            value,
-            label: value || "不限"
-          }))}
-          onChange={(value) =>
-            onChange({
-              ...draft,
-              preferredCodec: (value || undefined) as MyAnime["preferredCodec"]
-            })
-          }
-        />
-        <TextField
-          label="下载目录覆盖"
-          value={draft.downloadDir ?? ""}
-          onChange={(value) =>
-            onChange({
-              ...draft,
-              downloadDir: value || undefined
-            })
-          }
-        />
-        <RssSubscriptionsEditor draft={draft} onChange={onChange} />
-        <Button className="w-full" onClick={onSave} disabled={saving}>
-          <Save className="h-4 w-4" />
+          <RssSubscriptionsEditor draft={draft} onChange={onChange} />
+        </FieldGroup>
+      </CardContent>
+      <CardFooter>
+        <Button className="min-h-11 w-full sm:min-h-9" onClick={onSave} disabled={saving}>
+          <Save data-icon="inline-start" />
           {saving ? "保存中" : "保存规则"}
         </Button>
-      </div>
-    </Panel>
+      </CardFooter>
+    </Card>
   );
 }
 
@@ -1756,76 +1720,98 @@ function RssSubscriptionsEditor({
   }
 
   return (
-    <div className="space-y-3 rounded-md border p-3">
-      <div className="flex items-center justify-between gap-3">
-        <div>
-          <div className="text-sm font-medium">RSS订阅</div>
-          <div className="mt-1 text-xs text-muted-foreground">可为同一番剧配置多个 RSS 源。</div>
-        </div>
-        <div className="flex shrink-0 gap-2">
+    <FieldSet className="gap-4 rounded-md border p-3">
+      <FieldLegend className="mb-0">RSS订阅</FieldLegend>
+      <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <FieldDescription>可为同一番剧配置多个 RSS 源。</FieldDescription>
+        <div className="flex w-full shrink-0 gap-2 sm:w-auto">
           {mikanRssUrl && (
             <Button
+              className="min-h-11 min-w-0 flex-1 px-2 sm:min-h-9 sm:flex-none sm:px-3"
+              type="button"
               variant="outline"
               onClick={() => addSubscription({ name: "蜜柑计划", url: mikanRssUrl })}
               disabled={subscriptions.some((subscription) => subscription.url === mikanRssUrl)}
             >
+              <Rss data-icon="inline-start" />
               蜜柑RSS
             </Button>
           )}
-          <Button variant="outline" onClick={() => addSubscription()}>
-            <Plus className="h-4 w-4" />
+          <Button
+            className="min-h-11 min-w-0 flex-1 px-2 sm:min-h-9 sm:flex-none sm:px-3"
+            type="button"
+            variant="outline"
+            onClick={() => addSubscription()}
+          >
+            <Plus data-icon="inline-start" />
             添加
           </Button>
         </div>
       </div>
 
       {subscriptions.length > 0 ? (
-        <div className="space-y-3">
+        <FieldGroup className="gap-3">
           {subscriptions.map((subscription) => (
-            <div key={subscription.id} className="grid grid-cols-[auto_minmax(0,0.65fr)_minmax(0,1.05fr)_minmax(7rem,0.45fr)_minmax(5.5rem,0.32fr)_auto] items-center gap-2 rounded-md bg-muted/40 p-2">
-              <label className="flex items-center justify-center" title="启用订阅">
-                <input
+            <FieldGroup
+              className="grid min-w-0 gap-3 rounded-md bg-muted/40 p-3 md:grid-cols-2 xl:grid-cols-3 xl:items-end"
+              key={subscription.id}
+            >
+              <Field orientation="horizontal" className="min-w-0">
+                <Checkbox
+                  id={`rss-enabled-${subscription.id}`}
                   checked={subscription.enabled}
-                  className="h-4 w-4"
-                  type="checkbox"
-                  onChange={(event) => updateSubscription(subscription.id, { enabled: event.target.checked })}
+                  onCheckedChange={(checked) => updateSubscription(subscription.id, { enabled: checked === true })}
                 />
-              </label>
-              <input
-                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-                placeholder="订阅名称"
-                value={subscription.name}
-                onChange={(event) => updateSubscription(subscription.id, { name: event.target.value })}
-              />
-              <input
-                className="h-9 min-w-0 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-                placeholder="RSS 地址"
-                title={subscription.url}
-                value={subscription.url}
-                onChange={(event) => updateSubscription(subscription.id, { url: event.target.value })}
-              />
-              <select
-                className="h-9 min-w-0 rounded-md border bg-background px-2 text-sm outline-none focus:border-primary"
-                title="RSS 语言偏好"
-                value={subscription.preferredSubtitle ?? ""}
-                onChange={(event) =>
-                  updateSubscription(subscription.id, {
-                    preferredSubtitle: (event.target.value || undefined) as AnimeRssSubscription["preferredSubtitle"]
-                  })
-                }
-              >
-                {subtitleOptions.map((value) => (
-                  <option key={value || "follow"} value={value}>
-                    {value ? subtitleText[value] : `跟随追番${draft.preferredSubtitle ? `：${subtitleText[draft.preferredSubtitle]}` : ""}`}
-                  </option>
-                ))}
-              </select>
-              <div className="relative min-w-0">
-                <input
-                  className="h-9 w-full rounded-md border bg-background px-2 pr-6 text-sm outline-none focus:border-primary"
-                  aria-label="RSS 自动下载刷新间隔"
+                <FieldLabel htmlFor={`rss-enabled-${subscription.id}`}>启用</FieldLabel>
+              </Field>
+              <Field className="min-w-0">
+                <FieldLabel className="sr-only" htmlFor={`rss-name-${subscription.id}`}>订阅名称</FieldLabel>
+                <Input
+                  id={`rss-name-${subscription.id}`}
+                  placeholder="订阅名称"
+                  value={subscription.name}
+                  onChange={(event) => updateSubscription(subscription.id, { name: event.target.value })}
+                />
+              </Field>
+              <Field className="min-w-0">
+                <FieldLabel className="sr-only" htmlFor={`rss-url-${subscription.id}`}>RSS 地址</FieldLabel>
+                <Input
+                  id={`rss-url-${subscription.id}`}
+                  placeholder="RSS 地址"
+                  title={subscription.url}
+                  value={subscription.url}
+                  onChange={(event) => updateSubscription(subscription.id, { url: event.target.value })}
+                />
+              </Field>
+              <Field className="min-w-0">
+                <FieldLabel className="sr-only" htmlFor={`rss-subtitle-${subscription.id}`}>RSS 语言偏好</FieldLabel>
+                <Select
+                  value={subscription.preferredSubtitle ?? emptySelectValue}
+                  onValueChange={(value) =>
+                    updateSubscription(subscription.id, {
+                      preferredSubtitle: (value === emptySelectValue ? undefined : value) as AnimeRssSubscription["preferredSubtitle"]
+                    })
+                  }
+                >
+                  <SelectTrigger id={`rss-subtitle-${subscription.id}`} title="RSS 语言偏好">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {subtitleOptions.map((value) => (
+                        <SelectItem key={value || "follow"} value={value || emptySelectValue}>
+                          {value ? subtitleText[value] : `跟随追番${draft.preferredSubtitle ? `：${subtitleText[draft.preferredSubtitle]}` : ""}`}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <Field className="min-w-0">
+                <FieldLabel htmlFor={`rss-interval-${subscription.id}`}>刷新间隔（分钟）</FieldLabel>
+                <Input
+                  id={`rss-interval-${subscription.id}`}
                   min={1}
-                  title="自动下载刷新间隔（分钟）"
                   type="number"
                   value={subscription.refreshIntervalMinutes ?? defaultRssRefreshIntervalMinutes}
                   onChange={(event) =>
@@ -1834,22 +1820,33 @@ function RssSubscriptionsEditor({
                     })
                   }
                 />
-                <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-muted-foreground">
-                  分
-                </span>
-              </div>
-              <Button variant="ghost" onClick={() => removeSubscription(subscription.id)} aria-label="删除RSS订阅" title="删除RSS订阅">
-                <Trash2 className="h-4 w-4" />
+              </Field>
+              <Button
+                className="min-h-11 w-full xl:min-h-9"
+                type="button"
+                variant="ghost"
+                onClick={() => removeSubscription(subscription.id)}
+                aria-label="删除RSS订阅"
+                title="删除RSS订阅"
+              >
+                <Trash2 data-icon="inline-start" />
+                删除
               </Button>
-            </div>
+            </FieldGroup>
           ))}
-        </div>
+        </FieldGroup>
       ) : (
-        <div className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
-          未配置 RSS 订阅。
-        </div>
+        <Empty className="min-h-36 p-4">
+          <EmptyHeader>
+            <EmptyMedia variant="icon">
+              <Rss />
+            </EmptyMedia>
+            <EmptyTitle>未配置 RSS 订阅</EmptyTitle>
+            <EmptyDescription>添加订阅后可从指定 RSS 获取发布资源。</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
       )}
-    </div>
+    </FieldSet>
   );
 }
 
@@ -2034,6 +2031,7 @@ function AnimeDownloadPanel({
     };
   }
 
+  /** 按集数渲染资源族，并保留批量选择能力。 */
   function renderEpisodeGroups(groupReleases: Release[], batchSelectable = true) {
     const families = groupReleaseVersions(groupReleases, target.preferredSubtitle, releaseVersionSelections);
     return groupReleaseFamilyEpisodes(families).map((episodeGroup) => (
@@ -2069,20 +2067,21 @@ function AnimeDownloadPanel({
   }
 
   return (
-    <Panel
+    <Card
       className={cn(
-        "flex min-h-0 flex-col p-3 sm:p-4 [&>div:first-child]:mb-3 [@media(max-height:760px)]:p-2 [@media(max-height:760px)]:[&>div:first-child]:mb-2",
+        "flex min-h-0 flex-col",
         panelClassName
       )}
-      title="资源下载"
-      action={
-        <Button variant="ghost" onClick={onClose} aria-label="关闭下载" title="关闭下载">
-          <X className="h-4 w-4" />
-        </Button>
-      }
     >
-      <div className="flex min-h-0 flex-1 flex-col gap-3 [@media(max-height:760px)]:gap-2">
-        <div className="grid shrink-0 items-center gap-2 md:grid-cols-[minmax(0,1fr)_minmax(18rem,0.8fr)]">
+      <CardHeader className="flex-row items-start justify-between gap-4 p-3 pb-0 sm:p-4 sm:pb-0 [@media(max-height:760px)]:p-2 [@media(max-height:760px)]:pb-0">
+        <CardTitle>资源下载</CardTitle>
+        <Button className="size-11 p-0 sm:size-9" variant="ghost" onClick={onClose} aria-label="关闭下载" title="关闭下载">
+          <X />
+        </Button>
+      </CardHeader>
+      <CardContent className="flex min-h-0 flex-1 flex-col p-3 pt-3 sm:p-4 sm:pt-3 [@media(max-height:760px)]:p-2 [@media(max-height:760px)]:pt-2">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 [@media(max-height:760px)]:gap-2">
+        <div className="grid shrink-0 items-center gap-2 md:grid-cols-2">
           <div className="min-w-0">
             <div className="truncate text-sm font-medium" title={titleDisplay.title}>
               {titleDisplay.title}
@@ -2096,36 +2095,12 @@ function AnimeDownloadPanel({
               </div>
             )}
           </div>
-          <div className="grid h-9 grid-cols-2 overflow-hidden rounded-md border bg-background" role="tablist" aria-label="资源获取方式">
-            <button
-              aria-selected={activeTab === "rss"}
-              className={cn(
-                "border-r px-3 text-sm transition-colors",
-                activeTab === "rss"
-                  ? "bg-primary font-medium text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              )}
-              role="tab"
-              type="button"
-              onClick={() => onTabChange("rss")}
-            >
-              RSS订阅
-            </button>
-            <button
-              aria-selected={activeTab === "search"}
-              className={cn(
-                "px-3 text-sm transition-colors",
-                activeTab === "search"
-                  ? "bg-primary font-medium text-primary-foreground"
-                  : "text-muted-foreground hover:bg-accent hover:text-accent-foreground"
-              )}
-              role="tab"
-              type="button"
-              onClick={() => onTabChange("search")}
-            >
-              资源搜索
-            </button>
-          </div>
+          <Tabs value={activeTab} onValueChange={(value) => onTabChange(value as DownloadResourceTab)}>
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="rss">RSS订阅</TabsTrigger>
+              <TabsTrigger value="search">资源搜索</TabsTrigger>
+            </TabsList>
+          </Tabs>
         </div>
 
         {activeTab === "search" && (
@@ -2139,48 +2114,65 @@ function AnimeDownloadPanel({
           />
         )}
 
-        <div className="flex shrink-0 flex-wrap items-center gap-2">
-          <select
-            className="h-9 min-w-48 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-            value={selectedFansubId}
-            onChange={(event) => onFansubChange(event.target.value)}
-          >
-            <option value="">全部字幕组（{tabReleases.length}）</option>
-            {fansubs.map((group) => {
-              const count = countReleasesByFansub(tabReleases, group.id);
-              return (
-                <option key={group.id} value={group.id}>
-                  {group.name}
-                  {count > 0 ? `（${count}）` : ""}
-                </option>
-              );
-            })}
-            {unknownFansubCount > 0 && <option value={unknownFansubFilter}>未识别字幕组（{unknownFansubCount}）</option>}
-          </select>
-          {activeTab === "rss" ? (
-            <Button className="shrink-0" variant="outline" onClick={onRefreshRss} disabled={rssLoading}>
-              <RefreshCw className="h-4 w-4" />
-              {rssLoading ? "读取中" : "刷新RSS"}
-            </Button>
-          ) : (
-            <>
-              <Button className="shrink-0" variant="outline" onClick={onRefresh} disabled={loading}>
-                <Search className="h-4 w-4" />
-                {loading ? "查询中" : "刷新"}
-              </Button>
+        <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end">
+          <Field className="min-w-0 sm:flex-1">
+            <FieldLabel className="sr-only" htmlFor="anime-release-fansub-filter">字幕组筛选</FieldLabel>
+            <Select
+              value={selectedFansubId || emptySelectValue}
+              onValueChange={(value) => onFansubChange(value === emptySelectValue ? "" : value)}
+            >
+              <SelectTrigger id="anime-release-fansub-filter">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value={emptySelectValue}>全部字幕组（{tabReleases.length}）</SelectItem>
+                  {fansubs.map((group) => {
+                    const count = countReleasesByFansub(tabReleases, group.id);
+                    return (
+                      <SelectItem key={group.id} value={group.id}>
+                        {group.name}{count > 0 ? `（${count}）` : ""}
+                      </SelectItem>
+                    );
+                  })}
+                  {unknownFansubCount > 0 && (
+                    <SelectItem value={unknownFansubFilter}>未识别字幕组（{unknownFansubCount}）</SelectItem>
+                  )}
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
+          <div className="grid grid-cols-2 gap-2 sm:flex">
+            {activeTab === "rss" ? (
               <Button
-                className="shrink-0 px-2 sm:px-3"
+                className="col-span-2 min-h-11 shrink-0 sm:min-h-9"
                 variant="outline"
-                onClick={onForceRefresh}
-                disabled={loading}
-                aria-label="强制刷新"
-                title="绕过 1 天缓存重新查询下载源"
+                onClick={onRefreshRss}
+                disabled={rssLoading}
               >
-                <RefreshCw className="h-4 w-4" />
-                <span className="hidden sm:inline">强制刷新</span>
+                <RefreshCw data-icon="inline-start" />
+                {rssLoading ? "读取中" : "刷新RSS"}
               </Button>
-            </>
-          )}
+            ) : (
+              <>
+                <Button className="min-h-11 shrink-0 sm:min-h-9" variant="outline" onClick={onRefresh} disabled={loading}>
+                  <Search data-icon="inline-start" />
+                  {loading ? "查询中" : "刷新"}
+                </Button>
+                <Button
+                  className="min-h-11 shrink-0 px-2 sm:min-h-9 sm:px-3"
+                  variant="outline"
+                  onClick={onForceRefresh}
+                  disabled={loading}
+                  aria-label="强制刷新"
+                  title="绕过 1 天缓存重新查询下载源"
+                >
+                  <RefreshCw data-icon="inline-start" />
+                  <span className="hidden sm:inline">强制刷新</span>
+                </Button>
+              </>
+            )}
+          </div>
         </div>
 
         <BatchDownloadControls
@@ -2196,24 +2188,24 @@ function AnimeDownloadPanel({
         />
 
         {activeTab === "search" && visibleErrors.length > 0 && (
-          <div className="space-y-2">
+          <div className="flex flex-col gap-2">
             {visibleErrors.slice(0, 3).map((error, index) => (
-              <div
-                key={`${error.sourceId}-${index}`}
-                className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
-              >
-                {error.sourceId}: {error.message}
-              </div>
+              <Alert key={`${error.sourceId}-${index}`}>
+                <AlertTitle>{error.sourceId}</AlertTitle>
+                <AlertDescription>{error.message}</AlertDescription>
+              </Alert>
             ))}
           </div>
         )}
 
         {activeLoading ? (
-          <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-            {activeTab === "rss" ? "正在读取 RSS 订阅..." : "正在查询发布资源..."}
+          <div className="flex flex-col gap-3 py-2" aria-busy="true">
+            <Skeleton className="h-16 w-full" />
+            <Skeleton className="h-16 w-full" />
+            <span className="sr-only">{activeTab === "rss" ? "正在读取 RSS 订阅" : "正在查询发布资源"}</span>
           </div>
         ) : (
-          <div className={cn("space-y-3", listClassName)}>
+          <div className={cn("flex flex-col gap-3", listClassName)}>
             {activeTab === "rss"
               ? rssGroups.map((group) => {
                   const groupKey = `rss:${group.subscription.id}`;
@@ -2242,21 +2234,25 @@ function AnimeDownloadPanel({
                       {!collapsedGroupKeys.has(groupKey) && (
                         <div>
                           {group.errors.length > 0 && (
-                            <div className="space-y-2 border-b p-3">
+                            <div className="flex flex-col gap-2 border-b p-3">
                               {group.errors.map((error, index) => (
-                                <div
-                                  key={`${error.sourceId}-${index}`}
-                                  className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800"
-                                >
-                                  {group.subscription.name}: {error.message}
-                                </div>
+                                <Alert key={`${error.sourceId}-${index}`}>
+                                  <AlertTitle>{group.subscription.name}</AlertTitle>
+                                  <AlertDescription>{error.message}</AlertDescription>
+                                </Alert>
                               ))}
                             </div>
                           )}
                           {groupReleases.length > 0 ? (
                             <div className="divide-y">{renderEpisodeGroups(groupReleases)}</div>
                           ) : (
-                            <div className="p-6 text-center text-sm text-muted-foreground">当前订阅没有匹配资源。</div>
+                            <Empty className="m-3 min-h-36 p-4">
+                              <EmptyHeader>
+                                <EmptyMedia variant="icon"><Rss /></EmptyMedia>
+                                <EmptyTitle>暂无匹配资源</EmptyTitle>
+                                <EmptyDescription>当前订阅没有匹配资源。</EmptyDescription>
+                              </EmptyHeader>
+                            </Empty>
                           )}
                         </div>
                       )}
@@ -2291,24 +2287,39 @@ function AnimeDownloadPanel({
                 })}
 
             {visibleReleases.length === 0 && visibleOtherReleases.length === 0 && (
-              <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-                {sourceFailed
-                  ? activeTab === "rss"
-                    ? "RSS 订阅请求失败，暂时无法获取发布资源。"
-                    : "下载源请求失败，暂时无法获取发布资源和字幕组文件信息。"
-                  : selectedFansubId
-                    ? "当前字幕组没有可下载资源。"
-                    : activeTab === "rss"
-                      ? "没有找到 RSS 订阅资源，或尚未配置启用的 RSS 订阅。"
-                      : "没有找到可下载资源。"}
-              </div>
+              sourceFailed ? (
+                <Alert variant="destructive">
+                  <AlertTriangle />
+                  <AlertTitle>资源获取失败</AlertTitle>
+                  <AlertDescription>
+                    {activeTab === "rss"
+                      ? "RSS 订阅请求失败，暂时无法获取发布资源。"
+                      : "下载源请求失败，暂时无法获取发布资源和字幕组文件信息。"}
+                  </AlertDescription>
+                </Alert>
+              ) : (
+                <Empty className="min-h-44 p-4 md:p-6">
+                  <EmptyHeader>
+                    <EmptyMedia variant="icon"><Search /></EmptyMedia>
+                    <EmptyTitle>暂无可下载资源</EmptyTitle>
+                    <EmptyDescription>
+                      {selectedFansubId
+                        ? "当前字幕组没有可下载资源。"
+                        : activeTab === "rss"
+                          ? "没有找到 RSS 订阅资源，或尚未配置启用的 RSS 订阅。"
+                          : "没有找到可下载资源。"}
+                    </EmptyDescription>
+                  </EmptyHeader>
+                </Empty>
+              )
             )}
 
             {visibleOtherReleases.length > 0 && (
               <section className="overflow-hidden rounded-md border bg-background">
-                <button
-                  className="flex min-h-11 w-full items-center justify-between gap-3 bg-muted/50 px-3 py-2 text-left"
+                <Button
+                  className="h-auto min-h-11 w-full justify-between rounded-none px-3 py-2 text-left md:min-h-11"
                   type="button"
+                  variant="secondary"
                   onClick={() => setOtherResourcesCollapsed((current) => !current)}
                 >
                   <span className="flex min-w-0 items-center gap-2">
@@ -2317,7 +2328,7 @@ function AnimeDownloadPanel({
                     <Badge>{visibleOtherFamilies.length} 个资源</Badge>
                   </span>
                   <span className="text-xs text-muted-foreground">季度待确认</span>
-                </button>
+                </Button>
                 {!otherResourcesCollapsed && (
                   <div className="divide-y border-t">{renderEpisodeGroups(visibleOtherReleases, false)}</div>
                 )}
@@ -2326,8 +2337,9 @@ function AnimeDownloadPanel({
 
           </div>
         )}
-      </div>
-    </Panel>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -2354,23 +2366,23 @@ function BatchDownloadControls({
   onAddSelected: () => void;
 }) {
   return (
-    <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+    <div className="flex shrink-0 flex-col items-stretch gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
         <span>显示 {visibleCount} 组</span>
         <span>共 {totalCount} 组</span>
         <span>已选 {selectedCount} 组</span>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
         <Button
-          className="px-2 sm:px-3"
+          className="min-h-11 px-2 sm:min-h-9 sm:px-3"
           variant="outline"
           onClick={onToggleAll}
           disabled={selectableCount === 0 || disabled}
         >
           {allSelected ? "取消全选" : "全选可下载"}
         </Button>
-        <Button onClick={onAddSelected} disabled={selectedCount === 0 || batchAdding || disabled}>
-          <Download className="h-4 w-4" />
+        <Button className="min-h-11 sm:min-h-9" onClick={onAddSelected} disabled={selectedCount === 0 || batchAdding || disabled}>
+          <Download data-icon="inline-start" />
           {batchAdding ? "添加中" : "批量下载"}
         </Button>
       </div>
@@ -2410,9 +2422,10 @@ function ReleaseGroupHeader({
 }) {
   return (
     <div className="flex w-full flex-wrap items-center gap-2 border-b bg-muted/70 px-3 py-2">
-      <button
-        className="flex min-w-0 flex-1 items-center gap-2 text-left hover:text-primary focus:outline-none focus:ring-2 focus:ring-primary/25"
+      <Button
+        className="h-auto min-h-11 min-w-0 flex-1 justify-start px-0 py-0 text-left md:min-h-0"
         type="button"
+        variant="ghost"
         onClick={onToggleCollapsed}
         aria-expanded={!collapsed}
         title={title}
@@ -2424,23 +2437,23 @@ function ReleaseGroupHeader({
         )}
         <span className="truncate text-sm font-semibold">{name}</span>
         <Badge>{badgeText}</Badge>
-      </button>
+      </Button>
       <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
         <span className="text-xs text-muted-foreground">已选 {selectedCount}/{selectableCount}</span>
         {rssCandidate && (
           <Button
-            className="h-7 px-2 text-xs"
+            className="h-11 px-2 text-xs sm:h-7"
             variant="outline"
             onClick={() => onAddRssSubscription(rssCandidate)}
             disabled={rssSubscribed}
             title={rssSubscribed ? "该字幕组 RSS 已订阅" : rssCandidate.url}
           >
-            <Rss className="h-3.5 w-3.5" />
+            <Rss data-icon="inline-start" />
             {rssSubscribed ? "已订阅" : "订阅RSS"}
           </Button>
         )}
         <Button
-          className="h-7 px-2 text-xs"
+          className="h-11 px-2 text-xs sm:h-7"
           variant="outline"
           onClick={onToggleSelected}
           disabled={selectableCount === 0}
@@ -2497,18 +2510,15 @@ function ReleaseDownloadRow({
 
   return (
     <div className="p-2 sm:p-3 [@media(max-height:760px)]:p-2">
-      <div className="flex items-start justify-between gap-3">
-        <label className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center">
-          <input
-            aria-label={`选择资源 ${release.title}`}
-            checked={selected}
-            className="h-4 w-4 rounded border"
-            disabled={!selectable}
-            type="checkbox"
-            onChange={() => onToggleSelected(family)}
-          />
-        </label>
-        <div className="min-w-0 flex-1 space-y-2">
+      <div className="flex items-start justify-between gap-2 sm:gap-3">
+        <Checkbox
+          className="mt-0.5"
+          aria-label={`选择资源 ${release.title}`}
+          checked={selected}
+          disabled={!selectable}
+          onCheckedChange={() => onToggleSelected(family)}
+        />
+        <div className="flex min-w-0 flex-1 flex-col gap-2">
           <div className="min-w-0">
             <div className="truncate text-sm font-medium" title={release.title}>
               {release.title}
@@ -2529,40 +2539,44 @@ function ReleaseDownloadRow({
               )}
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+          <div className="flex min-w-0 flex-col items-start gap-2 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:items-center">
             <span title={release.publishedAt}>{formatReleaseDate(release.publishedAt)}</span>
             {family.releases.length > 1 && (
               <>
-                <span>·</span>
-                <span>语言版本</span>
-                <select
-                  className="h-8 rounded-md border bg-background px-2 text-xs outline-none focus:border-primary"
+                <span className="hidden sm:inline">·</span>
+                <Select
                   value={releaseKey(release)}
-                  onChange={(event) => onVersionChange(family.key, event.target.value)}
-                  title="选择对应语言版本"
+                  onValueChange={(value) => onVersionChange(family.key, value)}
                 >
-                  {family.releases.map((item) => {
-                    const itemKey = releaseKey(item);
-                    return (
-                      <option key={itemKey} value={itemKey}>
-                        {getReleaseVersionLabel(item, preferredSubtitle, releaseKey(item) === releaseKey(release))}
-                      </option>
-                    );
-                  })}
-                </select>
+                  <SelectTrigger className="h-8 w-full min-w-0 text-xs sm:w-52" aria-label="选择对应语言版本" title="选择对应语言版本">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      {family.releases.map((item) => {
+                        const itemKey = releaseKey(item);
+                        return (
+                          <SelectItem key={itemKey} value={itemKey}>
+                            {getReleaseVersionLabel(item, preferredSubtitle, releaseKey(item) === releaseKey(release))}
+                          </SelectItem>
+                        );
+                      })}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
               </>
             )}
           </div>
         </div>
         <Button
-          className="shrink-0 px-2 sm:px-3"
+          className="min-h-11 shrink-0 px-2 sm:min-h-9 sm:px-3"
           variant="outline"
           onClick={() => onAddRelease(release)}
           disabled={!canDownload || Boolean(linkedTask) || addingReleaseId === release.id || addingReleaseId === batchAddingReleaseId}
           aria-label={linkedTask ? "已加入下载" : "添加下载"}
           title={linkedTask ? "已加入下载" : "添加下载"}
         >
-          <Download className="h-4 w-4" />
+          <Download data-icon="inline-start" />
           <span className="hidden sm:inline">
             {linkedTask ? "已加入" : addingReleaseId === release.id ? "添加中" : "添加下载"}
           </span>
@@ -2782,9 +2796,10 @@ function AnimeSourceBindingPanel({
   return (
     <section className="shrink-0 overflow-hidden rounded-md border bg-background">
       <div className={cn("flex min-h-10 items-center justify-between bg-muted/50 pl-1 pr-2", expanded && "border-b")}>
-        <button
-          className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left text-sm font-medium"
+        <Button
+          className="h-auto min-h-10 min-w-0 flex-1 justify-start px-2 py-2 text-left md:min-h-10"
           type="button"
+          variant="ghost"
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
@@ -2806,13 +2821,16 @@ function AnimeSourceBindingPanel({
             {!hasContent && !loading && <span className="truncate text-xs font-normal text-muted-foreground">暂无精确匹配</span>}
             {loading && <span className="truncate text-xs font-normal text-muted-foreground">读取中</span>}
           </span>
-        </button>
+        </Button>
         <Button variant="ghost" onClick={onRefresh} disabled={loading} title="重新读取来源候选" aria-label="重新读取来源候选">
           <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
         </Button>
       </div>
       {expanded && (loading && !hasContent ? (
-        <div className="px-3 py-4 text-sm text-muted-foreground">正在匹配来源番剧...</div>
+        <div className="flex flex-col gap-2 px-3 py-4" aria-label="正在匹配来源番剧">
+          <Skeleton className="h-4 w-40" />
+          <Skeleton className="h-4 w-64 max-w-full" />
+        </div>
       ) : hasContent ? (
         <div className="max-h-72 divide-y overflow-y-auto">
           {confirmedBindings.map((binding) => (
@@ -2843,7 +2861,7 @@ function AnimeSourceBindingPanel({
                 <div className="text-sm font-medium">{group.sourceName}</div>
                 <Badge tone="amber">待确认</Badge>
               </div>
-              <div className="space-y-2">
+              <div className="flex flex-col gap-2">
                 {group.candidates.slice(0, 1).map((candidate) => {
                   const candidateKey = `${candidate.sourceId}:${candidate.sourceAnimeId}`;
                   return (
@@ -2870,7 +2888,7 @@ function AnimeSourceBindingPanel({
                     <summary className="cursor-pointer py-1 text-xs text-muted-foreground hover:text-foreground">
                       其他候选（{group.candidates.length - 1}）
                     </summary>
-                    <div className="mt-2 space-y-2">
+                    <div className="mt-2 flex flex-col gap-2">
                       {group.candidates.slice(1).map((candidate) => {
                         const candidateKey = `${candidate.sourceId}:${candidate.sourceAnimeId}`;
                         return (
@@ -2899,8 +2917,11 @@ function AnimeSourceBindingPanel({
             </div>
           ))}
           {state?.errors.map((error) => (
-            <div key={`${error.sourceId}:${error.message}`} className="px-3 py-2 text-xs text-amber-700">
-              {error.sourceId}: {error.message}
+            <div key={`${error.sourceId}:${error.message}`} className="px-3 py-2">
+              <Alert>
+                <AlertTitle>{error.sourceId}</AlertTitle>
+                <AlertDescription>{error.message}</AlertDescription>
+              </Alert>
             </div>
           ))}
         </div>
@@ -2968,51 +2989,76 @@ function EpisodeRulesPanel({
 }) {
   if (!draft) {
     return (
-      <Panel title="单集规则">
-        <div className="rounded-md border border-dashed p-6 text-sm leading-6 text-muted-foreground">
-          选择一部番剧后可管理每集的字幕组覆盖。
-        </div>
-      </Panel>
+      <Card>
+        <CardHeader>
+          <CardTitle>单集规则</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Empty className="min-h-40 p-4 md:p-6">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><SlidersHorizontal /></EmptyMedia>
+              <EmptyTitle>未选择追番</EmptyTitle>
+              <EmptyDescription>选择一部番剧后可管理每集的字幕组覆盖。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </CardContent>
+      </Card>
     );
   }
 
   if (!persisted) {
     return (
-      <Panel title="单集规则">
-        <div className="rounded-md border border-dashed p-6 text-sm leading-6 text-muted-foreground">
-          新追番需要先保存，之后才能添加单集规则。
-        </div>
-      </Panel>
+      <Card>
+        <CardHeader>
+          <CardTitle>单集规则</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <Empty className="min-h-40 p-4 md:p-6">
+            <EmptyHeader>
+              <EmptyMedia variant="icon"><Save /></EmptyMedia>
+              <EmptyTitle>请先保存追番</EmptyTitle>
+              <EmptyDescription>新追番需要先保存，之后才能添加单集规则。</EmptyDescription>
+            </EmptyHeader>
+          </Empty>
+        </CardContent>
+      </Card>
     );
   }
 
   return (
-    <Panel
-      title="单集规则"
-      description="不设置时跟随番剧默认字幕组；设置后这一集会优先使用覆盖字幕组。"
-      action={
-        <Button variant="outline" onClick={onAddEpisode}>
-          <Plus className="h-4 w-4" />
+    <Card>
+      <CardHeader className="flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <CardTitle>单集规则</CardTitle>
+          <CardDescription className="mt-1">
+            不设置时跟随番剧默认字幕组；设置后这一集会优先使用覆盖字幕组。
+          </CardDescription>
+        </div>
+        <Button className="min-h-11 w-full sm:min-h-9 sm:w-auto" variant="outline" onClick={onAddEpisode}>
+          <Plus data-icon="inline-start" />
           添加下一集
         </Button>
-      }
-    >
-      {loading ? (
-        <div className="text-sm text-muted-foreground">正在加载单集规则...</div>
-      ) : (
-        <div className="space-y-3">
-          {episodes.map((episode) => {
-            const preference = episodePreferences.find((item) => item.episodeId === episode.id);
-            const preview = releasePreviews[episode.id];
-            const linkedDownload = findEpisodeDownloadTask(downloadTasks, episode);
-            const inheritedFansub = draft.defaultFansubGroupId
-              ? (fansubNames.get(draft.defaultFansubGroupId) ?? "默认字幕组")
-              : "未设置默认字幕组";
-            const effectiveFansub = preference?.fansubGroupId
-              ? (fansubNames.get(preference.fansubGroupId) ?? preference.fansubGroupId)
-              : inheritedFansub;
+      </CardHeader>
+      <CardContent>
+        {loading ? (
+          <div className="flex flex-col gap-3" aria-busy="true" aria-label="正在加载单集规则">
+            <Skeleton className="h-32 w-full" />
+            <Skeleton className="h-32 w-full" />
+          </div>
+        ) : (
+          <div className="flex min-w-0 flex-col gap-3">
+            {episodes.map((episode) => {
+              const preference = episodePreferences.find((item) => item.episodeId === episode.id);
+              const preview = releasePreviews[episode.id];
+              const linkedDownload = findEpisodeDownloadTask(downloadTasks, episode);
+              const inheritedFansub = draft.defaultFansubGroupId
+                ? (fansubNames.get(draft.defaultFansubGroupId) ?? "默认字幕组")
+                : "未设置默认字幕组";
+              const effectiveFansub = preference?.fansubGroupId
+                ? (fansubNames.get(preference.fansubGroupId) ?? preference.fansubGroupId)
+                : inheritedFansub;
 
-            return (
+              return (
               <div key={episode.id} className="rounded-md border p-3">
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
@@ -3031,41 +3077,56 @@ function EpisodeRulesPanel({
                     {episodeStatusText[episode.status]}
                   </Badge>
                 </div>
-                <div className="mt-3 grid grid-cols-2 gap-3">
-                  <select
-                    className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-                    value={episode.status}
-                    onChange={(event) => onStatusChange(episode, event.target.value as EpisodeStatus)}
-                  >
-                    {episodeStatusOptions.map(([value, label]) => (
-                      <option key={value} value={value}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                  <select
-                    className="h-9 rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-                    value={preference?.fansubGroupId ?? ""}
-                    onChange={(event) => onFansubChange(episode, event.target.value)}
-                  >
-                    <option value="">跟随默认：{inheritedFansub}</option>
-                    {fansubs.map((group) => (
-                      <option key={group.id} value={group.id}>
-                        {group.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="mt-3 flex items-center justify-between gap-3">
+                <FieldGroup className="mt-3 grid gap-3 sm:grid-cols-2">
+                  <Field className="min-w-0">
+                    <FieldLabel htmlFor={`episode-status-${episode.id}`}>单集状态</FieldLabel>
+                    <Select
+                      value={episode.status}
+                      onValueChange={(value) => onStatusChange(episode, value as EpisodeStatus)}
+                    >
+                      <SelectTrigger id={`episode-status-${episode.id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          {episodeStatusOptions.map(([value, label]) => (
+                            <SelectItem key={value} value={value}>{label}</SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                  <Field className="min-w-0">
+                    <FieldLabel htmlFor={`episode-fansub-${episode.id}`}>字幕组覆盖</FieldLabel>
+                    <Select
+                      value={preference?.fansubGroupId ?? emptySelectValue}
+                      onValueChange={(value) => onFansubChange(episode, value === emptySelectValue ? "" : value)}
+                    >
+                      <SelectTrigger id={`episode-fansub-${episode.id}`}>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectGroup>
+                          <SelectItem value={emptySelectValue}>跟随默认：{inheritedFansub}</SelectItem>
+                          {fansubs.map((group) => (
+                            <SelectItem key={group.id} value={group.id}>{group.name}</SelectItem>
+                          ))}
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                </FieldGroup>
+                <div className="mt-3 flex flex-col items-stretch gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div className="min-w-0 text-xs text-muted-foreground">
                     {preview ? `候选 ${preview.candidates.length} 个` : "尚未匹配资源"}
                   </div>
                   <Button
+                    className="min-h-11 w-full sm:min-h-9 sm:w-auto"
                     variant="outline"
                     onClick={() => onPreviewReleases(episode)}
                     disabled={previewingEpisodeId === episode.id}
                   >
-                    <Search className="h-4 w-4" />
+                    <Search data-icon="inline-start" />
                     {previewingEpisodeId === episode.id ? "查询中" : "查看发布"}
                   </Button>
                 </div>
@@ -3075,10 +3136,10 @@ function EpisodeRulesPanel({
                   </div>
                 )}
                 {preview && (
-                  <div className="mt-3 space-y-2">
+                  <div className="mt-3 flex flex-col gap-2">
                     {preview.candidates.slice(0, 6).map((candidate) => (
                       <div key={candidate.release.id} className="rounded-md bg-muted p-3">
-                        <div className="flex items-start justify-between gap-3">
+                        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                           <div className="min-w-0 flex-1">
                             <div className="truncate text-sm font-medium">{candidate.release.title}</div>
                             <div className="mt-2 flex flex-wrap gap-2">
@@ -3103,11 +3164,12 @@ function EpisodeRulesPanel({
                             </div>
                           </div>
                           <Button
+                            className="min-h-11 w-full shrink-0 sm:min-h-9 sm:w-auto"
                             variant="outline"
                             onClick={() => onAddRelease(episode, candidate.release)}
                             disabled={addingReleaseId === candidate.release.id}
                           >
-                            <Download className="h-4 w-4" />
+                            <Download data-icon="inline-start" />
                             {addingReleaseId === candidate.release.id ? "添加中" : "添加下载"}
                           </Button>
                         </div>
@@ -3116,17 +3178,22 @@ function EpisodeRulesPanel({
                   </div>
                 )}
               </div>
-            );
-          })}
+              );
+            })}
 
-          {episodes.length === 0 && (
-            <div className="rounded-md border border-dashed p-6 text-center text-sm text-muted-foreground">
-              还没有单集，添加后可为每集设置字幕组。
-            </div>
-          )}
-        </div>
-      )}
-    </Panel>
+            {episodes.length === 0 && (
+              <Empty className="min-h-40 p-4 md:p-6">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon"><Plus /></EmptyMedia>
+                  <EmptyTitle>暂无单集规则</EmptyTitle>
+                  <EmptyDescription>还没有单集，添加后可为每集设置字幕组。</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            )}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -3443,6 +3510,7 @@ function formatReleaseDate(value: string): string {
   return date.toLocaleString();
 }
 
+/** 渲染带标签的单行文本字段。 */
 function TextField({
   label,
   value,
@@ -3452,18 +3520,21 @@ function TextField({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const id = useId();
+
   return (
-    <label className="block">
-      <div className="mb-2 text-sm font-medium">{label}</div>
-      <input
-        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
-    </label>
+    </Field>
   );
 }
 
+/** 渲染带标签的多行文本字段。 */
 function TextareaField({
   label,
   value,
@@ -3473,18 +3544,21 @@ function TextareaField({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const id = useId();
+
   return (
-    <label className="block">
-      <div className="mb-2 text-sm font-medium">{label}</div>
-      <textarea
-        className="min-h-20 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-primary"
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Textarea
+        id={id}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
-    </label>
+    </Field>
   );
 }
 
+/** 渲染带范围约束的数字字段。 */
 function NumberField({
   label,
   value,
@@ -3498,21 +3572,24 @@ function NumberField({
   max?: number;
   onChange: (value: number) => void;
 }) {
+  const id = useId();
+
   return (
-    <label className="block">
-      <div className="mb-2 text-sm font-medium">{label}</div>
-      <input
-        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Input
+        id={id}
         max={max}
         min={min}
         type="number"
         value={value}
         onChange={(event) => onChange(Number(event.target.value))}
       />
-    </label>
+    </Field>
   );
 }
 
+/** 渲染带标签的受控选择字段。 */
 function SelectField({
   label,
   value,
@@ -3524,21 +3601,29 @@ function SelectField({
   options: Array<{ value: string; label: string }>;
   onChange: (value: string) => void;
 }) {
+  const id = useId();
+
   return (
-    <label className="block">
-      <div className="mb-2 text-sm font-medium">{label}</div>
-      <select
-        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
+    <Field>
+      <FieldLabel htmlFor={id}>{label}</FieldLabel>
+      <Select
+        value={value || emptySelectValue}
+        onValueChange={(nextValue) => onChange(nextValue === emptySelectValue ? "" : nextValue)}
       >
-        {options.map((option) => (
-          <option key={option.value || "empty"} value={option.value}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
+        <SelectTrigger id={id}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {options.map((option) => (
+              <SelectItem key={option.value || "empty"} value={option.value || emptySelectValue}>
+                {option.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
   );
 }
 

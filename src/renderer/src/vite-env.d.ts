@@ -35,7 +35,7 @@ import type {
 
 declare global {
   interface Window {
-    aniBridge: {
+    aniBridge?: {
       getDashboard: () => Promise<DashboardData>;
       listNotifications: () => Promise<NotificationRecord[]>;
       getUnreadNotificationCount: () => Promise<number>;
@@ -89,4 +89,12 @@ declare global {
       openExternal: (url: string) => Promise<void>;
     };
   }
+}
+
+interface ImportMetaEnv {
+  readonly VITE_ANI_REMOTE_URL?: string;
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv;
 }

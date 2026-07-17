@@ -1,9 +1,14 @@
-import { Bell, CheckCheck, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { Panel } from "@/components/panel";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { AlertTriangle, Bell, CheckCheck, Trash2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Separator } from "@/components/ui/separator";
+import { Skeleton } from "@/components/ui/skeleton";
 import { appApi } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import type { NotificationRecord } from "@shared/domain";
 
 const severityTone = {
@@ -20,17 +25,21 @@ const kindText = {
   system: "系统"
 };
 
+/** 渲染提醒中心并管理提醒记录操作。 */
 export function NotificationsPage() {
   const [items, setItems] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
 
   const unreadCount = useMemo(() => items.filter((item) => !item.readAt).length, [items]);
+  const successCount = useMemo(() => items.filter((item) => item.severity === "success").length, [items]);
+  const errorCount = useMemo(() => items.filter((item) => item.severity === "error").length, [items]);
 
   useEffect(() => {
     void loadNotifications();
   }, []);
 
+  /** 加载全部提醒记录。 */
   async function loadNotifications() {
     setLoading(true);
     try {
@@ -43,14 +52,17 @@ export function NotificationsPage() {
     }
   }
 
+  /** 将指定提醒标记为已读。 */
   async function markRead(notificationId: string) {
     setItems(await appApi.markNotificationRead(notificationId));
   }
 
+  /** 将全部提醒标记为已读。 */
   async function markAllRead() {
     setItems(await appApi.markAllNotificationsRead());
   }
 
+  /** 确认后清空全部提醒记录。 */
   async function clearAll() {
     const confirmed = window.confirm("确认清空所有提醒记录？");
     if (!confirmed) {
@@ -61,89 +73,160 @@ export function NotificationsPage() {
   }
 
   if (loading) {
-    return <div className="text-sm text-muted-foreground">正在加载提醒中心...</div>;
+    return <NotificationsPageSkeleton />;
   }
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-end justify-between gap-4">
-        <div>
+    <div className="flex min-w-0 flex-col gap-5">
+      <header className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-semibold tracking-normal">提醒中心</h1>
           <p className="mt-1 text-sm text-muted-foreground">自动扫描、下载和系统提醒会保留在这里。</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={() => void markAllRead()} disabled={!unreadCount}>
-            <CheckCheck className="h-4 w-4" />
+        <div className="grid w-full grid-cols-2 gap-2 sm:w-auto">
+          <Button
+            className="min-h-11 min-w-0 px-2 sm:min-h-9 sm:px-3"
+            variant="outline"
+            onClick={() => void markAllRead()}
+            disabled={!unreadCount}
+          >
+            <CheckCheck data-icon="inline-start" />
             全部已读
           </Button>
-          <Button variant="outline" onClick={() => void clearAll()} disabled={!items.length}>
-            <Trash2 className="h-4 w-4" />
+          <Button
+            className="min-h-11 min-w-0 px-2 sm:min-h-9 sm:px-3"
+            variant="outline"
+            onClick={() => void clearAll()}
+            disabled={!items.length}
+          >
+            <Trash2 data-icon="inline-start" />
             清空
           </Button>
         </div>
+      </header>
+
+      {message && (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertTitle>提醒加载失败</AlertTitle>
+          <AlertDescription>{message}</AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+        <NotificationStat label="全部提醒" value={items.length} />
+        <NotificationStat label="未读提醒" value={unreadCount} />
+        <NotificationStat label="成功事件" value={successCount} />
+        <NotificationStat label="错误事件" value={errorCount} />
       </div>
 
-      {message && <div className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-800">{message}</div>}
-
-      <div className="grid grid-cols-4 gap-4">
-        <Panel className="p-4">
-          <div className="text-2xl font-semibold">{items.length}</div>
-          <div className="mt-1 text-sm text-muted-foreground">全部提醒</div>
-        </Panel>
-        <Panel className="p-4">
-          <div className="text-2xl font-semibold">{unreadCount}</div>
-          <div className="mt-1 text-sm text-muted-foreground">未读提醒</div>
-        </Panel>
-        <Panel className="p-4">
-          <div className="text-2xl font-semibold">{items.filter((item) => item.severity === "success").length}</div>
-          <div className="mt-1 text-sm text-muted-foreground">成功事件</div>
-        </Panel>
-        <Panel className="p-4">
-          <div className="text-2xl font-semibold">{items.filter((item) => item.severity === "error").length}</div>
-          <div className="mt-1 text-sm text-muted-foreground">错误事件</div>
-        </Panel>
-      </div>
-
-      <Panel>
-        <div className="space-y-3">
-          {items.map((item) => (
-            <div
-              key={item.id}
-              className={item.readAt ? "rounded-md border p-4 opacity-75" : "rounded-md border bg-accent/30 p-4"}
-            >
-              <div className="flex items-start justify-between gap-4">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <Bell className="h-4 w-4 text-primary" />
-                    <div className="font-medium">{item.title}</div>
-                    {!item.readAt && <Badge tone="amber">未读</Badge>}
-                  </div>
-                  <p className="mt-2 text-sm leading-6 text-muted-foreground">{item.body}</p>
-                  <div className="mt-3 flex flex-wrap gap-2">
-                    <Badge tone={severityTone[item.severity]}>{severityText(item.severity)}</Badge>
-                    <Badge>{kindText[item.kind]}</Badge>
-                    <Badge>{new Date(item.createdAt).toLocaleString()}</Badge>
-                  </div>
-                </div>
-                <Button variant="outline" onClick={() => void markRead(item.id)} disabled={Boolean(item.readAt)}>
-                  <CheckCheck className="h-4 w-4" />
-                  已读
-                </Button>
-              </div>
+      <Card className="min-w-0">
+        <CardHeader>
+          <CardTitle>提醒记录</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {items.length > 0 ? (
+            <div className="flex min-w-0 flex-col">
+              {items.map((item, index) => (
+                <Fragment key={item.id}>
+                  <article
+                    className={cn(
+                      "flex min-w-0 flex-col gap-4 rounded-md p-3 sm:flex-row sm:items-start sm:justify-between sm:p-4",
+                      item.readAt ? "opacity-75" : "bg-accent/30"
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <Bell className="size-4 shrink-0 text-primary" />
+                        <div className="min-w-0 break-words font-medium">{item.title}</div>
+                        {!item.readAt && <Badge tone="amber">未读</Badge>}
+                      </div>
+                      <p className="mt-2 break-words text-sm leading-6 text-muted-foreground">{item.body}</p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Badge tone={severityTone[item.severity]}>{severityText(item.severity)}</Badge>
+                        <Badge>{kindText[item.kind]}</Badge>
+                        <Badge>{new Date(item.createdAt).toLocaleString()}</Badge>
+                      </div>
+                    </div>
+                    <Button
+                      className="min-h-11 w-full shrink-0 sm:min-h-9 sm:w-auto"
+                      variant="outline"
+                      onClick={() => void markRead(item.id)}
+                      disabled={Boolean(item.readAt)}
+                    >
+                      <CheckCheck data-icon="inline-start" />
+                      已读
+                    </Button>
+                  </article>
+                  {index < items.length - 1 && <Separator />}
+                </Fragment>
+              ))}
             </div>
-          ))}
-
-          {items.length === 0 && (
-            <div className="rounded-md border border-dashed p-8 text-center text-sm text-muted-foreground">
-              当前没有提醒记录。
-            </div>
+          ) : (
+            <Empty className="min-h-64 p-4 md:p-8">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <Bell />
+                </EmptyMedia>
+                <EmptyTitle>暂无提醒</EmptyTitle>
+                <EmptyDescription>当前没有提醒记录。</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
           )}
-        </div>
-      </Panel>
+        </CardContent>
+      </Card>
     </div>
   );
 }
 
+/** 渲染提醒中心加载中的结构化占位状态。 */
+function NotificationsPageSkeleton() {
+  return (
+    <div className="flex min-w-0 flex-col gap-5" aria-busy="true" aria-label="正在加载提醒中心">
+      <div className="flex flex-col gap-2">
+        <Skeleton className="h-7 w-32" />
+        <Skeleton className="h-4 w-72 max-w-full" />
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
+        {["all", "unread", "success", "error"].map((stat) => (
+          <Card key={stat}>
+            <CardHeader>
+              <Skeleton className="h-4 w-20" />
+            </CardHeader>
+            <CardContent>
+              <Skeleton className="h-7 w-10" />
+            </CardContent>
+          </Card>
+        ))}
+      </div>
+      <Card>
+        <CardHeader>
+          <Skeleton className="h-5 w-24" />
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/** 渲染单项提醒统计卡片。 */
+function NotificationStat({ label, value }: { label: string; value: number }) {
+  return (
+    <Card className="min-w-0">
+      <CardHeader>
+        <CardTitle>{label}</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <div className="text-2xl font-semibold tabular-nums">{value}</div>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** 将提醒级别转换为中文标签。 */
 function severityText(severity: NotificationRecord["severity"]): string {
   const labels = {
     info: "信息",
