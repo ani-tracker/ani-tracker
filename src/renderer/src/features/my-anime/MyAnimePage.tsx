@@ -1966,7 +1966,7 @@ function AnimeDownloadPanel({
   onClose: () => void;
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(target.anime);
-  const [collapsedGroupKeys, setCollapsedGroupKeys] = useState<Set<string>>(() => new Set());
+  const [groupCollapseOverrides, setGroupCollapseOverrides] = useState<Record<string, boolean>>({});
   const [otherResourcesCollapsed, setOtherResourcesCollapsed] = useState(true);
   const [selectedFamilyKeys, setSelectedFamilyKeys] = useState<Set<string>>(() => new Set());
   const [releaseVersionSelections, setReleaseVersionSelections] = useState<Record<string, string>>({});
@@ -2002,17 +2002,17 @@ function AnimeDownloadPanel({
     setReleaseVersionSelections({});
   }, [activeTab, releaseSignature]);
 
-  /** 切换字幕组资源分组的折叠状态。 */
-  function toggleGroup(groupKey: string) {
-    setCollapsedGroupKeys((current) => {
-      const next = new Set(current);
-      if (next.has(groupKey)) {
-        next.delete(groupKey);
-      } else {
-        next.add(groupKey);
-      }
-      return next;
-    });
+  /** 返回分组折叠状态；首次仅展开当前列表第一组。 */
+  function isGroupCollapsed(groupKey: string, groupIndex: number): boolean {
+    return groupCollapseOverrides[groupKey] ?? groupIndex > 0;
+  }
+
+  /** 保存用户对字幕组资源分组的展开或折叠选择。 */
+  function toggleGroup(groupKey: string, collapsed: boolean) {
+    setGroupCollapseOverrides((current) => ({
+      ...current,
+      [groupKey]: !collapsed
+    }));
   }
 
   /** 切换某个资源族的批量选择状态。 */
@@ -2257,10 +2257,11 @@ function AnimeDownloadPanel({
             <span className="sr-only">{activeTab === "rss" ? "正在读取 RSS 订阅" : "正在查询发布资源"}</span>
           </div>
         ) : (
-          <div className={cn("flex flex-col gap-3", listClassName)}>
+          <div className={cn("grid auto-rows-max content-start gap-3", listClassName)}>
             {activeTab === "rss"
-              ? rssGroups.map((group) => {
+              ? rssGroups.map((group, groupIndex) => {
                   const groupKey = `rss:${group.subscription.id}`;
+                  const collapsed = isGroupCollapsed(groupKey, groupIndex);
                   const groupReleases = filterReleasesByFansub(
                     group.releases.filter((release) => classifyAnimeRelease(release, target.anime) === "current"),
                     selectedFansubId
@@ -2268,11 +2269,11 @@ function AnimeDownloadPanel({
                   const groupFamilies = groupReleaseVersions(groupReleases, target.preferredSubtitle, releaseVersionSelections);
                   const selection = getGroupSelectionState(groupFamilies);
                   return (
-                    <section key={group.subscription.id} className="overflow-hidden rounded-md border bg-background">
+                    <section key={group.subscription.id} className="shrink-0 overflow-hidden rounded-md border bg-background">
                       <ReleaseGroupHeader
                         allSelected={selection.allSelected}
                         badgeText={`${groupFamilies.length} 个资源`}
-                        collapsed={collapsedGroupKeys.has(groupKey)}
+                        collapsed={collapsed}
                         episodeCount={countReleaseFamilyEpisodes(groupFamilies)}
                         name={group.subscription.name}
                         rssSubscribed={false}
@@ -2280,10 +2281,10 @@ function AnimeDownloadPanel({
                         selectedCount={selection.selectedCount}
                         title={group.subscription.url}
                         onAddRssSubscription={onAddRssSubscription}
-                        onToggleCollapsed={() => toggleGroup(groupKey)}
+                        onToggleCollapsed={() => toggleGroup(groupKey, collapsed)}
                         onToggleSelected={() => toggleGroupFamilies(groupFamilies)}
                       />
-                      {!collapsedGroupKeys.has(groupKey) && (
+                      {!collapsed && (
                         <div>
                           {group.errors.length > 0 && (
                             <div className="flex flex-col gap-2 border-b p-3">
@@ -2311,17 +2312,18 @@ function AnimeDownloadPanel({
                     </section>
                   );
                 })
-              : releaseGroups.map((group) => {
+              : releaseGroups.map((group, groupIndex) => {
                   const groupFamilies = groupReleaseVersions(group.releases, target.preferredSubtitle, releaseVersionSelections);
                   const selection = getGroupSelectionState(groupFamilies);
                   const rssCandidate = buildMikanGroupRssSubscription(group, target);
                   const rssSubscribed = Boolean(rssCandidate && existingRssUrls.has(rssCandidate.url));
+                  const collapsed = isGroupCollapsed(group.key, groupIndex);
                   return (
-                    <section key={group.key} className="overflow-hidden rounded-md border bg-background">
+                    <section key={group.key} className="shrink-0 overflow-hidden rounded-md border bg-background">
                       <ReleaseGroupHeader
                         allSelected={selection.allSelected}
                         badgeText={`${groupFamilies.length} 个资源`}
-                        collapsed={collapsedGroupKeys.has(group.key)}
+                        collapsed={collapsed}
                         episodeCount={countReleaseFamilyEpisodes(groupFamilies)}
                         name={group.name}
                         rssCandidate={rssCandidate}
@@ -2330,10 +2332,10 @@ function AnimeDownloadPanel({
                         selectedCount={selection.selectedCount}
                         title={group.name}
                         onAddRssSubscription={onAddRssSubscription}
-                        onToggleCollapsed={() => toggleGroup(group.key)}
+                        onToggleCollapsed={() => toggleGroup(group.key, collapsed)}
                         onToggleSelected={() => toggleGroupFamilies(groupFamilies)}
                       />
-                      {!collapsedGroupKeys.has(group.key) && <div className="divide-y">{renderEpisodeGroups(group.releases)}</div>}
+                      {!collapsed && <div className="divide-y">{renderEpisodeGroups(group.releases)}</div>}
                     </section>
                   );
                 })}
@@ -2367,7 +2369,7 @@ function AnimeDownloadPanel({
             )}
 
             {visibleOtherReleases.length > 0 && (
-              <section className="overflow-hidden rounded-md border bg-background">
+              <section className="shrink-0 overflow-hidden rounded-md border bg-background">
                 <Button
                   className="h-auto min-h-11 w-full justify-between rounded-none px-3 py-2 text-left md:min-h-11"
                   type="button"
