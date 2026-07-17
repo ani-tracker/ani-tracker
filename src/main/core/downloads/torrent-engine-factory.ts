@@ -1,7 +1,8 @@
 import type { TorrentEngine } from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
 import { EmbeddedTorrentEngine } from "./embedded-torrent-engine";
-import { QbittorrentEngine, type TorrentHttpClient } from "./qbittorrent-engine";
+import { QbittorrentEngine } from "./qbittorrent-engine";
+import type { TorrentHttpClient } from "./torrent-file-downloader";
 import { MetadataHttpClient } from "../metadata/metadata-http-client";
 
 export interface TorrentEngineFactoryOptions {
