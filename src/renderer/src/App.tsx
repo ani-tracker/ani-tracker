@@ -10,7 +10,7 @@ import {
   Sparkles,
   Subtitles
 } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   MobileNavigation,
   MobileNavigationButton,
@@ -41,8 +41,10 @@ import { HomePage } from "@/features/home/HomePage";
 import { MyAnimePage } from "@/features/my-anime/MyAnimePage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { ReleaseSearchPage } from "@/features/release-search/ReleaseSearchPage";
+import { RemotePairingPage } from "@/features/remote/RemotePairingPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
+import { getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
 
 type PageId = "home" | "myAnime" | "discovery" | "releaseSearch" | "downloads" | "notifications" | "sources" | "settings";
 
@@ -58,8 +60,7 @@ const navItems = [
 ] satisfies Array<{ id: PageId; label: string; icon: typeof Home }>;
 
 const mobilePrimaryPageIds: PageId[] = ["home", "myAnime", "discovery", "releaseSearch", "downloads"];
-const mobilePrimaryNavItems = navItems.filter((item) => mobilePrimaryPageIds.includes(item.id));
-const mobileMoreNavItems = navItems.filter((item) => !mobilePrimaryPageIds.includes(item.id));
+const remotePageIds: PageId[] = ["home", "notifications"];
 
 /** 根据导航标识渲染对应业务页面。 */
 function renderPage(page: PageId) {
@@ -86,6 +87,34 @@ function renderPage(page: PageId) {
 /** 渲染适配桌面、平板和移动端的应用壳。 */
 export function App() {
   const [activePage, setActivePage] = useState<PageId>("home");
+  const [pairingState, setPairingState] = useState(getRemotePairingState);
+  const electronClient = isElectronClient();
+  const availableNavItems = electronClient
+    ? navItems
+    : navItems.filter((item) => remotePageIds.includes(item.id));
+  const mobilePrimaryNavItems = availableNavItems.filter(
+    (item) => !electronClient || mobilePrimaryPageIds.includes(item.id)
+  );
+  const mobileMoreNavItems = availableNavItems.filter((item) => !mobilePrimaryNavItems.includes(item));
+
+  useEffect(() => {
+    /** 同步当前窗口与其他标签页的远程鉴权状态。 */
+    function refreshRemoteAuth() {
+      setPairingState(getRemotePairingState());
+      setActivePage("home");
+    }
+
+    window.addEventListener(REMOTE_AUTH_CHANGED_EVENT, refreshRemoteAuth);
+    window.addEventListener("storage", refreshRemoteAuth);
+    return () => {
+      window.removeEventListener(REMOTE_AUTH_CHANGED_EVENT, refreshRemoteAuth);
+      window.removeEventListener("storage", refreshRemoteAuth);
+    };
+  }, []);
+
+  if (!electronClient && pairingState.needsPairing) {
+    return <RemotePairingPage onPaired={() => setPairingState(getRemotePairingState())} />;
+  }
 
   return (
     <SidebarProvider>
@@ -110,7 +139,7 @@ export function App() {
             <SidebarGroupContent>
               <TooltipProvider delayDuration={300}>
                 <SidebarMenu>
-                  {navItems.map((item) => {
+                  {availableNavItems.map((item) => {
                     const Icon = item.icon;
                     const selected = activePage === item.id;
 
@@ -143,8 +172,10 @@ export function App() {
         </SidebarContent>
 
         <SidebarFooter className="hidden text-xs text-sidebar-foreground/60 lg:block">
-          <div className="font-medium text-sidebar-foreground">内置下载核心</div>
-          <div className="mt-1">qBittorrent 兼容模式预留</div>
+          <div className="font-medium text-sidebar-foreground">
+            {electronClient ? "内置下载核心" : "受限远程模式"}
+          </div>
+          <div className="mt-1">{electronClient ? "qBittorrent 兼容模式预留" : "已连接桌面端"}</div>
         </SidebarFooter>
       </Sidebar>
 
@@ -176,37 +207,39 @@ export function App() {
               </li>
             );
           })}
-          <li className="flex min-w-0 list-none">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <MobileNavigationButton
-                  aria-current={mobileMoreNavItems.some((item) => item.id === activePage) ? "page" : undefined}
-                  aria-label="更多导航"
-                  isActive={mobileMoreNavItems.some((item) => item.id === activePage)}
-                >
-                  <Menu />
-                  <span>更多</span>
-                </MobileNavigationButton>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-40" side="top" sideOffset={8}>
-                <DropdownMenuGroup>
-                  {mobileMoreNavItems.map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <DropdownMenuItem
-                        className="min-h-11"
-                        key={item.id}
-                        onSelect={() => setActivePage(item.id)}
-                      >
-                        <Icon />
-                        {item.label}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </DropdownMenuGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </li>
+          {mobileMoreNavItems.length > 0 && (
+            <li className="flex min-w-0 list-none">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <MobileNavigationButton
+                    aria-current={mobileMoreNavItems.some((item) => item.id === activePage) ? "page" : undefined}
+                    aria-label="更多导航"
+                    isActive={mobileMoreNavItems.some((item) => item.id === activePage)}
+                  >
+                    <Menu />
+                    <span>更多</span>
+                  </MobileNavigationButton>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-40" side="top" sideOffset={8}>
+                  <DropdownMenuGroup>
+                    {mobileMoreNavItems.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <DropdownMenuItem
+                          className="min-h-11"
+                          key={item.id}
+                          onSelect={() => setActivePage(item.id)}
+                        >
+                          <Icon />
+                          {item.label}
+                        </DropdownMenuItem>
+                      );
+                    })}
+                  </DropdownMenuGroup>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </li>
+          )}
         </MobileNavigationList>
       </MobileNavigation>
     </SidebarProvider>

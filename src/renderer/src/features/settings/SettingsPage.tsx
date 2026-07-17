@@ -1,10 +1,24 @@
 import type { ReactNode } from "react";
 import { useEffect, useId, useState } from "react";
-import { FileSearch, FolderCog, HardDrive, Languages, Monitor, PlayCircle, Power, RotateCcw, Save } from "lucide-react";
+import {
+  FileSearch,
+  FolderCog,
+  HardDrive,
+  KeyRound,
+  Languages,
+  Monitor,
+  PlayCircle,
+  Power,
+  RefreshCw,
+  RotateCcw,
+  Save,
+  Smartphone,
+  Unplug
+} from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -19,7 +33,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { appApi } from "@/lib/api";
 import { useAsyncData } from "@/lib/use-async-data";
-import type { AutomationSchedulerStatus, QbittorrentManagedStatus } from "@shared/contracts";
+import type {
+  AutomationSchedulerStatus,
+  QbittorrentManagedStatus,
+  RemoteGatewayStatus,
+  RemotePairingChallenge
+} from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
 
 export function SettingsPage() {
@@ -30,6 +49,11 @@ export function SettingsPage() {
   const [schedulerStatus, setSchedulerStatus] = useState<AutomationSchedulerStatus | null>(null);
   const [qbManagedStatus, setQbManagedStatus] = useState<QbittorrentManagedStatus | null>(null);
   const [qbManagedAction, setQbManagedAction] = useState<"idle" | "starting" | "stopping">("idle");
+  const [remoteStatus, setRemoteStatus] = useState<RemoteGatewayStatus | null>(null);
+  const [remotePairing, setRemotePairing] = useState<RemotePairingChallenge | null>(null);
+  const [remoteAction, setRemoteAction] = useState<"idle" | "loading" | "creating" | "revoking">("idle");
+  const [revokingDeviceId, setRevokingDeviceId] = useState<string | null>(null);
+  const [remoteError, setRemoteError] = useState<string | null>(null);
   const [qbTest, setQbTest] = useState<{ state: "idle" | "testing" | "success" | "error"; message?: string }>({
     state: "idle"
   });
@@ -43,6 +67,7 @@ export function SettingsPage() {
   useEffect(() => {
     void refreshSchedulerStatus();
     void refreshQbittorrentManagedStatus();
+    void refreshRemoteStatus();
   }, []);
 
   async function refreshSchedulerStatus() {
@@ -57,6 +82,52 @@ export function SettingsPage() {
         state: "error",
         message: error instanceof Error ? error.message : "读取 qBittorrent 托管状态失败"
       });
+    }
+  }
+
+  /** 刷新本机远程网关与已配对设备状态。 */
+  async function refreshRemoteStatus() {
+    setRemoteAction("loading");
+    try {
+      const status = await appApi.getRemoteGatewayStatus();
+      setRemoteStatus(status);
+      if (remotePairing && Date.parse(remotePairing.expiresAt) <= Date.now()) {
+        setRemotePairing(null);
+      }
+      setRemoteError(null);
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "读取远程设备状态失败");
+    } finally {
+      setRemoteAction("idle");
+    }
+  }
+
+  /** 创建两分钟有效的一次性远程配对码。 */
+  async function createRemotePairingCode() {
+    setRemoteAction("creating");
+    try {
+      setRemotePairing(await appApi.createRemotePairingCode());
+      setRemoteError(null);
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "创建远程配对码失败");
+    } finally {
+      setRemoteAction("idle");
+    }
+  }
+
+  /** 吊销指定远程设备的访问令牌。 */
+  async function revokeRemoteDevice(deviceId: string) {
+    setRemoteAction("revoking");
+    setRevokingDeviceId(deviceId);
+    try {
+      setRemoteStatus(await appApi.revokeRemoteDevice(deviceId));
+      setRemotePairing(null);
+      setRemoteError(null);
+    } catch (error) {
+      setRemoteError(error instanceof Error ? error.message : "吊销远程设备失败");
+    } finally {
+      setRevokingDeviceId(null);
+      setRemoteAction("idle");
     }
   }
 
@@ -309,6 +380,104 @@ export function SettingsPage() {
               })
             }
           />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title="远程设备" description="管理通过一次性配对码登记的浏览器和移动设备。">
+        <div className="flex flex-col gap-4">
+          <Alert>
+            <Monitor />
+            <AlertTitle>当前仅开放本机回环访问</AlertTitle>
+            <AlertDescription>
+              服务不会监听局域网地址；跨设备 HTTPS 接入将在下一阶段单独审核。设备令牌仅保存在内存中，应用重启后需重新配对。
+            </AlertDescription>
+          </Alert>
+
+          {remoteStatus?.lastError && (
+            <Alert variant="destructive">
+              <Unplug />
+              <AlertTitle>远程服务启动失败</AlertTitle>
+              <AlertDescription>{remoteStatus.lastError}</AlertDescription>
+            </Alert>
+          )}
+
+          {remoteError && (
+            <Alert variant="destructive">
+              <Unplug />
+              <AlertTitle>远程服务操作失败</AlertTitle>
+              <AlertDescription>{remoteError}</AlertDescription>
+            </Alert>
+          )}
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge tone={remoteStatus?.running ? "green" : "amber"}>
+                {remoteStatus?.running ? "服务运行中" : "服务未运行"}
+              </Badge>
+              <span className="break-all text-sm text-muted-foreground">
+                {remoteStatus?.baseUrl ?? "正在读取服务地址"}
+              </span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                onClick={() => void refreshRemoteStatus()}
+                disabled={remoteAction !== "idle"}
+              >
+                <RefreshCw data-icon="inline-start" />
+                刷新状态
+              </Button>
+              <Button onClick={() => void createRemotePairingCode()} disabled={!remoteStatus?.running || remoteAction !== "idle"}>
+                <KeyRound data-icon="inline-start" />
+                生成配对码
+              </Button>
+            </div>
+          </div>
+
+          {remotePairing && (
+            <Alert>
+              <KeyRound />
+              <AlertTitle>一次性配对码：{remotePairing.code}</AlertTitle>
+              <AlertDescription>有效期至 {formatDateTime(remotePairing.expiresAt)}，使用后立即失效。</AlertDescription>
+            </Alert>
+          )}
+
+          {remoteStatus && remoteStatus.devices.length > 0 ? (
+            <div className="grid gap-3 md:grid-cols-2">
+              {remoteStatus.devices.map((device) => (
+                <Card key={device.id}>
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Smartphone />
+                      {device.name}
+                    </CardTitle>
+                    <CardDescription>
+                      配对于 {formatDateTime(device.createdAt)} · 最近访问 {formatDateTime(device.lastAccessedAt ?? undefined)}
+                    </CardDescription>
+                  </CardHeader>
+                  <CardContent className="flex flex-wrap gap-2">
+                    {device.scopes.map((scope) => <Badge key={scope}>{scope}</Badge>)}
+                  </CardContent>
+                  <CardFooter>
+                    <Button
+                      variant="outline"
+                      onClick={() => void revokeRemoteDevice(device.id)}
+                      disabled={remoteAction !== "idle"}
+                    >
+                      <Unplug data-icon="inline-start" />
+                      {revokingDeviceId === device.id ? "正在吊销" : "吊销设备"}
+                    </Button>
+                  </CardFooter>
+                </Card>
+              ))}
+            </div>
+          ) : (
+            <Alert>
+              <Smartphone />
+              <AlertTitle>暂无已配对设备</AlertTitle>
+              <AlertDescription>生成配对码后，在同源 PWA 配对页登记设备。</AlertDescription>
+            </Alert>
+          )}
         </div>
       </SettingsSection>
 

@@ -3,7 +3,17 @@ import { join } from "node:path";
 import { DailyReminderService } from "./core/automation/daily-reminder-service";
 import { logger } from "./core/logger";
 import { DesktopIntegrationService } from "./core/platform/desktop-integration-service";
-import { automationScheduler, qbittorrentManagedService, registerIpcHandlers, repository, repositoryRuntime } from "./ipc";
+import {
+  automationScheduler,
+  downloadTaskControlService,
+  qbittorrentManagedService,
+  registerIpcHandlers,
+  repository,
+  repositoryRuntime
+} from "./ipc";
+import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
+import { createRemoteMethodRegistry } from "./core/remote/remote-method-registry";
+import { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
 
 let mainWindow: BrowserWindow | null = null;
 let quitAfterManagedQbittorrentStops = false;
@@ -14,6 +24,26 @@ const desktopIntegration = new DesktopIntegrationService({
   quitApp: () => app.quit()
 });
 const dailyReminderService = new DailyReminderService(repository);
+const remoteMethodRegistry = createRemoteMethodRegistry({
+  getDashboard: () => repository.getDashboard(),
+  listNotifications: () => repository.listNotifications(),
+  getUnreadNotificationCount: () => repository.getUnreadNotificationCount(),
+  markNotificationRead: (notificationId) => repository.markNotificationRead(notificationId),
+  markAllNotificationsRead: () => repository.markAllNotificationsRead(),
+  listMyAnime: () => repository.listMyAnime(),
+  listAnimeCatalog: (year, month) => new AnimeDiscoveryService(repository).listCatalog(year, month),
+  searchAnimeCatalog: (keyword) => new AnimeDiscoveryService(repository).searchCatalog(keyword),
+  listFansubs: (animeId) => repository.listFansubs(animeId),
+  listEpisodes: (animeId) => repository.listEpisodes(animeId),
+  listEpisodePreferences: (animeId) => repository.listEpisodePreferences(animeId),
+  listDownloads: () => repository.listDownloads(),
+  refreshDownloads: () => downloadTaskControlService.refresh(),
+  pauseDownload: (taskId) => downloadTaskControlService.pause(taskId),
+  resumeDownload: (taskId) => downloadTaskControlService.resume(taskId)
+});
+const remoteGateway = new RemoteHttpGateway(remoteMethodRegistry, {
+  rendererDirectory: join(__dirname, "../renderer")
+});
 
 function createWindow(): void {
   const window = new BrowserWindow({
@@ -79,12 +109,14 @@ app.whenReady().then(async () => {
 
   await repositoryRuntime.initialize();
   registerIpcHandlers({
+    remoteGateway,
     onSettingsUpdated: async (settings) => {
       desktopIntegration.applySettings(settings);
       await qbittorrentManagedService.applySettings(settings);
     }
   });
   const settings = await repository.getSettings();
+  await remoteGateway.start().catch((error: unknown) => remoteGateway.setStartupError(error));
   desktopIntegration.applySettings(settings);
   void qbittorrentManagedService.applySettings(settings);
   createWindow();
@@ -126,6 +158,13 @@ app.on("window-all-closed", () => {
 });
 
 async function stopManagedQbittorrentThenQuit(): Promise<void> {
+  try {
+    await remoteGateway.stop();
+  } catch (error) {
+    logger.error("Remote HTTP gateway stop failed before quit", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
   try {
     await qbittorrentManagedService.stop();
   } catch (error) {

@@ -14,6 +14,8 @@ import type {
   AnimeReleaseQuery,
   AnimeDiscoveryQuery,
   ConfirmAnimeSourceBindingInput,
+  RemoteGatewayStatus,
+  RemotePairingChallenge,
   ReleaseQuery,
   RssSubscriptionReleaseQuery
 } from "@shared/contracts";
@@ -78,7 +80,10 @@ const api = {
   scanDownloadMedia: (taskId: string) => ipcRenderer.invoke("media:scanDownload", taskId),
   playMedia: (filePath: string, profileId?: string) => ipcRenderer.invoke("media:play", filePath, profileId),
   revealMedia: (filePath: string) => ipcRenderer.invoke("media:reveal", filePath),
-  openExternal: (url: string) => ipcRenderer.invoke("platform:openExternal", url)
+  openExternal: (url: string) => ipcRenderer.invoke("platform:openExternal", url),
+  getRemoteGatewayStatus: (): Promise<RemoteGatewayStatus> => ipcRenderer.invoke("remote:getStatus"),
+  createRemotePairingCode: (): Promise<RemotePairingChallenge> => ipcRenderer.invoke("remote:createPairingCode"),
+  revokeRemoteDevice: (deviceId: string): Promise<RemoteGatewayStatus> => ipcRenderer.invoke("remote:revokeDevice", deviceId)
 };
 
 contextBridge.exposeInMainWorld("aniBridge", api);

@@ -8,7 +8,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { appApi } from "@/lib/api";
+import { appApi, isElectronClient } from "@/lib/api";
 import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
 import { useAsyncData } from "@/lib/use-async-data";
 import type { AnimeStatus, MyAnime } from "@shared/domain";
@@ -32,6 +32,7 @@ async function loadHomeData() {
 /** 渲染首页追番、下载与提醒概览。 */
 export function HomePage() {
   const { data: homeData, loading, error } = useAsyncData(loadHomeData, []);
+  const electronClient = isElectronClient();
 
   if (loading) {
     return <HomePageSkeleton />;
@@ -213,7 +214,7 @@ export function HomePage() {
                           {file.bitDepth && <Badge>{file.bitDepth}bit</Badge>}
                         </div>
                       </div>
-                      <div className="flex shrink-0 self-end gap-2 sm:self-auto">
+                      {electronClient && <div className="flex shrink-0 self-end gap-2 sm:self-auto">
                         <Button
                           className="size-11 p-0 sm:size-9"
                           variant="outline"
@@ -232,7 +233,7 @@ export function HomePage() {
                         >
                           <FolderOpen data-icon="inline-start" />
                         </Button>
-                      </div>
+                      </div>}
                     </div>
                     {index < data.recentCompleted.length - 1 && <Separator />}
                   </Fragment>

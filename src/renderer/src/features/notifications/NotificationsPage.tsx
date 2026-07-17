@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { appApi } from "@/lib/api";
+import { appApi, isElectronClient } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import type { NotificationRecord } from "@shared/domain";
 
@@ -30,6 +30,7 @@ export function NotificationsPage() {
   const [items, setItems] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const electronClient = isElectronClient();
 
   const unreadCount = useMemo(() => items.filter((item) => !item.readAt).length, [items]);
   const successCount = useMemo(() => items.filter((item) => item.severity === "success").length, [items]);
@@ -83,7 +84,7 @@ export function NotificationsPage() {
           <h1 className="text-2xl font-semibold tracking-normal">提醒中心</h1>
           <p className="mt-1 text-sm text-muted-foreground">自动扫描、下载和系统提醒会保留在这里。</p>
         </div>
-        <div className="grid w-full grid-cols-2 gap-2 sm:w-auto">
+        <div className={cn("grid w-full gap-2 sm:w-auto", electronClient ? "grid-cols-2" : "grid-cols-1")}>
           <Button
             className="min-h-11 min-w-0 px-2 sm:min-h-9 sm:px-3"
             variant="outline"
@@ -93,15 +94,17 @@ export function NotificationsPage() {
             <CheckCheck data-icon="inline-start" />
             全部已读
           </Button>
-          <Button
-            className="min-h-11 min-w-0 px-2 sm:min-h-9 sm:px-3"
-            variant="outline"
-            onClick={() => void clearAll()}
-            disabled={!items.length}
-          >
-            <Trash2 data-icon="inline-start" />
-            清空
-          </Button>
+          {electronClient && (
+            <Button
+              className="min-h-11 min-w-0 px-2 sm:min-h-9 sm:px-3"
+              variant="outline"
+              onClick={() => void clearAll()}
+              disabled={!items.length}
+            >
+              <Trash2 data-icon="inline-start" />
+              清空
+            </Button>
+          )}
         </div>
       </header>
 

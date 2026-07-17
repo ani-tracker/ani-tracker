@@ -26,6 +26,8 @@ import type {
   EpisodeReleasePreview,
   MediaScanResult,
   QbittorrentManagedStatus,
+  RemoteGatewayStatus,
+  RemotePairingChallenge,
   ReleaseQuery,
   ReleaseSearchResult,
   RssSubscriptionReleaseQuery,
@@ -87,6 +89,9 @@ declare global {
       playMedia: (filePath: string, profileId?: string) => Promise<void>;
       revealMedia: (filePath: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
+      getRemoteGatewayStatus: () => Promise<RemoteGatewayStatus>;
+      createRemotePairingCode: () => Promise<RemotePairingChallenge>;
+      revokeRemoteDevice: (deviceId: string) => Promise<RemoteGatewayStatus>;
     };
   }
 }

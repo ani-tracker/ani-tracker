@@ -256,6 +256,28 @@ export interface AutomationSchedulerStatus {
   lastError?: string;
 }
 
+export interface RemoteDeviceInfo {
+  id: string;
+  name: string;
+  scopes: string[];
+  createdAt: string;
+  lastAccessedAt: string | null;
+}
+
+export interface RemoteGatewayStatus {
+  running: boolean;
+  host: string;
+  port: number;
+  baseUrl: string;
+  devices: RemoteDeviceInfo[];
+  lastError?: string;
+}
+
+export interface RemotePairingChallenge {
+  code: string;
+  expiresAt: string;
+}
+
 export interface MetadataProvider {
   searchAnime(query: AnimeSearchQuery): Promise<Anime[]>;
   getSeasonAnime(year: number, season: Season): Promise<Anime[]>;
