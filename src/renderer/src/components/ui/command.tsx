@@ -3,6 +3,12 @@ import { Command as CommandPrimitive } from "cmdk";
 
 import { cn } from "@/lib/cn";
 
+type CommandListVariant = "default" | "suggestions";
+
+interface CommandListProps extends React.ComponentPropsWithoutRef<typeof CommandPrimitive.List> {
+  variant?: CommandListVariant;
+}
+
 /** 提供可搜索命令列表的状态和键盘交互。 */
 const Command = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive>,
@@ -38,11 +44,15 @@ CommandInput.displayName = CommandPrimitive.Input.displayName;
 /** 承载命令候选项并限制长列表高度。 */
 const CommandList = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.List>,
-  React.ComponentPropsWithoutRef<typeof CommandPrimitive.List>
->(({ className, ...props }, ref) => (
+  CommandListProps
+>(({ className, variant = "default", ...props }, ref) => (
   <CommandPrimitive.List
     ref={ref}
-    className={cn("max-h-[300px] overflow-y-auto overflow-x-hidden", className)}
+    className={cn(
+      "max-h-[300px] overflow-y-auto overflow-x-hidden",
+      variant === "suggestions" && "rounded-md border bg-popover shadow-md",
+      className
+    )}
     {...props}
   />
 ));

@@ -1,5 +1,5 @@
 import { AlertCircle, CheckCircle2, Download, PackageSearch, Search } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type FocusEvent as ReactFocusEvent, useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,6 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupButton } from "@/components/ui/input-group";
-import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
@@ -25,6 +24,8 @@ import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import { parseReleaseSearchInput } from "@shared/release-search-input";
 import type { ReleaseSearchResult } from "@shared/contracts";
 import type { MyAnime, Release } from "@shared/domain";
+
+const MAX_ANIME_SUGGESTIONS = 10;
 
 interface SearchedContext {
   mode: "anime" | "keyword";
@@ -51,7 +52,9 @@ export function ReleaseSearchPage() {
   const parsedInput = useMemo(() => parseReleaseSearchInput(keyword), [keyword]);
   const suggestions = useMemo(
     () => parsedInput.keyword
-      ? myAnime.filter((item) => matchesAnimeSearchKeyword(item.anime, parsedInput.keyword)).slice(0, 8)
+      ? myAnime
+          .filter((item) => matchesAnimeSearchKeyword(item.anime, parsedInput.keyword))
+          .slice(0, MAX_ANIME_SUGGESTIONS)
       : [],
     [myAnime, parsedInput.keyword]
   );
@@ -96,6 +99,15 @@ export function ReleaseSearchPage() {
     setSelectedAnimeId(item.id);
     setKeyword(parsedInput.episodeNo === undefined ? title : `${title} 第 ${parsedInput.episodeNo} 集`);
     setSuggestionsOpen(false);
+  }
+
+  /** 焦点离开输入框和候选列表后关闭联想内容。 */
+  function closeSuggestionsOnBlur(event: ReactFocusEvent<HTMLDivElement>) {
+    if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget as Node)) {
+      return;
+    }
+
+    window.setTimeout(() => setSuggestionsOpen(false), 0);
   }
 
   /** 根据是否关联追番选择番剧级搜索或普通关键词搜索。 */
@@ -201,50 +213,46 @@ export function ReleaseSearchPage() {
           <FieldGroup className="gap-3">
             <Field className="min-w-0">
               <FieldLabel htmlFor="release-keyword">关键词</FieldLabel>
-              <Command className="overflow-visible bg-transparent" shouldFilter={false}>
-                <Popover
-                  open={suggestionsOpen && !selectedAnime && Boolean(parsedInput.keyword)}
-                  onOpenChange={setSuggestionsOpen}
-                >
-                  <PopoverAnchor asChild>
-                    <InputGroup>
-                      <CommandInput
-                        id="release-keyword"
-                        aria-label="资源搜索关键词"
-                        autoComplete="off"
-                        placeholder="输入番剧名、关键词或集数，如：芙莉莲 EP12"
-                        value={keyword}
-                        onValueChange={updateKeyword}
-                        onFocus={() => setSuggestionsOpen(Boolean(parsedInput.keyword))}
-                        onKeyDown={(event) => {
-                          if (event.key === "Escape") {
-                            setSuggestionsOpen(false);
-                          }
-                          if (event.key === "Enter" && (!suggestionsOpen || suggestions.length === 0)) {
-                            void search();
-                          }
-                        }}
-                      />
-                      <InputGroupAddon>
-                        <InputGroupButton
-                          variant="primary"
-                          onClick={() => void search()}
-                          disabled={loading || !keyword.trim()}
-                        >
-                          <Search data-icon="inline-start" />
-                          {loading ? "搜索中" : "搜索"}
-                        </InputGroupButton>
-                      </InputGroupAddon>
-                    </InputGroup>
-                  </PopoverAnchor>
-                  <PopoverContent
-                    className="w-[min(32rem,calc(100vw-2rem))] p-0"
-                    align="start"
-                    onOpenAutoFocus={(event) => event.preventDefault()}
-                  >
-                    <CommandList>
-                      <CommandEmpty>未匹配到追番，将按关键词搜索</CommandEmpty>
-                      <CommandGroup heading="我的追番">
+              <Command
+                className="overflow-visible bg-transparent"
+                shouldFilter={false}
+                onBlur={closeSuggestionsOnBlur}
+              >
+                <InputGroup>
+                  <CommandInput
+                    id="release-keyword"
+                    aria-label="资源搜索关键词"
+                    autoComplete="off"
+                    placeholder="输入番剧名、关键词或集数，如：芙莉莲 EP12"
+                    value={keyword}
+                    onValueChange={updateKeyword}
+                    onFocus={() => setSuggestionsOpen(Boolean(parsedInput.keyword))}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        setSuggestionsOpen(false);
+                      }
+                      if (event.key === "Enter" && (!suggestionsOpen || suggestions.length === 0)) {
+                        void search();
+                      }
+                    }}
+                  />
+                  <InputGroupAddon>
+                    <InputGroupButton
+                      variant="primary"
+                      onClick={() => void search()}
+                      disabled={loading || !keyword.trim()}
+                    >
+                      <Search data-icon="inline-start" />
+                      {loading ? "搜索中" : "搜索"}
+                    </InputGroupButton>
+                  </InputGroupAddon>
+                </InputGroup>
+
+                {suggestionsOpen && !selectedAnime && Boolean(parsedInput.keyword) && (
+                  <CommandList variant="suggestions" className="mt-2 max-h-[min(26rem,50vh)]">
+                    <CommandEmpty>我的追番中没有匹配项</CommandEmpty>
+                    {suggestions.length > 0 && (
+                      <CommandGroup heading={`我的追番（${suggestions.length}）`}>
                         {suggestions.map((item) => {
                           const titleDisplay = resolveAnimeTitleDisplay(item.anime);
                           return (
@@ -263,9 +271,9 @@ export function ReleaseSearchPage() {
                           );
                         })}
                       </CommandGroup>
-                    </CommandList>
-                  </PopoverContent>
-                </Popover>
+                    )}
+                  </CommandList>
+                )}
               </Command>
             </Field>
 
