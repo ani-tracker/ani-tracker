@@ -42,6 +42,9 @@ import { MyAnimePage } from "@/features/my-anime/MyAnimePage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { ReleaseSearchPage } from "@/features/release-search/ReleaseSearchPage";
 import { RemotePairingPage } from "@/features/remote/RemotePairingPage";
+import { RemoteDiscoveryPage } from "@/features/remote/RemoteDiscoveryPage";
+import { RemoteDownloadsPage } from "@/features/remote/RemoteDownloadsPage";
+import { RemoteMyAnimePage } from "@/features/remote/RemoteMyAnimePage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
@@ -60,21 +63,21 @@ const navItems = [
 ] satisfies Array<{ id: PageId; label: string; icon: typeof Home }>;
 
 const mobilePrimaryPageIds: PageId[] = ["home", "myAnime", "discovery", "releaseSearch", "downloads"];
-const remotePageIds: PageId[] = ["home", "notifications"];
+const remotePageIds: PageId[] = ["home", "myAnime", "discovery", "downloads", "notifications"];
 
 /** 根据导航标识渲染对应业务页面。 */
-function renderPage(page: PageId) {
+function renderPage(page: PageId, electronClient: boolean) {
   switch (page) {
     case "home":
       return <HomePage />;
     case "myAnime":
-      return <MyAnimePage />;
+      return electronClient ? <MyAnimePage /> : <RemoteMyAnimePage />;
     case "discovery":
-      return <DiscoveryPage />;
+      return electronClient ? <DiscoveryPage /> : <RemoteDiscoveryPage />;
     case "releaseSearch":
       return <ReleaseSearchPage />;
     case "downloads":
-      return <DownloadsPage />;
+      return electronClient ? <DownloadsPage /> : <RemoteDownloadsPage />;
     case "notifications":
       return <NotificationsPage />;
     case "sources":
@@ -183,7 +186,7 @@ export function App() {
         <div
           className="pb-[calc(var(--mobile-navigation-height)+var(--safe-area-bottom)+1rem)] pl-[max(1rem,var(--safe-area-left))] pr-[max(1rem,var(--safe-area-right))] pt-[max(1rem,var(--safe-area-top))] md:p-5 lg:p-6"
         >
-          {renderPage(activePage)}
+          {renderPage(activePage, electronClient)}
         </div>
       </SidebarInset>
 
