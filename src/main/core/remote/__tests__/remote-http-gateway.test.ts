@@ -5,9 +5,10 @@ import { createServer as createNetServer, connect } from "node:net";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
-import type { DashboardData } from "@shared/domain";
+import type { AppSettings, DashboardData, DownloadTask } from "@shared/domain";
 import { RemoteDeviceAuth } from "../remote-device-auth";
-import { RemoteHttpGateway, isPathInsideDirectory } from "../remote-http-gateway";
+import { RemoteHttpGateway, isPathInsideDirectory, parseByteRange } from "../remote-http-gateway";
+import { RemoteMediaSessionService } from "../remote-media-session-service";
 import { RemoteTlsCertificateStore, type SecretProtector } from "../remote-tls-certificate-store";
 import { createRemoteMethodRegistry, type RemoteRpcHandlers } from "../remote-method-registry";
 
@@ -186,6 +187,72 @@ test("静态目录边界判断兼容 Windows 分隔符", () => {
   assert.equal(isPathInsideDirectory("C:\\app\\renderer", "D:\\secret.js", operations), false);
 });
 
+test("parseByteRange 支持开放范围和后缀范围并拒绝越界", () => {
+  assert.deepEqual(parseByteRange("bytes=2-5", 10), { start: 2, end: 5 });
+  assert.deepEqual(parseByteRange("bytes=7-", 10), { start: 7, end: 9 });
+  assert.deepEqual(parseByteRange("bytes=-3", 10), { start: 7, end: 9 });
+  assert.equal(parseByteRange("bytes=10-12", 10), undefined);
+  assert.equal(parseByteRange("bytes=1-2,4-5", 10), undefined);
+});
+
+test("媒体会话使用设备 Cookie 输出 206 范围响应", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "ani-remote-media-gateway-"));
+  const filePath = join(directory, "episode.mp4");
+  await writeFile(filePath, "0123456789", "utf8");
+  const task: DownloadTask = {
+    id: "task-media-1",
+    engine: "qbittorrent",
+    name: "episode.mp4",
+    status: "downloading",
+    progress: 1,
+    downloadSpeed: 0,
+    uploadSpeed: 0,
+    savePath: directory,
+    files: [{
+      id: "file-media-1",
+      index: 0,
+      name: "episode.mp4",
+      size: 10,
+      progress: 1,
+      priority: 1,
+      selected: true
+    }],
+    createdAt: "2026-07-18T00:00:00.000Z"
+  };
+  const mediaSessionService = new RemoteMediaSessionService({
+    getDownloadTask: async (taskId) => taskId === task.id ? task : undefined,
+    listMediaFiles: async () => [],
+    getSettings: async () => ({
+      media: { ffprobePath: "ffprobe", ffprobeTimeoutSeconds: 20, videoExtensions: [".mp4"] }
+    } as AppSettings)
+  }, { logger: { info: () => undefined, warn: () => undefined } });
+  const gateway = await startGateway({ mediaSessionService });
+  context.after(async () => {
+    await gateway.stop();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const token = await pairGateway(gateway, "Media Client");
+  const createResponse = await fetch(`${gateway.getStatus().baseUrl}/api/media/sessions`, {
+    method: "POST",
+    headers: jsonHeaders(token),
+    body: JSON.stringify({ taskId: task.id })
+  });
+  assert.equal(createResponse.status, 200);
+  const session = await createResponse.json() as { streamUrl: string };
+  const cookie = createResponse.headers.get("set-cookie")?.split(";")[0];
+  assert.ok(cookie);
+
+  const rangeResponse = await fetch(`${gateway.getStatus().baseUrl}${session.streamUrl}`, {
+    headers: { Cookie: cookie, Range: "bytes=2-5" }
+  });
+  assert.equal(rangeResponse.status, 206);
+  assert.equal(rangeResponse.headers.get("content-range"), "bytes 2-5/10");
+  assert.equal(await rangeResponse.text(), "2345");
+
+  const unauthorized = await fetch(`${gateway.getStatus().baseUrl}${session.streamUrl}`);
+  assert.equal(unauthorized.status, 401);
+});
+
 test("缺失静态资源返回 404 且前端路由回退入口页面", async (context) => {
   const rendererDirectory = await mkdtemp(join(tmpdir(), "ani-remote-renderer-"));
   await writeFile(join(rendererDirectory, "index.html"), "<!doctype html><title>Ani Tracker</title>", "utf8");
@@ -295,6 +362,7 @@ interface GatewayFixtureOptions {
   certificateStore?: RemoteTlsCertificateStore;
   privateAddresses?: string[];
   start?: boolean;
+  mediaSessionService?: RemoteMediaSessionService;
 }
 
 /** 在随机端口启动测试网关。 */
@@ -303,6 +371,7 @@ async function startGateway(options: GatewayFixtureOptions = {}): Promise<Remote
     port: 0,
     auth: options.auth,
     rendererDirectory: options.rendererDirectory,
+    mediaSessionService: options.mediaSessionService,
     tlsCertificateStore: options.certificateStore,
     privateAddressProvider: () => options.privateAddresses ?? []
   });

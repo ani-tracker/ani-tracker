@@ -1,11 +1,16 @@
 import { createHash, randomBytes as nodeRandomBytes, timingSafeEqual } from "node:crypto";
 import type { RemoteDeviceInfo, RemotePairingChallenge } from "@shared/contracts";
 import { logger as defaultLogger } from "../logger";
+import type {
+  RemoteDeviceCredentialPersistence,
+  StoredRemoteDeviceCredential
+} from "./remote-device-credential-store";
 
 const DEFAULT_PAIRING_TTL_MS = 2 * 60 * 1_000;
 const DEFAULT_MAX_PAIRING_ATTEMPTS = 5;
 const PAIRING_CODE_RANGE = 1_000_000;
 const UINT32_RANGE = 0x1_0000_0000;
+const DEFAULT_ACCESS_PERSISTENCE_INTERVAL_MS = 60 * 1_000;
 
 export interface RemotePairingResult {
   device: RemoteDeviceInfo;
@@ -30,6 +35,8 @@ export interface RemoteDeviceAuthOptions {
   pairingTtlMs?: number;
   maxPairingAttempts?: number;
   logger?: RemoteDeviceAuthLogger;
+  credentialStore?: RemoteDeviceCredentialPersistence;
+  accessPersistenceIntervalMs?: number;
 }
 
 interface RemoteDeviceRecord extends RemoteDeviceInfo {
@@ -59,7 +66,13 @@ export class RemoteDeviceAuth {
   private readonly pairingTtlMs: number;
   private readonly maxPairingAttempts: number;
   private readonly logger: RemoteDeviceAuthLogger;
+  private readonly credentialStore?: RemoteDeviceCredentialPersistence;
+  private readonly accessPersistenceIntervalMs: number;
   private readonly devices = new Map<string, RemoteDeviceRecord>();
+  private readonly lastPersistedAccess = new Map<string, number>();
+  private persistenceQueue: Promise<void> = Promise.resolve();
+  private persistenceError: Error | undefined;
+  private initialized = false;
   private pairingSession: PairingSession | undefined;
 
   /** 初始化设备配对核心，并允许测试替换时间与安全随机源。 */
@@ -69,6 +82,35 @@ export class RemoteDeviceAuth {
     this.pairingTtlMs = toPositiveInteger(options.pairingTtlMs, DEFAULT_PAIRING_TTL_MS);
     this.maxPairingAttempts = toPositiveInteger(options.maxPairingAttempts, DEFAULT_MAX_PAIRING_ATTEMPTS);
     this.logger = options.logger ?? defaultLogger;
+    this.credentialStore = options.credentialStore;
+    this.accessPersistenceIntervalMs = toPositiveInteger(
+      options.accessPersistenceIntervalMs,
+      DEFAULT_ACCESS_PERSISTENCE_INTERVAL_MS
+    );
+  }
+
+  /** 从加密凭据仓库恢复已配对设备，重复调用不会重复加载。 */
+  async initialize(): Promise<void> {
+    if (this.initialized) {
+      return;
+    }
+    this.initialized = true;
+    if (!this.credentialStore) {
+      return;
+    }
+    const records = await this.credentialStore.load();
+    for (const stored of records) {
+      const tokenHash = Buffer.from(stored.tokenHash, "base64");
+      this.devices.set(stored.id, {
+        id: stored.id,
+        name: stored.name,
+        scopes: [...stored.scopes],
+        createdAt: stored.createdAt,
+        lastAccessedAt: stored.lastAccessedAt,
+        tokenHash
+      });
+    }
+    this.logger.info("Remote paired devices restored", { deviceCount: records.length });
   }
 
   /** 创建新的六位一次性配对码，并立即废止之前未使用的配对码。 */
@@ -114,6 +156,7 @@ export class RemoteDeviceAuth {
       tokenHash: hashSecret(token)
     };
     this.devices.set(record.id, record);
+    this.schedulePersistence();
     this.logger.info("Remote device paired", {
       deviceId: record.id,
       deviceName: record.name,
@@ -141,6 +184,11 @@ export class RemoteDeviceAuth {
     }
 
     authenticated.lastAccessedAt = new Date(this.clock()).toISOString();
+    const lastPersistedAt = this.lastPersistedAccess.get(authenticated.id) ?? 0;
+    if (this.clock() - lastPersistedAt >= this.accessPersistenceIntervalMs) {
+      this.lastPersistedAccess.set(authenticated.id, this.clock());
+      this.schedulePersistence();
+    }
     return toPublicDevice(authenticated);
   }
 
@@ -153,9 +201,38 @@ export class RemoteDeviceAuth {
   revoke(deviceId: string): boolean {
     const revoked = this.devices.delete(deviceId);
     if (revoked) {
+      this.lastPersistedAccess.delete(deviceId);
+      this.schedulePersistence();
       this.logger.info("Remote device revoked", { deviceId });
     }
     return revoked;
+  }
+
+  /** 等待已排队的设备凭据写入完成。 */
+  async flush(): Promise<void> {
+    await this.persistenceQueue;
+    if (this.persistenceError) {
+      throw this.persistenceError;
+    }
+  }
+
+  /** 将当前设备快照顺序写入加密仓库，避免并发覆盖较新的状态。 */
+  private schedulePersistence(): void {
+    if (!this.credentialStore) {
+      return;
+    }
+    const snapshot = [...this.devices.values()].map(toStoredCredential);
+    this.persistenceQueue = this.persistenceQueue
+      .then(() => this.credentialStore?.save(snapshot))
+      .then(() => {
+        this.persistenceError = undefined;
+      })
+      .catch((error: unknown) => {
+        this.persistenceError = error instanceof Error ? error : new Error("远程设备凭据保存失败");
+        this.logger.warn("Remote device credential persistence failed", {
+          errorType: error instanceof Error ? error.name : typeof error
+        });
+      });
   }
 
   /** 获取当前有效配对会话，并清理已过期会话。 */
@@ -227,6 +304,18 @@ function toPublicDevice(record: RemoteDeviceRecord): RemoteDeviceInfo {
     scopes: [...record.scopes],
     createdAt: record.createdAt,
     lastAccessedAt: record.lastAccessedAt
+  };
+}
+
+/** 生成不含明文令牌的持久化凭据快照。 */
+function toStoredCredential(record: RemoteDeviceRecord): StoredRemoteDeviceCredential {
+  return {
+    id: record.id,
+    name: record.name,
+    scopes: [...record.scopes],
+    createdAt: record.createdAt,
+    lastAccessedAt: record.lastAccessedAt,
+    tokenHash: record.tokenHash.toString("base64")
   };
 }
 

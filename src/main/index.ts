@@ -13,7 +13,10 @@ import {
 } from "./ipc";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
 import { createRemoteMethodRegistry } from "./core/remote/remote-method-registry";
+import { RemoteDeviceAuth } from "./core/remote/remote-device-auth";
+import { RemoteDeviceCredentialStore } from "./core/remote/remote-device-credential-store";
 import { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
+import { RemoteMediaSessionService } from "./core/remote/remote-media-session-service";
 import { RemoteTlsCertificateStore } from "./core/remote/remote-tls-certificate-store";
 
 let mainWindow: BrowserWindow | null = null;
@@ -42,13 +45,20 @@ const remoteMethodRegistry = createRemoteMethodRegistry({
   pauseDownload: (taskId) => downloadTaskControlService.pause(taskId),
   resumeDownload: (taskId) => downloadTaskControlService.resume(taskId)
 });
+const remoteMediaSessionService = new RemoteMediaSessionService(repository);
+const secretProtector = {
+  isAvailable: () => safeStorage.isEncryptionAvailable(),
+  encryptString: (value: string) => safeStorage.encryptString(value),
+  decryptString: (value: Buffer) => safeStorage.decryptString(value)
+};
+const remoteDeviceAuth = new RemoteDeviceAuth({
+  credentialStore: new RemoteDeviceCredentialStore(join(app.getPath("userData"), "remote-auth"), secretProtector)
+});
 const remoteGateway = new RemoteHttpGateway(remoteMethodRegistry, {
+  auth: remoteDeviceAuth,
   rendererDirectory: join(__dirname, "../renderer"),
-  tlsCertificateStore: new RemoteTlsCertificateStore(join(app.getPath("userData"), "remote-tls"), {
-    isAvailable: () => safeStorage.isEncryptionAvailable(),
-    encryptString: (value) => safeStorage.encryptString(value),
-    decryptString: (value) => safeStorage.decryptString(value)
-  })
+  mediaSessionService: remoteMediaSessionService,
+  tlsCertificateStore: new RemoteTlsCertificateStore(join(app.getPath("userData"), "remote-tls"), secretProtector)
 });
 
 function createWindow(): void {

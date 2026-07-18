@@ -4,11 +4,12 @@ import { createServer as createHttpsServer } from "node:https";
 import { type Socket } from "node:net";
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
-import type { RemoteGatewayStatus, RemotePairingChallenge } from "@shared/contracts";
+import type { RemoteDeviceInfo, RemoteGatewayStatus, RemotePairingChallenge } from "@shared/contracts";
 import type { RemoteAccessSettings } from "@shared/domain";
 import { logger } from "../logger";
 import { RemoteDeviceAuth, RemoteDeviceAuthError } from "./remote-device-auth";
 import { RemoteRpcDispatcher, RemoteRpcError } from "./remote-rpc-dispatcher";
+import { RemoteMediaSessionError, type RemoteMediaSessionService } from "./remote-media-session-service";
 import type { RemoteMethodRegistry, RemoteRpcEffect, RemoteRpcScope } from "./remote-method-registry";
 import {
   isTrustedHost,
@@ -39,6 +40,7 @@ export interface RemoteHttpGatewayOptions {
   clock?: () => number;
   tlsCertificateStore?: RemoteTlsCertificateStore;
   privateAddressProvider?: () => string[];
+  mediaSessionService?: RemoteMediaSessionService;
 }
 
 interface RateLimitEntry {
@@ -71,6 +73,7 @@ export class RemoteHttpGateway {
   private lastError: string | undefined;
   private readonly tlsCertificateStore?: RemoteTlsCertificateStore;
   private readonly privateAddressProvider: () => string[];
+  private readonly mediaSessionService?: RemoteMediaSessionService;
 
   /** 创建默认仅监听回环地址的远程网关。 */
   constructor(
@@ -88,6 +91,7 @@ export class RemoteHttpGateway {
     this.clock = options.clock ?? Date.now;
     this.tlsCertificateStore = options.tlsCertificateStore;
     this.privateAddressProvider = options.privateAddressProvider ?? listPrivateIpv4Addresses;
+    this.mediaSessionService = options.mediaSessionService;
     this.dispatcher = new RemoteRpcDispatcher(registry);
   }
 
@@ -148,6 +152,7 @@ export class RemoteHttpGateway {
     if (this.stopping) {
       await this.stopping;
     }
+    await this.auth.initialize();
     if (this.server) {
       return this.getStatus();
     }
@@ -193,6 +198,8 @@ export class RemoteHttpGateway {
     }
     const server = this.server;
     if (!server) {
+      await this.mediaSessionService?.stopAll();
+      await this.auth.flush();
       return;
     }
     this.server = undefined;
@@ -213,6 +220,8 @@ export class RemoteHttpGateway {
     this.stopping = stopping;
     try {
       await stopping;
+      await this.mediaSessionService?.stopAll();
+      await this.auth.flush();
       this.rateLimits.clear();
       logger.info("Remote gateway stopped", { host: this.host, port: this.activePort, protocol: this.protocol });
     } finally {
@@ -254,8 +263,9 @@ export class RemoteHttpGateway {
   }
 
   /** 吊销设备并返回最新状态。 */
-  revokeDevice(deviceId: string): RemoteGatewayStatus {
+  async revokeDevice(deviceId: string): Promise<RemoteGatewayStatus> {
     this.auth.revoke(deviceId);
+    await this.auth.flush();
     return this.getStatus();
   }
 
@@ -285,6 +295,19 @@ export class RemoteHttpGateway {
       }
       if (request.method === "POST" && url.pathname === "/api/rpc") {
         await this.handleRpc(request, response, requestId);
+        return;
+      }
+      if (request.method === "POST" && url.pathname === "/api/media/sessions") {
+        await this.handleMediaSessionCreate(request, response);
+        return;
+      }
+      const mediaRoute = parseMediaRoute(url.pathname);
+      if (request.method === "DELETE" && mediaRoute && mediaRoute.assetName === undefined) {
+        await this.handleMediaSessionClose(request, response, mediaRoute.sessionId);
+        return;
+      }
+      if ((request.method === "GET" || request.method === "HEAD") && mediaRoute?.assetName) {
+        await this.handleMediaAsset(request, response, mediaRoute.sessionId, mediaRoute.assetName);
         return;
       }
       if (request.method === "GET" || request.method === "HEAD") {
@@ -336,16 +359,19 @@ export class RemoteHttpGateway {
       throw new HttpGatewayError(400, "DEVICE_NAME_INVALID", "设备名称格式无效");
     }
     const result = this.auth.pairDevice(body.code, body.deviceName, ALL_REMOTE_SCOPES);
+    try {
+      await this.auth.flush();
+    } catch (error) {
+      this.auth.revoke(result.device.id);
+      await this.auth.flush().catch(() => undefined);
+      throw error;
+    }
     this.writeJson(response, 200, result);
   }
 
   /** 验证 Bearer 令牌、限流后调用显式 RPC dispatcher。 */
   private async handleRpc(request: IncomingMessage, response: ServerResponse, requestId: string): Promise<void> {
-    const token = parseBearerToken(request.headers.authorization);
-    const device = token ? this.auth.authenticate(token) : undefined;
-    if (!device) {
-      throw new HttpGatewayError(401, "UNAUTHORIZED", "设备未配对或令牌已失效");
-    }
+    const device = this.requireAuthenticatedDevice(request, false);
     const body = await readJsonBody(request);
     const method = requireObject(body).method;
     const definition = typeof method === "string" ? this.registry.get(method) : undefined;
@@ -361,6 +387,107 @@ export class RemoteHttpGateway {
       requestId
     });
     this.writeJson(response, 200, { result });
+  }
+
+  /** 创建绑定当前设备的短期媒体播放会话。 */
+  private async handleMediaSessionCreate(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!this.mediaSessionService) {
+      throw new HttpGatewayError(503, "MEDIA_SERVICE_UNAVAILABLE", "远程媒体服务不可用");
+    }
+    const device = this.requireAuthenticatedDevice(request, false);
+    this.consumeRateLimit(`media:${device.id}:write`, 20, 60 * 1000);
+    const body = requireObject(await readJsonBody(request));
+    assertOnlyKeys(body, ["taskId"]);
+    if (typeof body.taskId !== "string" || !/^[a-zA-Z0-9._:-]{1,160}$/.test(body.taskId)) {
+      throw new HttpGatewayError(400, "MEDIA_TASK_INVALID", "下载任务标识无效");
+    }
+    const session = await this.mediaSessionService.createSession(body.taskId, device.id);
+    const token = parseBearerToken(request.headers.authorization);
+    if (token) {
+      response.setHeader("Set-Cookie", createMediaCookie(token, this.protocol === "https"));
+    }
+    this.writeJson(response, 200, session);
+  }
+
+  /** 关闭当前设备拥有的媒体播放会话。 */
+  private async handleMediaSessionClose(
+    request: IncomingMessage,
+    response: ServerResponse,
+    sessionId: string
+  ): Promise<void> {
+    if (!this.mediaSessionService) {
+      throw new HttpGatewayError(503, "MEDIA_SERVICE_UNAVAILABLE", "远程媒体服务不可用");
+    }
+    const device = this.requireAuthenticatedDevice(request, true);
+    const closed = await this.mediaSessionService.closeSession(sessionId, device.id);
+    if (!closed) {
+      throw new HttpGatewayError(404, "MEDIA_SESSION_NOT_FOUND", "播放会话不存在");
+    }
+    response.statusCode = 204;
+    response.end();
+  }
+
+  /** 输出会话内的原文件范围或实时 HLS 播放资源。 */
+  private async handleMediaAsset(
+    request: IncomingMessage,
+    response: ServerResponse,
+    sessionId: string,
+    assetName: string
+  ): Promise<void> {
+    if (!this.mediaSessionService) {
+      throw new HttpGatewayError(503, "MEDIA_SERVICE_UNAVAILABLE", "远程媒体服务不可用");
+    }
+    const device = this.requireAuthenticatedDevice(request, true);
+    this.consumeRateLimit(`media:${device.id}:read`, 600, 60 * 1000);
+    const asset = await this.mediaSessionService.getAsset(sessionId, device.id, assetName);
+    const fileStats = statSync(asset.filePath);
+    const range = asset.direct ? parseByteRange(request.headers.range, fileStats.size) : undefined;
+    if (asset.direct && request.headers.range && !range) {
+      response.statusCode = 416;
+      response.setHeader("Content-Range", `bytes */${fileStats.size}`);
+      response.end();
+      return;
+    }
+
+    const start = range?.start ?? 0;
+    const end = range?.end ?? fileStats.size - 1;
+    response.statusCode = range ? 206 : 200;
+    response.setHeader("Content-Type", asset.contentType);
+    response.setHeader("Content-Length", Math.max(0, end - start + 1));
+    response.setHeader("Cache-Control", "no-store");
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    if (asset.direct) {
+      response.setHeader("Accept-Ranges", "bytes");
+    }
+    if (range) {
+      response.setHeader("Content-Range", `bytes ${start}-${end}/${fileStats.size}`);
+    }
+    if (request.method === "HEAD") {
+      response.end();
+      return;
+    }
+
+    const stream = createReadStream(asset.filePath, range ? { start, end } : undefined);
+    stream.on("error", (error) => {
+      logger.warn("Remote media asset read failed", {
+        sessionId,
+        errorType: error.name,
+        statusCode: response.statusCode
+      });
+      response.destroy(error);
+    });
+    stream.pipe(response);
+  }
+
+  /** 验证 Bearer 或媒体专用 HttpOnly Cookie 中的设备令牌。 */
+  private requireAuthenticatedDevice(request: IncomingMessage, allowCookie: boolean): RemoteDeviceInfo {
+    const token = parseBearerToken(request.headers.authorization)
+      ?? (allowCookie ? parseMediaCookie(request.headers.cookie) : undefined);
+    const device = token ? this.auth.authenticate(token) : undefined;
+    if (!device) {
+      throw new HttpGatewayError(401, "UNAUTHORIZED", "设备未配对或令牌已失效");
+    }
+    return device;
   }
 
   /** 同源提供构建后的 PWA，所有未知前端路由回退 index.html。 */
@@ -397,7 +524,7 @@ export class RemoteHttpGateway {
     }
     response.statusCode = 200;
     response.setHeader("Content-Type", getContentType(filePath));
-    response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+    response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Referrer-Policy", "no-referrer");
     if (headOnly) {
@@ -458,6 +585,10 @@ export class RemoteHttpGateway {
     }
     if (error instanceof RemoteDeviceAuthError) {
       this.writeError(response, 400, error.code, "配对请求失败");
+      return;
+    }
+    if (error instanceof RemoteMediaSessionError) {
+      this.writeError(response, error.statusCode, error.code, error.message);
       return;
     }
     logger.error("Remote HTTP request failed", { errorType: error instanceof Error ? error.name : typeof error });
@@ -542,6 +673,76 @@ export function isPathInsideDirectory(
     relativePath === "" ||
     (!operations.isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${operations.sep}`))
   );
+}
+
+/** 读取媒体接口专用的同源 HttpOnly Cookie。 */
+function parseMediaCookie(value: string | undefined): string | undefined {
+  const cookie = value?.split(";").map((item) => item.trim()).find((item) => item.startsWith("ani_media_token="));
+  if (!cookie) {
+    return undefined;
+  }
+  try {
+    return parseBearerToken(`Bearer ${decodeURIComponent(cookie.slice("ani_media_token=".length))}`);
+  } catch {
+    return undefined;
+  }
+}
+
+/** 创建仅供媒体路径使用的持久设备 Cookie。 */
+function createMediaCookie(token: string, secure: boolean): string {
+  return [
+    `ani_media_token=${encodeURIComponent(token)}`,
+    "HttpOnly",
+    "SameSite=Strict",
+    "Path=/api/media",
+    "Max-Age=2592000",
+    secure ? "Secure" : ""
+  ].filter(Boolean).join("; ");
+}
+
+interface MediaRoute {
+  sessionId: string;
+  assetName?: string;
+}
+
+/** 解析固定格式的媒体会话路由并拒绝额外路径层级。 */
+function parseMediaRoute(pathname: string): MediaRoute | undefined {
+  const match = pathname.match(
+    /^\/api\/media\/sessions\/([A-Za-z0-9_-]{32})(?:\/(file)|\/hls\/(index\.m3u8|segment-\d{6}\.ts))?$/
+  );
+  if (!match) {
+    return undefined;
+  }
+  return { sessionId: match[1], assetName: match[2] ?? match[3] };
+}
+
+export interface ByteRange {
+  start: number;
+  end: number;
+}
+
+/** 解析单段 HTTP Range，拒绝多段、越界和非法范围。 */
+export function parseByteRange(value: string | undefined, size: number): ByteRange | undefined {
+  if (!value || !Number.isSafeInteger(size) || size <= 0) {
+    return undefined;
+  }
+  const match = value.match(/^bytes=(\d*)-(\d*)$/);
+  if (!match || (!match[1] && !match[2])) {
+    return undefined;
+  }
+  if (!match[1]) {
+    const suffixLength = Number(match[2]);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) {
+      return undefined;
+    }
+    return { start: Math.max(0, size - suffixLength), end: size - 1 };
+  }
+  const start = Number(match[1]);
+  const requestedEnd = match[2] ? Number(match[2]) : size - 1;
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(requestedEnd) || start >= size || requestedEnd < start) {
+    return undefined;
+  }
+  return { start, end: Math.min(requestedEnd, size - 1) };
 }
 
 /** 规范远程网关端口，避免绑定特权端口或无效端口。 */

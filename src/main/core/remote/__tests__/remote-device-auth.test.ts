@@ -1,10 +1,15 @@
 import { strict as assert } from "node:assert";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   RemoteDeviceAuth,
   RemoteDeviceAuthError,
   type RemoteDeviceAuthLogger
 } from "../remote-device-auth";
+import { RemoteDeviceCredentialStore } from "../remote-device-credential-store";
+import type { SecretProtector } from "../remote-tls-certificate-store";
 
 const silentLogger: RemoteDeviceAuthLogger = {
   info: () => undefined,
@@ -106,3 +111,56 @@ test("revoke 吊销后令牌立即失效", () => {
   assert.equal(auth.revoke(paired.device.id), false);
   assert.deepEqual(auth.listDevices(), []);
 });
+
+test("已配对设备重启后恢复且吊销状态持久化", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "ani-remote-auth-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new RemoteDeviceCredentialStore(directory, createTestProtector(), silentLogger);
+  const first = new RemoteDeviceAuth({
+    credentialStore: store,
+    randomBytes: (size) => size === 4 ? Buffer.alloc(4) : Buffer.alloc(size, size === 16 ? 0x33 : 0x44),
+    logger: silentLogger
+  });
+  await first.initialize();
+  const challenge = first.createPairingCode();
+  const paired = first.pairDevice(challenge.code, "Living Room", ["library.read", "downloads.read"]);
+  await first.flush();
+
+  const encrypted = await readFile(join(directory, "remote-devices.enc"), "utf8");
+  assert.equal(encrypted.includes(paired.token), false);
+
+  const restored = new RemoteDeviceAuth({ credentialStore: store, logger: silentLogger });
+  await restored.initialize();
+  assert.equal(restored.authenticate(paired.token)?.name, "Living Room");
+  assert.equal(restored.revoke(paired.device.id), true);
+  await restored.flush();
+
+  const afterRevoke = new RemoteDeviceAuth({ credentialStore: store, logger: silentLogger });
+  await afterRevoke.initialize();
+  assert.equal(afterRevoke.authenticate(paired.token), undefined);
+  assert.deepEqual(afterRevoke.listDevices(), []);
+});
+
+test("损坏的设备凭据文件不会阻止远程服务启动", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "ani-remote-auth-"));
+  context.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(join(directory, "remote-devices.enc"), "broken-credential", "utf8");
+  const store = new RemoteDeviceCredentialStore(directory, createTestProtector(), silentLogger);
+
+  assert.deepEqual(await store.load(), []);
+});
+
+/** 创建可逆但不会在磁盘暴露明文的测试加密器。 */
+function createTestProtector(): SecretProtector {
+  return {
+    isAvailable: () => true,
+    encryptString: (value) => Buffer.from(`protected:${Buffer.from(value).toString("base64")}`),
+    decryptString: (value) => {
+      const stored = value.toString();
+      if (!stored.startsWith("protected:")) {
+        throw new Error("测试密文损坏");
+      }
+      return Buffer.from(stored.slice("protected:".length), "base64").toString();
+    }
+  };
+}

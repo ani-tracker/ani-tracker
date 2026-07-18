@@ -1,4 +1,4 @@
-import { CalendarDays, Eye, Library, X } from "lucide-react";
+import { CalendarDays, Eye, Library, Play, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { appApi } from "@/lib/api";
 import { formatMonth, formatPercent } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { DownloadTask, Episode, EpisodePreference, FansubGroup, MyAnime } from "@shared/domain";
+import { RemoteVideoPlayer } from "./RemoteVideoPlayer";
 
 const animeStatusText: Record<MyAnime["status"], string> = {
   watching: "在追",
@@ -55,6 +56,7 @@ export function RemoteMyAnimePage() {
   const [episodePreferences, setEpisodePreferences] = useState<EpisodePreference[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
+  const [playbackTask, setPlaybackTask] = useState<DownloadTask | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fansubNames = useMemo(() => new Map(fansubs.map((group) => [group.id, group.name])), [fansubs]);
@@ -215,8 +217,10 @@ export function RemoteMyAnimePage() {
           item={selectedItem}
           loading={detailsLoading}
           onClose={() => setSelectedItem(null)}
+          onPlay={setPlaybackTask}
         />
       )}
+      {playbackTask && <RemoteVideoPlayer task={playbackTask} onClose={() => setPlaybackTask(null)} />}
     </div>
   );
 }
@@ -229,7 +233,8 @@ function RemoteAnimeDetailsDrawer({
   downloadTasks,
   fansubNames,
   loading,
-  onClose
+  onClose,
+  onPlay
 }: {
   item: MyAnime;
   episodes: Episode[];
@@ -238,6 +243,7 @@ function RemoteAnimeDetailsDrawer({
   fansubNames: Map<string, string>;
   loading: boolean;
   onClose: () => void;
+  onPlay: (task: DownloadTask) => void;
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(item.anime);
   const defaultFansubName = item.defaultFansubGroupId
@@ -283,9 +289,17 @@ function RemoteAnimeDetailsDrawer({
                       </div>
                       {task && <Progress className="mt-3" value={task.progress} />}
                     </div>
-                    <Badge tone={episode.status === "watched" || episode.status === "downloaded" ? "green" : "neutral"}>
-                      {episodeStatusText[episode.status]}
-                    </Badge>
+                    <div className="flex shrink-0 flex-col items-end gap-2">
+                      <Badge tone={episode.status === "watched" || episode.status === "downloaded" ? "green" : "neutral"}>
+                        {episodeStatusText[episode.status]}
+                      </Badge>
+                      {task && isRemotePlayable(task) && (
+                        <Button variant="outline" onClick={() => onPlay(task)}>
+                          <Play data-icon="inline-start" />
+                          播放
+                        </Button>
+                      )}
+                    </div>
                   </div>
                   {index < episodes.length - 1 && <Separator />}
                 </div>
@@ -329,4 +343,12 @@ function findEpisodeDownload(tasks: DownloadTask[], episode: Episode): DownloadT
 /** 统计下载任务中去重后的有效集数。 */
 function countEpisodes(tasks: DownloadTask[]): number {
   return new Set(tasks.map((task) => task.episodeNo).filter((value) => value !== undefined)).size;
+}
+
+/** 下载文件完整写入后允许远程端请求受控播放会话。 */
+function isRemotePlayable(task: DownloadTask): boolean {
+  return task.progress >= 1
+    || task.status === "completed"
+    || task.status === "seeding"
+    || task.files.some((file) => file.selected && file.progress >= 1);
 }

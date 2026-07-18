@@ -1,3 +1,5 @@
+import type { RemotePlaybackSession } from "@shared/contracts";
+
 type AppClient = NonNullable<Window["aniBridge"]>;
 
 interface RemoteRpcResponse {
@@ -76,6 +78,49 @@ export async function pairRemoteDevice(code: string, deviceName: string): Promis
 export function clearRemoteDeviceToken(): void {
   window.localStorage.removeItem(REMOTE_TOKEN_STORAGE_KEY);
   window.dispatchEvent(new Event(REMOTE_AUTH_CHANGED_EVENT));
+}
+
+/** 为当前远程设备创建绑定下载任务的播放会话。 */
+export async function createRemotePlaybackSession(taskId: string): Promise<RemotePlaybackSession> {
+  const baseUrl = getRemoteBaseUrl();
+  const accessToken = window.localStorage.getItem(REMOTE_TOKEN_STORAGE_KEY);
+  if (!baseUrl || !accessToken) {
+    throw new Error("当前设备尚未完成远程配对");
+  }
+  const response = await fetch(`${baseUrl}/api/media/sessions`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify({ taskId })
+  });
+  const payload = (await response.json().catch(() => ({}))) as RemotePlaybackSession & { error?: string };
+  if (!response.ok || !payload.id) {
+    if (response.status === 401) {
+      clearRemoteDeviceToken();
+    }
+    throw new Error(payload.error ?? `播放会话创建失败：${response.status}`);
+  }
+  return payload;
+}
+
+/** 关闭远程播放会话并通知桌面端回收转码资源。 */
+export async function closeRemotePlaybackSession(sessionId: string): Promise<void> {
+  const baseUrl = getRemoteBaseUrl();
+  const accessToken = window.localStorage.getItem(REMOTE_TOKEN_STORAGE_KEY);
+  if (!baseUrl || !accessToken) {
+    return;
+  }
+  const response = await fetch(`${baseUrl}/api/media/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+    headers: { Authorization: `Bearer ${accessToken}` }
+  });
+  if (!response.ok && response.status !== 404) {
+    console.warn("[remote] 播放会话关闭失败", { sessionId, status: response.status });
+  }
 }
 
 /** 调用桌面端暴露的远程 RPC，并统一处理协议错误。 */

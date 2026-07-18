@@ -290,6 +290,18 @@ export interface RemotePairingChallenge {
   expiresAt: string;
 }
 
+export type RemotePlaybackMode = "direct" | "hls";
+
+export interface RemotePlaybackSession {
+  id: string;
+  taskId: string;
+  fileName: string;
+  mode: RemotePlaybackMode;
+  streamUrl: string;
+  expiresAt: string;
+  durationSeconds?: number;
+}
+
 export interface MetadataProvider {
   searchAnime(query: AnimeSearchQuery): Promise<Anime[]>;
   getSeasonAnime(year: number, season: Season): Promise<Anime[]>;
