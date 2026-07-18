@@ -11,13 +11,13 @@ const subtitleLanguageOrder: SubtitleLanguage[] = ["chs", "cht", "jpn", "eng"];
 
 /** 规范化字幕语言集合，去重并保持稳定展示顺序。 */
 export function normalizeSubtitleLanguages(values: readonly SubtitleLanguage[] | undefined): SubtitleLanguage[] {
-  const selected = new Set(values ?? []);
+  const selected = new Set<unknown>(values ?? []);
   return subtitleLanguageOrder.filter((language) => selected.has(language));
 }
 
 /** 将旧版单值字幕偏好转换为多语言集合。 */
 export function subtitlePreferenceToLanguages(value?: SubtitlePreference): SubtitleLanguage[] {
-  if (!value) {
+  if (!isSubtitlePreference(value)) {
     return [];
   }
   return value === "multi" ? ["chs", "cht"] : [value];
@@ -83,10 +83,20 @@ export function formatSubtitleLanguages(
   if (legacyPreference === "multi") {
     return "多语";
   }
-  if (legacyPreference) {
+  if (isSubtitleLanguage(legacyPreference)) {
     return subtitleLanguageText[legacyPreference];
   }
   return "字幕未知";
+}
+
+/** 校验运行时字幕语言值，避免历史脏数据生成空白标签。 */
+function isSubtitleLanguage(value: unknown): value is SubtitleLanguage {
+  return typeof value === "string" && subtitleLanguageOrder.includes(value as SubtitleLanguage);
+}
+
+/** 校验兼容字段是否为受支持的字幕偏好值。 */
+function isSubtitlePreference(value: unknown): value is SubtitlePreference {
+  return value === "multi" || isSubtitleLanguage(value);
 }
 
 /** 生成位深展示文案，编码格式不会用于推断位深。 */
