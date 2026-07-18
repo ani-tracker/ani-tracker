@@ -45,6 +45,7 @@ import { RemotePairingPage } from "@/features/remote/RemotePairingPage";
 import { RemoteDiscoveryPage } from "@/features/remote/RemoteDiscoveryPage";
 import { RemoteDownloadsPage } from "@/features/remote/RemoteDownloadsPage";
 import { RemoteMyAnimePage } from "@/features/remote/RemoteMyAnimePage";
+import { RemotePlayerPage, resolveRemotePlayerTaskId } from "@/features/remote/RemotePlayerPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
@@ -92,6 +93,9 @@ export function App() {
   const [activePage, setActivePage] = useState<PageId>("home");
   const [pairingState, setPairingState] = useState(getRemotePairingState);
   const electronClient = isElectronClient();
+  const remotePlayerTaskId = electronClient
+    ? undefined
+    : resolveRemotePlayerTaskId(window.location.pathname);
   const availableNavItems = electronClient
     ? navItems
     : navItems.filter((item) => remotePageIds.includes(item.id));
@@ -114,6 +118,10 @@ export function App() {
       window.removeEventListener("storage", refreshRemoteAuth);
     };
   }, []);
+
+  if (remotePlayerTaskId) {
+    return <RemotePlayerPage taskId={remotePlayerTaskId} />;
+  }
 
   if (!electronClient && pairingState.needsPairing) {
     return <RemotePairingPage onPaired={() => setPairingState(getRemotePairingState())} />;

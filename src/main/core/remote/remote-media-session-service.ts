@@ -4,9 +4,18 @@ import { existsSync } from "node:fs";
 import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import type { RemotePlaybackMode, RemotePlaybackSession } from "@shared/contracts";
+import type {
+  RemotePlaybackMode,
+  RemotePlaybackRequestMode,
+  RemotePlaybackSession
+} from "@shared/contracts";
 import type { AppSettings, DownloadTask, MediaFile } from "@shared/domain";
+import ffprobeInstaller from "@ffprobe-installer/ffprobe";
 import ffmpegStaticPath from "ffmpeg-static";
+import {
+  probeMediaDuration,
+  type FfprobeMediaProbeOptions
+} from "../media/ffprobe-media-probe-service";
 import type { AppRepository } from "../repositories/app-repository";
 import { logger as defaultLogger } from "../logger";
 
@@ -41,6 +50,8 @@ export interface RemoteMediaSessionServiceOptions {
   platform?: NodeJS.Platform;
   logger?: RemoteMediaSessionLogger;
   bundledFfmpegPath?: string | null;
+  bundledFfprobePath?: string | null;
+  durationProbe?: (filePath: string, options: FfprobeMediaProbeOptions) => Promise<number | undefined>;
 }
 
 interface ResolvedMedia {
@@ -85,6 +96,8 @@ export class RemoteMediaSessionService {
   private readonly platform: NodeJS.Platform;
   private readonly logger: RemoteMediaSessionLogger;
   private readonly bundledFfmpegPath?: string;
+  private readonly bundledFfprobePath?: string;
+  private readonly durationProbe: NonNullable<RemoteMediaSessionServiceOptions["durationProbe"]>;
   private readonly sessions = new Map<string, MediaSessionRecord>();
 
   /** 初始化受控媒体会话服务并注入可测试的平台依赖。 */
@@ -107,17 +120,25 @@ export class RemoteMediaSessionService {
     this.bundledFfmpegPath = options.bundledFfmpegPath === undefined
       ? ffmpegStaticPath ?? undefined
       : options.bundledFfmpegPath ?? undefined;
+    this.bundledFfprobePath = options.bundledFfprobePath === undefined
+      ? ffprobeInstaller.path
+      : options.bundledFfprobePath ?? undefined;
+    this.durationProbe = options.durationProbe ?? probeMediaDuration;
   }
 
   /** 为已配对设备创建短期播放会话，且不向远程端暴露真实路径。 */
-  async createSession(taskId: string, deviceId: string): Promise<RemotePlaybackSession> {
+  async createSession(
+    taskId: string,
+    deviceId: string,
+    requestedMode: RemotePlaybackRequestMode
+  ): Promise<RemotePlaybackSession> {
     await this.cleanupExpiredSessions();
     const task = await this.repository.getDownloadTask(taskId);
     if (!task) {
       throw new RemoteMediaSessionError(404, "MEDIA_TASK_NOT_FOUND", "下载任务不存在");
     }
 
-    const media = await this.resolveMedia(task);
+    const media = await this.resolveMedia(task, requestedMode);
     await this.closeMatchingSession(deviceId, taskId);
     await this.reserveSessionSlot();
 
@@ -157,7 +178,8 @@ export class RemoteMediaSessionService {
       sessionId: id,
       taskId,
       deviceId,
-      mode: record.mode
+      mode: record.mode,
+      requestedMode
     });
     return toPublicSession(record);
   }
@@ -234,7 +256,10 @@ export class RemoteMediaSessionService {
   }
 
   /** 从已登记媒体或完整下载文件中解析可播放源。 */
-  private async resolveMedia(task: DownloadTask): Promise<ResolvedMedia> {
+  private async resolveMedia(
+    task: DownloadTask,
+    requestedMode: RemotePlaybackRequestMode
+  ): Promise<ResolvedMedia> {
     const settings = await this.repository.getSettings();
     const extensions = new Set(settings.media.videoExtensions.map(normalizeExtension));
     const mediaFiles = (await this.repository.listMediaFiles())
@@ -261,17 +286,52 @@ export class RemoteMediaSessionService {
       if (!extensions.has(extension)) {
         continue;
       }
-      const mode = resolvePlaybackMode(extension, candidate.media?.normalizedVideoCodec ?? task.normalizedVideoCodec);
       return {
         filePath: source,
         fileName: candidate.fileName,
-        mode,
+        mode: requestedMode === "transcode" ? "hls" : "direct",
         contentType: directContentType(extension),
         durationSeconds: candidate.media?.durationSeconds
+          ?? await this.resolveDuration(source, settings)
       };
     }
 
     throw new RemoteMediaSessionError(409, "MEDIA_FILE_UNAVAILABLE", "已完成的媒体文件不存在或尚未写入完成");
+  }
+
+  /** 在媒体扫描尚未提供时长时按需探测，失败不阻断播放。 */
+  private async resolveDuration(filePath: string, settings: AppSettings): Promise<number | undefined> {
+    const configuredPath = settings.media.ffprobePath.trim() || "ffprobe";
+    try {
+      const durationSeconds = await this.durationProbe(filePath, {
+        ffprobePath: configuredPath,
+        timeoutMs: settings.media.ffprobeTimeoutSeconds * 1_000
+      });
+      if (durationSeconds !== undefined) {
+        this.logger.info("Remote media duration probed", { durationSeconds });
+      }
+      return durationSeconds;
+    } catch (error) {
+      if (this.bundledFfprobePath && this.bundledFfprobePath !== configuredPath) {
+        try {
+          const durationSeconds = await this.durationProbe(filePath, {
+            ffprobePath: this.bundledFfprobePath,
+            timeoutMs: settings.media.ffprobeTimeoutSeconds * 1_000
+          });
+          this.logger.info("Remote media duration probed with bundled FFprobe", { durationSeconds });
+          return durationSeconds;
+        } catch (fallbackError) {
+          this.logger.warn("Bundled remote media duration probe failed", {
+            errorType: fallbackError instanceof Error ? fallbackError.name : typeof fallbackError
+          });
+          return undefined;
+        }
+      }
+      this.logger.warn("Remote media duration probe failed", {
+        errorType: error instanceof Error ? error.name : typeof error
+      });
+      return undefined;
+    }
   }
 
   /** 校验真实文件始终位于下载任务保存目录中。 */
@@ -408,20 +468,24 @@ export class RemoteMediaSessionService {
   }
 }
 
-/** 根据容器和探测编码决定直传或实时转码。 */
-function resolvePlaybackMode(extension: string, codec: MediaFile["normalizedVideoCodec"] | undefined): RemotePlaybackMode {
-  if (codec === "H.265/HEVC") {
-    return "hls";
-  }
-  return extension === ".mp4" || extension === ".m4v" || extension === ".webm" ? "direct" : "hls";
-}
-
 /** 返回浏览器直传容器的 MIME 类型。 */
 function directContentType(extension: string): string {
   if (extension === ".webm") {
     return "video/webm";
   }
-  return extension === ".mp4" || extension === ".m4v" ? "video/mp4" : "application/octet-stream";
+  if (extension === ".mp4" || extension === ".m4v") {
+    return "video/mp4";
+  }
+  if (extension === ".mkv") {
+    return "video/x-matroska";
+  }
+  if (extension === ".avi") {
+    return "video/x-msvideo";
+  }
+  if (extension === ".mov") {
+    return "video/quicktime";
+  }
+  return extension === ".mpg" || extension === ".mpeg" ? "video/mpeg" : "application/octet-stream";
 }
 
 /** 从 ffprobe 配置推导同目录 FFmpeg，命令名配置则沿用 PATH。 */

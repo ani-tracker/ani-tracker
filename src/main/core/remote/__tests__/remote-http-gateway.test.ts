@@ -225,17 +225,27 @@ test("媒体会话使用设备 Cookie 输出 206 范围响应", async (context) 
     getSettings: async () => ({
       media: { ffprobePath: "ffprobe", ffprobeTimeoutSeconds: 20, videoExtensions: [".mp4"] }
     } as AppSettings)
-  }, { logger: { info: () => undefined, warn: () => undefined } });
+  }, {
+    durationProbe: async () => 1_445,
+    logger: { info: () => undefined, warn: () => undefined }
+  });
   const gateway = await startGateway({ mediaSessionService });
   context.after(async () => {
     await gateway.stop();
     await rm(directory, { recursive: true, force: true });
   });
   const token = await pairGateway(gateway, "Media Client");
+  const invalidModeResponse = await fetch(`${gateway.getStatus().baseUrl}/api/media/sessions`, {
+    method: "POST",
+    headers: jsonHeaders(token),
+    body: JSON.stringify({ taskId: task.id, mode: "automatic" })
+  });
+  assert.equal(invalidModeResponse.status, 400);
+
   const createResponse = await fetch(`${gateway.getStatus().baseUrl}/api/media/sessions`, {
     method: "POST",
     headers: jsonHeaders(token),
-    body: JSON.stringify({ taskId: task.id })
+    body: JSON.stringify({ taskId: task.id, mode: "direct" })
   });
   assert.equal(createResponse.status, 200);
   const session = await createResponse.json() as { streamUrl: string };

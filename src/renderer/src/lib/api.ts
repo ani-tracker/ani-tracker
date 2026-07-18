@@ -1,4 +1,4 @@
-import type { RemotePlaybackSession } from "@shared/contracts";
+import type { RemotePlaybackRequestMode, RemotePlaybackSession } from "@shared/contracts";
 
 type AppClient = NonNullable<Window["aniBridge"]>;
 
@@ -81,7 +81,10 @@ export function clearRemoteDeviceToken(): void {
 }
 
 /** 为当前远程设备创建绑定下载任务的播放会话。 */
-export async function createRemotePlaybackSession(taskId: string): Promise<RemotePlaybackSession> {
+export async function createRemotePlaybackSession(
+  taskId: string,
+  mode: RemotePlaybackRequestMode
+): Promise<RemotePlaybackSession> {
   const baseUrl = getRemoteBaseUrl();
   const accessToken = window.localStorage.getItem(REMOTE_TOKEN_STORAGE_KEY);
   if (!baseUrl || !accessToken) {
@@ -94,7 +97,7 @@ export async function createRemotePlaybackSession(taskId: string): Promise<Remot
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`
     },
-    body: JSON.stringify({ taskId })
+    body: JSON.stringify({ taskId, mode })
   });
   const payload = (await response.json().catch(() => ({}))) as RemotePlaybackSession & { error?: string };
   if (!response.ok || !payload.id) {

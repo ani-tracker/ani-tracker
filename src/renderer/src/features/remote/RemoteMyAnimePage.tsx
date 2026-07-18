@@ -13,7 +13,6 @@ import { appApi } from "@/lib/api";
 import { formatMonth, formatPercent } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { DownloadTask, Episode, EpisodePreference, FansubGroup, MyAnime } from "@shared/domain";
-import { RemoteVideoPlayer } from "./RemoteVideoPlayer";
 
 const animeStatusText: Record<MyAnime["status"], string> = {
   watching: "在追",
@@ -56,10 +55,16 @@ export function RemoteMyAnimePage() {
   const [episodePreferences, setEpisodePreferences] = useState<EpisodePreference[]>([]);
   const [loading, setLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
-  const [playbackTask, setPlaybackTask] = useState<DownloadTask | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const fansubNames = useMemo(() => new Map(fansubs.map((group) => [group.id, group.name])), [fansubs]);
+
+  /** 在新标签页打开独立播放器，使播放生命周期与追番详情解耦。 */
+  const openPlayback = (task: DownloadTask): void => {
+    const playerUrl = new URL(`/player/${encodeURIComponent(task.id)}`, window.location.origin);
+    window.open(playerUrl, "_blank", "noopener,noreferrer");
+    console.info("[remote] 已打开独立播放器标签页", { taskId: task.id });
+  };
 
   useEffect(() => {
     let active = true;
@@ -217,10 +222,9 @@ export function RemoteMyAnimePage() {
           item={selectedItem}
           loading={detailsLoading}
           onClose={() => setSelectedItem(null)}
-          onPlay={setPlaybackTask}
+          onPlay={openPlayback}
         />
       )}
-      {playbackTask && <RemoteVideoPlayer task={playbackTask} onClose={() => setPlaybackTask(null)} />}
     </div>
   );
 }

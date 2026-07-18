@@ -24,6 +24,15 @@ export interface FfprobeMediaProbeOptions {
   timeoutMs: number;
 }
 
+/** 单独探测媒体总时长，供不需要完整媒体记录的播放会话复用。 */
+export async function probeMediaDuration(
+  filePath: string,
+  options: FfprobeMediaProbeOptions
+): Promise<number | undefined> {
+  const output = await runFfprobe(filePath, options);
+  return parseDuration(output.format?.duration);
+}
+
 interface FfprobeOutput {
   streams?: FfprobeStream[];
   format?: {

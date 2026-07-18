@@ -23,10 +23,11 @@ test("RemoteMediaSessionService 为浏览器兼容文件创建直传会话", asy
     await rm(directory, { recursive: true, force: true });
   });
 
-  const session = await service.createSession("task-1", "device-1");
+  const session = await service.createSession("task-1", "device-1", "direct");
   const asset = await service.getAsset(session.id, "device-1", "file");
 
   assert.equal(session.mode, "direct");
+  assert.equal(session.durationSeconds, 1_445);
   assert.equal(session.streamUrl, `/api/media/sessions/${session.id}/file`);
   assert.equal(asset.filePath, filePath);
   assert.equal(asset.contentType, "video/mp4");
@@ -36,10 +37,10 @@ test("RemoteMediaSessionService 为浏览器兼容文件创建直传会话", asy
   );
 });
 
-test("RemoteMediaSessionService 对 MKV 启动 FFmpeg HLS 并公开播放列表", async (context) => {
+test("RemoteMediaSessionService 按实时转码模式为 MP4 启动 FFmpeg HLS", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "ani-remote-media-test-"));
-  const filePath = join(directory, "episode.mkv");
-  await writeFile(filePath, Buffer.from("mkv-test"));
+  const filePath = join(directory, "episode.mp4");
+  await writeFile(filePath, Buffer.from("mp4-test"));
   let command = "";
   let argumentsList: readonly string[] = [];
   const spawnProcess = ((inputCommand: string, args: readonly string[]) => {
@@ -53,12 +54,13 @@ test("RemoteMediaSessionService 对 MKV 启动 FFmpeg HLS 并公开播放列表"
     return child;
   }) as typeof spawn;
   const service = new RemoteMediaSessionService(
-    createRepository(createTask(directory, "episode.mkv"), []),
+    createRepository(createTask(directory, "episode.mp4"), []),
     {
       spawnProcess,
       temporaryDirectory: directory,
       platform: "win32",
       bundledFfmpegPath: null,
+      durationProbe: async () => 1_445,
       logger: silentLogger
     }
   );
@@ -67,13 +69,30 @@ test("RemoteMediaSessionService 对 MKV 启动 FFmpeg HLS 并公开播放列表"
     await rm(directory, { recursive: true, force: true });
   });
 
-  const session = await service.createSession("task-1", "device-1");
+  const session = await service.createSession("task-1", "device-1", "transcode");
   const playlist = await service.getAsset(session.id, "device-1", "index.m3u8");
 
   assert.equal(session.mode, "hls");
   assert.equal(command, "ffmpeg.exe");
   assert.ok(argumentsList.includes("libx264"));
   assert.equal(playlist.contentType, "application/vnd.apple.mpegurl");
+});
+
+test("RemoteMediaSessionService 按不转码模式直传 MKV 原文件", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "ani-remote-media-test-"));
+  const filePath = join(directory, "episode.mkv");
+  await writeFile(filePath, Buffer.from("mkv-test"));
+  const service = createService(createRepository(createTask(directory, "episode.mkv"), []));
+  context.after(async () => {
+    await service.stopAll();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const session = await service.createSession("task-1", "device-1", "direct");
+  const asset = await service.getAsset(session.id, "device-1", "file");
+
+  assert.equal(session.mode, "direct");
+  assert.equal(asset.contentType, "video/x-matroska");
 });
 
 test("RemoteMediaSessionService 拒绝下载目录之外的登记媒体", async (context) => {
@@ -103,7 +122,7 @@ test("RemoteMediaSessionService 拒绝下载目录之外的登记媒体", async 
   });
 
   await assert.rejects(
-    service.createSession(task.id, "device-1"),
+    service.createSession(task.id, "device-1", "direct"),
     (error) => isMediaError(error, "MEDIA_FILE_UNAVAILABLE", 409)
   );
 });
@@ -180,5 +199,8 @@ function isMediaError(error: unknown, code: string, statusCode: number): boolean
 
 /** 创建关闭日志的媒体服务。 */
 function createService(repository: RemoteMediaRepository): RemoteMediaSessionService {
-  return new RemoteMediaSessionService(repository, { logger: silentLogger });
+  return new RemoteMediaSessionService(repository, {
+    durationProbe: async () => 1_445,
+    logger: silentLogger
+  });
 }

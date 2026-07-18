@@ -292,6 +292,8 @@ export interface RemotePairingChallenge {
 
 export type RemotePlaybackMode = "direct" | "hls";
 
+export type RemotePlaybackRequestMode = "direct" | "transcode";
+
 export interface RemotePlaybackSession {
   id: string;
   taskId: string;
