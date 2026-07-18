@@ -20,7 +20,9 @@ import type {
   RemotePairingChallenge,
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
-  SelectPlayerExecutableInput
+  SelectPlayerExecutableInput,
+  SourceSyncRunResult,
+  SourceSyncSchedulerStatus
 } from "@shared/contracts";
 import type { ImageCacheResolveResult } from "@shared/contracts";
 
@@ -65,6 +67,8 @@ const api = {
   listSources: () => ipcRenderer.invoke("sources:list"),
   setSourceEnabled: (sourceId: string, enabled: boolean) => ipcRenderer.invoke("sources:setEnabled", sourceId, enabled),
   upsertSource: (source: ReleaseSourceConfig) => ipcRenderer.invoke("sources:upsert", source),
+  getSourceSyncStatus: (): Promise<SourceSyncSchedulerStatus> => ipcRenderer.invoke("sources:getSyncStatus"),
+  syncSourcesNow: (): Promise<SourceSyncRunResult> => ipcRenderer.invoke("sources:syncNow"),
   getAnimeSourceBindingState: (animeId: string, discoverCandidates = true) =>
     ipcRenderer.invoke("animeSourceBindings:getState", animeId, discoverCandidates),
   confirmAnimeSourceBinding: (input: ConfirmAnimeSourceBindingInput) =>

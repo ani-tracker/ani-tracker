@@ -2,11 +2,16 @@ import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
+import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
+import type { ReleaseHttpClient } from "./mikan-source";
 
 const DEFAULT_DMHY_BASE_URL = "https://share.dmhy.org/";
 
 export class DmhyReleaseSource implements ReleaseSource {
-  constructor(public readonly config: ReleaseSourceConfig) {}
+  constructor(
+    public readonly config: ReleaseSourceConfig,
+    private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
+  ) {}
 
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
     const url = new URL("/topics/list", this.config.baseUrl ?? DEFAULT_DMHY_BASE_URL);
@@ -15,7 +20,8 @@ export class DmhyReleaseSource implements ReleaseSource {
       url.searchParams.set("keyword", keyword);
     }
 
-    const response = await fetch(url, {
+    const response = await this.httpClient.fetch(url, {
+      source: "dmhy-release",
       headers: {
         "User-Agent": DESKTOP_BROWSER_USER_AGENT
       }

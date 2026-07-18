@@ -10,7 +10,8 @@ import {
   qbittorrentManagedService,
   registerIpcHandlers,
   repository,
-  repositoryRuntime
+  repositoryRuntime,
+  sourceSyncScheduler
 } from "./ipc";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
 import { createRemoteMethodRegistry } from "./core/remote/remote-method-registry";
@@ -166,6 +167,7 @@ app.whenReady().then(async () => {
   void qbittorrentManagedService.applySettings(settings);
   createWindow();
   void automationScheduler.start();
+  void sourceSyncScheduler.start();
   void dailyReminderService.runOnce().catch((error: unknown) => {
     logger.error("Daily reminder failed", {
       message: error instanceof Error ? error.message : String(error)
@@ -193,6 +195,7 @@ app.on("before-quit", (event) => {
 });
 
 app.on("will-quit", () => {
+  sourceSyncScheduler.stop();
   appearanceService.dispose();
 });
 

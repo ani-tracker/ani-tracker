@@ -13,7 +13,8 @@ import type {
   MyAnime,
   NotificationRecord,
   Release,
-  ReleaseSourceConfig
+  ReleaseSourceConfig,
+  ReleaseSourceSyncState
 } from "@shared/domain";
 import { normalizeAppearanceSettings } from "@shared/theme";
 import type { AppDataFile } from "@shared/persistence/app-data";
@@ -57,6 +58,11 @@ export interface AppRepository {
   resetSettingsToDefaults(): Promise<AppSettings>;
   updateSourceEnabled(sourceId: string, enabled: boolean): Promise<ReleaseSourceConfig[]>;
   upsertSource(source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]>;
+  listSourceSyncStates(): Promise<ReleaseSourceSyncState[]>;
+  upsertSourceSyncState(state: ReleaseSourceSyncState): Promise<ReleaseSourceSyncState[]>;
+  listCachedReleases(sourceIds?: string[], limit?: number): Promise<Release[]>;
+  upsertCachedReleases(releases: Release[]): Promise<number>;
+  pruneCachedReleases(before: string): Promise<number>;
   upsertMyAnime(item: MyAnime): Promise<MyAnime[]>;
   removeMyAnime(itemId: string): Promise<MyAnime[]>;
 }
@@ -194,6 +200,10 @@ export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>)
     automation: {
       ...current.automation,
       ...patch.automation
+    },
+    sourceSync: {
+      enabled: patch.sourceSync?.enabled ?? current.sourceSync?.enabled ?? true,
+      dailyTime: patch.sourceSync?.dailyTime ?? current.sourceSync?.dailyTime ?? "09:00"
     },
     media: {
       ...current.media,

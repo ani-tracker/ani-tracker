@@ -67,7 +67,7 @@ export class AutomationRunService {
       this.repository.listSources()
     ]);
     const httpClient = new MetadataHttpClient(settings.network.metadataProxy);
-    const sourceService = new ReleaseSourceService(sources, fansubs, httpClient);
+    const sourceService = new ReleaseSourceService(sources, fansubs, httpClient, this.repository);
     const engine = createTorrentEngine(settings, {
       qbittorrentBaseUrl: this.options.getQbittorrentBaseUrl?.(settings),
       torrentHttpClient: httpClient

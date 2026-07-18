@@ -2,6 +2,8 @@ import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
+import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
+import type { ReleaseHttpClient } from "./mikan-source";
 import { parseXml, textValue, toArray } from "./xml";
 
 interface TorznabDocument {
@@ -30,7 +32,10 @@ interface TorznabAttr {
 }
 
 export class TorznabReleaseSource implements ReleaseSource {
-  constructor(public readonly config: ReleaseSourceConfig) {}
+  constructor(
+    public readonly config: ReleaseSourceConfig,
+    private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
+  ) {}
 
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
     if (!this.config.baseUrl) {
@@ -44,7 +49,8 @@ export class TorznabReleaseSource implements ReleaseSource {
       url.searchParams.set("apikey", this.config.apiKey);
     }
 
-    const response = await fetch(url, {
+    const response = await this.httpClient.fetch(url, {
+      source: "torznab-release",
       headers: {
         "User-Agent": DESKTOP_BROWSER_USER_AGENT
       }

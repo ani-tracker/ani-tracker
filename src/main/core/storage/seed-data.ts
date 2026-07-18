@@ -14,6 +14,7 @@ export function createSeedData(settingsProvider: DefaultSettingsProvider = creat
     episodePreferences: [],
     fansubGroups: [],
     sources: defaultSourceConfigs,
+    sourceSyncStates: [],
     downloads: [],
     mediaFiles: [],
     notifications: [],

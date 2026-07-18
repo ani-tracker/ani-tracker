@@ -111,6 +111,48 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   second.close();
 });
 
+test("SQLite 重启后保留下载源网络策略、退避状态和增量资源", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const anibt = (await first.repository.listSources()).find((source) => source.id === "anibt");
+  assert.ok(anibt);
+  assert.equal(anibt.useProxy, true);
+  assert.equal(anibt.requestIntervalMs, 1_500);
+  await first.repository.upsertSource({ ...anibt, useProxy: false, requestIntervalMs: 2_750 });
+  await first.repository.upsertSourceSyncState({
+    sourceId: anibt.id,
+    lastRequestAt: "2026-07-18T01:00:00.000Z",
+    requestFailureCount: 2,
+    backoffUntil: "2026-07-18T01:05:00.000Z",
+    lastSuccessfulSyncAt: "2026-07-18T00:30:00.000Z"
+  });
+  const added = await first.repository.upsertCachedReleases([enrichReleaseFromTitle({
+    id: "anibt:persisted-release",
+    title: "[测试组] 测试番 - 01 [1080p][HEVC][10bit]",
+    sourceId: anibt.id,
+    sourceName: anibt.name,
+    magnetUrl: "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
+    publishedAt: "2026-07-18T00:20:00.000Z"
+  })]);
+  assert.equal(added, 1);
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const restoredSource = (await second.repository.listSources()).find((source) => source.id === "anibt");
+  const restoredState = (await second.repository.listSourceSyncStates()).find((state) => state.sourceId === "anibt");
+  const restoredReleases = await second.repository.listCachedReleases(["anibt"]);
+  assert.equal(restoredSource?.useProxy, false);
+  assert.equal(restoredSource?.requestIntervalMs, 2_750);
+  assert.equal(restoredState?.requestFailureCount, 2);
+  assert.equal(restoredState?.backoffUntil, "2026-07-18T01:05:00.000Z");
+  assert.equal(restoredReleases[0]?.id, "anibt:persisted-release");
+  assert.equal(restoredReleases[0]?.normalizedVideoCodec, "H.265/HEVC");
+  assert.equal(restoredReleases[0]?.bitDepth, 10);
+  second.close();
+});
+
 test("SQLite 重启后恢复播放器选择和自定义路径", async () => {
   const fixture = await createFixture();
   const first = createRepositoryRuntime(fixture.options);

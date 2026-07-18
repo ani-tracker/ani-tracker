@@ -290,6 +290,26 @@ export interface RemoteGatewayStatus {
   lastError?: string;
 }
 
+export interface SourceSyncRunResult {
+  startedAt: string;
+  finishedAt: string;
+  syncedSourceIds: string[];
+  skippedSourceIds: string[];
+  addedReleaseCount: number;
+  errors: Array<{ sourceId: string; message: string }>;
+}
+
+export interface SourceSyncSchedulerStatus {
+  enabled: boolean;
+  running: boolean;
+  inFlight: boolean;
+  dailyTime: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+  lastResult?: SourceSyncRunResult;
+  lastError?: string;
+}
+
 export interface RemotePairingChallenge {
   code: string;
   expiresAt: string;

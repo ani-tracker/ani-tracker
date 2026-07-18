@@ -1,10 +1,11 @@
 import type { AnimeReleaseQuery, ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
 import type { Anime, AnimeSourceBinding, FansubGroup, Release, ReleaseSourceConfig } from "@shared/domain";
 import { createHash } from "node:crypto";
-import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle } from "../../../shared/anime-release-search";
+import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle, normalizeReleaseSearchText } from "../../../shared/anime-release-search";
 import { releaseMatchesEpisode } from "../../../shared/release-search-input";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import { logger } from "../logger";
+import type { AppRepository } from "../repositories/app-repository";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { AcgnxReleaseSource } from "./acgnx-source";
 import { AniBtReleaseSource } from "./anibt-source";
@@ -12,6 +13,7 @@ import { DmhyReleaseSource } from "./dmhy-source";
 import { MikanReleaseSource, type ReleaseHttpClient } from "./mikan-source";
 import { RssReleaseSource } from "./rss-source";
 import { TorznabReleaseSource } from "./torznab-source";
+import { createSourceHttpClient } from "./source-http-client";
 
 const MAX_RELEASE_SEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
 const releaseSearchCache = new Map<string, { expiresAt: number; result: ReleaseSearchResult }>();
@@ -20,7 +22,8 @@ export class ReleaseSourceService {
   constructor(
     private readonly configs: ReleaseSourceConfig[],
     private readonly fansubs: FansubGroup[] = [],
-    private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
+    private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient,
+    private readonly repository?: AppRepository
   ) {}
 
   async search(query: ReleaseQuery): Promise<ReleaseSearchResult> {
@@ -42,7 +45,7 @@ export class ReleaseSourceService {
 
     const sources = this.configs
       .filter((config) => config.enabled)
-      .map((config) => createReleaseSource(config, this.httpClient))
+      .map((config) => createReleaseSource(config, this.httpClient, this.repository))
       .filter(Boolean) as ReleaseSource[];
     const errors: ReleaseSearchResult["errors"] = [];
     const releases = (
@@ -64,16 +67,22 @@ export class ReleaseSourceService {
       .map((release) => enrichReleaseFromTitle(release, this.fansubs));
 
     const dedupedReleases = dedupeReleases(releases);
+    await this.persistCachedReleases(dedupedReleases);
     const episodeReleases = dedupedReleases.filter((release) => releaseMatchesEpisode(release, query.episodeNo));
-    const relevantReleases = query.animeId
+    const liveRelevantReleases = query.animeId
       ? episodeReleases.filter((release) => matchesAnimeReleaseTitle(release.title, [query.keyword]))
       : episodeReleases;
-    if (relevantReleases.length !== dedupedReleases.length) {
+    const cachedReleases = await this.loadCachedReleases(sources.map((source) => source.config.id));
+    const relevantReleases = sortReleasesByPublishedAt(dedupeReleases([
+      ...liveRelevantReleases,
+      ...cachedReleases.filter((release) => matchesCachedQuery(release, query))
+    ]));
+    if (liveRelevantReleases.length !== dedupedReleases.length) {
       logger.info("下载资源搜索结果已按条件过滤", {
         animeId: query.animeId,
         keyword: query.keyword,
         episodeNo: query.episodeNo,
-        filteredCount: dedupedReleases.length - relevantReleases.length
+        filteredCount: dedupedReleases.length - liveRelevantReleases.length
       });
     }
 
@@ -127,12 +136,13 @@ export class ReleaseSourceService {
         sources.map(async (config) => {
           const binding = bindings.find((item) => item.sourceId === config.id && item.confirmed);
           try {
+            const sourceHttpClient = createSourceHttpClient(config, this.httpClient, this.repository);
             if (isMikanRssConfig(config)) {
               if (!binding) {
                 errors.push({ sourceId: config.id, message: "请先确认蜜柑计划番剧匹配" });
                 return [];
               }
-              return new MikanReleaseSource(config, this.httpClient).listReleasesByAnimeId(
+              return new MikanReleaseSource(config, sourceHttpClient).listReleasesByAnimeId(
                 binding.sourceAnimeId,
                 query.limit
               );
@@ -142,10 +152,10 @@ export class ReleaseSourceService {
                 errors.push({ sourceId: config.id, message: "请先确认 AniBT 番剧匹配" });
                 return [];
               }
-              return new AniBtReleaseSource(config).listReleasesByAnimeId(binding.sourceAnimeId, query.limit);
+              return new AniBtReleaseSource(config, sourceHttpClient).listReleasesByAnimeId(binding.sourceAnimeId, query.limit);
             }
 
-            const source = createReleaseSource(config, this.httpClient);
+            const source = createReleaseSource(config, this.httpClient, this.repository);
             if (!source) {
               return [];
             }
@@ -165,7 +175,7 @@ export class ReleaseSourceService {
     )
       .flat()
       .map((release) => ({ ...enrichReleaseFromTitle(release, this.fansubs), animeId: anime.id }));
-    const relevantReleases = dedupeReleases(releases).filter((release) => {
+    const liveRelevantReleases = dedupeReleases(releases).filter((release) => {
       const hasConfirmedExactBinding = bindings.some(
         (binding) => binding.sourceId === release.sourceId && binding.confirmed
       );
@@ -174,6 +184,19 @@ export class ReleaseSourceService {
         classifyAnimeRelease(release, anime) !== "mismatch" &&
         releaseMatchesEpisode(release, query.episodeNo);
     });
+    await this.persistCachedReleases(liveRelevantReleases);
+    const cachedReleases = await this.loadCachedReleases(sources.map((source) => source.id));
+    const relevantReleases = sortReleasesByPublishedAt(dedupeReleases([
+      ...liveRelevantReleases,
+      ...cachedReleases.filter((release) => {
+        const hasConfirmedExactBinding = bindings.some(
+          (binding) => binding.sourceId === release.sourceId && binding.confirmed
+        );
+        return releaseMatchesEpisode(release, query.episodeNo) &&
+          (hasConfirmedExactBinding || matchesAnimeReleaseTitle(release.title, terms)) &&
+          classifyAnimeRelease(release, anime) !== "mismatch";
+      })
+    ]));
 
     logger.info("Anime release search finished", {
       animeId: anime.id,
@@ -209,6 +232,8 @@ export class ReleaseSourceService {
         id: config.id,
         name: config.name,
         kind: config.kind,
+        useProxy: config.useProxy,
+        requestIntervalMs: config.requestIntervalMs,
         baseUrl: config.baseUrl,
         rssUrl: config.rssUrl,
         tags: config.tags,
@@ -264,38 +289,63 @@ export class ReleaseSourceService {
       bindings: bindings
         .filter((binding) => binding.confirmed)
         .map((binding) => [binding.sourceId, binding.sourceAnimeId, binding.updatedAt]),
-      sources: this.configs.map((source) => [source.id, source.enabled, source.baseUrl, source.rssUrl]),
+      sources: this.configs.map((source) => [
+        source.id,
+        source.enabled,
+        source.useProxy,
+        source.requestIntervalMs,
+        source.baseUrl,
+        source.rssUrl
+      ]),
       fansubs: this.fansubs.map((fansub) => [fansub.id, fansub.name, fansub.aliases])
     }));
+  }
+
+  /** 读取持久化资源缓存；仓库不可用时保持原有纯网络搜索行为。 */
+  private async loadCachedReleases(sourceIds: string[]): Promise<Release[]> {
+    if (typeof this.repository?.listCachedReleases !== "function") {
+      return [];
+    }
+    return this.repository.listCachedReleases(sourceIds, 2_000);
+  }
+
+  /** 将网络结果写入持久化缓存，同时兼容尚未扩展的仓库实现。 */
+  private async persistCachedReleases(releases: Release[]): Promise<void> {
+    if (typeof this.repository?.upsertCachedReleases === "function") {
+      await this.repository.upsertCachedReleases(releases);
+    }
   }
 }
 
 export function createReleaseSource(
   config: ReleaseSourceConfig,
-  httpClient: ReleaseHttpClient = defaultMetadataHttpClient
+  httpClient: ReleaseHttpClient = defaultMetadataHttpClient,
+  repository?: AppRepository,
+  applyNetworkPolicy = true
 ): ReleaseSource | null {
+  const sourceHttpClient = applyNetworkPolicy ? createSourceHttpClient(config, httpClient, repository) : httpClient;
   if (config.kind === "rss") {
-    return new RssReleaseSource(config, httpClient);
+    return new RssReleaseSource(config, sourceHttpClient);
   }
 
   if (config.kind === "torznab") {
-    return new TorznabReleaseSource(config);
+    return new TorznabReleaseSource(config, sourceHttpClient);
   }
 
   if (config.kind === "site_adapter" && isDmhyConfig(config)) {
-    return new DmhyReleaseSource(config);
+    return new DmhyReleaseSource(config, sourceHttpClient);
   }
 
   if (config.kind === "site_adapter" && isMikanConfig(config)) {
-    return new MikanReleaseSource(config, httpClient);
+    return new MikanReleaseSource(config, sourceHttpClient);
   }
 
   if (config.kind === "site_adapter" && isAniBtConfig(config)) {
-    return new AniBtReleaseSource(config);
+    return new AniBtReleaseSource(config, sourceHttpClient);
   }
 
   if (config.kind === "site_adapter" && isAcgnxConfig(config)) {
-    return new AcgnxReleaseSource(config);
+    return new AcgnxReleaseSource(config, sourceHttpClient);
   }
 
   return null;
@@ -341,6 +391,21 @@ function dedupeReleases<T extends { infoHash?: string; magnetUrl?: string; torre
     seen.add(key);
     return true;
   });
+}
+
+function matchesCachedQuery(release: Release, query: ReleaseQuery): boolean {
+  if (!releaseMatchesEpisode(release, query.episodeNo)) {
+    return false;
+  }
+  const keyword = normalizeReleaseSearchText(query.keyword);
+  if (!keyword) {
+    return true;
+  }
+  return normalizeReleaseSearchText(release.title).includes(keyword);
+}
+
+function sortReleasesByPublishedAt<T extends { publishedAt: string }>(releases: T[]): T[] {
+  return [...releases].sort((left, right) => right.publishedAt.localeCompare(left.publishedAt));
 }
 
 function formatReleaseSourceError(error: unknown): string {

@@ -15,6 +15,7 @@ import type {
   NotificationRecord,
   Release,
   ReleaseSourceConfig,
+  ReleaseSourceSyncState,
   TorrentFile
 } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
@@ -543,6 +544,61 @@ export class SqliteAppRepository implements AppRepository {
     return this.listSources();
   }
 
+  /** 读取所有下载源的持久化请求与增量同步状态。 */
+  async listSourceSyncStates(): Promise<ReleaseSourceSyncState[]> {
+    return this.all("SELECT * FROM release_source_sync_state ORDER BY source_id").map(mapSourceSyncState);
+  }
+
+  /** 保存下载源请求退避和每日同步游标。 */
+  async upsertSourceSyncState(state: ReleaseSourceSyncState): Promise<ReleaseSourceSyncState[]> {
+    this.upsertSourceSyncStateRow(state);
+    return this.listSourceSyncStates();
+  }
+
+  /** 读取最近采集的资源，用于重启后搜索缓存和来源故障兜底。 */
+  async listCachedReleases(sourceIds?: string[], limit = 2_000): Promise<Release[]> {
+    const normalizedLimit = Math.max(1, Math.min(10_000, Math.round(limit)));
+    if (!sourceIds?.length) {
+      return this.all("SELECT * FROM release ORDER BY published_at DESC LIMIT @limit", { limit: normalizedLimit }).map(mapRelease);
+    }
+
+    const uniqueSourceIds = [...new Set(sourceIds.filter(Boolean))];
+    if (!uniqueSourceIds.length) {
+      return [];
+    }
+    const params: SqliteParams = { limit: normalizedLimit };
+    const placeholders = uniqueSourceIds.map((sourceId, index) => {
+      const key = `sourceId${index}`;
+      params[key] = sourceId;
+      return `@${key}`;
+    });
+    return this.all(
+      `SELECT * FROM release WHERE source_id IN (${placeholders.join(", ")}) ORDER BY published_at DESC LIMIT @limit`,
+      params
+    ).map(mapRelease);
+  }
+
+  /** 按资源稳定 ID 增量写入缓存，并返回首次出现的资源数量。 */
+  async upsertCachedReleases(releases: Release[]): Promise<number> {
+    const unique = [...new Map(releases.map((release) => [release.id, release])).values()];
+    if (!unique.length) {
+      return 0;
+    }
+    const existing = new Set<string>();
+    for (const release of unique) {
+      if (this.get("SELECT id FROM release WHERE id = @id", { id: release.id })) {
+        existing.add(release.id);
+      }
+    }
+    this.transaction(() => unique.forEach((release) => this.upsertReleaseRow(release)));
+    return unique.length - existing.size;
+  }
+
+  /** 清理过期资源缓存，限制每日增量同步的长期占用。 */
+  async pruneCachedReleases(before: string): Promise<number> {
+    return this.run("DELETE FROM release WHERE published_at < @before", { before }).changes;
+  }
+
   async upsertMyAnime(item: MyAnime): Promise<MyAnime[]> {
     const saved: MyAnime = { ...item, addedAt: item.addedAt || nowIso(), updatedAt: nowIso() };
     this.transaction(() => {
@@ -693,6 +749,42 @@ export class SqliteAppRepository implements AppRepository {
       });
     }
 
+    if (currentSchemaVersion < 10) {
+      this.ensureColumn("release_source", "use_proxy", "use_proxy INTEGER NOT NULL DEFAULT 0");
+      this.ensureColumn("release_source", "request_interval_ms", "request_interval_ms INTEGER NOT NULL DEFAULT 1000");
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS release_source_sync_state (
+          source_id TEXT PRIMARY KEY REFERENCES release_source(id) ON DELETE CASCADE,
+          request_host TEXT,
+          last_request_at TEXT,
+          request_failure_count INTEGER NOT NULL DEFAULT 0,
+          backoff_until TEXT,
+          last_sync_attempt_at TEXT,
+          last_successful_sync_at TEXT,
+          last_sync_error TEXT,
+          etag TEXT,
+          last_modified TEXT,
+          updated_at TEXT NOT NULL
+        );
+
+        UPDATE release_source
+        SET use_proxy = 1, request_interval_ms = 1500
+        WHERE id IN ('mikan', 'dmhy', 'mikan-site', 'anibt', 'acgnx');
+
+        UPDATE release_source
+        SET use_proxy = 0, request_interval_ms = 250
+        WHERE id = 'prowlarr';
+      `);
+      logger.info("SQLite 下载源网络策略迁移完成", {
+        fromVersion: currentSchemaVersion,
+        toVersion: SQLITE_SCHEMA_VERSION
+      });
+    }
+
+    if (currentSchemaVersion < 11) {
+      this.ensureColumn("release_source_sync_state", "request_host", "request_host TEXT");
+    }
+
     if (currentSchemaVersion < 8) {
       this.database.exec(`
         UPDATE my_anime
@@ -736,6 +828,7 @@ export class SqliteAppRepository implements AppRepository {
     data.animeCatalog.forEach((anime) => this.upsertAnime(anime));
     data.fansubGroups.forEach((fansub) => this.upsertFansub(fansub));
     data.sources.forEach((source) => this.upsertSourceRow(source));
+    (data.sourceSyncStates ?? []).forEach((state) => this.upsertSourceSyncStateRow(state));
     data.myAnime.forEach((item) => this.upsertMyAnimeRow(item));
     data.episodes.forEach((episode) => this.upsertEpisodeRow(episode));
     data.episodePreferences.forEach((preference) => this.upsertEpisodePreferenceRow(preference));
@@ -769,6 +862,7 @@ export class SqliteAppRepository implements AppRepository {
       episodePreferences: this.all("SELECT * FROM episode_preference").map(mapEpisodePreference),
       fansubGroups: this.all("SELECT * FROM fansub_group ORDER BY name").map(mapFansub),
       sources: this.all("SELECT * FROM release_source ORDER BY name").map(mapSource),
+      sourceSyncStates: this.all("SELECT * FROM release_source_sync_state ORDER BY source_id").map(mapSourceSyncState),
       downloads,
       mediaFiles,
       notifications: sortNotifications(this.all("SELECT * FROM notification").map(mapNotification)),
@@ -1013,14 +1107,103 @@ export class SqliteAppRepository implements AppRepository {
   private upsertSourceRow(source: ReleaseSourceConfig): void {
     const timestamp = nowIso();
     this.run(
-      `INSERT INTO release_source (id, name, kind, enabled, base_url, api_key, rss_url, tags_json, created_at, updated_at)
-       VALUES (@id, @name, @kind, @enabled, @baseUrl, @apiKey, @rssUrl, @tagsJson, @createdAt, @updatedAt)
+      `INSERT INTO release_source (
+        id, name, kind, enabled, use_proxy, request_interval_ms, base_url, api_key, rss_url, tags_json, created_at, updated_at
+       ) VALUES (
+        @id, @name, @kind, @enabled, @useProxy, @requestIntervalMs, @baseUrl, @apiKey, @rssUrl, @tagsJson, @createdAt, @updatedAt
+       )
        ON CONFLICT(id) DO UPDATE SET name = excluded.name, kind = excluded.kind, enabled = excluded.enabled,
+       use_proxy = excluded.use_proxy, request_interval_ms = excluded.request_interval_ms,
        base_url = excluded.base_url, api_key = excluded.api_key, rss_url = excluded.rss_url,
        tags_json = excluded.tags_json, updated_at = excluded.updated_at`,
       { id: source.id, name: source.name, kind: source.kind, enabled: toInteger(source.enabled),
+        useProxy: toInteger(source.useProxy ?? false), requestIntervalMs: normalizeSourceRequestInterval(source.requestIntervalMs),
         baseUrl: source.baseUrl ?? null, apiKey: source.apiKey ?? null, rssUrl: source.rssUrl ?? null,
         tagsJson: toJson(source.tags ?? []), createdAt: timestamp, updatedAt: timestamp }
+    );
+  }
+
+  private upsertSourceSyncStateRow(state: ReleaseSourceSyncState): void {
+    this.run(
+      `INSERT INTO release_source_sync_state (
+        source_id, request_host, last_request_at, request_failure_count, backoff_until, last_sync_attempt_at,
+        last_successful_sync_at, last_sync_error, etag, last_modified, updated_at
+      ) VALUES (
+        @sourceId, @requestHost, @lastRequestAt, @requestFailureCount, @backoffUntil, @lastSyncAttemptAt,
+        @lastSuccessfulSyncAt, @lastSyncError, @etag, @lastModified, @updatedAt
+      ) ON CONFLICT(source_id) DO UPDATE SET
+        request_host = excluded.request_host,
+        last_request_at = excluded.last_request_at,
+        request_failure_count = excluded.request_failure_count,
+        backoff_until = excluded.backoff_until,
+        last_sync_attempt_at = excluded.last_sync_attempt_at,
+        last_successful_sync_at = excluded.last_successful_sync_at,
+        last_sync_error = excluded.last_sync_error,
+        etag = excluded.etag,
+        last_modified = excluded.last_modified,
+        updated_at = excluded.updated_at`,
+      {
+        sourceId: state.sourceId,
+        requestHost: state.requestHost ?? null,
+        lastRequestAt: state.lastRequestAt ?? null,
+        requestFailureCount: Math.max(0, Math.round(state.requestFailureCount)),
+        backoffUntil: state.backoffUntil ?? null,
+        lastSyncAttemptAt: state.lastSyncAttemptAt ?? null,
+        lastSuccessfulSyncAt: state.lastSuccessfulSyncAt ?? null,
+        lastSyncError: state.lastSyncError ?? null,
+        etag: state.etag ?? null,
+        lastModified: state.lastModified ?? null,
+        updatedAt: nowIso()
+      }
+    );
+  }
+
+  private upsertReleaseRow(release: Release): void {
+    const animeId = release.animeId && this.get("SELECT id FROM anime_catalog WHERE id = @id", { id: release.animeId })
+      ? release.animeId
+      : null;
+    const fansubGroupId = release.fansubGroupId && this.get("SELECT id FROM fansub_group WHERE id = @id", { id: release.fansubGroupId })
+      ? release.fansubGroupId
+      : null;
+    this.run(
+      `INSERT INTO release (
+        id, title, anime_id, episode_no, fansub_group_id, source_id, source_name, magnet_url, torrent_url,
+        info_hash, size, resolution, declared_video_codec, normalized_video_codec, bit_depth, subtitle,
+        subtitle_languages_json, published_at, seeders, raw_json
+      ) VALUES (
+        @id, @title, @animeId, @episodeNo, @fansubGroupId, @sourceId, @sourceName, @magnetUrl, @torrentUrl,
+        @infoHash, @size, @resolution, @declaredVideoCodec, @normalizedVideoCodec, @bitDepth, @subtitle,
+        @subtitleLanguagesJson, @publishedAt, @seeders, @rawJson
+      ) ON CONFLICT(id) DO UPDATE SET
+        title = excluded.title, anime_id = excluded.anime_id, episode_no = excluded.episode_no,
+        fansub_group_id = excluded.fansub_group_id, source_name = excluded.source_name,
+        magnet_url = excluded.magnet_url, torrent_url = excluded.torrent_url, info_hash = excluded.info_hash,
+        size = excluded.size, resolution = excluded.resolution, declared_video_codec = excluded.declared_video_codec,
+        normalized_video_codec = excluded.normalized_video_codec, bit_depth = excluded.bit_depth,
+        subtitle = excluded.subtitle, subtitle_languages_json = excluded.subtitle_languages_json,
+        published_at = excluded.published_at, seeders = excluded.seeders, raw_json = excluded.raw_json`,
+      {
+        id: release.id,
+        title: release.title,
+        animeId,
+        episodeNo: release.episodeNo ?? null,
+        fansubGroupId,
+        sourceId: release.sourceId,
+        sourceName: release.sourceName,
+        magnetUrl: release.magnetUrl ?? null,
+        torrentUrl: release.torrentUrl ?? null,
+        infoHash: release.infoHash ?? null,
+        size: release.size ?? null,
+        resolution: release.resolution ?? null,
+        declaredVideoCodec: release.declaredVideoCodec ?? null,
+        normalizedVideoCodec: release.normalizedVideoCodec ?? null,
+        bitDepth: release.bitDepth ?? null,
+        subtitle: release.subtitle ?? null,
+        subtitleLanguagesJson: toJson(resolveSubtitleLanguages(release.subtitleLanguages, release.subtitle)),
+        publishedAt: release.publishedAt,
+        seeders: release.seeders ?? null,
+        rawJson: toJson(release)
+      }
     );
   }
 
@@ -1627,8 +1810,51 @@ function uniqueStrings(values: string[]): string[] {
 
 function mapSource(row: SqliteRow): ReleaseSourceConfig {
   return compact({ id: asString(row.id), name: asString(row.name), kind: asString(row.kind) as ReleaseSourceConfig["kind"],
-    enabled: toBoolean(row.enabled), baseUrl: optionalString(row.base_url), apiKey: optionalString(row.api_key),
+    enabled: toBoolean(row.enabled), useProxy: toBoolean(row.use_proxy),
+    requestIntervalMs: normalizeSourceRequestInterval(optionalNumber(row.request_interval_ms)),
+    baseUrl: optionalString(row.base_url), apiKey: optionalString(row.api_key),
     rssUrl: optionalString(row.rss_url), tags: fromJson<string[]>(asString(row.tags_json)) });
+}
+
+function mapSourceSyncState(row: SqliteRow): ReleaseSourceSyncState {
+  return compact({
+    sourceId: asString(row.source_id),
+    requestHost: optionalString(row.request_host),
+    lastRequestAt: optionalString(row.last_request_at),
+    requestFailureCount: optionalNumber(row.request_failure_count) ?? 0,
+    backoffUntil: optionalString(row.backoff_until),
+    lastSyncAttemptAt: optionalString(row.last_sync_attempt_at),
+    lastSuccessfulSyncAt: optionalString(row.last_successful_sync_at),
+    lastSyncError: optionalString(row.last_sync_error),
+    etag: optionalString(row.etag),
+    lastModified: optionalString(row.last_modified)
+  });
+}
+
+function mapRelease(row: SqliteRow): Release {
+  const raw = fromJson<Partial<Release>>(asString(row.raw_json));
+  return compact({
+    ...raw,
+    id: asString(row.id),
+    title: asString(row.title),
+    animeId: optionalString(row.anime_id) ?? raw.animeId,
+    episodeNo: optionalNumber(row.episode_no) ?? raw.episodeNo,
+    fansubGroupId: optionalString(row.fansub_group_id) ?? raw.fansubGroupId,
+    sourceId: asString(row.source_id),
+    sourceName: asString(row.source_name),
+    magnetUrl: optionalString(row.magnet_url),
+    torrentUrl: optionalString(row.torrent_url),
+    infoHash: optionalString(row.info_hash),
+    size: optionalNumber(row.size),
+    resolution: optionalString(row.resolution) as Release["resolution"],
+    declaredVideoCodec: optionalString(row.declared_video_codec),
+    normalizedVideoCodec: optionalString(row.normalized_video_codec) as Release["normalizedVideoCodec"],
+    bitDepth: optionalNumber(row.bit_depth) as Release["bitDepth"],
+    subtitle: optionalString(row.subtitle) as Release["subtitle"],
+    subtitleLanguages: normalizeSubtitleLanguages(fromJson(asString(row.subtitle_languages_json))),
+    publishedAt: asString(row.published_at),
+    seeders: optionalNumber(row.seeders)
+  });
 }
 
 function mapDownload(row: SqliteRow, files: TorrentFile[]): DownloadTask {
@@ -1652,6 +1878,14 @@ function mapTorrentFile(row: SqliteRow): { downloadTaskId: string; file: Torrent
   return { downloadTaskId: asString(row.download_task_id), file: { id: asString(row.id), index: Number(row.file_index),
     name: asString(row.name), size: Number(row.size), progress: Number(row.progress), priority: Number(row.priority),
     selected: toBoolean(row.selected) } };
+}
+
+/** 将来源采集间隔限制在 250 毫秒到 60 秒之间。 */
+function normalizeSourceRequestInterval(value?: number): number {
+  if (!Number.isFinite(value)) {
+    return 1_500;
+  }
+  return Math.max(250, Math.min(60_000, Math.round(value!)));
 }
 
 /** 为下载任务自动补建的单集生成稳定 ID。 */

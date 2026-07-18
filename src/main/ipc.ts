@@ -46,6 +46,7 @@ import { DownloadTaskControlService } from "./core/downloads/download-task-contr
 import { PlayerDetectionService } from "./core/platform/player-detection-service";
 import type { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
 import type { ImageCacheService } from "./core/cache/image-cache-service";
+import { SourceSyncScheduler } from "./core/sources/source-sync-scheduler";
 
 export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
@@ -53,6 +54,7 @@ export const qbittorrentManagedService = new QbittorrentManagedService();
 export const automationScheduler = new AutomationScheduler(repository, undefined, {
   getQbittorrentBaseUrl: (settings) => qbittorrentManagedService.getRuntimeBaseUrl(settings)
 });
+export const sourceSyncScheduler = new SourceSyncScheduler(repository);
 export const downloadTaskControlService = new DownloadTaskControlService(repository, qbittorrentManagedService);
 const playbackStatusService = new PlaybackStatusService(repository);
 
@@ -313,6 +315,8 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     repository.updateSourceEnabled(sourceId, enabled)
   );
   ipcMain.handle("sources:upsert", (_event, source: ReleaseSourceConfig) => repository.upsertSource(source));
+  ipcMain.handle("sources:getSyncStatus", () => sourceSyncScheduler.getStatus());
+  ipcMain.handle("sources:syncNow", () => sourceSyncScheduler.runNow({ force: true, trigger: "manual" }));
   ipcMain.handle("animeSourceBindings:getState", async (_event, animeId: string, discoverCandidates = true) => {
     const settings = await repository.getSettings();
     return new AnimeSourceBindingService(
@@ -343,7 +347,8 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     const result = await new ReleaseSourceService(
       sources,
       fansubs,
-      new MetadataHttpClient(settings.network.metadataProxy)
+      new MetadataHttpClient(settings.network.metadataProxy),
+      repository
     ).search(query);
     if (query.animeId && await findMyAnime(query.animeId)) {
       await repository.observeAnimeFansubs(query.animeId, result.releases);
@@ -362,7 +367,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     ]);
     const httpClient = new MetadataHttpClient(settings.network.metadataProxy);
     const bindingState = await new AnimeSourceBindingService(repository, httpClient).getState(query.animeId, false);
-    const result = await new ReleaseSourceService(sources, fansubs, httpClient).searchAnime(
+    const result = await new ReleaseSourceService(sources, fansubs, httpClient, repository).searchAnime(
       followedAnime.anime,
       query,
       bindingState.bindings
@@ -378,12 +383,14 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     const settings = await repository.updateSettings(patch);
     await options.onSettingsUpdated?.(settings);
     await automationScheduler.restart();
+    await sourceSyncScheduler.restart();
     return settings;
   });
   ipcMain.handle("settings:resetDefaults", async () => {
     const settings = await repository.resetSettingsToDefaults();
     await options.onSettingsUpdated?.(settings);
     await automationScheduler.restart();
+    await sourceSyncScheduler.restart();
     return settings;
   });
   ipcMain.handle("players:detect", async (_event, profiles?: PlayerProfile[]) => {

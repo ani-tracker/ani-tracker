@@ -7,6 +7,8 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     name: "蜜柑计划 RSS",
     kind: "rss",
     enabled: false,
+    useProxy: true,
+    requestIntervalMs: 1_500,
     rssUrl: "https://mikanani.me/RSS/Bangumi",
     tags: ["anime", "rss"]
   },
@@ -15,6 +17,8 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     name: "动漫花园",
     kind: "site_adapter",
     enabled: false,
+    useProxy: true,
+    requestIntervalMs: 1_500,
     baseUrl: "https://share.dmhy.org/",
     tags: ["anime", "bt"]
   },
@@ -23,6 +27,8 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     name: "蜜柑计划站点",
     kind: "site_adapter",
     enabled: false,
+    useProxy: true,
+    requestIntervalMs: 1_500,
     baseUrl: "https://mikanani.me/",
     tags: ["anime", "bt", "mikan"]
   },
@@ -31,6 +37,8 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     name: "AniBT",
     kind: "site_adapter",
     enabled: true,
+    useProxy: true,
+    requestIntervalMs: 1_500,
     baseUrl: "https://anibt.net/",
     tags: ["anime", "bt", "anibt", "rss"]
   },
@@ -39,6 +47,8 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     name: "末日动漫资源库 ACGNX",
     kind: "site_adapter",
     enabled: false,
+    useProxy: true,
+    requestIntervalMs: 1_500,
     baseUrl: "https://share.acgnx.se/",
     tags: ["anime", "bt", "acgnx"]
   },
@@ -47,6 +57,8 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     name: "Prowlarr Torznab",
     kind: "torznab",
     enabled: false,
+    useProxy: false,
+    requestIntervalMs: 250,
     baseUrl: "http://127.0.0.1:9696",
     tags: ["torznab"]
   }

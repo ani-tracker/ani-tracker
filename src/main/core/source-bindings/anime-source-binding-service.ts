@@ -10,13 +10,15 @@ import { MikanReleaseSource, type ReleaseHttpClient } from "../sources/mikan-sou
 import { AniBtReleaseSource } from "../sources/anibt-source";
 import { isAniBtConfig, isMikanRssConfig, isMikanSiteConfig } from "../sources/release-source-service";
 import { scoreAnimeSourceCandidate } from "./anime-source-matcher";
+import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
+import { createSourceHttpClient } from "../sources/source-http-client";
 
 const MAX_CANDIDATES_PER_SOURCE = 6;
 
 export class AnimeSourceBindingService {
   constructor(
     private readonly repository: AppRepository,
-    private readonly httpClient?: ReleaseHttpClient
+    private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
   ) {}
 
   /** 读取来源绑定，并按需发现尚未绑定的来源候选。 */
@@ -175,10 +177,16 @@ export class AnimeSourceBindingService {
     }
 
     const candidates = isMikanRssConfig(source)
-      ? (await new MikanReleaseSource(mikanSiteSource!, this.httpClient).searchAnimeCandidates(anime)).map(
+      ? (await new MikanReleaseSource(
+          mikanSiteSource!,
+          createSourceHttpClient(mikanSiteSource!, this.httpClient, this.repository)
+        ).searchAnimeCandidates(anime)).map(
           (candidate) => ({ ...candidate, sourceId: source.id, sourceName: source.name })
         )
-      : await new AniBtReleaseSource(source).searchAnimeCandidates(anime);
+      : await new AniBtReleaseSource(
+          source,
+          createSourceHttpClient(source, this.httpClient, this.repository)
+        ).searchAnimeCandidates(anime);
 
     return candidates
       .map((candidate) => scoreAnimeSourceCandidate(anime, candidate, localEpisodeCount))

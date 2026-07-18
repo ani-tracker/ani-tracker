@@ -5,6 +5,7 @@ import type { AppRepository } from "../repositories/app-repository";
 import { rankReleases } from "../releases/release-matcher";
 import { ReleaseSourceService } from "../sources/release-source-service";
 import { AnimeSourceBindingService } from "../source-bindings/anime-source-binding-service";
+import { MetadataHttpClient } from "../metadata/metadata-http-client";
 
 export class EpisodeReleasePreviewService {
   constructor(private readonly repository: AppRepository) {}
@@ -32,7 +33,12 @@ export class EpisodeReleasePreviewService {
     const preferredFansubGroupId = preference?.fansubGroupId ?? anime.defaultFansubGroupId;
     const terms = buildAnimeReleaseSearchTerms(anime.anime);
     const bindingState = await new AnimeSourceBindingService(this.repository).getState(animeId, false);
-    const sourceService = new ReleaseSourceService(sources, fansubs);
+    const sourceService = new ReleaseSourceService(
+      sources,
+      fansubs,
+      new MetadataHttpClient(settings.network.metadataProxy),
+      this.repository
+    );
     const searchResults = [await sourceService.searchAnime(anime.anime, {
       animeId,
       episodeNo: episode.episodeNo,

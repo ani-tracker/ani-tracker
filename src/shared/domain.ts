@@ -147,10 +147,25 @@ export interface ReleaseSourceConfig {
   name: string;
   kind: SourceKind;
   enabled: boolean;
+  useProxy?: boolean;
+  requestIntervalMs?: number;
   baseUrl?: string;
   apiKey?: string;
   rssUrl?: string;
   tags?: string[];
+}
+
+export interface ReleaseSourceSyncState {
+  sourceId: string;
+  requestHost?: string;
+  lastRequestAt?: string;
+  requestFailureCount: number;
+  backoffUntil?: string;
+  lastSyncAttemptAt?: string;
+  lastSuccessfulSyncAt?: string;
+  lastSyncError?: string;
+  etag?: string;
+  lastModified?: string;
 }
 
 export interface ReleaseSourceMeta {
@@ -323,6 +338,11 @@ export interface AutomationSettings {
   fallbackWhenDefaultFansubMissing: "wait" | "candidate" | "notify_only";
 }
 
+export interface SourceSyncSettings {
+  enabled: boolean;
+  dailyTime: string;
+}
+
 export interface MediaSettings {
   ffprobePath: string;
   ffprobeTimeoutSeconds: number;
@@ -359,6 +379,7 @@ export interface AppSettings {
   players: PlayerProfile[];
   defaultPlayerProfileId?: string;
   automation: AutomationSettings;
+  sourceSync?: SourceSyncSettings;
   media: MediaSettings;
   desktop: DesktopSettings;
   network: NetworkSettings;

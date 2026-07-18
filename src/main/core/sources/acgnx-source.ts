@@ -3,19 +3,20 @@ import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { logger } from "../logger";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
+import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
+import type { ReleaseHttpClient } from "./mikan-source";
 
 const DEFAULT_ACGNX_BASE_URL = "https://share.acgnx.se/";
 const ACGNX_FETCH_TIMEOUT_MS = 10_000;
 
 export class AcgnxReleaseSource implements ReleaseSource {
-  constructor(public readonly config: ReleaseSourceConfig) {}
+  constructor(
+    public readonly config: ReleaseSourceConfig,
+    private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
+  ) {}
 
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
     const keyword = query.keyword.trim();
-    if (!keyword) {
-      return [];
-    }
-
     logger.info("ACGNX source search started", {
       sourceId: this.config.id,
       keyword,
@@ -47,7 +48,7 @@ export class AcgnxReleaseSource implements ReleaseSource {
 
     for (const url of buildSearchUrls(this.config.baseUrl ?? DEFAULT_ACGNX_BASE_URL, keyword)) {
       try {
-        const response = await fetchWithTimeout(url);
+        const response = await fetchWithTimeout(this.httpClient, url);
         if (!response.ok) {
           if (response.status === 404 || response.status === 405) {
             continue;
@@ -129,21 +130,15 @@ function withSearchKeyword(url: URL, keyword: string): URL {
   return next;
 }
 
-async function fetchWithTimeout(url: string): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ACGNX_FETCH_TIMEOUT_MS);
-
-  try {
-    return await fetch(url, {
-      signal: controller.signal,
-      headers: {
-        Accept: "application/json,text/html,application/xhtml+xml",
-        "User-Agent": DESKTOP_BROWSER_USER_AGENT
-      }
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+async function fetchWithTimeout(httpClient: ReleaseHttpClient, url: string): Promise<Response> {
+  return httpClient.fetch(url, {
+    source: "acgnx-release",
+    timeoutMs: ACGNX_FETCH_TIMEOUT_MS,
+    headers: {
+      Accept: "application/json,text/html,application/xhtml+xml",
+      "User-Agent": DESKTOP_BROWSER_USER_AGENT
+    }
+  });
 }
 
 function findRecordArray(payload: unknown): unknown[] {

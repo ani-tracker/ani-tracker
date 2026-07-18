@@ -3,6 +3,8 @@ import type { Anime, Release, ReleaseSourceConfig, SubtitlePreference } from "@s
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { logger } from "../logger";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
+import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
+import type { ReleaseHttpClient } from "./mikan-source";
 import { parseXml, textValue, toArray } from "./xml";
 
 const DEFAULT_ANIBT_BASE_URL = "https://anibt.net/";
@@ -63,7 +65,10 @@ interface AniBtRssItem {
 }
 
 export class AniBtReleaseSource implements ReleaseSource {
-  constructor(public readonly config: ReleaseSourceConfig) {}
+  constructor(
+    public readonly config: ReleaseSourceConfig,
+    private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
+  ) {}
 
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
     const keyword = query.keyword.trim();
@@ -144,7 +149,7 @@ export class AniBtReleaseSource implements ReleaseSource {
     const url = new URL("/api/bgm/search", this.config.baseUrl ?? DEFAULT_ANIBT_BASE_URL);
     url.searchParams.set("q", keyword);
 
-    const response = await fetchWithTimeout(url.toString(), {
+    const response = await fetchWithTimeout(this.httpClient, url.toString(), {
       headers: createAniBtHeaders(this.config, "application/json")
     });
 
@@ -187,7 +192,7 @@ export class AniBtReleaseSource implements ReleaseSource {
   }
 
   private async readFeed(url: string): Promise<Release[]> {
-    const response = await fetchWithTimeout(url, {
+    const response = await fetchWithTimeout(this.httpClient, url, {
       headers: createAniBtHeaders(this.config, "application/rss+xml,application/xml,text/xml")
     });
 
@@ -279,18 +284,12 @@ function mapAniBtItem(item: AniBtRssItem, config: ReleaseSourceConfig, index: nu
   };
 }
 
-async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), ANIBT_FETCH_TIMEOUT_MS);
-
-  try {
-    return await fetch(url, {
-      ...init,
-      signal: controller.signal
-    });
-  } finally {
-    clearTimeout(timeout);
-  }
+async function fetchWithTimeout(httpClient: ReleaseHttpClient, url: string, init: RequestInit): Promise<Response> {
+  return httpClient.fetch(url, {
+    ...init,
+    source: "anibt-release",
+    timeoutMs: ANIBT_FETCH_TIMEOUT_MS
+  });
 }
 
 function normalizeResolution(value?: string): Release["resolution"] {

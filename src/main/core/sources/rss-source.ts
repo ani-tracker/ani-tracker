@@ -79,6 +79,9 @@ export class RssReleaseSource implements ReleaseSource {
         "User-Agent": DESKTOP_BROWSER_USER_AGENT
       }
     });
+    if (response.status === 304) {
+      return [];
+    }
     if (!response.ok) {
       throw new Error(`RSS source failed: ${response.status} ${response.statusText}`);
     }

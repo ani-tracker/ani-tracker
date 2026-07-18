@@ -35,6 +35,8 @@ import type {
   RssSubscriptionReleaseQuery,
   RssSubscriptionReleaseResult,
   SelectPlayerExecutableInput,
+  SourceSyncRunResult,
+  SourceSyncSchedulerStatus,
   TorrentConnectionTestResult
 } from "@shared/contracts";
 import type { ImageCacheResolveResult } from "@shared/contracts";
@@ -76,6 +78,8 @@ declare global {
       listSources: () => Promise<ReleaseSourceConfig[]>;
       setSourceEnabled: (sourceId: string, enabled: boolean) => Promise<ReleaseSourceConfig[]>;
       upsertSource: (source: ReleaseSourceConfig) => Promise<ReleaseSourceConfig[]>;
+      getSourceSyncStatus: () => Promise<SourceSyncSchedulerStatus>;
+      syncSourcesNow: () => Promise<SourceSyncRunResult>;
       getAnimeSourceBindingState: (animeId: string, discoverCandidates?: boolean) => Promise<AnimeSourceBindingState>;
       confirmAnimeSourceBinding: (input: ConfirmAnimeSourceBindingInput) => Promise<AnimeSourceBindingState>;
       removeAnimeSourceBinding: (animeId: string, sourceId: string) => Promise<AnimeSourceBindingState>;

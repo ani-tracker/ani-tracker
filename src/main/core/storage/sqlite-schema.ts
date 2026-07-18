@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 9;
+export const SQLITE_SCHEMA_VERSION = 11;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -153,11 +153,27 @@ CREATE TABLE IF NOT EXISTS release_source (
   name TEXT NOT NULL,
   kind TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
+  use_proxy INTEGER NOT NULL DEFAULT 0,
+  request_interval_ms INTEGER NOT NULL DEFAULT 1000,
   base_url TEXT,
   api_key TEXT,
   rss_url TEXT,
   tags_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS release_source_sync_state (
+  source_id TEXT PRIMARY KEY REFERENCES release_source(id) ON DELETE CASCADE,
+  request_host TEXT,
+  last_request_at TEXT,
+  request_failure_count INTEGER NOT NULL DEFAULT 0,
+  backoff_until TEXT,
+  last_sync_attempt_at TEXT,
+  last_successful_sync_at TEXT,
+  last_sync_error TEXT,
+  etag TEXT,
+  last_modified TEXT,
   updated_at TEXT NOT NULL
 );
 

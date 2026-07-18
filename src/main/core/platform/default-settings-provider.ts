@@ -67,6 +67,10 @@ export abstract class DefaultSettingsProvider {
         autoDownloadEnabledGlobally: true,
         fallbackWhenDefaultFansubMissing: "wait"
       },
+      sourceSync: {
+        enabled: true,
+        dailyTime: "09:00"
+      },
       media: {
         ffprobePath: "ffprobe",
         ffprobeTimeoutSeconds: 20,

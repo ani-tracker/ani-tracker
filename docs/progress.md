@@ -104,6 +104,20 @@
 
 ### 资源来源和匹配
 
+- 已实现下载源网络策略：
+  - 每个来源独立保存代理开关和 250ms 至 60 秒的最小采集间隔。
+  - Mikan、DMHY、AniBT、ACGNX 默认开启来源代理并使用 1500ms 间隔，Prowlarr 默认直连并使用 250ms 间隔。
+  - RSS、Torznab、DMHY、Mikan、AniBT、ACGNX 已统一接入同一 HTTP 客户端，不再存在绕过代理的全局 `fetch`。
+  - 同域名并发数为 1，间隔增加最多 20% 抖动，相同并发请求会合并。
+  - 403/429 遵守 `Retry-After` 并按 1、5、15、30 分钟退避；连续失败 3 次至少熔断 30 分钟。
+  - 请求时间、失败次数和退避截止时间保存到 SQLite，应用重启后继续生效。
+- 已实现每日下载源增量同步：
+  - 默认每天本地时间 09:00 执行，可在下载源页面启停、修改时间或立即同步。
+  - 应用启动时按来源检查当天成功记录，仅补跑未同步或失败来源。
+  - RSS 使用 ETag/Last-Modified 条件请求，其余来源按稳定资源 ID 增量写入。
+  - 资源缓存跨重启参与搜索兜底，并自动清理 90 天前数据。
+  - 部分来源失败不会重复采集成功来源，失败摘要写入通知中心。
+
 - 已实现 RSS 和 Torznab release source adapter。
 - 已实现 DMHY / 动漫花园 site adapter：
   - 搜索 `share.dmhy.org/topics/list`。
@@ -291,7 +305,7 @@ git diff --check
 说明：
 
 - `pnpm.cmd run test:parsers` 当前会编译测试到 `out/test-node`，该目录已在 `.gitignore` 中。
-- Node 测试当前共 `193` 项，包含远程 PWA 目录选择、图片缓存、外部播放票据、PotPlayer/IINA 协议、Range/HLS、非法目标拒绝和桌面/远程缓存复用覆盖。
+- Node 测试当前共 `199` 项，包含来源限速/请求合并、跨重启退避、每日补跑、SQLite 增量缓存、远程 PWA、图片缓存和媒体播放覆盖。
 - 主进程和渲染进程 TypeScript 类型检查通过。
 - 主进程、preload 和 renderer 生产构建通过；完整构建的 qBittorrent 资源准备步骤受运行中进程锁定，待进程退出后复验。
 - `git diff --check` 通过。

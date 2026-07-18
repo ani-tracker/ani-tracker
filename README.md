@@ -9,6 +9,8 @@ Ani Tracker 是一个本地桌面追番工具，围绕新番发现、追番规�
 - 新番发现：按年份、季度和月份采集番剧，合并 Bangumi、AniList、Mikan 等元数据。
 - 我的追番：管理状态、集数、字幕组、自动下载、分辨率、编码、位深、字幕语言和目录偏好。
 - 资源搜索：搜索 RSS、Torznab、DMHY、Mikan、AniBT、ACGNX，自动补全集数并关联我的追番。
+- 来源保护：每个下载源可独立选择代理和采集间隔，同域名串行请求并对 403/429 自动退避。
+- 增量同步：默认每天 09:00 同步启用来源，错过后在当天首次启动时补跑，结果跨重启复用。
 - 候选评分：综合番剧、集数、字幕组、分辨率、编码、位深、字幕语言和 seeders 选择资源。
 - 下载管理：支持 qBittorrent Web API、Enhanced JSON、真实 hash 确认、托管 qBittorrent-nox、进度和文件优先级。
 - 媒体扫描：通过标题、文件名和 ffprobe 提取容器、分辨率、编码、位深、音轨和字幕轨。
@@ -33,6 +35,8 @@ Desktop Renderer / Remote PWA
 
 - `MetadataProvider`：Bangumi、AniList、Mikan 等番剧元数据来源。
 - `ReleaseSource`：RSS、Torznab 和站点资源适配器。
+- `SourceRequestScheduler`：下载源代理选择、域名限速、请求合并、退避和熔断。
+- `SourceSyncScheduler`：每日增量采集、启动补跑和持久化资源缓存。
 - `TorrentEngine`：qBittorrent 兼容引擎和内置引擎占位。
 - `RemoteHttpGateway`：配对、RPC、远程静态页面、媒体和图片缓存路由。
 - `ImageCacheService`：桌面协议与远程 HTTP 共用的持久图片缓存。
@@ -124,6 +128,16 @@ pnpm.cmd build
 
 完整构建会更新 `out/qbittorrent`。若 qBittorrent-nox 正在从该目录运行，应先正常退出 Ani Tracker，否则 Windows 可能返回 `EBUSY` 文件占用错误。
 
+## 下载源网络与同步
+
+- “下载源”页面为每个来源提供“使用全局代理”和最小采集间隔设置，范围为 250ms 到 60 秒。
+- Mikan、DMHY、AniBT、ACGNX 默认开启来源代理、间隔 1500ms；Prowlarr 默认直连、间隔 250ms；自定义来源默认直连、间隔 1500ms。
+- 来源代理依赖页面顶部的全局代理配置；全局模式为“关闭”时，即使来源开关已开启也会直连。
+- 同一域名最多执行一个请求，实际间隔会增加最多 20% 随机抖动；相同并发请求只访问源站一次。
+- 403/429 按 1、5、15、30 分钟退避，遵守服务端 `Retry-After`；连续失败 3 次后至少暂停 30 分钟。退避状态保存在 SQLite，重启不会清空。
+- 每日增量同步默认在本地时间 09:00 执行，可修改时间或关闭；当天尚未成功的来源会在应用启动后立即补跑。
+- RSS 使用 `ETag`、`Last-Modified` 条件请求；其他来源按资源稳定 ID 增量写入。资源缓存保留 90 天，并作为来源临时不可用时的搜索兜底。
+
 ## 远程 PWA
 
 1. 使用 `pnpm.cmd dev` 或 `pnpm.cmd preview` 启动完整应用。
@@ -184,6 +198,12 @@ curl.exe -k -X POST "https://<主机IP>:18083/api/images/resolve" `
 - 远程 HTTPS 默认端口为 `18083`，可在设置页修改。
 - 托管 qBittorrent 默认使用 `18080`，被占用时会选择其他高位端口。
 - 切换开发和预览进程前应正常退出已有 Ani Tracker 实例。
+
+### 下载源返回 403 或 429
+
+- 先在“下载源”顶部配置系统代理或手动代理，再为对应公网来源开启“使用全局代理”。
+- 查看来源是否显示退避状态；保护期内不要反复强制刷新，应用会在到期后恢复请求。
+- AniBT、DMHY 等公网来源可能启用 Cloudflare，频繁多关键词搜索会触发临时风控；应用会合并请求并持久化退避，但不能绕过站点访问规则。
 
 ## 项目文档
 

@@ -1,6 +1,7 @@
-import { KeyRound, Network, Pencil, PlugZap, Plus, Save, X } from "lucide-react";
+import { KeyRound, Network, Pencil, PlugZap, Plus, RefreshCw, Save, Timer, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
+import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import { Switch } from "@/components/ui/switch";
 import { appApi } from "@/lib/api";
 import { useAsyncData } from "@/lib/use-async-data";
 import type { AppSettings, MetadataProxySettings, ReleaseSourceConfig, SourceKind } from "@shared/domain";
+import type { SourceSyncSchedulerStatus } from "@shared/contracts";
 
 const kindText = {
   rss: "RSS",
@@ -26,9 +28,14 @@ const kindText = {
 export function SourcesPage() {
   const { data, error: sourcesError, loading } = useAsyncData(appApi.listSources, []);
   const { data: settingsData, error: settingsError, loading: settingsLoading } = useAsyncData(appApi.getSettings, []);
+  const { data: syncStatusData, error: syncStatusError, loading: syncStatusLoading } = useAsyncData(appApi.getSourceSyncStatus, []);
   const [sources, setSources] = useState<ReleaseSourceConfig[]>([]);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
+  const [intervalDrafts, setIntervalDrafts] = useState<Record<string, string>>({});
+  const [syncStatus, setSyncStatus] = useState<SourceSyncSchedulerStatus | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncTimeDraft, setSyncTimeDraft] = useState("09:00");
   const [proxyEditing, setProxyEditing] = useState(false);
   const [proxyDraft, setProxyDraft] = useState<MetadataProxySettings>(defaultMetadataProxySettings);
   const [proxySaveState, setProxySaveState] = useState<"idle" | "saving" | "saved">("idle");
@@ -44,6 +51,10 @@ export function SourcesPage() {
     if (data) {
       setSources(data);
       setCredentials(Object.fromEntries(data.map((source) => [source.id, source.apiKey ?? ""])));
+      setIntervalDrafts(Object.fromEntries(data.map((source) => [
+        source.id,
+        String(normalizeSourceInterval(source.requestIntervalMs))
+      ])));
     }
   }, [data]);
 
@@ -51,8 +62,15 @@ export function SourcesPage() {
     if (settingsData) {
       setSettings(settingsData);
       setProxyDraft(getMetadataProxySettings(settingsData));
+      setSyncTimeDraft(getSourceSyncSettings(settingsData).dailyTime);
     }
   }, [settingsData]);
+
+  useEffect(() => {
+    if (syncStatusData) {
+      setSyncStatus(syncStatusData);
+    }
+  }, [syncStatusData]);
 
   async function toggleSource(source: ReleaseSourceConfig) {
     const updated = await appApi.setSourceEnabled(source.id, !source.enabled);
@@ -67,6 +85,23 @@ export function SourcesPage() {
     setSources(updated);
   }
 
+  async function toggleSourceProxy(source: ReleaseSourceConfig) {
+    const updated = await appApi.upsertSource({
+      ...source,
+      useProxy: !(source.useProxy ?? false),
+      requestIntervalMs: normalizeSourceInterval(source.requestIntervalMs)
+    });
+    setSources(updated);
+  }
+
+  async function saveSourceInterval(source: ReleaseSourceConfig) {
+    const requestIntervalMs = normalizeSourceInterval(Number(intervalDrafts[source.id]));
+    const updated = await appApi.upsertSource({ ...source, requestIntervalMs });
+    setSources(updated);
+    setIntervalDrafts((current) => ({ ...current, [source.id]: String(requestIntervalMs) }));
+    toast.success("采集策略已保存");
+  }
+
   async function addSource() {
     const name = draft.name.trim();
     const url = draft.url.trim();
@@ -79,6 +114,8 @@ export function SourcesPage() {
       name,
       kind: draft.kind,
       enabled: true,
+      useProxy: false,
+      requestIntervalMs: 1_500,
       rssUrl: draft.kind === "rss" ? url : undefined,
       baseUrl: draft.kind !== "rss" ? url : undefined,
       apiKey: draft.kind !== "rss" ? draft.apiKey.trim() || undefined : undefined,
@@ -130,7 +167,40 @@ export function SourcesPage() {
     window.setTimeout(() => setProxySaveState("idle"), 1200);
   }
 
-  if (loading || settingsLoading) {
+  async function updateSourceSyncSettings(patch: { enabled?: boolean; dailyTime?: string }) {
+    if (!settings) {
+      return;
+    }
+    const current = getSourceSyncSettings(settings);
+    const saved = await appApi.updateSettings({
+      sourceSync: {
+        enabled: patch.enabled ?? current.enabled,
+        dailyTime: patch.dailyTime ?? current.dailyTime
+      }
+    });
+    setSettings(saved);
+    setSyncTimeDraft(getSourceSyncSettings(saved).dailyTime);
+    setSyncStatus(await appApi.getSourceSyncStatus());
+  }
+
+  async function syncSourcesNow() {
+    setSyncing(true);
+    try {
+      const result = await appApi.syncSourcesNow();
+      setSyncStatus(await appApi.getSourceSyncStatus());
+      if (result.errors.length) {
+        toast.warning(`同步完成，${result.errors.length} 个来源失败`);
+      } else {
+        toast.success(`同步完成，新增 ${result.addedReleaseCount} 条资源`);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "下载源同步失败");
+    } finally {
+      setSyncing(false);
+    }
+  }
+
+  if (loading || settingsLoading || syncStatusLoading) {
     return (
       <div className="flex flex-col gap-5" aria-label="正在加载下载源">
         <div className="flex flex-col gap-2">
@@ -148,7 +218,7 @@ export function SourcesPage() {
     );
   }
 
-  const loadingError = sourcesError ?? settingsError;
+  const loadingError = sourcesError ?? settingsError ?? syncStatusError;
   if (loadingError) {
     return (
       <Alert variant="destructive">
@@ -169,7 +239,7 @@ export function SourcesPage() {
         <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div className="flex min-w-0 flex-col gap-1.5">
             <CardTitle>元数据代理</CardTitle>
-            <CardDescription>仅用于新番发现中的 AniList、Bangumi 和 Mikan 元数据采集。</CardDescription>
+            <CardDescription>用于元数据采集，以及已开启“使用全局代理”的下载源请求。</CardDescription>
           </div>
           <Button className="w-full sm:w-auto" variant="outline" onClick={startEditProxy} disabled={!settings || proxySaveState === "saving"}>
             <Pencil data-icon="inline-start" />
@@ -273,6 +343,61 @@ export function SourcesPage() {
       </Card>
 
       <Card>
+        <CardHeader className="gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <CardTitle>每日增量同步</CardTitle>
+            <CardDescription>按来源保存同步状态；当天未成功时会在应用启动后自动补跑。</CardDescription>
+          </div>
+          <Button
+            className="w-full sm:w-auto"
+            variant="outline"
+            disabled={syncing || syncStatus?.inFlight}
+            onClick={() => void syncSourcesNow()}
+          >
+            <RefreshCw data-icon="inline-start" />
+            {syncing || syncStatus?.inFlight ? "同步中" : "立即同步"}
+          </Button>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-5">
+          <FieldGroup className="grid gap-4 sm:grid-cols-2">
+            <Field className="justify-between" orientation="horizontal">
+              <FieldLabel htmlFor="source-sync-enabled">启用每日同步</FieldLabel>
+              <Switch
+                id="source-sync-enabled"
+                checked={getSourceSyncSettings(settings).enabled}
+                onCheckedChange={(enabled) => void updateSourceSyncSettings({ enabled })}
+              />
+            </Field>
+            <Field data-disabled={!getSourceSyncSettings(settings).enabled}>
+              <FieldLabel htmlFor="source-sync-time">每日同步时间</FieldLabel>
+              <div className="flex min-w-0 gap-2">
+                <Input
+                  id="source-sync-time"
+                  type="time"
+                  disabled={!getSourceSyncSettings(settings).enabled}
+                  value={syncTimeDraft}
+                  onChange={(event) => setSyncTimeDraft(event.target.value)}
+                />
+                <Button
+                  variant="outline"
+                  disabled={!getSourceSyncSettings(settings).enabled}
+                  onClick={() => void updateSourceSyncSettings({ dailyTime: syncTimeDraft })}
+                >
+                  <Save data-icon="inline-start" />
+                  保存
+                </Button>
+              </div>
+            </Field>
+          </FieldGroup>
+          <div className="grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-3">
+            <ProxySummaryItem icon={<Timer className="size-4" />} label="计划时间" value={getSourceSyncSettings(settings).dailyTime} />
+            <ProxySummaryItem label="上次完成" value={formatOptionalDateTime(syncStatus?.lastRunAt)} />
+            <ProxySummaryItem label="下次同步" value={formatOptionalDateTime(syncStatus?.nextRunAt)} />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader>
           <CardTitle>添加下载源</CardTitle>
           <CardDescription>支持通用 RSS / Torznab；站点适配器已内置动漫花园、蜜柑计划、AniBT 和 ACGNX 解析。</CardDescription>
@@ -356,8 +481,42 @@ export function SourcesPage() {
             <CardContent className="flex flex-col gap-4">
               <div className="flex flex-wrap gap-2">
                 <Badge tone="blue">{kindText[source.kind]}</Badge>
+                <Badge tone={source.useProxy && getMetadataProxySettings(settings).mode === "off" ? "amber" : "neutral"}>
+                  {source.useProxy
+                    ? getMetadataProxySettings(settings).mode === "off" ? "代理待配置" : "使用代理"
+                    : "直连"}
+                </Badge>
+                <Badge>{normalizeSourceInterval(source.requestIntervalMs)}ms</Badge>
                 {source.tags?.map((tag) => <Badge key={tag}>{tag}</Badge>)}
               </div>
+              <FieldGroup className="gap-3">
+                <Field className="justify-between" orientation="horizontal">
+                  <FieldLabel htmlFor={`source-proxy-${source.id}`}>使用全局代理</FieldLabel>
+                  <Switch
+                    id={`source-proxy-${source.id}`}
+                    checked={source.useProxy ?? false}
+                    onCheckedChange={() => void toggleSourceProxy(source)}
+                  />
+                </Field>
+                <Field>
+                  <FieldLabel htmlFor={`source-interval-${source.id}`}>最小采集间隔（毫秒）</FieldLabel>
+                  <div className="flex min-w-0 gap-2">
+                    <Input
+                      id={`source-interval-${source.id}`}
+                      type="number"
+                      min={250}
+                      max={60000}
+                      step={250}
+                      value={intervalDrafts[source.id] ?? "1500"}
+                      onChange={(event) => setIntervalDrafts({ ...intervalDrafts, [source.id]: event.target.value })}
+                    />
+                    <Button variant="outline" onClick={() => void saveSourceInterval(source)}>
+                      <Save data-icon="inline-start" />
+                      保存
+                    </Button>
+                  </div>
+                </Field>
+              </FieldGroup>
               {canUseCredential(source) ? (
                 <FieldGroup className="gap-3 xl:flex-row xl:items-end">
                   <Field className="min-w-0 flex-1">
@@ -425,6 +584,29 @@ const defaultMetadataProxySettings: MetadataProxySettings = {
 
 function getMetadataProxySettings(settings: AppSettings | null): MetadataProxySettings {
   return settings?.network?.metadataProxy ?? defaultMetadataProxySettings;
+}
+
+function getSourceSyncSettings(settings: AppSettings | null): { enabled: boolean; dailyTime: string } {
+  const dailyTime = settings?.sourceSync?.dailyTime;
+  return {
+    enabled: settings?.sourceSync?.enabled ?? true,
+    dailyTime: /^([01]\d|2[0-3]):[0-5]\d$/.test(dailyTime ?? "") ? dailyTime! : "09:00"
+  };
+}
+
+function normalizeSourceInterval(value?: number): number {
+  if (!Number.isFinite(value)) {
+    return 1_500;
+  }
+  return Math.max(250, Math.min(60_000, Math.round(value!)));
+}
+
+function formatOptionalDateTime(value?: string): string {
+  if (!value) {
+    return "--";
+  }
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "--" : date.toLocaleString();
 }
 
 function normalizeMetadataProxyDraft(draft: MetadataProxySettings): MetadataProxySettings {

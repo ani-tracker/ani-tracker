@@ -64,6 +64,14 @@ The qB-compatible state model must include:
 - per-file progress
 - selected file priority
 
+## Release Source Network Strategy
+
+- Every release source owns a proxy switch and minimum request interval; the global metadata proxy supplies the actual system or manual proxy transport.
+- Requests are serialized per host, deduplicated while in flight, and delayed with bounded random jitter.
+- HTTP 403/429 responses honor `Retry-After` and enter persisted exponential backoff; repeated failures open a 30-minute circuit.
+- A daily local-time scheduler incrementally synchronizes enabled sources at 09:00 by default. Startup immediately catches up sources without a successful local-day record.
+- RSS uses ETag/Last-Modified validation. Other adapters upsert stable release IDs into SQLite, with a 90-day cache retention window.
+
 Download submission follows a confirmed-task workflow:
 
 1. Prefer magnet URLs; for HTTP torrent URLs, reuse the application network/proxy layer to download and validate bencode metadata before multipart upload.
