@@ -68,10 +68,16 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   const first = createRepositoryRuntime(fixture.options);
   await first.initialize();
   const item = createTestMyAnime();
-  await first.repository.upsertMyAnime(item);
+  await first.repository.upsertMyAnime({
+    ...item,
+    preferredBitDepth: 10,
+    preferredSubtitleLanguages: ["chs", "cht"]
+  });
   const timestamp = new Date().toISOString();
   await first.repository.upsertMyAnime({
     ...item,
+    preferredBitDepth: 10,
+    preferredSubtitleLanguages: ["chs", "cht"],
     rssSubscriptions: [
       {
         id: "rss-sqlite-test",
@@ -79,7 +85,7 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
         name: "蜜柑计划",
         url: "https://mikanani.me/RSS/Bangumi?bangumiId=3941",
         enabled: true,
-        preferredSubtitle: "cht",
+        preferredSubtitleLanguages: ["cht", "jpn"],
         refreshIntervalMinutes: 20,
         lastFetchedAt: timestamp,
         createdAt: timestamp,
@@ -96,9 +102,40 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   assert.equal(restored?.rssSubscriptions?.[0].name, "蜜柑计划");
   assert.equal(restored?.rssSubscriptions?.[0].url, "https://mikanani.me/RSS/Bangumi?bangumiId=3941");
   assert.equal(restored?.rssSubscriptions?.[0].enabled, true);
-  assert.equal(restored?.rssSubscriptions?.[0].preferredSubtitle, "cht");
+  assert.deepEqual(restored?.preferredSubtitleLanguages, ["chs", "cht"]);
+  assert.equal(restored?.preferredBitDepth, 10);
+  assert.deepEqual(restored?.rssSubscriptions?.[0].preferredSubtitleLanguages, ["cht", "jpn"]);
   assert.equal(restored?.rssSubscriptions?.[0].refreshIntervalMinutes, 20);
   assert.equal(restored?.rssSubscriptions?.[0].lastFetchedAt, timestamp);
+  second.close();
+});
+
+test("SQLite 重启后恢复下载任务技术信息快照", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const item = createTestMyAnime();
+  await first.repository.upsertMyAnime(item);
+  await first.repository.upsertDownloadTask({
+    ...createDownloadTask(item.anime.id, "metadata-snapshot", 2),
+    name: "[字幕组] 测试番 - 02 [1080p][HEVC][10bit][简繁]",
+    resolution: "1080p",
+    declaredVideoCodec: "HEVC",
+    normalizedVideoCodec: "H.265/HEVC",
+    bitDepth: 10,
+    subtitleLanguages: ["chs", "cht"],
+    subtitle: "multi"
+  });
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const restored = (await second.repository.listDownloads()).find((task) => task.id === "metadata-snapshot");
+  assert.equal(restored?.resolution, "1080p");
+  assert.equal(restored?.normalizedVideoCodec, "H.265/HEVC");
+  assert.equal(restored?.bitDepth, 10);
+  assert.deepEqual(restored?.subtitleLanguages, ["chs", "cht"]);
+  assert.equal(restored?.subtitle, "multi");
   second.close();
 });
 

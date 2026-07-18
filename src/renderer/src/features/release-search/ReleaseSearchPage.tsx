@@ -16,6 +16,7 @@ import {
   SelectValue
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { formatBytes, formatDateTime } from "@/lib/format";
 import { buildAnimeReleaseSearchTerms } from "@shared/anime-release-search";
@@ -138,7 +139,7 @@ export function ReleaseSearchPage() {
     <div className="flex min-w-0 flex-col gap-5">
       <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-normal">资源搜索</h1>
-        <p className="mt-1 text-sm text-muted-foreground">统一搜索已启用的 RSS、Torznab 和站点适配器，结果会自动解析字幕组、集数、编码和清晰度。</p>
+        <p className="mt-1 text-sm text-muted-foreground">统一搜索已启用的 RSS、Torznab 和站点适配器，结果会自动解析字幕语言、编码、位深和清晰度。</p>
       </div>
 
       {message && (
@@ -315,9 +316,7 @@ export function ReleaseSearchPage() {
                         <Badge className="max-w-full truncate">{release.fansubName ?? release.fansubGroupId}</Badge>
                       )}
                       {release.episodeNo && <Badge>第 {release.episodeNo} 集</Badge>}
-                      {release.resolution && <Badge>{release.resolution}</Badge>}
-                      {release.normalizedVideoCodec && <Badge tone="green">{release.normalizedVideoCodec}</Badge>}
-                      {release.subtitle && <Badge>{release.subtitle}</Badge>}
+                      <ReleaseMetadataBadges metadata={release} />
                       {release.size && <Badge>{formatBytes(release.size)}</Badge>}
                       {typeof release.seeders === "number" && (
                         <Badge tone={release.seeders > 0 ? "green" : "neutral"}>{release.seeders} 做种</Badge>

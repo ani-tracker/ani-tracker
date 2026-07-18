@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { MyAnime, Release } from "@shared/domain";
-import { rankReleases } from "../release-matcher";
+import { evaluateAutomaticDownload, rankReleases } from "../release-matcher";
 
 test("rankReleases 连集范围命中低于单集精确命中", () => {
   const anime = createMyAnime();
@@ -29,6 +29,35 @@ test("rankReleases 自动匹配排除旧季度和无目标集数的合集", () =
   const ranked = rankReleases([oldBatch, unknownBatch, current], { anime, episodeNo: 2 });
 
   assert.deepEqual(ranked.map((item) => item.release.id), ["current"]);
+});
+
+test("rankReleases 将编码、位深和多语言覆盖作为独立偏好评分", () => {
+  const anime = createMyAnime();
+  anime.preferredCodec = "H.265/HEVC";
+  anime.preferredBitDepth = 10;
+  anime.preferredSubtitleLanguages = ["chs", "cht"];
+  anime.preferredSubtitle = undefined;
+  const preferred = createRelease("preferred", "[字幕组] 测试番 - 02 [1080p][HEVC][10bit][简繁]");
+  const fallback = createRelease("fallback", "[字幕组] 测试番 - 02 [1080p][HEVC][8bit][简体]");
+
+  const ranked = rankReleases([fallback, preferred], { anime, episodeNo: 2 });
+
+  assert.equal(ranked[0].release.id, "preferred");
+  assert.equal(ranked[0].preferenceScore - ranked[1].preferenceScore, 11);
+  assert.equal(evaluateAutomaticDownload(ranked).accepted, true);
+});
+
+test("evaluateAutomaticDownload 拒绝近似并列的资源版本", () => {
+  const anime = createMyAnime();
+  anime.preferredSubtitleLanguages = [];
+  anime.preferredSubtitle = undefined;
+  const first = createRelease("first", "[字幕组] 测试番 - 02 [1080p][HEVC][简体]");
+  const second = createRelease("second", "[字幕组] 测试番 - 02 [1080p][HEVC][繁体]");
+  const ranked = rankReleases([first, second], { anime, episodeNo: 2 });
+
+  const decision = evaluateAutomaticDownload(ranked);
+  assert.equal(decision.accepted, false);
+  assert.match(decision.reason, /领先不足/);
 });
 
 /** 创建匹配器测试用追番。 */

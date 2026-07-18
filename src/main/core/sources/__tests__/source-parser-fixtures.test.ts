@@ -96,7 +96,8 @@ test("parseDmhyList 解析资源行中的标题、下载地址和媒体字段", 
   assert.equal(releases[0].episodeNo, 1);
   assert.equal(releases[0].resolution, "1080p");
   assert.equal(releases[0].normalizedVideoCodec, "H.265/HEVC");
-  assert.equal(releases[0].subtitle, "chs");
+  assert.equal(releases[0].subtitle, "multi");
+  assert.deepEqual(releases[0].subtitleLanguages, ["chs", "jpn"]);
   assert.equal(releases[0].size, 1342177280);
 });
 
@@ -479,7 +480,8 @@ test("RssReleaseSource 解析 RSS item 的下载地址、体积和媒体字段",
   assert.equal(releases[0].episodeNo, 4);
   assert.equal(releases[0].resolution, "1080p");
   assert.equal(releases[0].normalizedVideoCodec, "H.265/HEVC");
-  assert.equal(releases[0].subtitle, "cht");
+  assert.equal(releases[0].subtitle, "multi");
+  assert.deepEqual(releases[0].subtitleLanguages, ["cht", "jpn"]);
 });
 
 test("RssReleaseSource 优先使用 enclosure 作为蜜柑 RSS 下载地址", async (t) => {

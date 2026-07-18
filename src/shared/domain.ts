@@ -23,7 +23,11 @@ export type DownloadStatus =
 
 export type Season = "winter" | "spring" | "summer" | "fall";
 
-export type SubtitlePreference = "chs" | "cht" | "multi" | "jpn" | "eng";
+export type SubtitleLanguage = "chs" | "cht" | "jpn" | "eng";
+
+export type SubtitlePreference = SubtitleLanguage | "multi";
+
+export type VideoBitDepth = 8 | 10 | 12;
 
 export type NormalizedVideoCodec = "H.264/AVC" | "H.265/HEVC" | "AV1" | "VP9" | "Unknown";
 
@@ -72,6 +76,9 @@ export interface MyAnime {
   rssSubscriptions?: AnimeRssSubscription[];
   preferredResolution?: "720p" | "1080p" | "2160p";
   preferredCodec?: NormalizedVideoCodec;
+  preferredBitDepth?: VideoBitDepth;
+  preferredSubtitleLanguages?: SubtitleLanguage[];
+  /** 兼容旧数据，读取时会迁移为 preferredSubtitleLanguages。 */
   preferredSubtitle?: SubtitlePreference;
   addedAt: string;
   updatedAt: string;
@@ -83,6 +90,8 @@ export interface AnimeRssSubscription {
   name: string;
   url: string;
   enabled: boolean;
+  preferredSubtitleLanguages?: SubtitleLanguage[];
+  /** 兼容旧数据，读取时会迁移为 preferredSubtitleLanguages。 */
   preferredSubtitle?: SubtitlePreference;
   refreshIntervalMinutes?: number;
   lastFetchedAt?: string;
@@ -174,6 +183,8 @@ export interface Release {
   resolution?: "720p" | "1080p" | "2160p";
   declaredVideoCodec?: string;
   normalizedVideoCodec?: NormalizedVideoCodec;
+  bitDepth?: VideoBitDepth;
+  subtitleLanguages?: SubtitleLanguage[];
   subtitle?: SubtitlePreference;
   publishedAt: string;
   seeders?: number;
@@ -199,6 +210,12 @@ export interface DownloadTask {
   episodeNo?: number;
   fansubGroupId?: string;
   fansubName?: string;
+  resolution?: Release["resolution"];
+  declaredVideoCodec?: string;
+  normalizedVideoCodec?: NormalizedVideoCodec;
+  bitDepth?: VideoBitDepth;
+  subtitleLanguages?: SubtitleLanguage[];
+  subtitle?: SubtitlePreference;
   correlationTag?: string;
   engine: TorrentEngineKind;
   torrentHash?: string;

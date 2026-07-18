@@ -8,15 +8,16 @@ import type {
   FansubGroup,
   MyAnime,
   Release,
-  SubtitlePreference
+  SubtitleLanguage
 } from "@shared/domain";
 import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
+import { getSubtitleCoverage, resolveSubtitleLanguages } from "@shared/release-metadata";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
 import { addReleaseTorrentToEngine } from "../downloads/torrent-resource-adder";
 import { logger } from "../logger";
 import { resolveAnimeDownloadPath } from "../downloads/download-path-resolver";
 import type { AppRepository } from "../repositories/app-repository";
-import { rankReleases, type ReleaseMatchResult } from "../releases/release-matcher";
+import { evaluateAutomaticDownload, rankReleases, type ReleaseMatchResult } from "../releases/release-matcher";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { MetadataHttpClient } from "../metadata/metadata-http-client";
 import { ReleaseSourceService } from "../sources/release-source-service";
@@ -169,8 +170,6 @@ export class AutomationRunService {
             );
           }
 
-          const best = candidates[0]?.release;
-
           if (ranked.length && !candidates.length && preferredFansubGroupId) {
             logger.info("Automation run waiting for preferred fansub release", {
               animeId: anime.anime.id,
@@ -181,7 +180,7 @@ export class AutomationRunService {
             });
           }
 
-          if (!best) {
+          if (!candidates.length) {
             result.skipped.push({
               animeId: anime.anime.id,
               animeTitle: anime.anime.title,
@@ -195,6 +194,36 @@ export class AutomationRunService {
             });
             continue;
           }
+
+          const decision = evaluateAutomaticDownload(candidates);
+          if (!decision.accepted) {
+            const bestCandidate = candidates[0];
+            logger.info("自动下载候选未通过可信度门槛", {
+              animeId: anime.anime.id,
+              episodeId: episode.id,
+              episodeNo: episode.episodeNo,
+              reason: decision.reason,
+              score: bestCandidate?.score,
+              matchScore: bestCandidate?.matchScore,
+              preferenceScore: bestCandidate?.preferenceScore,
+              availabilityScore: bestCandidate?.availabilityScore,
+              warnings: bestCandidate?.warnings
+            });
+            result.skipped.push({
+              animeId: anime.anime.id,
+              animeTitle: anime.anime.title,
+              episodeId: episode.id,
+              episodeNo: episode.episodeNo,
+              reason: decision.reason
+            });
+            await this.repository.upsertEpisode({
+              ...episode,
+              status: "matched"
+            });
+            continue;
+          }
+
+          const best = candidates[0].release;
 
           if (!best.magnetUrl && !best.torrentUrl) {
             result.skipped.push({
@@ -232,6 +261,12 @@ export class AutomationRunService {
             episodeNo: episode.episodeNo,
             fansubGroupId: best.fansubGroupId,
             fansubName: best.fansubName,
+            resolution: best.resolution,
+            declaredVideoCodec: best.declaredVideoCodec,
+            normalizedVideoCodec: best.normalizedVideoCodec,
+            bitDepth: best.bitDepth,
+            subtitleLanguages: best.subtitleLanguages,
+            subtitle: best.subtitle,
             name: best.title
           });
           await this.repository.upsertEpisode({
@@ -384,14 +419,14 @@ async function fetchRssSubscriptionReleases(
   const relevantReleases = isExactMikanSubscription(rssUrl, input.anime)
     ? rssReleases
     : rssReleases.filter((release) => matchesAnimeReleaseTitle(release.title, searchTerms));
-  const preferredSubtitle = subscription.preferredSubtitle ?? input.anime.preferredSubtitle;
+  const preferredSubtitleLanguages = resolveSubscriptionSubtitleLanguages(subscription, input.anime);
 
   return sortRssSubscriptionReleases(
     relevantReleases.map((release) => ({
       ...enrichReleaseFromTitle(release, input.fansubs),
       animeId: input.anime.anime.id
     })),
-    preferredSubtitle
+    preferredSubtitleLanguages
   );
 }
 
@@ -451,11 +486,11 @@ function isExactMikanSubscription(rssUrl: string, anime: MyAnime): boolean {
     url.searchParams.get("bangumiId") === mikanId;
 }
 
-/** 按订阅语言偏好和发布时间排列 RSS 资源。 */
-function sortRssSubscriptionReleases(releases: Release[], preferredSubtitle?: SubtitlePreference): Release[] {
+/** 按订阅语言覆盖率和发布时间排列 RSS 资源。 */
+function sortRssSubscriptionReleases(releases: Release[], preferredSubtitleLanguages: SubtitleLanguage[]): Release[] {
   return [...releases].sort((left, right) => {
-    const leftRank = getSubtitleSortRank(left.subtitle, preferredSubtitle);
-    const rightRank = getSubtitleSortRank(right.subtitle, preferredSubtitle);
+    const leftRank = getSubtitleSortRank(left, preferredSubtitleLanguages);
+    const rightRank = getSubtitleSortRank(right, preferredSubtitleLanguages);
     if (leftRank !== rightRank) {
       return leftRank - rightRank;
     }
@@ -464,21 +499,23 @@ function sortRssSubscriptionReleases(releases: Release[], preferredSubtitle?: Su
   });
 }
 
-/** 计算 RSS 资源在当前语言偏好下的排序等级。 */
-function getSubtitleSortRank(subtitle?: SubtitlePreference, preferredSubtitle?: SubtitlePreference): number {
-  if (!preferredSubtitle) {
+/** 计算 RSS 资源在当前多语言偏好下的排序等级。 */
+function getSubtitleSortRank(release: Release, preferredSubtitleLanguages: SubtitleLanguage[]): number {
+  if (!preferredSubtitleLanguages.length) {
     return 0;
   }
-  if (subtitle === preferredSubtitle) {
-    return 0;
-  }
-  if (subtitle === "multi") {
-    return 1;
-  }
-  if (subtitle) {
-    return 2;
-  }
-  return 3;
+  return 1 - getSubtitleCoverage(release, preferredSubtitleLanguages);
+}
+
+/** RSS 未配置独立语言时继承追番的多语言偏好。 */
+function resolveSubscriptionSubtitleLanguages(subscription: AnimeRssSubscription, anime: MyAnime): SubtitleLanguage[] {
+  const subscriptionLanguages = resolveSubtitleLanguages(
+    subscription.preferredSubtitleLanguages,
+    subscription.preferredSubtitle
+  );
+  return subscriptionLanguages.length > 0
+    ? subscriptionLanguages
+    : resolveSubtitleLanguages(anime.preferredSubtitleLanguages, anime.preferredSubtitle);
 }
 
 function isActionableEpisode(episode: Episode): boolean {

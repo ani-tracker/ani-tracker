@@ -8,6 +8,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi, isElectronClient } from "@/lib/api";
 import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
 import { useAsyncData } from "@/lib/use-async-data";
@@ -161,6 +162,9 @@ export function HomePage() {
                         <div className="min-w-0">
                           <div className="truncate text-sm font-medium" title={task.name}>
                             {task.name}
+                          </div>
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            <ReleaseMetadataBadges metadata={task} />
                           </div>
                           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                             <span>{formatSpeed(task.downloadSpeed)}</span>

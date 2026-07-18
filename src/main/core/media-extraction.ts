@@ -89,7 +89,12 @@ function extractFromText(text: string, source: string, confidence: number): Part
   const normalizedVideoCodec = normalizeVideoCodec(text);
   const declaredVideoCodec = detectCodecLabel(text);
   const resolution = resolutionPatterns.map((pattern) => pattern.exec(text)?.[1]).find(Boolean);
-  const bitDepth = /\b10\s*bit\b|\b10bit\b/i.test(text) ? 10 : undefined;
+  const bitDepthMatch = text.match(/\b(8|10|12)\s*[- ]?\s*bits?\b/i);
+  const bitDepth = /\b(?:hi10p|main\s*10)\b/i.test(text)
+    ? 10
+    : bitDepthMatch?.[1]
+      ? Number(bitDepthMatch[1])
+      : undefined;
 
   return {
     declaredVideoCodec,
@@ -136,14 +141,12 @@ function detectAudioCodecs(text: string): string[] {
 }
 
 function detectSubtitleTracks(text: string): string[] {
-  const tracks = [
-    { pattern: /(?:\b(?:chs|gb)\b|简体|简日)/i, value: "chs" },
-    { pattern: /(?:\b(?:cht|big5)\b|繁体|繁日)/i, value: "cht" },
-    { pattern: /(?:\b(?:jpn|jp)\b|日文)/i, value: "jpn" },
-    { pattern: /(?:\beng\b|英文)/i, value: "eng" }
-  ];
-
-  return tracks.filter((item) => item.pattern.test(text)).map((item) => item.value);
+  const tracks = new Set<string>();
+  if (/(?:\b(?:chs|gb)\b|简体|简中|简日|简繁|繁简)/i.test(text)) tracks.add("chs");
+  if (/(?:\b(?:cht|big5)\b|繁体|繁中|繁日|简繁|繁简)/i.test(text)) tracks.add("cht");
+  if (/(?:\b(?:jpn|jp)\b|日文|日语|日語|简日|繁日)/i.test(text)) tracks.add("jpn");
+  if (/(?:\beng\b|英文|英语|英語)/i.test(text)) tracks.add("eng");
+  return [...tracks];
 }
 
 export function mergeMediaInfo(candidates: PartialMediaInfo[]): PartialMediaInfo {

@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 7;
+export const SQLITE_SCHEMA_VERSION = 8;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -82,6 +82,8 @@ CREATE TABLE IF NOT EXISTS my_anime (
   preferred_resolution TEXT,
   preferred_codec TEXT,
   preferred_subtitle TEXT,
+  preferred_subtitle_languages_json TEXT NOT NULL DEFAULT '[]',
+  preferred_bit_depth INTEGER,
   added_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -95,6 +97,7 @@ CREATE TABLE IF NOT EXISTS my_anime_rss_subscription (
   url TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1,
   preferred_subtitle TEXT,
+  preferred_subtitle_languages_json TEXT NOT NULL DEFAULT '[]',
   refresh_interval_minutes INTEGER,
   last_fetched_at TEXT,
   created_at TEXT NOT NULL,
@@ -173,7 +176,9 @@ CREATE TABLE IF NOT EXISTS release (
   resolution TEXT,
   declared_video_codec TEXT,
   normalized_video_codec TEXT,
+  bit_depth INTEGER,
   subtitle TEXT,
+  subtitle_languages_json TEXT NOT NULL DEFAULT '[]',
   published_at TEXT NOT NULL,
   seeders INTEGER,
   raw_json TEXT NOT NULL DEFAULT '{}'
@@ -191,6 +196,12 @@ CREATE TABLE IF NOT EXISTS download_task (
   episode_no REAL,
   fansub_group_id TEXT,
   fansub_name TEXT,
+  resolution TEXT,
+  declared_video_codec TEXT,
+  normalized_video_codec TEXT,
+  bit_depth INTEGER,
+  subtitle_languages_json TEXT NOT NULL DEFAULT '[]',
+  subtitle TEXT,
   correlation_tag TEXT,
   engine TEXT NOT NULL,
   torrent_hash TEXT,

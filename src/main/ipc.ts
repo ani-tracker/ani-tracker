@@ -6,8 +6,9 @@ import type {
   MyAnime,
   Release,
   ReleaseSourceConfig,
-  SubtitlePreference
+  SubtitleLanguage
 } from "@shared/domain";
+import { getSubtitleCoverage, resolveSubtitleLanguages } from "@shared/release-metadata";
 import type { AppRepository } from "./core/repositories/app-repository";
 import { createRepositoryRuntime } from "./core/repositories/repository-runtime";
 import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
@@ -180,9 +181,23 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       }
     });
 
+    const name = input.name?.trim() || getManualDownloadName(url);
+    const metadata = enrichReleaseFromTitle({
+      id: task.id,
+      title: name,
+      sourceId: "manual",
+      sourceName: "手动添加",
+      publishedAt: task.createdAt
+    });
     return repository.upsertDownloadTask({
       ...task,
-      name: input.name?.trim() || getManualDownloadName(url)
+      name,
+      resolution: metadata.resolution,
+      declaredVideoCodec: metadata.declaredVideoCodec,
+      normalizedVideoCodec: metadata.normalizedVideoCodec,
+      bitDepth: metadata.bitDepth,
+      subtitleLanguages: metadata.subtitleLanguages,
+      subtitle: metadata.subtitle
     });
   });
   ipcMain.handle("downloads:addRelease", async (_event, input: AddReleaseDownloadInput) => {
@@ -265,6 +280,12 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       episodeNo,
       fansubGroupId,
       fansubName,
+      resolution: release.resolution,
+      declaredVideoCodec: release.declaredVideoCodec,
+      normalizedVideoCodec: release.normalizedVideoCodec,
+      bitDepth: release.bitDepth,
+      subtitleLanguages: release.subtitleLanguages,
+      subtitle: release.subtitle,
       name: release.title
     });
     await updateEpisodeDownloadLink({
@@ -476,7 +497,7 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
     animeId: query.animeId,
     subscriptionId: query.subscriptionId,
     subscriptionName: subscription.name,
-    preferredSubtitle: subscription.preferredSubtitle ?? followedAnime.preferredSubtitle
+    preferredSubtitleLanguages: resolveSubscriptionSubtitleLanguages(subscription, followedAnime)
   });
   try {
     const rssUrl = validateRssUrl(subscription.url);
@@ -507,8 +528,8 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
         matchesAnimeReleaseTitle(release.title, searchTerms);
       return titleMatched && classifyAnimeRelease(release, followedAnime.anime) !== "mismatch";
     });
-    const preferredSubtitle = subscription.preferredSubtitle ?? followedAnime.preferredSubtitle;
-    const normalizedReleases = sortRssSubscriptionReleases(relevantReleases, preferredSubtitle);
+    const preferredSubtitleLanguages = resolveSubscriptionSubtitleLanguages(subscription, followedAnime);
+    const normalizedReleases = sortRssSubscriptionReleases(relevantReleases, preferredSubtitleLanguages);
     await repository.observeAnimeFansubs(query.animeId, normalizedReleases);
     logger.info("RSS 订阅资源搜索完成", {
       animeId: query.animeId,
@@ -536,11 +557,11 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
   }
 }
 
-/** 按订阅语言偏好和发布时间排列 RSS 资源，空偏好时保持时间优先。 */
-function sortRssSubscriptionReleases(releases: Release[], preferredSubtitle?: SubtitlePreference): Release[] {
+/** 按订阅语言覆盖率和发布时间排列 RSS 资源，空偏好时保持时间优先。 */
+function sortRssSubscriptionReleases(releases: Release[], preferredSubtitleLanguages: SubtitleLanguage[]): Release[] {
   return [...releases].sort((left, right) => {
-    const leftRank = getSubtitleSortRank(left.subtitle, preferredSubtitle);
-    const rightRank = getSubtitleSortRank(right.subtitle, preferredSubtitle);
+    const leftRank = getSubtitleSortRank(left, preferredSubtitleLanguages);
+    const rightRank = getSubtitleSortRank(right, preferredSubtitleLanguages);
     if (leftRank !== rightRank) {
       return leftRank - rightRank;
     }
@@ -549,21 +570,26 @@ function sortRssSubscriptionReleases(releases: Release[], preferredSubtitle?: Su
   });
 }
 
-/** 计算 RSS 资源在当前语言偏好下的排序等级。 */
-function getSubtitleSortRank(subtitle?: SubtitlePreference, preferredSubtitle?: SubtitlePreference): number {
-  if (!preferredSubtitle) {
+/** 计算 RSS 资源在当前多语言偏好下的排序等级。 */
+function getSubtitleSortRank(release: Release, preferredSubtitleLanguages: SubtitleLanguage[]): number {
+  if (!preferredSubtitleLanguages.length) {
     return 0;
   }
-  if (subtitle === preferredSubtitle) {
-    return 0;
-  }
-  if (subtitle === "multi") {
-    return 1;
-  }
-  if (subtitle) {
-    return 2;
-  }
-  return 3;
+  return 1 - getSubtitleCoverage(release, preferredSubtitleLanguages);
+}
+
+/** RSS 未配置独立语言时继承追番的多语言偏好。 */
+function resolveSubscriptionSubtitleLanguages(
+  subscription: NonNullable<MyAnime["rssSubscriptions"]>[number],
+  anime: MyAnime
+): SubtitleLanguage[] {
+  const subscriptionLanguages = resolveSubtitleLanguages(
+    subscription.preferredSubtitleLanguages,
+    subscription.preferredSubtitle
+  );
+  return subscriptionLanguages.length > 0
+    ? subscriptionLanguages
+    : resolveSubtitleLanguages(anime.preferredSubtitleLanguages, anime.preferredSubtitle);
 }
 
 /** 校验用户保存的 RSS 地址，主进程只允许 HTTP(S)。 */

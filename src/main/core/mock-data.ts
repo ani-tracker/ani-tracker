@@ -76,7 +76,7 @@ export const myAnime: MyAnime[] = [
     rssSubscriptions: [],
     preferredResolution: "1080p",
     preferredCodec: "H.265/HEVC",
-    preferredSubtitle: "chs",
+    preferredSubtitleLanguages: ["chs"],
     addedAt: "2026-07-11T12:00:00.000Z",
     updatedAt: "2026-07-11T12:00:00.000Z"
   },
@@ -117,7 +117,7 @@ export const myAnime: MyAnime[] = [
     rssSubscriptions: [],
     preferredResolution: "1080p",
     preferredCodec: "H.265/HEVC",
-    preferredSubtitle: "chs",
+    preferredSubtitleLanguages: ["chs"],
     addedAt: "2026-07-10T12:00:00.000Z",
     updatedAt: "2026-07-10T12:00:00.000Z"
   }
@@ -134,6 +134,12 @@ export const downloadTasks: DownloadTask[] = [
     engine: "embedded",
     torrentHash: "abc123",
     name: "[喵萌奶茶屋] 葬送的芙莉莲 - 05 [1080p][HEVC]",
+    resolution: "1080p",
+    declaredVideoCodec: "HEVC",
+    normalizedVideoCodec: "H.265/HEVC",
+    bitDepth: 10,
+    subtitleLanguages: ["chs"],
+    subtitle: "chs",
     status: "downloading",
     progress: 0.64,
     downloadSpeed: 5_420_000,

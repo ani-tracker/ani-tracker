@@ -12,7 +12,7 @@ import type {
   ReleaseSourceConfig
 } from "../domain";
 
-export const APP_DATA_VERSION = 18;
+export const APP_DATA_VERSION = 19;
 
 export interface AppDataFile {
   version: number;

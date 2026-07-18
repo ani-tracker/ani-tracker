@@ -1,4 +1,14 @@
-import type { FansubGroup, NormalizedVideoCodec, Release, ReleaseContentKind, ReleaseEpisodeRange, SubtitlePreference } from "@shared/domain";
+import type {
+  FansubGroup,
+  NormalizedVideoCodec,
+  Release,
+  ReleaseContentKind,
+  ReleaseEpisodeRange,
+  SubtitleLanguage,
+  SubtitlePreference,
+  VideoBitDepth
+} from "@shared/domain";
+import { normalizeSubtitleLanguages, toLegacySubtitlePreference } from "@shared/release-metadata";
 import { createHash } from "node:crypto";
 import { detectSeriesSeasonNo } from "../../../shared/anime-release-search";
 import { normalizeVideoCodec } from "../media-extraction";
@@ -12,6 +22,8 @@ export interface ParsedReleaseTitle {
   resolution?: "720p" | "1080p" | "2160p";
   declaredVideoCodec?: string;
   normalizedVideoCodec: NormalizedVideoCodec;
+  bitDepth?: VideoBitDepth;
+  subtitleLanguages: SubtitleLanguage[];
   subtitle?: SubtitlePreference;
 }
 
@@ -19,14 +31,6 @@ const resolutionPatterns: Array<{ pattern: RegExp; value: "720p" | "1080p" | "21
   { pattern: /\b(?:2160p|4k|3840x2160)\b/i, value: "2160p" },
   { pattern: /\b(?:1080p|1920x1080)\b/i, value: "1080p" },
   { pattern: /\b(?:720p|1280x720)\b/i, value: "720p" }
-];
-
-const subtitlePatterns: Array<{ pattern: RegExp; value: SubtitlePreference }> = [
-  { pattern: /(?:\b(?:chs|gb)\b|简体|简日)/i, value: "chs" },
-  { pattern: /(?:\b(?:cht|big5)\b|繁体|繁日)/i, value: "cht" },
-  { pattern: /(?:\bmulti\b|简繁|繁简)/i, value: "multi" },
-  { pattern: /(?:\b(?:jpn|jp)\b|日文)/i, value: "jpn" },
-  { pattern: /(?:\beng\b|英文)/i, value: "eng" }
 ];
 
 const fansubVariantCharacters: Record<string, string> = {
@@ -81,6 +85,7 @@ export function parseReleaseTitle(title: string, groups: FansubGroup[] = []): Pa
   const normalizedVideoCodec = normalizeVideoCodec(title);
   const episodeRange = detectEpisodeRange(title);
   const episodeNo = episodeRange ? undefined : detectEpisodeNo(stripTechnicalNumberTokens(title));
+  const subtitleMetadata = detectSubtitleMetadata(title);
 
   return {
     fansubName: detectFansubName(title, groups),
@@ -91,7 +96,9 @@ export function parseReleaseTitle(title: string, groups: FansubGroup[] = []): Pa
     resolution: resolutionPatterns.find((item) => item.pattern.test(title))?.value,
     declaredVideoCodec: detectCodecLabel(title),
     normalizedVideoCodec,
-    subtitle: subtitlePatterns.find((item) => item.pattern.test(title))?.value
+    bitDepth: detectBitDepth(title),
+    subtitleLanguages: subtitleMetadata.languages,
+    subtitle: subtitleMetadata.legacyPreference
   };
 }
 
@@ -109,6 +116,15 @@ export function enrichReleaseFromTitle(release: Release, groups: FansubGroup[] =
   const existingFansubGroupId = release.fansubGroupId?.startsWith("fansub-auto-")
     ? undefined
     : release.fansubGroupId;
+  const subtitleLanguages = normalizeSubtitleLanguages(
+    release.subtitleLanguages?.length
+      ? release.subtitleLanguages
+      : parsed.subtitleLanguages.length
+        ? parsed.subtitleLanguages
+        : release.subtitle && release.subtitle !== "multi"
+          ? [release.subtitle]
+          : []
+  );
 
   return {
     ...release,
@@ -123,7 +139,9 @@ export function enrichReleaseFromTitle(release: Release, groups: FansubGroup[] =
     normalizedVideoCodec:
       release.normalizedVideoCodec ??
       (parsed.normalizedVideoCodec === "Unknown" ? undefined : parsed.normalizedVideoCodec),
-    subtitle: release.subtitle ?? parsed.subtitle
+    bitDepth: release.bitDepth ?? parsed.bitDepth,
+    subtitleLanguages,
+    subtitle: release.subtitle ?? parsed.subtitle ?? toLegacySubtitlePreference(subtitleLanguages)
   };
 }
 
@@ -169,7 +187,66 @@ export function isMeaningfulFansubName(name: string): boolean {
   if (["字幕组", "压制组", "fansub", "unknown", "未知", "未识别字幕组"].includes(normalized)) {
     return false;
   }
-  return !/^(?:\d{1,4}(?:\.\d+)?|\d{3,4}p|4k|8k|x26[45]|h\.?26[45]|avc|hevc|av1|vp9|web-?dl|bdrip|webrip|mkv|mp4|简体|繁体|简繁|chs|cht|multi)$/i.test(normalized);
+  return !/^(?:\d{1,4}(?:\.\d+)?|(?:8|10|12)\s*-?\s*bits?|hi10p|main10|\d{3,4}p|4k|8k|x26[45]|h\.?26[45]|avc|hevc|av1|vp9|web-?dl|bdrip|webrip|mkv|mp4|简体|繁体|简繁|chs|cht|multi)$/i.test(normalized);
+}
+
+/** 从标题识别具体字幕语言，泛化“多语”不会虚构语言组成。 */
+function detectSubtitleMetadata(title: string): {
+  languages: SubtitleLanguage[];
+  legacyPreference?: SubtitlePreference;
+} {
+  const languages: SubtitleLanguage[] = [];
+  const add = (language: SubtitleLanguage) => {
+    if (!languages.includes(language)) {
+      languages.push(language);
+    }
+  };
+
+  if (/(?:简繁|繁简)/i.test(title)) {
+    add("chs");
+    add("cht");
+  }
+  if (/(?:简日|简中日)/i.test(title)) {
+    add("chs");
+    add("jpn");
+  }
+  if (/(?:繁日|繁中日)/i.test(title)) {
+    add("cht");
+    add("jpn");
+  }
+  if (/(?:\b(?:chs|gb)\b|简体|简中)/i.test(title)) {
+    add("chs");
+  }
+  if (/(?:\b(?:cht|big5)\b|繁体|繁中)/i.test(title)) {
+    add("cht");
+  }
+  if (/(?:\b(?:jpn|jp)\b|日文|日语|日語)/i.test(title)) {
+    add("jpn");
+  }
+  if (/(?:\beng\b|英文|英语|英語)/i.test(title)) {
+    add("eng");
+  }
+
+  const normalized = normalizeSubtitleLanguages(languages);
+  const isGenericMulti = /(?:\bmulti\b|多语|多語|多国语言|多國語言)/i.test(title);
+  return {
+    languages: normalized,
+    legacyPreference: isGenericMulti || normalized.length > 1
+      ? "multi"
+      : toLegacySubtitlePreference(normalized)
+  };
+}
+
+/** 仅根据标题中的显式标记识别位深，不从编码格式推断。 */
+function detectBitDepth(title: string): VideoBitDepth | undefined {
+  if (/\b(?:hi10p|main\s*10)\b/i.test(title)) {
+    return 10;
+  }
+  const match = title.match(/\b(8|10|12)\s*[- ]?\s*bits?\b/i);
+  if (!match?.[1]) {
+    return undefined;
+  }
+  return Number(match[1]) as VideoBitDepth;
 }
 
 /** 从标题识别 `[01-02]`、`第01-02集` 等连集范围。 */

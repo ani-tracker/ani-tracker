@@ -21,6 +21,7 @@ test("parseReleaseTitle 解析多季 SxxExx 标题中的集数和媒体字段", 
   assert.equal(parsed.declaredVideoCodec, "x265");
   assert.equal(parsed.normalizedVideoCodec, "H.265/HEVC");
   assert.equal(parsed.subtitle, "multi");
+  assert.deepEqual(parsed.subtitleLanguages, ["chs", "cht"]);
 });
 
 test("parseReleaseTitle 解析 AniBT 常见前缀字幕组标题", () => {
@@ -42,6 +43,7 @@ test("parseReleaseTitle 优先使用分隔符后的集数而非续作编号", ()
   );
 
   assert.equal(parsed.episodeNo, 1);
+  assert.equal(parsed.bitDepth, 10);
 });
 
 test("parseReleaseTitle 解析中文第 N 话和小数集数", () => {
@@ -50,7 +52,8 @@ test("parseReleaseTitle 解析中文第 N 话和小数集数", () => {
   assert.equal(parsed.episodeNo, 12.5);
   assert.equal(parsed.resolution, "1080p");
   assert.equal(parsed.normalizedVideoCodec, "H.264/AVC");
-  assert.equal(parsed.subtitle, "chs");
+  assert.equal(parsed.subtitle, "multi");
+  assert.deepEqual(parsed.subtitleLanguages, ["chs", "jpn"]);
 });
 
 test("parseReleaseTitle 不把合集范围解析成单集", () => {
@@ -80,6 +83,19 @@ test("parseReleaseTitle 不把总集篇和 10bit 误判为集数", () => {
   assert.equal(parsed.resolution, "1080p");
   assert.equal(parsed.normalizedVideoCodec, "H.265/HEVC");
   assert.equal(parsed.subtitle, "chs");
+  assert.equal(parsed.bitDepth, 10);
+});
+
+test("parseReleaseTitle 独立识别编码和位深且不做互相推断", () => {
+  const hevc8 = parseReleaseTitle("[字幕组] 测试番 - 01 [1080p][HEVC][8bit][简体]");
+  const avc10 = parseReleaseTitle("[字幕组] 测试番 - 01 [1080p][AVC][Hi10P][繁体]");
+  const unknown = parseReleaseTitle("[字幕组] 测试番 - 01 [1080p][HEVC][简体]");
+
+  assert.equal(hevc8.normalizedVideoCodec, "H.265/HEVC");
+  assert.equal(hevc8.bitDepth, 8);
+  assert.equal(avc10.normalizedVideoCodec, "H.264/AVC");
+  assert.equal(avc10.bitDepth, 10);
+  assert.equal(unknown.bitDepth, undefined);
 });
 
 test("parseReleaseTitle 识别无括号 S3 Fin 合集标记", () => {

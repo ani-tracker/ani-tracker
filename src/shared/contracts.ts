@@ -204,7 +204,11 @@ export interface MediaScanResult {
 export interface EpisodeReleaseCandidate {
   release: Release;
   score: number;
+  matchScore: number;
+  preferenceScore: number;
+  availabilityScore: number;
   reasons: string[];
+  warnings: string[];
 }
 
 export interface EpisodeReleasePreview {

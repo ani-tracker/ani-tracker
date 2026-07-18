@@ -19,10 +19,15 @@ import type {
 } from "@shared/domain";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
+import {
+  normalizeSubtitleLanguages,
+  resolveSubtitleLanguages,
+  toLegacySubtitlePreference
+} from "@shared/release-metadata";
 import { logger } from "../logger";
 import { inferDownloadTaskEpisodeNo } from "../downloads/download-episode-resolver";
 import { mergeAnimeMetadataBatches } from "../metadata/metadata-provider";
-import { normalizeFansubName } from "../releases/release-title-parser";
+import { enrichReleaseFromTitle, normalizeFansubName } from "../releases/release-title-parser";
 import { defaultSourceConfigs } from "../sources/default-source-configs";
 import { createDefaultSettingsProvider, type DefaultSettingsProvider } from "../platform/default-settings-provider";
 import { createSeedData } from "../storage/seed-data";
@@ -399,6 +404,12 @@ export class SqliteAppRepository implements AppRepository {
             episodeNo: inferredEpisodeNo ?? existing.episodeNo,
             fansubGroupId: existing.fansubGroupId,
             fansubName: existing.fansubName,
+            resolution: existing.resolution,
+            declaredVideoCodec: existing.declaredVideoCodec,
+            normalizedVideoCodec: existing.normalizedVideoCodec,
+            bitDepth: existing.bitDepth,
+            subtitleLanguages: existing.subtitleLanguages,
+            subtitle: existing.subtitle,
             correlationTag: task.correlationTag ?? existing.correlationTag,
             createdAt: existing.createdAt,
             completedAt: task.completedAt ?? existing.completedAt
@@ -584,6 +595,7 @@ export class SqliteAppRepository implements AppRepository {
     this.mergeDuplicateFansubGroups();
     this.normalizeFansubGroupData();
     this.repairStoredDownloadEpisodeMetadata();
+    this.repairStoredDownloadReleaseMetadata();
   }
 
   /** 补齐已存在 SQLite 数据库缺少的新列。 */
@@ -672,6 +684,54 @@ export class SqliteAppRepository implements AppRepository {
       this.ensureColumn("my_anime_rss_subscription", "refresh_interval_minutes", "refresh_interval_minutes INTEGER");
       this.ensureColumn("my_anime_rss_subscription", "last_fetched_at", "last_fetched_at TEXT");
     }
+
+    if (currentSchemaVersion < 8) {
+      this.ensureColumn("my_anime", "preferred_subtitle_languages_json", "preferred_subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
+      this.ensureColumn("my_anime", "preferred_bit_depth", "preferred_bit_depth INTEGER");
+      this.ensureColumn("my_anime_rss_subscription", "preferred_subtitle_languages_json", "preferred_subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
+      this.ensureColumn("release", "bit_depth", "bit_depth INTEGER");
+      this.ensureColumn("release", "subtitle_languages_json", "subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
+      this.ensureColumn("download_task", "resolution", "resolution TEXT");
+      this.ensureColumn("download_task", "declared_video_codec", "declared_video_codec TEXT");
+      this.ensureColumn("download_task", "normalized_video_codec", "normalized_video_codec TEXT");
+      this.ensureColumn("download_task", "bit_depth", "bit_depth INTEGER");
+      this.ensureColumn("download_task", "subtitle_languages_json", "subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
+      this.ensureColumn("download_task", "subtitle", "subtitle TEXT");
+      this.database.exec(`
+        UPDATE my_anime
+        SET preferred_subtitle_languages_json = CASE preferred_subtitle
+          WHEN 'chs' THEN '["chs"]'
+          WHEN 'cht' THEN '["cht"]'
+          WHEN 'jpn' THEN '["jpn"]'
+          WHEN 'eng' THEN '["eng"]'
+          WHEN 'multi' THEN '["chs","cht"]'
+          ELSE '[]'
+        END
+        WHERE preferred_subtitle_languages_json = '[]' AND preferred_subtitle IS NOT NULL;
+
+        UPDATE my_anime_rss_subscription
+        SET preferred_subtitle_languages_json = CASE preferred_subtitle
+          WHEN 'chs' THEN '["chs"]'
+          WHEN 'cht' THEN '["cht"]'
+          WHEN 'jpn' THEN '["jpn"]'
+          WHEN 'eng' THEN '["eng"]'
+          WHEN 'multi' THEN '["chs","cht"]'
+          ELSE '[]'
+        END
+        WHERE preferred_subtitle_languages_json = '[]' AND preferred_subtitle IS NOT NULL;
+
+        UPDATE release
+        SET subtitle_languages_json = CASE subtitle
+          WHEN 'chs' THEN '["chs"]'
+          WHEN 'cht' THEN '["cht"]'
+          WHEN 'jpn' THEN '["jpn"]'
+          WHEN 'eng' THEN '["eng"]'
+          WHEN 'multi' THEN '["chs","cht"]'
+          ELSE '[]'
+        END
+        WHERE subtitle_languages_json = '[]' AND subtitle IS NOT NULL;
+      `);
+    }
   }
 
   /** 将首次启动快照写入各业务表。 */
@@ -756,6 +816,10 @@ export class SqliteAppRepository implements AppRepository {
         name: asString(row.name),
         url: asString(row.url),
         enabled: toBoolean(row.enabled),
+        preferredSubtitleLanguages: resolveSubtitleLanguages(
+          fromJson(asString(row.preferred_subtitle_languages_json)),
+          optionalString(row.preferred_subtitle) as MyAnime["preferredSubtitle"]
+        ),
         preferredSubtitle: optionalString(row.preferred_subtitle) as MyAnime["preferredSubtitle"],
         refreshIntervalMinutes: optionalNumber(row.refresh_interval_minutes),
         lastFetchedAt: optionalString(row.last_fetched_at),
@@ -848,24 +912,35 @@ export class SqliteAppRepository implements AppRepository {
   }
 
   private upsertMyAnimeRow(item: MyAnime): void {
+    const preferredSubtitleLanguages = resolveSubtitleLanguages(
+      item.preferredSubtitleLanguages,
+      item.preferredSubtitle
+    );
+    const preferredSubtitle = toLegacySubtitlePreference(preferredSubtitleLanguages);
     this.run(
       `INSERT INTO my_anime (
         id, anime_id, status, default_fansub_group_id, auto_download, download_dir,
-        preferred_resolution, preferred_codec, preferred_subtitle, added_at, updated_at
+        preferred_resolution, preferred_codec, preferred_subtitle, preferred_subtitle_languages_json,
+        preferred_bit_depth, added_at, updated_at
       ) VALUES (
         @id, @animeId, @status, @defaultFansubGroupId, @autoDownload, @downloadDir,
-        @preferredResolution, @preferredCodec, @preferredSubtitle, @addedAt, @updatedAt
+        @preferredResolution, @preferredCodec, @preferredSubtitle, @preferredSubtitleLanguagesJson,
+        @preferredBitDepth, @addedAt, @updatedAt
       ) ON CONFLICT(id) DO UPDATE SET
         anime_id = excluded.anime_id, status = excluded.status,
         default_fansub_group_id = excluded.default_fansub_group_id, auto_download = excluded.auto_download,
         download_dir = excluded.download_dir, preferred_resolution = excluded.preferred_resolution,
         preferred_codec = excluded.preferred_codec, preferred_subtitle = excluded.preferred_subtitle,
+        preferred_subtitle_languages_json = excluded.preferred_subtitle_languages_json,
+        preferred_bit_depth = excluded.preferred_bit_depth,
         updated_at = excluded.updated_at`,
       {
         id: item.id, animeId: item.anime.id, status: item.status,
         defaultFansubGroupId: item.defaultFansubGroupId ?? null, autoDownload: toInteger(item.autoDownload),
         downloadDir: item.downloadDir ?? null, preferredResolution: item.preferredResolution ?? null,
-        preferredCodec: item.preferredCodec ?? null, preferredSubtitle: item.preferredSubtitle ?? null,
+        preferredCodec: item.preferredCodec ?? null, preferredSubtitle: preferredSubtitle ?? null,
+        preferredSubtitleLanguagesJson: toJson(preferredSubtitleLanguages),
+        preferredBitDepth: item.preferredBitDepth ?? null,
         addedAt: item.addedAt, updatedAt: item.updatedAt
       }
     );
@@ -880,12 +955,17 @@ export class SqliteAppRepository implements AppRepository {
     this.run("DELETE FROM my_anime_rss_subscription WHERE my_anime_id = @myAnimeId", { myAnimeId: item.id });
     for (const subscription of item.rssSubscriptions ?? []) {
       const timestamp = nowIso();
+      const preferredSubtitleLanguages = resolveSubtitleLanguages(
+        subscription.preferredSubtitleLanguages,
+        subscription.preferredSubtitle
+      );
+      const preferredSubtitle = toLegacySubtitlePreference(preferredSubtitleLanguages);
       this.run(
         `INSERT INTO my_anime_rss_subscription (
-          id, my_anime_id, name, url, enabled, preferred_subtitle,
+          id, my_anime_id, name, url, enabled, preferred_subtitle, preferred_subtitle_languages_json,
           refresh_interval_minutes, last_fetched_at, created_at, updated_at
         ) VALUES (
-          @id, @myAnimeId, @name, @url, @enabled, @preferredSubtitle,
+          @id, @myAnimeId, @name, @url, @enabled, @preferredSubtitle, @preferredSubtitleLanguagesJson,
           @refreshIntervalMinutes, @lastFetchedAt, @createdAt, @updatedAt
         )`,
         {
@@ -894,7 +974,8 @@ export class SqliteAppRepository implements AppRepository {
           name: subscription.name,
           url: subscription.url,
           enabled: toInteger(subscription.enabled),
-          preferredSubtitle: subscription.preferredSubtitle ?? null,
+          preferredSubtitle: preferredSubtitle ?? null,
+          preferredSubtitleLanguagesJson: toJson(preferredSubtitleLanguages),
           refreshIntervalMinutes: subscription.refreshIntervalMinutes ?? null,
           lastFetchedAt: subscription.lastFetchedAt ?? null,
           createdAt: subscription.createdAt || timestamp,
@@ -950,16 +1031,21 @@ export class SqliteAppRepository implements AppRepository {
     this.run(
       `INSERT INTO download_task (
         id, release_id, anime_id, episode_id, anime_title, episode_no, fansub_group_id, fansub_name,
+        resolution, declared_video_codec, normalized_video_codec, bit_depth, subtitle_languages_json, subtitle,
         correlation_tag, engine, torrent_hash, name, status, progress, download_speed, upload_speed,
         eta_seconds, save_path, created_at, completed_at, updated_at
       ) VALUES (
         @id, @releaseId, @animeId, @episodeId, @animeTitle, @episodeNo, @fansubGroupId, @fansubName,
+        @resolution, @declaredVideoCodec, @normalizedVideoCodec, @bitDepth, @subtitleLanguagesJson, @subtitle,
         @correlationTag, @engine, @torrentHash, @name, @status, @progress, @downloadSpeed, @uploadSpeed,
         @etaSeconds, @savePath, @createdAt, @completedAt, @updatedAt
       ) ON CONFLICT(id) DO UPDATE SET
         release_id = excluded.release_id, anime_id = excluded.anime_id, episode_id = excluded.episode_id,
         anime_title = excluded.anime_title, episode_no = excluded.episode_no,
         fansub_group_id = excluded.fansub_group_id, fansub_name = excluded.fansub_name,
+        resolution = excluded.resolution, declared_video_codec = excluded.declared_video_codec,
+        normalized_video_codec = excluded.normalized_video_codec, bit_depth = excluded.bit_depth,
+        subtitle_languages_json = excluded.subtitle_languages_json, subtitle = excluded.subtitle,
         correlation_tag = excluded.correlation_tag, engine = excluded.engine, torrent_hash = excluded.torrent_hash,
         name = excluded.name, status = excluded.status, progress = excluded.progress,
         download_speed = excluded.download_speed, upload_speed = excluded.upload_speed,
@@ -969,6 +1055,10 @@ export class SqliteAppRepository implements AppRepository {
         id: task.id, releaseId: task.releaseId ?? null, animeId: task.animeId ?? null,
         episodeId: task.episodeId ?? null, animeTitle: task.animeTitle ?? null, episodeNo: task.episodeNo ?? null,
         fansubGroupId: task.fansubGroupId ?? null, fansubName: task.fansubName ?? null,
+        resolution: task.resolution ?? null, declaredVideoCodec: task.declaredVideoCodec ?? null,
+        normalizedVideoCodec: task.normalizedVideoCodec ?? null, bitDepth: task.bitDepth ?? null,
+        subtitleLanguagesJson: toJson(normalizeSubtitleLanguages(task.subtitleLanguages)),
+        subtitle: task.subtitle ?? toLegacySubtitlePreference(task.subtitleLanguages) ?? null,
         correlationTag: task.correlationTag ?? null, engine: task.engine, torrentHash: task.torrentHash ?? null,
         name: task.name, status: task.status, progress: task.progress, downloadSpeed: task.downloadSpeed,
         uploadSpeed: task.uploadSpeed, etaSeconds: task.etaSeconds ?? null, savePath: task.savePath,
@@ -1079,6 +1169,55 @@ export class SqliteAppRepository implements AppRepository {
       syncEpisodeStatusesFromDownloads(snapshot);
       this.transaction(() => snapshot.episodes.forEach((episode) => this.upsertEpisodeRow(episode)));
       logger.info("Stored download episode metadata repaired", { repairedCount });
+    }
+  }
+
+  /** 启动时从历史任务标题补齐编码、位深和字幕语言快照。 */
+  private repairStoredDownloadReleaseMetadata(): void {
+    const current = this.readDownloadsSync();
+    let repairedCount = 0;
+
+    this.transaction(() => {
+      for (const task of current) {
+        const release = enrichReleaseFromTitle({
+          id: task.releaseId ?? task.id,
+          title: task.name,
+          sourceId: task.engine,
+          sourceName: task.engine,
+          publishedAt: task.createdAt,
+          resolution: task.resolution,
+          declaredVideoCodec: task.declaredVideoCodec,
+          normalizedVideoCodec: task.normalizedVideoCodec,
+          bitDepth: task.bitDepth,
+          subtitleLanguages: task.subtitleLanguages,
+          subtitle: task.subtitle
+        });
+        const normalized: DownloadTask = {
+          ...task,
+          resolution: release.resolution,
+          declaredVideoCodec: release.declaredVideoCodec,
+          normalizedVideoCodec: release.normalizedVideoCodec,
+          bitDepth: release.bitDepth,
+          subtitleLanguages: release.subtitleLanguages,
+          subtitle: release.subtitle
+        };
+        const changed = task.resolution !== normalized.resolution ||
+          task.declaredVideoCodec !== normalized.declaredVideoCodec ||
+          task.normalizedVideoCodec !== normalized.normalizedVideoCodec ||
+          task.bitDepth !== normalized.bitDepth ||
+          task.subtitle !== normalized.subtitle ||
+          toJson(task.subtitleLanguages ?? []) !== toJson(normalized.subtitleLanguages ?? []);
+        if (!changed) {
+          continue;
+        }
+
+        this.upsertDownload(normalized);
+        repairedCount += 1;
+      }
+    });
+
+    if (repairedCount > 0) {
+      logger.info("Stored download release metadata repaired", { repairedCount });
     }
   }
 
@@ -1345,6 +1484,11 @@ function mapMyAnime(row: SqliteRow, anime: Anime, rssSubscriptions: NonNullable<
     defaultFansubGroupId: optionalString(row.default_fansub_group_id), autoDownload: toBoolean(row.auto_download),
     downloadDir: optionalString(row.download_dir), preferredResolution: optionalString(row.preferred_resolution) as MyAnime["preferredResolution"],
     preferredCodec: optionalString(row.preferred_codec) as MyAnime["preferredCodec"],
+    preferredBitDepth: optionalNumber(row.preferred_bit_depth) as MyAnime["preferredBitDepth"],
+    preferredSubtitleLanguages: resolveSubtitleLanguages(
+      fromJson(asString(row.preferred_subtitle_languages_json)),
+      optionalString(row.preferred_subtitle) as MyAnime["preferredSubtitle"]
+    ),
     preferredSubtitle: optionalString(row.preferred_subtitle) as MyAnime["preferredSubtitle"],
     rssSubscriptions,
     addedAt: asString(row.added_at), updatedAt: asString(row.updated_at) });
@@ -1479,6 +1623,12 @@ function mapDownload(row: SqliteRow, files: TorrentFile[]): DownloadTask {
   return compact({ id: asString(row.id), releaseId: optionalString(row.release_id), animeId: optionalString(row.anime_id),
     episodeId: optionalString(row.episode_id), animeTitle: optionalString(row.anime_title), episodeNo: optionalNumber(row.episode_no),
     fansubGroupId: optionalString(row.fansub_group_id), fansubName: optionalString(row.fansub_name),
+    resolution: optionalString(row.resolution) as DownloadTask["resolution"],
+    declaredVideoCodec: optionalString(row.declared_video_codec),
+    normalizedVideoCodec: optionalString(row.normalized_video_codec) as DownloadTask["normalizedVideoCodec"],
+    bitDepth: optionalNumber(row.bit_depth) as DownloadTask["bitDepth"],
+    subtitleLanguages: normalizeSubtitleLanguages(fromJson(asString(row.subtitle_languages_json))),
+    subtitle: optionalString(row.subtitle) as DownloadTask["subtitle"],
     correlationTag: optionalString(row.correlation_tag), engine: asString(row.engine) as DownloadTask["engine"],
     torrentHash: optionalString(row.torrent_hash), name: asString(row.name), status: asString(row.status) as DownloadStatus,
     progress: Number(row.progress), downloadSpeed: Number(row.download_speed), uploadSpeed: Number(row.upload_speed),

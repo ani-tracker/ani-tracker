@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format";
@@ -354,6 +355,7 @@ function DownloadTaskRow({
                   </div>
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
                     <Badge tone="blue">{task.engine === "embedded" ? "内置引擎" : "qBittorrent"}</Badge>
+                    <ReleaseMetadataBadges metadata={task} />
                     <span>{formatSpeed(task.downloadSpeed)}</span>
                     <span>上传 {formatSpeed(task.uploadSpeed)}</span>
                     <span>剩余 {formatDuration(task.etaSeconds)}</span>

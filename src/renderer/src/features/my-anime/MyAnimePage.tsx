@@ -21,6 +21,8 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectVa
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatMonth, formatPercent } from "@/lib/format";
@@ -38,8 +40,16 @@ import type {
   MyAnime,
   NormalizedVideoCodec,
   Release,
-  SubtitlePreference
+  SubtitleLanguage,
+  VideoBitDepth
 } from "@shared/domain";
+import {
+  formatSubtitleLanguages,
+  formatVideoBitDepth,
+  getSubtitleCoverage,
+  resolveSubtitleLanguages,
+  subtitleLanguageText
+} from "@shared/release-metadata";
 
 const statusText: Record<AnimeStatus, string> = {
   watching: "在追",
@@ -75,14 +85,8 @@ const downloadStatusText: Record<DownloadTask["status"], string> = {
 const episodeStatusOptions = Object.entries(episodeStatusText) as Array<[EpisodeStatus, string]>;
 const resolutionOptions = ["", "720p", "1080p", "2160p"];
 const codecOptions: Array<"" | NormalizedVideoCodec> = ["", "H.264/AVC", "H.265/HEVC", "AV1", "VP9", "Unknown"];
-const subtitleOptions: Array<"" | SubtitlePreference> = ["", "chs", "cht", "multi", "jpn", "eng"];
-const subtitleText: Record<SubtitlePreference, string> = {
-  chs: "简体",
-  cht: "繁体",
-  multi: "多语",
-  jpn: "日语",
-  eng: "英语"
-};
+const subtitleOptions: SubtitleLanguage[] = ["chs", "cht", "jpn", "eng"];
+const bitDepthOptions: Array<"" | VideoBitDepth> = ["", 8, 10, 12];
 const unknownFansubFilter = "__unknown__";
 const batchAddingReleaseId = "__batch__";
 const emptySelectValue = "__empty__";
@@ -104,7 +108,7 @@ interface RssReleaseGroupState {
 interface RssSubscriptionDraft {
   name: string;
   url: string;
-  preferredSubtitle?: SubtitlePreference;
+  preferredSubtitleLanguages?: SubtitleLanguage[];
 }
 
 const downloadDetailFilters: Array<{ value: AnimeDownloadDetailFilter; label: string }> = [
@@ -690,13 +694,13 @@ export function MyAnimePage() {
               id: createId("rss"),
               myAnimeId: downloadTarget.id,
               name: subscriptionDraft.name.trim() || "RSS订阅",
-            url,
-            enabled: true,
-            preferredSubtitle: subscriptionDraft.preferredSubtitle,
-            refreshIntervalMinutes: defaultRssRefreshIntervalMinutes,
-            createdAt: now,
-            updatedAt: now
-          }
+              url,
+              enabled: true,
+              preferredSubtitleLanguages: subscriptionDraft.preferredSubtitleLanguages,
+              refreshIntervalMinutes: defaultRssRefreshIntervalMinutes,
+              createdAt: now,
+              updatedAt: now
+            }
           ]
         },
         now
@@ -1154,6 +1158,12 @@ function MyAnimeCard({
           </Badge>
           {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
           {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
+          {item.preferredBitDepth && <Badge>{formatVideoBitDepth(item.preferredBitDepth)}</Badge>}
+          {resolveSubtitleLanguages(item.preferredSubtitleLanguages, item.preferredSubtitle).length > 0 && (
+            <Badge>
+              {formatSubtitleLanguages(resolveSubtitleLanguages(item.preferredSubtitleLanguages, item.preferredSubtitle))}
+            </Badge>
+          )}
         </div>
       </div>
     </article>
@@ -1403,6 +1413,7 @@ function DownloadDetailTaskCard({
             {task.episodeNo !== undefined && <Badge tone="blue">第 {task.episodeNo} 集</Badge>}
             <Badge tone={getDownloadStatusTone(task.status)}>{downloadStatusText[task.status]}</Badge>
             <Badge>{fansubName}</Badge>
+            <ReleaseMetadataBadges metadata={task} />
           </div>
           <h3 className="mt-2 truncate text-sm font-medium" title={task.name}>
             {task.name}
@@ -1662,34 +1673,47 @@ function RulesPanel({
               }
             />
             <SelectField
-              label="偏好字幕"
-              value={draft.preferredSubtitle ?? ""}
-              options={subtitleOptions.map((value) => ({
+              label="偏好编码"
+              value={draft.preferredCodec ?? ""}
+              options={codecOptions.map((value) => ({
                 value,
                 label: value || "不限"
               }))}
               onChange={(value) =>
                 onChange({
                   ...draft,
-                  preferredSubtitle: (value || undefined) as MyAnime["preferredSubtitle"]
+                  preferredCodec: (value || undefined) as MyAnime["preferredCodec"]
                 })
               }
             />
           </div>
-          <SelectField
-            label="偏好编码"
-            value={draft.preferredCodec ?? ""}
-            options={codecOptions.map((value) => ({
-              value,
-              label: value || "不限"
-            }))}
-            onChange={(value) =>
-              onChange({
-                ...draft,
-                preferredCodec: (value || undefined) as MyAnime["preferredCodec"]
-              })
-            }
-          />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <SelectField
+              label="偏好位深"
+              value={draft.preferredBitDepth ? String(draft.preferredBitDepth) : ""}
+              options={bitDepthOptions.map((value) => ({
+                value: value ? String(value) : "",
+                label: value ? `${value}bit` : "不限"
+              }))}
+              onChange={(value) =>
+                onChange({
+                  ...draft,
+                  preferredBitDepth: value ? Number(value) as VideoBitDepth : undefined
+                })
+              }
+            />
+            <SubtitleLanguageToggleField
+              label="偏好字幕语言（可多选）"
+              value={resolveSubtitleLanguages(draft.preferredSubtitleLanguages, draft.preferredSubtitle)}
+              onChange={(value) =>
+                onChange({
+                  ...draft,
+                  preferredSubtitleLanguages: value,
+                  preferredSubtitle: undefined
+                })
+              }
+            />
+          </div>
           <TextField
             label="下载目录覆盖"
             value={draft.downloadDir ?? ""}
@@ -1742,6 +1766,7 @@ function RssSubscriptionsEditor({
         name: initial?.name ?? "RSS订阅",
         url: initial?.url ?? "",
         enabled: initial?.enabled ?? true,
+        preferredSubtitleLanguages: initial?.preferredSubtitleLanguages,
         preferredSubtitle: initial?.preferredSubtitle,
         refreshIntervalMinutes: initial?.refreshIntervalMinutes ?? defaultRssRefreshIntervalMinutes,
         createdAt: now,
@@ -1835,30 +1860,19 @@ function RssSubscriptionsEditor({
                   onChange={(event) => updateSubscription(subscription.id, { url: event.target.value })}
                 />
               </Field>
-              <Field className="min-w-0">
-                <FieldLabel className="sr-only" htmlFor={`rss-subtitle-${subscription.id}`}>RSS 语言偏好</FieldLabel>
-                <Select
-                  value={subscription.preferredSubtitle ?? emptySelectValue}
-                  onValueChange={(value) =>
-                    updateSubscription(subscription.id, {
-                      preferredSubtitle: (value === emptySelectValue ? undefined : value) as AnimeRssSubscription["preferredSubtitle"]
-                    })
-                  }
-                >
-                  <SelectTrigger id={`rss-subtitle-${subscription.id}`} title="RSS 语言偏好">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {subtitleOptions.map((value) => (
-                        <SelectItem key={value || "follow"} value={value || emptySelectValue}>
-                          {value ? subtitleText[value] : `跟随追番${draft.preferredSubtitle ? `：${subtitleText[draft.preferredSubtitle]}` : ""}`}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              </Field>
+              <SubtitleLanguageToggleField
+                label="RSS字幕（留空继承追番）"
+                value={resolveSubtitleLanguages(
+                  subscription.preferredSubtitleLanguages,
+                  subscription.preferredSubtitle
+                )}
+                onChange={(value) =>
+                  updateSubscription(subscription.id, {
+                    preferredSubtitleLanguages: value.length > 0 ? value : undefined,
+                    preferredSubtitle: undefined
+                  })
+                }
+              />
               <Field className="min-w-0">
                 <FieldLabel htmlFor={`rss-interval-${subscription.id}`}>刷新间隔（分钟）</FieldLabel>
                 <Input
@@ -1985,9 +1999,9 @@ function AnimeDownloadPanel({
   const sourceFailed = currentTabReleases.length === 0 && otherTabReleases.length === 0 && visibleErrors.length > 0;
   const linkedTasks = downloadTasks.filter((task) => task.animeId === target.anime.id);
   const releaseSignature = tabReleases.map(releaseKey).join("|");
-  const tabFamilies = groupReleaseVersions(currentTabReleases, target.preferredSubtitle, releaseVersionSelections);
-  const visibleFamilies = groupReleaseVersions(visibleReleases, target.preferredSubtitle, releaseVersionSelections);
-  const visibleOtherFamilies = groupReleaseVersions(visibleOtherReleases, target.preferredSubtitle, releaseVersionSelections);
+  const tabFamilies = groupReleaseVersions(currentTabReleases, target, releaseVersionSelections);
+  const visibleFamilies = groupReleaseVersions(visibleReleases, target, releaseVersionSelections);
+  const visibleOtherFamilies = groupReleaseVersions(visibleOtherReleases, target, releaseVersionSelections);
   const selectedReleases = visibleFamilies
     .filter((family) => selectedFamilyKeys.has(family.key))
     .map((family) => family.selectedRelease);
@@ -2085,7 +2099,7 @@ function AnimeDownloadPanel({
 
   /** 按集数渲染资源族，并保留批量选择能力。 */
   function renderEpisodeGroups(groupReleases: Release[], batchSelectable = true) {
-    const families = groupReleaseVersions(groupReleases, target.preferredSubtitle, releaseVersionSelections);
+    const families = groupReleaseVersions(groupReleases, target, releaseVersionSelections);
     return groupReleaseFamilyEpisodes(families).map((episodeGroup) => (
       <section key={episodeGroup.key}>
         <div className="flex items-center justify-between bg-muted/30 px-3 py-2 text-xs">
@@ -2105,7 +2119,7 @@ function AnimeDownloadPanel({
                 fansubNames={fansubNames}
                 family={family}
                 linkedTask={linkedTask}
-                preferredSubtitle={target.preferredSubtitle}
+                preferences={target}
                 selected={selectedFamilyKeys.has(family.key)}
                 onAddRelease={onAddRelease}
                 onToggleSelected={toggleFamilySelection}
@@ -2266,7 +2280,7 @@ function AnimeDownloadPanel({
                     group.releases.filter((release) => classifyAnimeRelease(release, target.anime) === "current"),
                     selectedFansubId
                   );
-                  const groupFamilies = groupReleaseVersions(groupReleases, target.preferredSubtitle, releaseVersionSelections);
+                  const groupFamilies = groupReleaseVersions(groupReleases, target, releaseVersionSelections);
                   const selection = getGroupSelectionState(groupFamilies);
                   return (
                     <section key={group.subscription.id} className="shrink-0 overflow-hidden rounded-md border bg-background">
@@ -2313,7 +2327,7 @@ function AnimeDownloadPanel({
                   );
                 })
               : releaseGroups.map((group, groupIndex) => {
-                  const groupFamilies = groupReleaseVersions(group.releases, target.preferredSubtitle, releaseVersionSelections);
+                  const groupFamilies = groupReleaseVersions(group.releases, target, releaseVersionSelections);
                   const selection = getGroupSelectionState(groupFamilies);
                   const rssCandidate = buildMikanGroupRssSubscription(group, target);
                   const rssSubscribed = Boolean(rssCandidate && existingRssUrls.has(rssCandidate.url));
@@ -2540,7 +2554,7 @@ function ReleaseDownloadRow({
   linkedTask,
   batchSelectable,
   fansubNames,
-  preferredSubtitle,
+  preferences,
   selected,
   addingReleaseId,
   onToggleSelected,
@@ -2551,7 +2565,7 @@ function ReleaseDownloadRow({
   linkedTask?: DownloadTask;
   batchSelectable: boolean;
   fansubNames: Map<string, string>;
-  preferredSubtitle?: SubtitlePreference;
+  preferences: MyAnime;
   selected: boolean;
   addingReleaseId: string | null;
   onToggleSelected: (family: ReleaseVersionFamily) => void;
@@ -2582,9 +2596,7 @@ function ReleaseDownloadRow({
               <Badge>{getReleaseFansubName(release, fansubNames)}</Badge>
               <Badge>{family.episodeLabel}</Badge>
               {!batchSelectable && <Badge tone="amber">季度待确认</Badge>}
-              {release.resolution && <Badge>{release.resolution}</Badge>}
-              {release.normalizedVideoCodec && <Badge tone="green">{release.normalizedVideoCodec}</Badge>}
-              {release.subtitle && <Badge>{subtitleText[release.subtitle]}</Badge>}
+              <ReleaseMetadataBadges metadata={release} />
               {release.size && <Badge>{formatBytes(release.size)}</Badge>}
               {linkedTask && (
                 <Badge tone={isCompletedDownload(linkedTask) ? "green" : "amber"}>
@@ -2602,7 +2614,7 @@ function ReleaseDownloadRow({
                   value={releaseKey(release)}
                   onValueChange={(value) => onVersionChange(family.key, value)}
                 >
-                  <SelectTrigger className="h-8 w-full min-w-0 text-xs sm:w-52" aria-label="选择对应语言版本" title="选择对应语言版本">
+                  <SelectTrigger className="h-8 w-full min-w-0 text-xs sm:w-72" aria-label="选择资源版本" title="选择资源版本">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -2611,7 +2623,7 @@ function ReleaseDownloadRow({
                         const itemKey = releaseKey(item);
                         return (
                           <SelectItem key={itemKey} value={itemKey}>
-                            {getReleaseVersionLabel(item, preferredSubtitle, releaseKey(item) === releaseKey(release))}
+                            {getReleaseVersionLabel(item, preferences, releaseKey(item) === releaseKey(release))}
                           </SelectItem>
                         );
                       })}
@@ -2661,10 +2673,10 @@ function countReleaseFamilyEpisodes(families: ReleaseVersionFamily[]): number {
   return new Set(families.map((family) => family.episodeKey)).size;
 }
 
-/** 将同一集数、字幕组、分辨率和编码下仅语言不同的资源合并为一个版本族。 */
+/** 将同一资源的字幕、编码、位深和分辨率版本合并为一个资源族。 */
 function groupReleaseVersions(
   releases: Release[],
-  preferredSubtitle?: SubtitlePreference,
+  preferences: MyAnime,
   selections: Record<string, string> = {}
 ): ReleaseVersionFamily[] {
   const families = new Map<string, ReleaseVersionFamily>();
@@ -2677,7 +2689,7 @@ function groupReleaseVersions(
 
   return [...families.values()]
     .map((family) => {
-      const ordered = sortReleaseVersions(family.releases, preferredSubtitle);
+      const ordered = sortReleaseVersions(family.releases, preferences);
       const selectedRelease =
         family.releases.find((item) => releaseKey(item) === selections[family.key]) ?? ordered[0] ?? family.releases[0];
       return {
@@ -2708,15 +2720,13 @@ function createReleaseVersionFamily(key: string, release: Release): ReleaseVersi
   };
 }
 
-/** 构造忽略字幕语言差异的资源族键。 */
+/** 构造忽略字幕、编码、位深和分辨率差异的资源族键。 */
 function buildReleaseFamilyKey(release: Release): string {
   return [
     release.sourceId,
     release.fansubGroupId ?? normalizeFamilyText(release.fansubName ?? ""),
     getReleaseEpisodeKey(release),
-    release.resolution ?? "",
-    release.normalizedVideoCodec ?? "",
-    normalizeFamilyText(stripSubtitleTokens(release.title))
+    normalizeFamilyText(stripReleaseVariantTokens(release.title))
   ].join("|");
 }
 
@@ -2750,13 +2760,13 @@ function releaseEpisodeOrder(release: Release): number {
   return release.episodeNo ?? -1;
 }
 
-/** 按语言偏好和发布时间排列同一资源族内的版本。 */
-function sortReleaseVersions(releases: Release[], preferredSubtitle?: SubtitlePreference): Release[] {
+/** 按字幕、编码、位深和分辨率偏好排列同一资源族内的版本。 */
+function sortReleaseVersions(releases: Release[], preferences: MyAnime): Release[] {
   return [...releases].sort((left, right) => {
-    const leftScore = getReleaseVersionRank(left, preferredSubtitle);
-    const rightScore = getReleaseVersionRank(right, preferredSubtitle);
+    const leftScore = getReleaseVersionPreferenceScore(left, preferences);
+    const rightScore = getReleaseVersionPreferenceScore(right, preferences);
     if (leftScore !== rightScore) {
-      return leftScore - rightScore;
+      return rightScore - leftScore;
     }
 
     const leftDate = right.publishedAt.localeCompare(left.publishedAt);
@@ -2768,31 +2778,39 @@ function sortReleaseVersions(releases: Release[], preferredSubtitle?: SubtitlePr
   });
 }
 
-/** 计算单个语言版本在当前偏好下的优先级。 */
-function getReleaseVersionRank(release: Release, preferredSubtitle?: SubtitlePreference): number {
-  if (preferredSubtitle && release.subtitle === preferredSubtitle) {
-    return 0;
+/** 计算资源版本对追番技术偏好的命中分。 */
+function getReleaseVersionPreferenceScore(release: Release, preferences: MyAnime): number {
+  let score = 0;
+  const preferredSubtitleLanguages = resolveSubtitleLanguages(
+    preferences.preferredSubtitleLanguages,
+    preferences.preferredSubtitle
+  );
+  if (preferredSubtitleLanguages.length > 0) {
+    score += getSubtitleCoverage(release, preferredSubtitleLanguages) * 10;
   }
-  if (preferredSubtitle && release.subtitle === "multi") {
-    return 1;
+  if (preferences.preferredResolution && release.resolution === preferences.preferredResolution) {
+    score += 5;
   }
-  if (release.subtitle) {
-    return 2;
+  if (preferences.preferredCodec && release.normalizedVideoCodec === preferences.preferredCodec) {
+    score += 5;
   }
-  return 3;
+  if (preferences.preferredBitDepth && release.bitDepth === preferences.preferredBitDepth) {
+    score += 6;
+  }
+  return score;
 }
 
-/** 生成语言版本下拉框中的选项文案。 */
-function getReleaseVersionLabel(release: Release, preferredSubtitle?: SubtitlePreference, active = false): string {
-  const subtitleLabel = release.subtitle ? subtitleText[release.subtitle] : "未标记";
-  const preferredText = preferredSubtitle && release.subtitle === preferredSubtitle ? "偏好" : "";
+/** 生成资源版本下拉框中的完整技术信息文案。 */
+function getReleaseVersionLabel(release: Release, preferences: MyAnime, active = false): string {
+  const preferredText = getReleaseVersionPreferenceScore(release, preferences) > 0 ? "偏好匹配" : "";
   const parts = [
-    subtitleLabel,
+    formatSubtitleLanguages(release.subtitleLanguages, release.subtitle),
+    release.normalizedVideoCodec ?? release.declaredVideoCodec ?? "编码未知",
+    formatVideoBitDepth(release.bitDepth),
     release.resolution ?? "",
-    release.normalizedVideoCodec ?? "",
     release.sourceName
   ].filter(Boolean);
-  return `${active ? "当前" : ""}${parts.join(" · ")}${preferredText ? ` · ${preferredText}` : ""}`;
+  return `${active ? "当前 · " : ""}${parts.join(" · ")}${preferredText ? ` · ${preferredText}` : ""}`;
 }
 
 /** 归一化资源族键中的标题片段。 */
@@ -2808,11 +2826,14 @@ function normalizeFamilyText(value: string): string {
     .trim();
 }
 
-/** 去除标题中仅表示字幕语言的标记。 */
-function stripSubtitleTokens(value: string): string {
+/** 去除资源族中允许切换的技术变量，保留 WEB-DL、BDRip 等版本类型。 */
+function stripReleaseVariantTokens(value: string): string {
   return value
-    .replace(/[\[【(（][^\]】)）]*(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)[^\]】)）]*[\]】)）]/gi, "")
-    .replace(/(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)/gi, "");
+    .replace(/(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|日语|日語|英文|英语|英語|内封|内嵌|字幕)/gi, " ")
+    .replace(/\b(?:h\.?264|x264|avc|h\.?265|x265|hevc|av1|vp9)\b/gi, " ")
+    .replace(/\b(?:8|10|12)\s*[- ]?\s*bits?\b|\b(?:hi10p|main\s*10)\b/gi, " ")
+    .replace(/\b(?:720p|1080p|2160p|4k|1280x720|1920x1080|3840x2160)\b/gi, " ")
+    .replace(/[\[【(（]\s*[\]】)）]/g, " ");
 }
 
 /** 格式化集数，整数补齐两位，小数保持原样。 */
@@ -3198,14 +3219,12 @@ function EpisodeRulesPanel({
                             <div className="truncate text-sm font-medium">{candidate.release.title}</div>
                             <div className="mt-2 flex flex-wrap gap-2">
                               <Badge tone="blue">{candidate.score} 分</Badge>
+                              <Badge>匹配 {candidate.matchScore}/50</Badge>
+                              <Badge>偏好 {candidate.preferenceScore}/40</Badge>
                               <Badge>{candidate.release.sourceName}</Badge>
                               <Badge>第 {candidate.release.episodeNo ?? episode.episodeNo} 集</Badge>
                               <Badge>{getReleaseFansubName(candidate.release, fansubNames)}</Badge>
-                              {candidate.release.resolution && <Badge>{candidate.release.resolution}</Badge>}
-                              {candidate.release.normalizedVideoCodec && (
-                                <Badge tone="green">{candidate.release.normalizedVideoCodec}</Badge>
-                              )}
-                              {candidate.release.subtitle && <Badge>{subtitleText[candidate.release.subtitle]}</Badge>}
+                              <ReleaseMetadataBadges metadata={candidate.release} />
                               {candidate.release.size && <Badge>{formatBytes(candidate.release.size)}</Badge>}
                               {typeof candidate.release.seeders === "number" && (
                                 <Badge tone={candidate.release.seeders > 0 ? "green" : "neutral"}>
@@ -3214,7 +3233,7 @@ function EpisodeRulesPanel({
                               )}
                             </div>
                             <div className="mt-2 text-xs text-muted-foreground">
-                              {candidate.reasons.join("，") || "规则匹配"}
+                              {[...candidate.reasons, ...candidate.warnings.map((warning) => `注意：${warning}`)].join("，") || "规则匹配"}
                             </div>
                           </div>
                           <Button
@@ -3358,7 +3377,11 @@ function normalizeRssSubscriptions(item: MyAnime, timestamp: string): AnimeRssSu
       myAnimeId: item.id,
       name: subscription.name.trim() || `RSS订阅 ${index + 1}`,
       url: subscription.url.trim(),
-      preferredSubtitle: subscription.preferredSubtitle,
+      preferredSubtitleLanguages: resolveSubtitleLanguages(
+        subscription.preferredSubtitleLanguages,
+        subscription.preferredSubtitle
+      ),
+      preferredSubtitle: undefined,
       refreshIntervalMinutes: normalizeRssRefreshInterval(subscription.refreshIntervalMinutes),
       lastFetchedAt: subscription.lastFetchedAt,
       createdAt: subscription.createdAt || timestamp,
@@ -3681,6 +3704,38 @@ function SelectField({
   );
 }
 
+/** 使用 shadcn ToggleGroup 编辑可多选的字幕语言偏好。 */
+function SubtitleLanguageToggleField({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: SubtitleLanguage[];
+  onChange: (value: SubtitleLanguage[]) => void;
+}) {
+  const labelId = useId();
+  return (
+    <Field className="min-w-0">
+      <FieldLabel id={labelId}>{label}</FieldLabel>
+      <ToggleGroup
+        className="flex w-full flex-wrap justify-start"
+        type="multiple"
+        variant="outline"
+        value={value}
+        onValueChange={(nextValue) => onChange(nextValue as SubtitleLanguage[])}
+        aria-labelledby={labelId}
+      >
+        {subtitleOptions.map((language) => (
+          <ToggleGroupItem key={language} value={language} aria-label={subtitleLanguageText[language]}>
+            {subtitleLanguageText[language]}
+          </ToggleGroupItem>
+        ))}
+      </ToggleGroup>
+    </Field>
+  );
+}
+
 function createEmptyDraft(): MyAnime {
   const now = new Date();
   const animeId = createId("anime");
@@ -3700,7 +3755,7 @@ function createEmptyDraft(): MyAnime {
     autoDownload: false,
     preferredResolution: "1080p",
     preferredCodec: "H.265/HEVC",
-    preferredSubtitle: "chs",
+    preferredSubtitleLanguages: ["chs"],
     addedAt: now.toISOString(),
     updatedAt: now.toISOString()
   };

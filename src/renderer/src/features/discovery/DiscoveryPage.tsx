@@ -196,7 +196,7 @@ export function DiscoveryPage() {
         autoDownload: false,
         preferredResolution: "1080p",
         preferredCodec: "H.265/HEVC",
-        preferredSubtitle: "chs",
+        preferredSubtitleLanguages: ["chs"],
         addedAt: now,
         updatedAt: now
       });
