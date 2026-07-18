@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 8;
+export const SQLITE_SCHEMA_VERSION = 9;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;

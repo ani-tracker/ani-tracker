@@ -685,18 +685,15 @@ export class SqliteAppRepository implements AppRepository {
       this.ensureColumn("my_anime_rss_subscription", "last_fetched_at", "last_fetched_at TEXT");
     }
 
+    if (currentSchemaVersion < 9) {
+      this.ensureReleaseMetadataColumns();
+      logger.info("SQLite 下载技术信息列修复完成", {
+        fromVersion: currentSchemaVersion,
+        toVersion: SQLITE_SCHEMA_VERSION
+      });
+    }
+
     if (currentSchemaVersion < 8) {
-      this.ensureColumn("my_anime", "preferred_subtitle_languages_json", "preferred_subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
-      this.ensureColumn("my_anime", "preferred_bit_depth", "preferred_bit_depth INTEGER");
-      this.ensureColumn("my_anime_rss_subscription", "preferred_subtitle_languages_json", "preferred_subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
-      this.ensureColumn("release", "bit_depth", "bit_depth INTEGER");
-      this.ensureColumn("release", "subtitle_languages_json", "subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
-      this.ensureColumn("download_task", "resolution", "resolution TEXT");
-      this.ensureColumn("download_task", "declared_video_codec", "declared_video_codec TEXT");
-      this.ensureColumn("download_task", "normalized_video_codec", "normalized_video_codec TEXT");
-      this.ensureColumn("download_task", "bit_depth", "bit_depth INTEGER");
-      this.ensureColumn("download_task", "subtitle_languages_json", "subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
-      this.ensureColumn("download_task", "subtitle", "subtitle TEXT");
       this.database.exec(`
         UPDATE my_anime
         SET preferred_subtitle_languages_json = CASE preferred_subtitle
@@ -1430,6 +1427,21 @@ export class SqliteAppRepository implements AppRepository {
     if (!columns.includes(column)) {
       this.database.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`);
     }
+  }
+
+  /** 幂等补齐资源偏好与下载技术信息列，用于修复版本号领先于实际表结构的数据库。 */
+  private ensureReleaseMetadataColumns(): void {
+    this.ensureColumn("my_anime", "preferred_subtitle_languages_json", "preferred_subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("my_anime", "preferred_bit_depth", "preferred_bit_depth INTEGER");
+    this.ensureColumn("my_anime_rss_subscription", "preferred_subtitle_languages_json", "preferred_subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("release", "bit_depth", "bit_depth INTEGER");
+    this.ensureColumn("release", "subtitle_languages_json", "subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("download_task", "resolution", "resolution TEXT");
+    this.ensureColumn("download_task", "declared_video_codec", "declared_video_codec TEXT");
+    this.ensureColumn("download_task", "normalized_video_codec", "normalized_video_codec TEXT");
+    this.ensureColumn("download_task", "bit_depth", "bit_depth INTEGER");
+    this.ensureColumn("download_task", "subtitle_languages_json", "subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("download_task", "subtitle", "subtitle TEXT");
   }
 }
 

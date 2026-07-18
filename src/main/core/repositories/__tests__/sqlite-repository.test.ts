@@ -9,6 +9,7 @@ import type { MyAnime } from "@shared/domain";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
 import { enrichReleaseFromTitle } from "../../releases/release-title-parser";
 import { createSeedData } from "../../storage/seed-data";
+import { SQLITE_SCHEMA_VERSION } from "../../storage/sqlite-schema";
 import { createRepositoryRuntime } from "../repository-runtime";
 
 const DatabaseConstructor = (
@@ -137,6 +138,49 @@ test("SQLite 重启后恢复下载任务技术信息快照", async () => {
   assert.deepEqual(restored?.subtitleLanguages, ["chs", "cht"]);
   assert.equal(restored?.subtitle, "multi");
   second.close();
+});
+
+test("SQLite schema 8 缺少下载字幕列时自动修复且保留任务", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const item = createTestMyAnime();
+  await first.repository.upsertMyAnime(item);
+  await first.repository.upsertDownloadTask(createDownloadTask(item.anime.id, "schema-8-repair", 1));
+  first.close();
+
+  const driftedDatabase = new DatabaseConstructor(fixture.databasePath);
+  try {
+    driftedDatabase.exec("ALTER TABLE download_task DROP COLUMN subtitle");
+    driftedDatabase.prepare("UPDATE app_meta SET value = '8' WHERE key = 'schema_version'").run();
+    const columns = driftedDatabase.pragma("table_info(download_task)") as Array<{ name: string }>;
+    assert.equal(columns.some((column) => column.name === "subtitle"), false);
+  } finally {
+    driftedDatabase.close();
+  }
+
+  const repaired = createRepositoryRuntime(fixture.options);
+  await repaired.initialize();
+  await repaired.repository.upsertDownloadTask({
+    ...createDownloadTask(item.anime.id, "schema-8-repair", 1),
+    subtitleLanguages: ["chs", "cht"],
+    subtitle: "multi"
+  });
+  const restored = (await repaired.repository.listDownloads()).find((task) => task.id === "schema-8-repair");
+  assert.equal(restored?.subtitle, "multi");
+  assert.deepEqual(restored?.subtitleLanguages, ["chs", "cht"]);
+  repaired.close();
+
+  const verifiedDatabase = new DatabaseConstructor(fixture.databasePath, { readonly: true });
+  try {
+    const columns = verifiedDatabase.pragma("table_info(download_task)") as Array<{ name: string }>;
+    const schemaVersion = verifiedDatabase.prepare("SELECT value FROM app_meta WHERE key = 'schema_version'").get() as { value: string };
+    assert.equal(columns.some((column) => column.name === "subtitle"), true);
+    assert.equal(Number(schemaVersion.value), SQLITE_SCHEMA_VERSION);
+  } finally {
+    verifiedDatabase.close();
+  }
+  assertDatabaseIntegrity(fixture.databasePath);
 });
 
 test("SQLite 保存、替换并恢复番剧来源绑定", async () => {
