@@ -1,9 +1,9 @@
-import { createReadStream, existsSync, realpathSync, statSync } from "node:fs";
+import { createReadStream, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { type Socket } from "node:net";
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import type { RemoteDeviceInfo, RemoteGatewayStatus, RemotePairingChallenge } from "@shared/contracts";
 import type { RemoteAccessSettings } from "@shared/domain";
 import { logger } from "../logger";
@@ -525,13 +525,26 @@ export class RemoteHttpGateway {
     if (!isPathInsideDirectory(rendererRoot, filePath)) {
       throw new HttpGatewayError(403, "PATH_FORBIDDEN", "静态资源路径无效");
     }
+    const rendererEntryPath = realpathSync(join(rendererRoot, "index.html"));
+    const isRendererEntry = filePath === rendererEntryPath;
+    const scriptNonce = isRendererEntry ? randomBytes(18).toString("base64") : undefined;
+    const rendererEntry = isRendererEntry
+      ? prepareRendererEntryHtml(readFileSync(filePath, "utf8"), scriptNonce as string)
+      : undefined;
     response.statusCode = 200;
     response.setHeader("Content-Type", getContentType(filePath));
-    response.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'");
+    response.setHeader("Content-Security-Policy", createRendererContentSecurityPolicy(scriptNonce));
     response.setHeader("X-Content-Type-Options", "nosniff");
     response.setHeader("Referrer-Policy", "no-referrer");
+    if (rendererEntry !== undefined) {
+      response.setHeader("Content-Length", Buffer.byteLength(rendererEntry));
+    }
     if (headOnly) {
       response.end();
+      return;
+    }
+    if (rendererEntry !== undefined) {
+      response.end(rendererEntry);
       return;
     }
     const stream = createReadStream(filePath);
@@ -676,6 +689,37 @@ export function isPathInsideDirectory(
     relativePath === "" ||
     (!operations.isAbsolute(relativePath) && relativePath !== ".." && !relativePath.startsWith(`..${operations.sep}`))
   );
+}
+
+/** 为远程入口页补齐根路径基准，并授权受控的内联初始化脚本。 */
+function prepareRendererEntryHtml(html: string, scriptNonce: string): string {
+  const withBase = /<base(?:\s|>)/i.test(html)
+    ? html
+    : html.replace(/<head(?:\s[^>]*)?>/i, (head) => `${head}\n    <base href="/" />`);
+  return withBase.replace(/<script(?![^>]*\bsrc\s*=)([^>]*)>/gi, (scriptTag) => (
+    /\bnonce\s*=/.test(scriptTag)
+      ? scriptTag
+      : scriptTag.replace(/>$/, ` nonce="${scriptNonce}">`)
+  ));
+}
+
+/** 创建远程 PWA 的 CSP，并仅放行当前入口响应中的 nonce 脚本。 */
+function createRendererContentSecurityPolicy(scriptNonce?: string): string {
+  const scriptSource = scriptNonce
+    ? `script-src 'self' 'nonce-${scriptNonce}'`
+    : "script-src 'self'";
+  return [
+    "default-src 'self'",
+    scriptSource,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: https:",
+    "connect-src 'self'",
+    "media-src 'self' blob:",
+    "worker-src 'self' blob:",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "frame-ancestors 'none'"
+  ].join("; ");
 }
 
 /** 读取媒体接口专用的同源 HttpOnly Cookie。 */

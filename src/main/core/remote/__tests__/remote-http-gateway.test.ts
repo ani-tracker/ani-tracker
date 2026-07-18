@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
 import { createServer as createNetServer, connect } from "node:net";
 import { test } from "node:test";
@@ -290,9 +290,18 @@ test("媒体会话使用设备 Cookie 输出 206 范围响应", async (context) 
   assert.equal(unauthorized.status, 401);
 });
 
-test("缺失静态资源返回 404 且前端路由回退入口页面", async (context) => {
+test("深层前端路由使用根路径资源、nonce CSP 且缺失资源返回 404", async (context) => {
   const rendererDirectory = await mkdtemp(join(tmpdir(), "ani-remote-renderer-"));
-  await writeFile(join(rendererDirectory, "index.html"), "<!doctype html><title>Ani Tracker</title>", "utf8");
+  await mkdir(join(rendererDirectory, "assets"));
+  await Promise.all([
+    writeFile(
+      join(rendererDirectory, "index.html"),
+      "<!doctype html><html><head><link rel=\"manifest\" href=\"./manifest.webmanifest\"><script>window.__theme=true</script><script type=\"module\" src=\"./assets/app.js\"></script></head><body>Ani Tracker</body></html>",
+      "utf8"
+    ),
+    writeFile(join(rendererDirectory, "assets", "app.js"), "window.__app=true", "utf8"),
+    writeFile(join(rendererDirectory, "manifest.webmanifest"), "{}", "utf8")
+  ]);
   const gateway = await startGateway({ rendererDirectory });
   context.after(async () => {
     await gateway.stop();
@@ -303,10 +312,27 @@ test("缺失静态资源返回 404 且前端路由回退入口页面", async (co
   assert.equal(missingAsset.status, 404);
   assert.equal((await missingAsset.json() as { code: string }).code, "ASSET_NOT_FOUND");
 
-  const frontendRoute = await fetch(`${gateway.getStatus().baseUrl}/notifications`);
+  const frontendRoute = await fetch(`${gateway.getStatus().baseUrl}/player/task-1`);
   assert.equal(frontendRoute.status, 200);
   assert.match(frontendRoute.headers.get("content-type") ?? "", /^text\/html/);
-  assert.match(await frontendRoute.text(), /Ani Tracker/);
+  const contentSecurityPolicy = frontendRoute.headers.get("content-security-policy") ?? "";
+  const frontendHtml = await frontendRoute.text();
+  const nonce = frontendHtml.match(/<script nonce="([^"]+)">/)?.[1];
+  assert.ok(nonce);
+  assert.ok(contentSecurityPolicy.includes(`script-src 'self' 'nonce-${nonce}'`));
+  assert.doesNotMatch(contentSecurityPolicy, /script-src[^;]*'unsafe-inline'/);
+  assert.match(frontendHtml, /<base href="\/" \/>/);
+  assert.match(frontendHtml, /Ani Tracker/);
+
+  const [scriptResponse, manifestResponse] = await Promise.all([
+    fetch(`${gateway.getStatus().baseUrl}/assets/app.js`),
+    fetch(`${gateway.getStatus().baseUrl}/manifest.webmanifest`)
+  ]);
+  assert.equal(scriptResponse.status, 200);
+  assert.match(scriptResponse.headers.get("content-type") ?? "", /^text\/javascript/);
+  assert.equal(await scriptResponse.text(), "window.__app=true");
+  assert.equal(manifestResponse.status, 200);
+  assert.match(manifestResponse.headers.get("content-type") ?? "", /^application\/manifest\+json/);
 });
 
 test("局域网 HTTPS 使用本地 CA 并限制 Host 与 Origin", async (context) => {
