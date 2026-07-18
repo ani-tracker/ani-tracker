@@ -4,7 +4,7 @@
 
 ## 专项计划
 
-- [主题系统专项计划进度表](theme-system-progress.md)：跟随系统、浅色、深色，以及后续主题包和用户自定义能力。
+- [主题系统专项计划进度表](theme-system-progress.md)：T1-T4 已完成，Windows T5 验收通过，macOS 与 PWA 待外部验收。
 
 ## 已完成
 

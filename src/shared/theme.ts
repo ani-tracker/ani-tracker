@@ -176,7 +176,7 @@ const DEFAULT_DARK_TOKENS: ThemeTokens = {
   "muted-foreground": "215 12% 66%",
   accent: "190 24% 20%",
   "accent-foreground": "185 42% 88%",
-  destructive: "350 70% 55%",
+  destructive: "350 70% 53%",
   "destructive-foreground": "0 0% 100%",
   success: "151 56% 45%",
   "success-foreground": "151 70% 8%",
@@ -224,17 +224,17 @@ export const BUILT_IN_THEME_PACKS: readonly ThemePackManifest[] = [
     tokens: {
       light: {
         ...DEFAULT_LIGHT_TOKENS,
-        primary: "8 75% 50%",
+        primary: "8 75% 49%",
         "primary-foreground": "0 0% 100%",
         accent: "203 64% 91%",
         "accent-foreground": "207 52% 23%",
-        ring: "8 75% 50%",
-        "chart-1": "8 75% 50%",
+        ring: "8 75% 49%",
+        "chart-1": "8 75% 49%",
         "chart-2": "203 72% 43%",
-        "sidebar-primary": "8 75% 50%",
+        "sidebar-primary": "8 75% 49%",
         "sidebar-accent": "203 64% 91%",
         "sidebar-accent-foreground": "207 52% 23%",
-        "sidebar-ring": "8 75% 50%"
+        "sidebar-ring": "8 75% 49%"
       },
       dark: {
         ...DEFAULT_DARK_TOKENS,
