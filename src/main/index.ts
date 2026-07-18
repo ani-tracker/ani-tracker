@@ -18,6 +18,7 @@ import { RemoteDeviceAuth } from "./core/remote/remote-device-auth";
 import { RemoteDeviceCredentialStore } from "./core/remote/remote-device-credential-store";
 import { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
 import { RemoteMediaSessionService } from "./core/remote/remote-media-session-service";
+import { resolveRemoteRendererDirectory } from "./core/remote/remote-renderer-directory";
 import { RemoteTlsCertificateStore } from "./core/remote/remote-tls-certificate-store";
 import { ImageCacheService } from "./core/cache/image-cache-service";
 import { registerImageCacheProtocol, registerImageCacheScheme } from "./core/cache/image-cache-protocol";
@@ -72,7 +73,11 @@ const remoteDeviceAuth = new RemoteDeviceAuth({
 });
 const remoteGateway = new RemoteHttpGateway(remoteMethodRegistry, {
   auth: remoteDeviceAuth,
-  rendererDirectory: join(__dirname, "../renderer"),
+  rendererDirectory: resolveRemoteRendererDirectory({
+    appPath: app.getAppPath(),
+    bundleDirectory: __dirname,
+    rendererDevServerUrl: process.env.ELECTRON_RENDERER_URL
+  }),
   imageCacheService,
   mediaSessionService: remoteMediaSessionService,
   tlsCertificateStore: new RemoteTlsCertificateStore(join(app.getPath("userData"), "remote-tls"), secretProtector)

@@ -4,12 +4,13 @@ import { request as httpsRequest } from "node:https";
 import { createServer as createNetServer, connect } from "node:net";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
-import { join, win32 } from "node:path";
+import { join, resolve, win32 } from "node:path";
 import type { AppSettings, DashboardData, DownloadTask } from "@shared/domain";
 import { ImageCacheService } from "../../cache/image-cache-service";
 import { RemoteDeviceAuth } from "../remote-device-auth";
 import { RemoteHttpGateway, isPathInsideDirectory, parseByteRange } from "../remote-http-gateway";
 import { RemoteMediaSessionService } from "../remote-media-session-service";
+import { resolveRemoteRendererDirectory } from "../remote-renderer-directory";
 import { RemoteTlsCertificateStore, type SecretProtector } from "../remote-tls-certificate-store";
 import { createRemoteMethodRegistry, type RemoteRpcHandlers } from "../remote-method-registry";
 
@@ -45,6 +46,20 @@ test("HTTP 网关拒绝监听非回环地址", () => {
   assert.throws(
     () => new RemoteHttpGateway(createRemoteMethodRegistry(createHandlers()), { host: "0.0.0.0" }),
     /只允许监听 127\.0\.0\.1/
+  );
+});
+
+test("远程 PWA 在开发模式使用独立构建目录", () => {
+  const appPath = join(tmpdir(), "ani-project");
+  const bundleDirectory = join(appPath, "out", "main");
+
+  assert.equal(
+    resolveRemoteRendererDirectory({ appPath, bundleDirectory, rendererDevServerUrl: "http://localhost:5173" }),
+    resolve(appPath, ".remote-pwa", "renderer")
+  );
+  assert.equal(
+    resolveRemoteRendererDirectory({ appPath, bundleDirectory }),
+    resolve(appPath, "out", "renderer")
   );
 });
 

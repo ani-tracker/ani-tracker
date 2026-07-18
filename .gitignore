@@ -1,6 +1,7 @@
 node_modules
 dist
 out
+.remote-pwa
 release
 *.tsbuildinfo
 electron.vite.config.js

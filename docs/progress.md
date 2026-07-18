@@ -33,6 +33,10 @@
   - 默认容量上限为 5GB，单图上限为 20MB，超限时按最近访问时间淘汰旧图片。
   - 支持 JPEG、PNG、WebP、GIF、AVIF，并拒绝私网地址、异常端口、非法 MIME 和篡改令牌。
   - 新番发现、我的追番及对应远程页面已统一接入缓存图片组件，并使用 Skeleton 保持加载布局稳定。
+- 已修复开发模式远程 PWA 静态资源缺失：
+  - `pnpm dev` 启动前构建 `.remote-pwa/renderer`，不再依赖会被开发服务器清理的 `out/renderer`。
+  - 生产预览继续使用 `out/renderer`，主进程按 `ELECTRON_RENDERER_URL` 自动选择目录。
+  - README 已补充运行模式、HTTPS 配对、图片缓存接口和常见错误排查。
 
 ### 新番发现和元数据
 
@@ -287,7 +291,7 @@ git diff --check
 说明：
 
 - `pnpm.cmd run test:parsers` 当前会编译测试到 `out/test-node`，该目录已在 `.gitignore` 中。
-- Node 测试当前共 `192` 项，包含图片缓存、外部播放票据、PotPlayer/IINA 协议、Range/HLS、非法目标拒绝和桌面/远程缓存复用覆盖。
+- Node 测试当前共 `193` 项，包含远程 PWA 目录选择、图片缓存、外部播放票据、PotPlayer/IINA 协议、Range/HLS、非法目标拒绝和桌面/远程缓存复用覆盖。
 - 主进程和渲染进程 TypeScript 类型检查通过。
 - 主进程、preload 和 renderer 生产构建通过；完整构建的 qBittorrent 资源准备步骤受运行中进程锁定，待进程退出后复验。
 - `git diff --check` 通过。

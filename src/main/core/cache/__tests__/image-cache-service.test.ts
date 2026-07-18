@@ -99,8 +99,9 @@ test("缓存拒绝非法 MIME、私网目标和被篡改令牌", async (context)
     (error: unknown) => error instanceof ImageCacheError && error.code === "IMAGE_HOST_FORBIDDEN"
   );
   const token = service.createRemotePath("https://example.com/image.png").split("/").at(-1)!;
+  const tamperedSuffix = token.endsWith("x") ? "y" : "x";
   assert.throws(
-    () => service.getByToken(`${token.slice(0, -1)}x`),
+    () => service.getByToken(`${token.slice(0, -1)}${tamperedSuffix}`),
     (error: unknown) => error instanceof ImageCacheError && error.code === "IMAGE_TOKEN_INVALID"
   );
   assert.deepEqual(await readdir(cacheDirectory).catch(() => []), []);

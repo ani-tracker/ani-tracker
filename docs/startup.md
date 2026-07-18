@@ -47,15 +47,27 @@ Windows PowerShell：
 pnpm.cmd dev
 ```
 
-`pnpm dev` 实际执行 `electron-vite dev`，启动流程如下：
+`pnpm dev` 会先生成开发模式远程 PWA，再执行 `electron-vite dev`，启动流程如下：
 
-1. 编译主进程入口 `src/main/index.ts` 到 `out/main/index.js`。
-2. 编译 preload 入口 `src/preload/index.ts` 到 `out/preload/index.mjs`。
-3. 启动 renderer 的 Vite dev server，默认地址为 `http://localhost:5173/`。
-4. 启动 Electron 应用。
-5. 主进程创建 `BrowserWindow`，开发模式下通过 `ELECTRON_RENDERER_URL` 加载 Vite dev server。
-6. preload 通过 `contextBridge` 暴露 `window.aniBridge`。
-7. renderer 从 `src/renderer/index.html` 加载 `src/renderer/src/main.tsx`，再挂载 React `App`。
+1. 执行 `prepare:remote-renderer`，将远程静态页面构建到 `.remote-pwa/renderer`。
+2. 编译主进程入口 `src/main/index.ts` 到 `out/main/index.js`。
+3. 编译 preload 入口 `src/preload/index.ts` 到 `out/preload/index.mjs`。
+4. 启动 renderer 的 Vite dev server，默认地址为 `http://localhost:5173/`。
+5. 启动 Electron 应用；桌面窗口通过 `ELECTRON_RENDERER_URL` 加载 Vite dev server。
+6. 远程 HTTPS 网关从 `.remote-pwa/renderer` 提供 PWA，避免开发构建清理 `out/renderer`。
+7. preload 通过 `contextBridge` 暴露 `window.aniBridge`。
+
+只调试桌面端并希望跳过远程 PWA 预构建时可执行：
+
+```powershell
+pnpm.cmd dev:desktop
+```
+
+远程界面发生变化后可单独刷新静态快照：
+
+```powershell
+pnpm.cmd run prepare:remote-renderer
+```
 
 ## 类型检查和构建
 
