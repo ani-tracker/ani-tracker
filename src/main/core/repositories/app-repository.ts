@@ -210,8 +210,20 @@ export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>)
         port: normalizeRemoteAccessPort(patch.network?.remoteAccess?.port, current.network.remoteAccess.port)
       }
     },
-    players: patch.players ?? current.players
+    players: mergePlayerProfiles(current.players, patch.players)
   };
+}
+
+/** 按播放器标识合并平台默认项和用户路径，避免升级后缺少新增选项。 */
+function mergePlayerProfiles(current: AppSettings["players"], patch?: AppSettings["players"]): AppSettings["players"] {
+  if (!patch) {
+    return current;
+  }
+
+  const patchById = new Map(patch.map((profile) => [profile.id, profile]));
+  const merged = current.map((profile) => ({ ...profile, ...patchById.get(profile.id) }));
+  const currentIds = new Set(current.map((profile) => profile.id));
+  return [...merged, ...patch.filter((profile) => !currentIds.has(profile.id))];
 }
 
 /** 仅接受非特权有效端口，非法补丁保留当前配置。 */

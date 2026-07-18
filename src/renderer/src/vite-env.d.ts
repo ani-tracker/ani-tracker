@@ -11,6 +11,7 @@ import type {
   MediaFile,
   MyAnime,
   NotificationRecord,
+  PlayerProfile,
   ReleaseSourceConfig
 } from "@shared/domain";
 import type {
@@ -25,6 +26,7 @@ import type {
   ConfirmAnimeSourceBindingInput,
   EpisodeReleasePreview,
   MediaScanResult,
+  PlayerDetectionResult,
   QbittorrentManagedStatus,
   RemoteGatewayStatus,
   RemotePairingChallenge,
@@ -32,6 +34,7 @@ import type {
   ReleaseSearchResult,
   RssSubscriptionReleaseQuery,
   RssSubscriptionReleaseResult,
+  SelectPlayerExecutableInput,
   TorrentConnectionTestResult
 } from "@shared/contracts";
 
@@ -80,6 +83,8 @@ declare global {
       getSettings: () => Promise<AppSettings>;
       updateSettings: (patch: Partial<AppSettings>) => Promise<AppSettings>;
       resetSettingsToDefaults: () => Promise<AppSettings>;
+      detectPlayers: (profiles?: PlayerProfile[]) => Promise<PlayerDetectionResult>;
+      selectPlayerExecutable: (input: SelectPlayerExecutableInput) => Promise<string | undefined>;
       testQbittorrent: () => Promise<TorrentConnectionTestResult>;
       getQbittorrentManagedStatus: () => Promise<QbittorrentManagedStatus>;
       startQbittorrentManaged: () => Promise<QbittorrentManagedStatus>;

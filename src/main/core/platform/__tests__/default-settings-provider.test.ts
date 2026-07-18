@@ -22,7 +22,7 @@ test("MacDefaultSettingsProvider 生成 macOS 默认目录和 IINA 播放器模�
   const settings = new MacDefaultSettingsProvider(paths).getSettings();
 
   assertSharedDefaults(settings);
-  assert.equal(settings.defaultPlayerProfileId, "iina");
+  assert.equal(settings.defaultPlayerProfileId, "auto");
   assert.deepEqual(
     settings.players.map((player) => player.id),
     ["iina", "mpv"]
@@ -37,16 +37,24 @@ test("MacDefaultSettingsProvider 生成 macOS 默认目录和 IINA 播放器模�
   });
 });
 
-test("WindowsDefaultSettingsProvider 生成 Windows 默认目录和 PotPlayer 播放器模板", () => {
+test("WindowsDefaultSettingsProvider 生成 Windows 四种播放器选择模板", () => {
   const settings = new WindowsDefaultSettingsProvider(paths).getSettings();
 
   assertSharedDefaults(settings);
-  assert.equal(settings.defaultPlayerProfileId, "potplayer");
+  assert.equal(settings.defaultPlayerProfileId, "auto");
   assert.deepEqual(
     settings.players.map((player) => player.id),
-    ["potplayer", "mpv"]
+    ["pure-codec-potplayer", "potplayer", "mpv"]
   );
   assert.deepEqual(settings.players[0], {
+    id: "pure-codec-potplayer",
+    name: "完美解码版 PotPlayer",
+    executablePath: "C:\\Program Files\\Pure Codec\\x64\\PotPlayerMini64.exe",
+    argumentTemplate: "\"{file}\"",
+    supportsMadVr: true,
+    platform: "windows"
+  });
+  assert.deepEqual(settings.players[1], {
     id: "potplayer",
     name: "PotPlayer",
     executablePath: "C:\\Program Files\\DAUM\\PotPlayer\\PotPlayerMini64.exe",
@@ -60,7 +68,7 @@ test("GenericDefaultSettingsProvider 只提供跨平台 mpv 模板", () => {
   const settings = new GenericDefaultSettingsProvider(paths).getSettings();
 
   assertSharedDefaults(settings);
-  assert.equal(settings.defaultPlayerProfileId, "mpv");
+  assert.equal(settings.defaultPlayerProfileId, "auto");
   assert.deepEqual(settings.players, [
     {
       id: "mpv",
@@ -86,6 +94,19 @@ test("mergeSettings 拒绝非法远程端口并接受有效端口", () => {
 
   assert.equal(invalid.network.remoteAccess.port, 18_083);
   assert.equal(valid.network.remoteAccess.port, 18_183);
+});
+
+test("mergeSettings 保留旧播放器自定义路径并补入新平台选项", () => {
+  const current = new WindowsDefaultSettingsProvider(paths).getSettings();
+  const storedPlayers = current.players
+    .filter((player) => player.id !== "pure-codec-potplayer")
+    .map((player) => player.id === "potplayer"
+      ? { ...player, executablePath: "D:\\Players\\PotPlayerMini64.exe" }
+      : player);
+  const merged = mergeSettings(current, { players: storedPlayers });
+
+  assert.deepEqual(merged.players.map((player) => player.id), ["pure-codec-potplayer", "potplayer", "mpv"]);
+  assert.equal(merged.players.find((player) => player.id === "potplayer")?.executablePath, "D:\\Players\\PotPlayerMini64.exe");
 });
 
 function assertSharedDefaults(settings: AppSettings): void {

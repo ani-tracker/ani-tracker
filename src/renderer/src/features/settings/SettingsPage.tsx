@@ -5,6 +5,7 @@ import {
   Copy,
   FileSearch,
   FolderCog,
+  FolderOpen,
   HardDrive,
   KeyRound,
   Languages,
@@ -24,6 +25,12 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput
+} from "@/components/ui/input-group";
+import {
   Select,
   SelectContent,
   SelectGroup,
@@ -37,6 +44,7 @@ import { appApi } from "@/lib/api";
 import { useAsyncData } from "@/lib/use-async-data";
 import type {
   AutomationSchedulerStatus,
+  PlayerDetectionResult,
   QbittorrentManagedStatus,
   RemoteGatewayStatus,
   RemotePairingChallenge
@@ -59,10 +67,14 @@ export function SettingsPage() {
   const [qbTest, setQbTest] = useState<{ state: "idle" | "testing" | "success" | "error"; message?: string }>({
     state: "idle"
   });
+  const [playerDetection, setPlayerDetection] = useState<PlayerDetectionResult | null>(null);
+  const [playerDetectionState, setPlayerDetectionState] = useState<"idle" | "detecting" | "error">("idle");
+  const [playerDetectionError, setPlayerDetectionError] = useState<string | null>(null);
 
   useEffect(() => {
     if (data) {
       setDraft(data);
+      void refreshPlayerDetection(data.players);
     }
   }, [data]);
 
@@ -179,7 +191,8 @@ export function SettingsPage() {
       const [, , remote] = await Promise.all([
         refreshSchedulerStatus(),
         refreshQbittorrentManagedStatus(),
-        refreshRemoteStatus()
+        refreshRemoteStatus(),
+        refreshPlayerDetection(saved.players)
       ]);
       setSaveState("saved");
       if (saved.network.remoteAccess.lanEnabled && (!remote?.lanEnabled || remote.lastError)) {
@@ -203,6 +216,7 @@ export function SettingsPage() {
     setResetState("resetting");
     const saved = await appApi.resetSettingsToDefaults();
     setDraft(saved);
+    await refreshPlayerDetection(saved.players);
     setQbTest({ state: "idle" });
     await refreshSchedulerStatus();
     await refreshQbittorrentManagedStatus();
@@ -265,6 +279,83 @@ export function SettingsPage() {
       setQbManagedAction("idle");
     }
   }
+
+  /** 探测当前系统可用的播放器路径并刷新状态。 */
+  async function refreshPlayerDetection(players = draft?.players, notify = false) {
+    if (!players) {
+      return;
+    }
+    setPlayerDetectionState("detecting");
+    try {
+      const result = await appApi.detectPlayers(players);
+      setPlayerDetection(result);
+      setPlayerDetectionError(null);
+      if (notify) {
+        if (result.detectedProfileId) {
+          toast.success("播放器探测完成");
+        } else {
+          toast.warning("未探测到可用播放器");
+        }
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "播放器探测失败";
+      setPlayerDetectionError(message);
+      if (notify) {
+        toast.error(message);
+      }
+    } finally {
+      setPlayerDetectionState("idle");
+    }
+  }
+
+  /** 更新指定播放器的可执行文件路径并等待用户保存。 */
+  function updatePlayerPath(profileId: string, executablePath: string) {
+    if (!draft) {
+      return;
+    }
+    setDraft({
+      ...draft,
+      players: draft.players.map((player) => player.id === profileId ? { ...player, executablePath } : player)
+    });
+    setPlayerDetection(null);
+    setPlayerDetectionError(null);
+  }
+
+  /** 打开系统文件选择器并写入当前播放器路径。 */
+  async function selectPlayerExecutable(profileId: string) {
+    if (!draft) {
+      return;
+    }
+    const player = draft.players.find((item) => item.id === profileId);
+    if (!player) {
+      return;
+    }
+    try {
+      const selectedPath = await appApi.selectPlayerExecutable({
+        profileId,
+        currentPath: player.executablePath
+      });
+      if (!selectedPath) {
+        return;
+      }
+      const players = draft.players.map((item) => item.id === profileId
+        ? { ...item, executablePath: selectedPath }
+        : item);
+      setDraft({ ...draft, players });
+      await refreshPlayerDetection(players);
+      toast.success("播放器路径已选择，请保存设置");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "播放器文件选择失败");
+    }
+  }
+
+  const playerOptions = draft.players.filter((player) =>
+    !playerDetection || playerDetection.candidates.some((candidate) => candidate.profileId === player.id)
+  );
+  const selectedPlayerId = draft.defaultPlayerProfileId ?? "auto";
+  const selectedPlayer = draft.players.find((player) => player.id === selectedPlayerId);
+  const selectedCandidate = playerDetection?.candidates.find((candidate) => candidate.profileId === selectedPlayerId);
+  const autoCandidate = playerDetection?.candidates.find((candidate) => candidate.profileId === playerDetection.detectedProfileId);
 
   return (
     <div className="flex flex-col gap-5">
@@ -580,27 +671,82 @@ export function SettingsPage() {
         </div>
       </SettingsSection>
 
-      <SettingsSection title="播放器配置">
-        <div className="grid gap-4 md:grid-cols-2">
-          {draft.players.map((player) => (
-            <div key={player.id} className="rounded-md border p-4">
-              <div className="flex items-start justify-between gap-4">
-                <div>
-                  <div className="flex items-center gap-2 font-medium">
-                    <PlayCircle className="h-4 w-4 text-primary" />
-                    {player.name}
-                  </div>
-                  <div className="mt-2 text-sm text-muted-foreground">{player.executablePath}</div>
-                </div>
-                <Badge tone={player.id === draft.defaultPlayerProfileId ? "green" : "neutral"}>
-                  {player.id === draft.defaultPlayerProfileId ? "默认" : player.platform}
+      <SettingsSection title="播放器配置" description="按当前操作系统提供播放器选项。">
+        <div className="flex flex-col gap-4">
+          <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+            <Field>
+              <FieldLabel htmlFor="default-player">默认播放器</FieldLabel>
+              <Select
+                value={selectedPlayerId}
+                onValueChange={(value) => setDraft({ ...draft, defaultPlayerProfileId: value })}
+              >
+                <SelectTrigger id="default-player">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="auto">自动</SelectItem>
+                    {playerOptions.map((player) => (
+                      <SelectItem key={player.id} value={player.id}>{player.name}</SelectItem>
+                    ))}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+            <Button
+              variant="outline"
+              onClick={() => void refreshPlayerDetection(draft.players, true)}
+              disabled={playerDetectionState === "detecting"}
+            >
+              <RefreshCw data-icon="inline-start" />
+              {playerDetectionState === "detecting" ? "探测中" : "重新探测"}
+            </Button>
+          </div>
+
+          {selectedPlayerId === "auto" ? (
+            <Alert>
+              <PlayCircle />
+              <AlertTitle>{autoCandidate ? `自动选择：${autoCandidate.name}` : "未探测到可用播放器"}</AlertTitle>
+              <AlertDescription className="break-all">
+                {autoCandidate?.resolvedPath ?? "请安装播放器，或选择具体播放器并设置可执行文件路径。"}
+              </AlertDescription>
+            </Alert>
+          ) : selectedPlayer ? (
+            <Field data-invalid={Boolean(playerDetection && !selectedCandidate?.available)}>
+              <FieldLabel htmlFor="player-executable-path">可执行文件路径</FieldLabel>
+              <InputGroup>
+                <InputGroupInput
+                  id="player-executable-path"
+                  value={selectedPlayer.executablePath}
+                  aria-invalid={Boolean(playerDetection && !selectedCandidate?.available)}
+                  onChange={(event) => updatePlayerPath(selectedPlayer.id, event.target.value)}
+                />
+                <InputGroupAddon>
+                  <InputGroupButton
+                    onClick={() => void selectPlayerExecutable(selectedPlayer.id)}
+                    aria-label="选择播放器可执行文件"
+                    title="选择播放器可执行文件"
+                  >
+                    <FolderOpen />
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <Badge tone={selectedCandidate?.available ? "green" : selectedCandidate ? "amber" : "neutral"}>
+                  {selectedCandidate?.available ? "路径可用" : selectedCandidate ? "路径不可用" : "待探测"}
                 </Badge>
+                {selectedCandidate?.resolvedPath && <span className="break-all">{selectedCandidate.resolvedPath}</span>}
               </div>
-              <div className="mt-4 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
-                {player.argumentTemplate}
-              </div>
-            </div>
-          ))}
+            </Field>
+          ) : null}
+
+          {playerDetectionError && (
+            <Alert variant="destructive">
+              <PlayCircle />
+              <AlertTitle>播放器探测失败</AlertTitle>
+              <AlertDescription>{playerDetectionError}</AlertDescription>
+            </Alert>
+          )}
         </div>
       </SettingsSection>
 

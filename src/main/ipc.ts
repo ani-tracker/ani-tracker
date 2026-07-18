@@ -1,9 +1,10 @@
-import { ipcMain, shell } from "electron";
+import { dialog, ipcMain, shell } from "electron";
 import type {
   AppSettings,
   Episode,
   EpisodePreference,
   MyAnime,
+  PlayerProfile,
   Release,
   ReleaseSourceConfig,
   SubtitleLanguage
@@ -20,7 +21,8 @@ import type {
   AnimeDiscoveryQuery,
   ConfirmAnimeSourceBindingInput,
   ReleaseQuery,
-  RssSubscriptionReleaseQuery
+  RssSubscriptionReleaseQuery,
+  SelectPlayerExecutableInput
 } from "@shared/contracts";
 import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
 import { PlayerLauncherService } from "./core/platform/player-launcher";
@@ -41,6 +43,7 @@ import { AnimeFansubDiscoveryService } from "./core/fansubs/anime-fansub-discove
 import { enrichReleaseFromTitle } from "./core/releases/release-title-parser";
 import { PlaybackStatusService } from "./core/media/playback-status-service";
 import { DownloadTaskControlService } from "./core/downloads/download-task-control-service";
+import { PlayerDetectionService } from "./core/platform/player-detection-service";
 import type { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
 
 export const repositoryRuntime = createRepositoryRuntime();
@@ -375,6 +378,29 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     await options.onSettingsUpdated?.(settings);
     await automationScheduler.restart();
     return settings;
+  });
+  ipcMain.handle("players:detect", async (_event, profiles?: PlayerProfile[]) => {
+    const settings = await repository.getSettings();
+    return new PlayerDetectionService().detect(Array.isArray(profiles) ? profiles : settings.players);
+  });
+  ipcMain.handle("players:selectExecutable", async (_event, input: SelectPlayerExecutableInput) => {
+    const profileId = input?.profileId?.trim();
+    if (!profileId) {
+      throw new Error("播放器标识不能为空");
+    }
+
+    logger.info("Player executable selection opened", { profileId });
+    const result = await dialog.showOpenDialog({
+      title: "选择播放器可执行文件",
+      defaultPath: input.currentPath?.trim() || undefined,
+      properties: ["openFile"],
+      filters: process.platform === "win32"
+        ? [{ name: "Windows 可执行文件", extensions: ["exe"] }]
+        : undefined
+    });
+    const selectedPath = result.canceled ? undefined : result.filePaths[0];
+    logger.info("Player executable selection completed", { profileId, selected: Boolean(selectedPath) });
+    return selectedPath;
   });
   ipcMain.handle("downloads:getQbittorrentManagedStatus", async () => {
     const settings = await repository.getSettings();

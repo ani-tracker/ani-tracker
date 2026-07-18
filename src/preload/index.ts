@@ -6,6 +6,7 @@ import type {
   EpisodePreference,
   MyAnime,
   NotificationRecord,
+  PlayerProfile,
   ReleaseSourceConfig
 } from "@shared/domain";
 import type {
@@ -14,10 +15,12 @@ import type {
   AnimeReleaseQuery,
   AnimeDiscoveryQuery,
   ConfirmAnimeSourceBindingInput,
+  PlayerDetectionResult,
   RemoteGatewayStatus,
   RemotePairingChallenge,
   ReleaseQuery,
-  RssSubscriptionReleaseQuery
+  RssSubscriptionReleaseQuery,
+  SelectPlayerExecutableInput
 } from "@shared/contracts";
 
 const api = {
@@ -72,6 +75,10 @@ const api = {
   getSettings: () => ipcRenderer.invoke("settings:get"),
   updateSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings:update", patch),
   resetSettingsToDefaults: () => ipcRenderer.invoke("settings:resetDefaults"),
+  detectPlayers: (profiles?: PlayerProfile[]): Promise<PlayerDetectionResult> =>
+    ipcRenderer.invoke("players:detect", profiles),
+  selectPlayerExecutable: (input: SelectPlayerExecutableInput): Promise<string | undefined> =>
+    ipcRenderer.invoke("players:selectExecutable", input),
   testQbittorrent: () => ipcRenderer.invoke("downloads:testQbittorrent"),
   getQbittorrentManagedStatus: () => ipcRenderer.invoke("downloads:getQbittorrentManagedStatus"),
   startQbittorrentManaged: () => ipcRenderer.invoke("downloads:startQbittorrentManaged"),

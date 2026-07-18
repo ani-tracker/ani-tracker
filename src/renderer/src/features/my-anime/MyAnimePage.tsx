@@ -904,7 +904,7 @@ export function MyAnimePage() {
 
       {downloadTarget && (
         <Drawer
-          ariaLabel="资源下载"
+          ariaLabel="资源搜索"
           className="overflow-x-hidden sm:max-w-5xl"
           onClose={closeAnimeDownloads}
         >
@@ -2140,8 +2140,8 @@ function AnimeDownloadPanel({
       )}
     >
       <CardHeader className="flex-row items-start justify-between gap-4 p-3 pb-0 sm:p-4 sm:pb-0 [@media(max-height:760px)]:p-2 [@media(max-height:760px)]:pb-0">
-        <CardTitle>资源下载</CardTitle>
-        <Button className="size-11 p-0 sm:size-9" variant="ghost" onClick={onClose} aria-label="关闭下载" title="关闭下载">
+        <CardTitle>资源搜索</CardTitle>
+        <Button className="size-11 p-0 sm:size-9" variant="ghost" onClick={onClose} aria-label="关闭资源搜索" title="关闭资源搜索">
           <X />
         </Button>
       </CardHeader>

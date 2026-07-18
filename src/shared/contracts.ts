@@ -330,6 +330,28 @@ export interface PlayerService {
   reveal(filePath: string): Promise<void>;
 }
 
+export type PlayerRuntimePlatform = "windows" | "macos" | "linux" | "other";
+
+export interface PlayerDetectionCandidate {
+  profileId: string;
+  name: string;
+  configuredPath: string;
+  available: boolean;
+  resolvedPath?: string;
+}
+
+export interface PlayerDetectionResult {
+  platform: PlayerRuntimePlatform;
+  candidates: PlayerDetectionCandidate[];
+  detectedProfileId?: string;
+  detectedExecutablePath?: string;
+}
+
+export interface SelectPlayerExecutableInput {
+  profileId: string;
+  currentPath?: string;
+}
+
 export interface PlatformService {
   getDefaultDownloadDir(): Promise<string>;
   getAppDataDir(): Promise<string>;

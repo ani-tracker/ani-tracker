@@ -112,13 +112,21 @@ export class MacDefaultSettingsProvider extends DefaultSettingsProvider {
   }
 
   protected getDefaultPlayerProfileId(): string {
-    return "iina";
+    return "auto";
   }
 }
 
 export class WindowsDefaultSettingsProvider extends DefaultSettingsProvider {
   protected getPlayerProfiles(): PlayerProfile[] {
     return [
+      {
+        id: "pure-codec-potplayer",
+        name: "完美解码版 PotPlayer",
+        executablePath: "C:\\Program Files\\Pure Codec\\x64\\PotPlayerMini64.exe",
+        argumentTemplate: "\"{file}\"",
+        supportsMadVr: true,
+        platform: "windows"
+      },
       {
         id: "potplayer",
         name: "PotPlayer",
@@ -132,7 +140,7 @@ export class WindowsDefaultSettingsProvider extends DefaultSettingsProvider {
   }
 
   protected getDefaultPlayerProfileId(): string {
-    return "potplayer";
+    return "auto";
   }
 }
 
@@ -142,7 +150,7 @@ export class GenericDefaultSettingsProvider extends DefaultSettingsProvider {
   }
 
   protected getDefaultPlayerProfileId(): string {
-    return "mpv";
+    return "auto";
   }
 }
 

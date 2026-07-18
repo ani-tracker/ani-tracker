@@ -111,6 +111,27 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   second.close();
 });
 
+test("SQLite 重启后恢复播放器选择和自定义路径", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const settings = await first.repository.getSettings();
+  await first.repository.updateSettings({
+    defaultPlayerProfileId: "mpv",
+    players: settings.players.map((player) => player.id === "mpv"
+      ? { ...player, executablePath: "D:\\Players\\mpv.exe" }
+      : player)
+  });
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const restored = await second.repository.getSettings();
+  assert.equal(restored.defaultPlayerProfileId, "mpv");
+  assert.equal(restored.players.find((player) => player.id === "mpv")?.executablePath, "D:\\Players\\mpv.exe");
+  second.close();
+});
+
 test("SQLite 重启后恢复下载任务技术信息快照", async () => {
   const fixture = await createFixture();
   const first = createRepositoryRuntime(fixture.options);
