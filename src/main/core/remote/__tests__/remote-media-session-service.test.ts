@@ -12,12 +12,31 @@ import {
   RemoteMediaSessionService,
   type RemoteMediaRepository
 } from "../remote-media-session-service";
+import type { RemoteSubtitlePreparationResult } from "../remote-subtitle-service";
 
 test("RemoteMediaSessionService 为浏览器兼容文件创建直传会话", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "ani-remote-media-test-"));
   const filePath = join(directory, "episode.mp4");
   await writeFile(filePath, Buffer.from("0123456789"));
-  const service = createService(createRepository(createTask(directory, "episode.mp4"), []));
+  const service = createService(
+    createRepository(createTask(directory, "episode.mp4"), []),
+    async (_sourcePath, outputDirectory) => {
+      await writeFile(join(outputDirectory, "subtitle-000.ass"), "[Events]\n", "utf8");
+      return {
+        subtitles: [{
+          assetName: "subtitle-000.ass",
+          id: "subtitle-2",
+          label: "简体中文",
+          language: "简体中文",
+          type: "ass",
+          default: true
+        }],
+        detectedCount: 1,
+        unsupportedCount: 0,
+        failedCount: 0
+      };
+    }
+  );
   context.after(async () => {
     await service.stopAll();
     await rm(directory, { recursive: true, force: true });
@@ -25,12 +44,22 @@ test("RemoteMediaSessionService 为浏览器兼容文件创建直传会话", asy
 
   const session = await service.createSession("task-1", "device-1", "direct");
   const asset = await service.getAsset(session.id, "device-1", "file");
+  const subtitleAsset = await service.getAsset(session.id, "device-1", "subtitle-000.ass");
 
   assert.equal(session.mode, "direct");
   assert.equal(session.durationSeconds, 1_445);
+  assert.deepEqual(session.subtitles, [{
+    id: "subtitle-2",
+    label: "简体中文",
+    language: "简体中文",
+    type: "ass",
+    url: `/api/media/sessions/${session.id}/subtitles/subtitle-000.ass`,
+    default: true
+  }]);
   assert.equal(session.streamUrl, `/api/media/sessions/${session.id}/file`);
   assert.equal(asset.filePath, filePath);
   assert.equal(asset.contentType, "video/mp4");
+  assert.equal(subtitleAsset.contentType, "text/x-ssa; charset=utf-8");
   await assert.rejects(
     service.getAsset(session.id, "device-2", "file"),
     (error) => isMediaError(error, "MEDIA_SESSION_NOT_FOUND", 404)
@@ -61,6 +90,7 @@ test("RemoteMediaSessionService 按实时转码模式为 MP4 启动 FFmpeg HLS",
       platform: "win32",
       bundledFfmpegPath: null,
       durationProbe: async () => 1_445,
+      subtitlePreparer: emptySubtitlePreparer,
       logger: silentLogger
     }
   );
@@ -198,9 +228,19 @@ function isMediaError(error: unknown, code: string, statusCode: number): boolean
 }
 
 /** 创建关闭日志的媒体服务。 */
-function createService(repository: RemoteMediaRepository): RemoteMediaSessionService {
+function createService(
+  repository: RemoteMediaRepository,
+  subtitlePreparer: NonNullable<ConstructorParameters<typeof RemoteMediaSessionService>[1]>["subtitlePreparer"]
+    = emptySubtitlePreparer
+): RemoteMediaSessionService {
   return new RemoteMediaSessionService(repository, {
     durationProbe: async () => 1_445,
+    subtitlePreparer,
     logger: silentLogger
   });
+}
+
+/** 返回无字幕轨道的稳定测试结果。 */
+async function emptySubtitlePreparer(): Promise<RemoteSubtitlePreparationResult> {
+  return { subtitles: [], detectedCount: 0, unsupportedCount: 0, failedCount: 0 };
 }

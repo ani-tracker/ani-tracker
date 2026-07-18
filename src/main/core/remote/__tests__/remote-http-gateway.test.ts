@@ -227,6 +227,22 @@ test("媒体会话使用设备 Cookie 输出 206 范围响应", async (context) 
     } as AppSettings)
   }, {
     durationProbe: async () => 1_445,
+    subtitlePreparer: async (_sourcePath, outputDirectory) => {
+      await writeFile(join(outputDirectory, "subtitle-000.vtt"), "WEBVTT\n\n", "utf8");
+      return {
+        subtitles: [{
+          assetName: "subtitle-000.vtt",
+          id: "subtitle-2",
+          label: "简体中文",
+          language: "简体中文",
+          type: "vtt",
+          default: true
+        }],
+        detectedCount: 1,
+        unsupportedCount: 0,
+        failedCount: 0
+      };
+    },
     logger: { info: () => undefined, warn: () => undefined }
   });
   const gateway = await startGateway({ mediaSessionService });
@@ -248,7 +264,10 @@ test("媒体会话使用设备 Cookie 输出 206 范围响应", async (context) 
     body: JSON.stringify({ taskId: task.id, mode: "direct" })
   });
   assert.equal(createResponse.status, 200);
-  const session = await createResponse.json() as { streamUrl: string };
+  const session = await createResponse.json() as {
+    streamUrl: string;
+    subtitles: Array<{ url: string }>;
+  };
   const cookie = createResponse.headers.get("set-cookie")?.split(";")[0];
   assert.ok(cookie);
 
@@ -258,6 +277,14 @@ test("媒体会话使用设备 Cookie 输出 206 范围响应", async (context) 
   assert.equal(rangeResponse.status, 206);
   assert.equal(rangeResponse.headers.get("content-range"), "bytes 2-5/10");
   assert.equal(await rangeResponse.text(), "2345");
+
+  const subtitleResponse = await fetch(
+    `${gateway.getStatus().baseUrl}${session.subtitles[0].url}`,
+    { headers: { Cookie: cookie } }
+  );
+  assert.equal(subtitleResponse.status, 200);
+  assert.match(subtitleResponse.headers.get("content-type") ?? "", /^text\/vtt/);
+  assert.equal(await subtitleResponse.text(), "WEBVTT\n\n");
 
   const unauthorized = await fetch(`${gateway.getStatus().baseUrl}${session.streamUrl}`);
   assert.equal(unauthorized.status, 401);

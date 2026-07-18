@@ -711,12 +711,12 @@ interface MediaRoute {
 /** 解析固定格式的媒体会话路由并拒绝额外路径层级。 */
 function parseMediaRoute(pathname: string): MediaRoute | undefined {
   const match = pathname.match(
-    /^\/api\/media\/sessions\/([A-Za-z0-9_-]{32})(?:\/(file)|\/hls\/(index\.m3u8|segment-\d{6}\.ts))?$/
+    /^\/api\/media\/sessions\/([A-Za-z0-9_-]{32})(?:\/(file)|\/hls\/(index\.m3u8|segment-\d{6}\.ts)|\/subtitles\/(subtitle-\d{3}\.(?:ass|vtt)))?$/
   );
   if (!match) {
     return undefined;
   }
-  return { sessionId: match[1], assetName: match[2] ?? match[3] };
+  return { sessionId: match[1], assetName: match[2] ?? match[3] ?? match[4] };
 }
 
 export interface ByteRange {

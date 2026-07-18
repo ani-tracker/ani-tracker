@@ -10,18 +10,25 @@ import type {
   RemotePlaybackSession
 } from "@shared/contracts";
 import type { AppSettings, DownloadTask, MediaFile } from "@shared/domain";
-import ffprobeInstaller from "@ffprobe-installer/ffprobe";
-import ffmpegStaticPath from "ffmpeg-static";
+import * as ffprobeInstallerModule from "@ffprobe-installer/ffprobe";
+import * as ffmpegStaticModule from "ffmpeg-static";
 import {
   probeMediaDuration,
   type FfprobeMediaProbeOptions
 } from "../media/ffprobe-media-probe-service";
 import type { AppRepository } from "../repositories/app-repository";
 import { logger as defaultLogger } from "../logger";
+import {
+  prepareRemoteSubtitles,
+  type RemoteSubtitlePreparationOptions,
+  type RemoteSubtitlePreparationResult
+} from "./remote-subtitle-service";
 
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1_000;
 const DEFAULT_TRANSCODER_START_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_SESSIONS = 2;
+const bundledFfprobeInstallerPath = resolveFfprobeInstallerPath(ffprobeInstallerModule);
+const bundledFfmpegStaticPath = resolveFfmpegStaticPath(ffmpegStaticModule);
 
 export interface RemoteMediaAsset {
   filePath: string;
@@ -52,6 +59,11 @@ export interface RemoteMediaSessionServiceOptions {
   bundledFfmpegPath?: string | null;
   bundledFfprobePath?: string | null;
   durationProbe?: (filePath: string, options: FfprobeMediaProbeOptions) => Promise<number | undefined>;
+  subtitlePreparer?: (
+    sourcePath: string,
+    outputDirectory: string,
+    options: RemoteSubtitlePreparationOptions
+  ) => Promise<RemoteSubtitlePreparationResult>;
 }
 
 interface ResolvedMedia {
@@ -60,6 +72,7 @@ interface ResolvedMedia {
   mode: RemotePlaybackMode;
   contentType: string;
   durationSeconds?: number;
+  settings: AppSettings;
 }
 
 interface MediaSessionRecord extends RemotePlaybackSession {
@@ -98,6 +111,7 @@ export class RemoteMediaSessionService {
   private readonly bundledFfmpegPath?: string;
   private readonly bundledFfprobePath?: string;
   private readonly durationProbe: NonNullable<RemoteMediaSessionServiceOptions["durationProbe"]>;
+  private readonly subtitlePreparer: NonNullable<RemoteMediaSessionServiceOptions["subtitlePreparer"]>;
   private readonly sessions = new Map<string, MediaSessionRecord>();
 
   /** 初始化受控媒体会话服务并注入可测试的平台依赖。 */
@@ -118,12 +132,13 @@ export class RemoteMediaSessionService {
     this.platform = options.platform ?? process.platform;
     this.logger = options.logger ?? defaultLogger;
     this.bundledFfmpegPath = options.bundledFfmpegPath === undefined
-      ? ffmpegStaticPath ?? undefined
+      ? bundledFfmpegStaticPath
       : options.bundledFfmpegPath ?? undefined;
     this.bundledFfprobePath = options.bundledFfprobePath === undefined
-      ? ffprobeInstaller.path
+      ? bundledFfprobeInstallerPath
       : options.bundledFfprobePath ?? undefined;
     this.durationProbe = options.durationProbe ?? probeMediaDuration;
+    this.subtitlePreparer = options.subtitlePreparer ?? prepareRemoteSubtitles;
   }
 
   /** 为已配对设备创建短期播放会话，且不向远程端暴露真实路径。 */
@@ -154,6 +169,7 @@ export class RemoteMediaSessionService {
         : `/api/media/sessions/${id}/hls/index.m3u8`,
       expiresAt: new Date(now + this.sessionTtlMs).toISOString(),
       durationSeconds: media.durationSeconds,
+      subtitles: [],
       deviceId,
       sourcePath: media.filePath,
       contentType: media.contentType,
@@ -162,16 +178,28 @@ export class RemoteMediaSessionService {
     this.sessions.set(id, record);
     this.refreshExpiration(record);
 
-    try {
-      if (record.mode === "hls") {
-        await this.startHlsTranscode(record, await this.repository.getSettings());
+    if (record.mode === "hls") {
+      try {
+        record.temporaryDirectory = await mkdtemp(join(this.temporaryDirectory, "ani-remote-media-"));
+        await this.prepareSessionSubtitles(record, media.settings);
+        await this.startHlsTranscode(record, media.settings);
+      } catch (error) {
+        await this.closeSession(id, deviceId);
+        if (error instanceof RemoteMediaSessionError) {
+          throw error;
+        }
+        throw new RemoteMediaSessionError(503, "TRANSCODER_UNAVAILABLE", "实时转码启动失败");
       }
-    } catch (error) {
-      await this.closeSession(id, deviceId);
-      if (error instanceof RemoteMediaSessionError) {
-        throw error;
+    } else {
+      try {
+        record.temporaryDirectory = await mkdtemp(join(this.temporaryDirectory, "ani-remote-media-"));
+        await this.prepareSessionSubtitles(record, media.settings);
+      } catch (error) {
+        this.logger.warn("Remote subtitle cache initialization failed", {
+          sessionId: record.id,
+          errorType: error instanceof Error ? error.name : typeof error
+        });
       }
-      throw new RemoteMediaSessionError(503, "TRANSCODER_UNAVAILABLE", "实时转码启动失败");
     }
 
     this.logger.info("Remote media session created", {
@@ -187,6 +215,20 @@ export class RemoteMediaSessionService {
   /** 返回指定会话中的直传文件或 HLS 资源。 */
   async getAsset(sessionId: string, deviceId: string, assetName: string): Promise<RemoteMediaAsset> {
     const session = await this.requireSession(sessionId, deviceId);
+    const subtitle = session.subtitles.find((item) => item.url.endsWith(`/subtitles/${assetName}`));
+    if (subtitle && /^subtitle-\d{3}\.(?:ass|vtt)$/.test(assetName) && session.temporaryDirectory) {
+      const candidate = resolve(session.temporaryDirectory, assetName);
+      if (!isPathInside(session.temporaryDirectory, candidate) || !existsSync(candidate)) {
+        throw new RemoteMediaSessionError(404, "MEDIA_ASSET_NOT_FOUND", "字幕资源不存在");
+      }
+      return {
+        filePath: await realpath(candidate),
+        contentType: subtitle.type === "ass"
+          ? "text/x-ssa; charset=utf-8"
+          : "text/vtt; charset=utf-8",
+        direct: false
+      };
+    }
     if (session.mode === "direct") {
       if (assetName !== "file") {
         throw new RemoteMediaSessionError(404, "MEDIA_ASSET_NOT_FOUND", "媒体资源不存在");
@@ -292,7 +334,8 @@ export class RemoteMediaSessionService {
         mode: requestedMode === "transcode" ? "hls" : "direct",
         contentType: directContentType(extension),
         durationSeconds: candidate.media?.durationSeconds
-          ?? await this.resolveDuration(source, settings)
+          ?? await this.resolveDuration(source, settings),
+        settings
       };
     }
 
@@ -349,9 +392,49 @@ export class RemoteMediaSessionService {
     }
   }
 
+  /** 提取会话可用文本字幕，失败时保留视频播放能力。 */
+  private async prepareSessionSubtitles(session: MediaSessionRecord, settings: AppSettings): Promise<void> {
+    if (!session.temporaryDirectory) {
+      return;
+    }
+    const configuredFfprobePath = settings.media.ffprobePath.trim() || "ffprobe";
+    try {
+      const result = await this.subtitlePreparer(session.sourcePath, session.temporaryDirectory, {
+        ffprobePaths: [configuredFfprobePath, this.bundledFfprobePath ?? ""],
+        ffmpegPath: resolveFfmpegPath(
+          configuredFfprobePath,
+          this.platform,
+          this.bundledFfmpegPath
+        ),
+        timeoutMs: settings.media.ffprobeTimeoutSeconds * 1_000
+      });
+      session.subtitles = result.subtitles.map((subtitle) => ({
+        id: subtitle.id,
+        label: subtitle.label,
+        language: subtitle.language,
+        type: subtitle.type,
+        url: `/api/media/sessions/${session.id}/subtitles/${subtitle.assetName}`,
+        default: subtitle.default
+      }));
+      this.logger.info("Remote media subtitles prepared", {
+        sessionId: session.id,
+        detectedCount: result.detectedCount,
+        supportedCount: session.subtitles.length,
+        unsupportedCount: result.unsupportedCount,
+        failedCount: result.failedCount
+      });
+    } catch (error) {
+      this.logger.warn("Remote media subtitle preparation failed", {
+        sessionId: session.id,
+        errorType: error instanceof Error ? error.name : typeof error
+      });
+    }
+  }
+
   /** 启动 FFmpeg 并等待首个 HLS 播放列表生成。 */
   private async startHlsTranscode(session: MediaSessionRecord, settings: AppSettings): Promise<void> {
-    const outputDirectory = await mkdtemp(join(this.temporaryDirectory, "ani-remote-media-"));
+    const outputDirectory = session.temporaryDirectory
+      ?? await mkdtemp(join(this.temporaryDirectory, "ani-remote-media-"));
     session.temporaryDirectory = outputDirectory;
     const playlistPath = join(outputDirectory, "index.m3u8");
     const segmentPattern = join(outputDirectory, "segment-%06d.ts");
@@ -530,13 +613,33 @@ function toPublicSession(session: MediaSessionRecord): RemotePlaybackSession {
     mode: session.mode,
     streamUrl: session.streamUrl,
     expiresAt: session.expiresAt,
-    durationSeconds: session.durationSeconds
+    durationSeconds: session.durationSeconds,
+    subtitles: session.subtitles.map((subtitle) => ({ ...subtitle }))
   };
 }
 
 /** 将可选整数约束为正整数。 */
 function positiveInteger(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isInteger(value) && value > 0 ? value : fallback;
+}
+
+/** 兼容 FFprobe 安装包在 CommonJS 与 ESM 中的导出形态。 */
+function resolveFfprobeInstallerPath(moduleValue: unknown): string | undefined {
+  const candidate = moduleValue as {
+    path?: unknown;
+    default?: { path?: unknown };
+  };
+  const value = candidate.path ?? candidate.default?.path;
+  return typeof value === "string" ? value : undefined;
+}
+
+/** 兼容 ffmpeg-static 在 CommonJS 与 ESM 中的导出形态。 */
+function resolveFfmpegStaticPath(moduleValue: unknown): string | undefined {
+  if (typeof moduleValue === "string") {
+    return moduleValue;
+  }
+  const value = (moduleValue as { default?: unknown }).default;
+  return typeof value === "string" ? value : undefined;
 }
 
 /** 非阻塞等待转码产物生成。 */

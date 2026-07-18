@@ -1,4 +1,4 @@
-import Artplayer from "artplayer";
+import Artplayer, { type Setting } from "artplayer";
 import Hls from "hls.js";
 import { RotateCcw, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
@@ -8,7 +8,11 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { closeRemotePlaybackSession, createRemotePlaybackSession } from "@/lib/api";
-import type { RemotePlaybackRequestMode, RemotePlaybackSession } from "@shared/contracts";
+import type {
+  RemotePlaybackRequestMode,
+  RemotePlaybackSession,
+  RemotePlaybackSubtitle
+} from "@shared/contracts";
 import type { DownloadTask } from "@shared/domain";
 
 interface RemoteVideoPlayerProps {
@@ -65,6 +69,8 @@ export function RemoteVideoPlayer({ task, onClose }: RemoteVideoPlayerProps) {
 
     let hls: Hls | undefined;
     const streamUrl = new URL(session.streamUrl, window.location.origin).toString();
+    const defaultSubtitle = session.subtitles.find((subtitle) => subtitle.default)
+      ?? session.subtitles[0];
     const handlePlaybackError = (message: string): void => {
       console.error("[remote] ArtPlayer 播放失败", { taskId: task.id, mode: session.mode });
       setError(message);
@@ -79,6 +85,7 @@ export function RemoteVideoPlayer({ task, onClose }: RemoteVideoPlayerProps) {
         autoplay: true,
         volume: 0.7,
         setting: true,
+        subtitleOffset: session.subtitles.length > 0,
         playbackRate: true,
         aspectRatio: true,
         pip: true,
@@ -90,6 +97,9 @@ export function RemoteVideoPlayer({ task, onClose }: RemoteVideoPlayerProps) {
         playsInline: true,
         lock: true,
         fastForward: true,
+        ...(session.subtitles.length > 0
+          ? { settings: [createSubtitleSetting(session.subtitles)] }
+          : {}),
         customType: {
           m3u8(video, url, art) {
             if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -127,6 +137,22 @@ export function RemoteVideoPlayer({ task, onClose }: RemoteVideoPlayerProps) {
           : "浏览器无法播放当前转码视频流，请重试"
       );
     });
+    player.on("subtitleLoad", (cues) => {
+      console.info("[remote] ArtPlayer 字幕加载完成", {
+        taskId: task.id,
+        cueCount: cues.length
+      });
+    });
+    if (defaultSubtitle) {
+      void switchArtPlayerSubtitle(player, defaultSubtitle).catch((caught) => {
+        console.error("[remote] 默认字幕加载失败", {
+          taskId: task.id,
+          subtitleId: defaultSubtitle.id,
+          error: caught
+        });
+        player.notice.show = "默认字幕加载失败，可在设置中重试";
+      });
+    }
 
     return () => {
       hls?.destroy();
@@ -153,6 +179,7 @@ export function RemoteVideoPlayer({ task, onClose }: RemoteVideoPlayerProps) {
             <div className="mt-1 flex flex-wrap gap-2">
               <Badge>{session.mode === "hls" ? "实时转码" : "原文件直传"}</Badge>
               <Badge>{session.durationSeconds ? `总时长 ${formatPlaybackDuration(session.durationSeconds)}` : "时长未知"}</Badge>
+              <Badge>{session.subtitles.length > 0 ? `${session.subtitles.length} 条字幕` : "无文本字幕"}</Badge>
             </div>
           )}
         </div>
@@ -184,7 +211,7 @@ export function RemoteVideoPlayer({ task, onClose }: RemoteVideoPlayerProps) {
       </div>
 
       <div className="relative min-h-60 flex-1 bg-foreground">
-        <div ref={playerContainerRef} className="size-full" />
+        <div ref={playerContainerRef} className="absolute inset-0" />
         {!session && !error && (
           <Skeleton className="absolute inset-0 size-full rounded-none" aria-label="正在准备视频" />
         )}
@@ -236,4 +263,60 @@ function formatPlaybackDuration(durationSeconds: number): string {
   return hours > 0
     ? `${hours}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}`
     : `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+/** 构建 ArtPlayer 多轨字幕设置菜单。 */
+function createSubtitleSetting(subtitles: RemotePlaybackSubtitle[]): Setting {
+  const defaultSubtitle = subtitles.find((subtitle) => subtitle.default) ?? subtitles[0];
+  return {
+    name: "remote-subtitles",
+    html: "字幕",
+    tooltip: escapeHtml(defaultSubtitle.label),
+    selector: [
+      { html: "关闭", value: "off" },
+      ...subtitles.map((subtitle) => ({
+        html: escapeHtml(subtitle.label),
+        value: subtitle.id,
+        default: subtitle.id === defaultSubtitle.id
+      }))
+    ],
+    async onSelect(item) {
+      const subtitle = subtitles.find((entry) => entry.id === item.value);
+      if (!subtitle) {
+        this.subtitle.show = false;
+        return "关闭";
+      }
+      try {
+        await switchArtPlayerSubtitle(this, subtitle);
+        console.info("[remote] ArtPlayer 字幕已切换", { subtitleId: subtitle.id });
+        return escapeHtml(subtitle.label);
+      } catch (caught) {
+        console.error("[remote] ArtPlayer 字幕切换失败", { subtitleId: subtitle.id, error: caught });
+        this.notice.show = "字幕加载失败";
+        return escapeHtml(subtitle.label);
+      }
+    }
+  };
+}
+
+/** 切换并显示远程会话中的指定字幕轨道。 */
+async function switchArtPlayerSubtitle(player: Artplayer, subtitle: RemotePlaybackSubtitle): Promise<void> {
+  const subtitleUrl = new URL(subtitle.url, window.location.origin).toString();
+  await player.subtitle.switch(subtitleUrl, {
+    name: subtitle.label,
+    type: subtitle.type,
+    encoding: "utf-8"
+  });
+  player.subtitle.show = true;
+}
+
+/** 转义写入 ArtPlayer HTML 插槽的媒体元数据。 */
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>'"]/g, (character) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    "'": "&#39;",
+    "\"": "&quot;"
+  })[character] ?? character);
 }

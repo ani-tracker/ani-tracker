@@ -294,6 +294,17 @@ export type RemotePlaybackMode = "direct" | "hls";
 
 export type RemotePlaybackRequestMode = "direct" | "transcode";
 
+export type RemotePlaybackSubtitleType = "ass" | "vtt";
+
+export interface RemotePlaybackSubtitle {
+  id: string;
+  label: string;
+  language?: string;
+  type: RemotePlaybackSubtitleType;
+  url: string;
+  default: boolean;
+}
+
 export interface RemotePlaybackSession {
   id: string;
   taskId: string;
@@ -302,6 +313,7 @@ export interface RemotePlaybackSession {
   streamUrl: string;
   expiresAt: string;
   durationSeconds?: number;
+  subtitles: RemotePlaybackSubtitle[];
 }
 
 export interface MetadataProvider {
