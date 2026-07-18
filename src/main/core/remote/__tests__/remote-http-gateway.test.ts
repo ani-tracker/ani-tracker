@@ -257,17 +257,25 @@ test("媒体会话使用设备 Cookie 输出 206 范围响应", async (context) 
     body: JSON.stringify({ taskId: task.id, mode: "automatic" })
   });
   assert.equal(invalidModeResponse.status, 400);
+  const invalidFileResponse = await fetch(`${gateway.getStatus().baseUrl}/api/media/sessions`, {
+    method: "POST",
+    headers: jsonHeaders(token),
+    body: JSON.stringify({ taskId: task.id, mode: "direct", fileIndex: -1 })
+  });
+  assert.equal(invalidFileResponse.status, 400);
 
   const createResponse = await fetch(`${gateway.getStatus().baseUrl}/api/media/sessions`, {
     method: "POST",
     headers: jsonHeaders(token),
-    body: JSON.stringify({ taskId: task.id, mode: "direct" })
+    body: JSON.stringify({ taskId: task.id, mode: "direct", fileIndex: 0 })
   });
   assert.equal(createResponse.status, 200);
   const session = await createResponse.json() as {
+    fileIndex: number;
     streamUrl: string;
     subtitles: Array<{ url: string }>;
   };
+  assert.equal(session.fileIndex, 0);
   const cookie = createResponse.headers.get("set-cookie")?.split(";")[0];
   assert.ok(cookie);
 

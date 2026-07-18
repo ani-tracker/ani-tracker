@@ -397,14 +397,26 @@ export class RemoteHttpGateway {
     const device = this.requireAuthenticatedDevice(request, false);
     this.consumeRateLimit(`media:${device.id}:write`, 20, 60 * 1000);
     const body = requireObject(await readJsonBody(request));
-    assertOnlyKeys(body, ["taskId", "mode"]);
+    assertOnlyKeys(body, ["taskId", "mode", "fileIndex"]);
     if (typeof body.taskId !== "string" || !/^[a-zA-Z0-9._:-]{1,160}$/.test(body.taskId)) {
       throw new HttpGatewayError(400, "MEDIA_TASK_INVALID", "下载任务标识无效");
     }
     if (body.mode !== "direct" && body.mode !== "transcode") {
       throw new HttpGatewayError(400, "MEDIA_MODE_INVALID", "播放模式无效");
     }
-    const session = await this.mediaSessionService.createSession(body.taskId, device.id, body.mode);
+    if (body.fileIndex !== undefined && (
+      typeof body.fileIndex !== "number"
+      || !Number.isSafeInteger(body.fileIndex)
+      || body.fileIndex < 0
+    )) {
+      throw new HttpGatewayError(400, "MEDIA_FILE_INVALID", "媒体文件标识无效");
+    }
+    const session = await this.mediaSessionService.createSession(
+      body.taskId,
+      device.id,
+      body.mode,
+      body.fileIndex as number | undefined
+    );
     const token = parseBearerToken(request.headers.authorization);
     if (token) {
       response.setHeader("Set-Cookie", createMediaCookie(token, this.protocol === "https"));

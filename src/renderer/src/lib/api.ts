@@ -83,7 +83,8 @@ export function clearRemoteDeviceToken(): void {
 /** 为当前远程设备创建绑定下载任务的播放会话。 */
 export async function createRemotePlaybackSession(
   taskId: string,
-  mode: RemotePlaybackRequestMode
+  mode: RemotePlaybackRequestMode,
+  fileIndex?: number
 ): Promise<RemotePlaybackSession> {
   const baseUrl = getRemoteBaseUrl();
   const accessToken = window.localStorage.getItem(REMOTE_TOKEN_STORAGE_KEY);
@@ -97,7 +98,7 @@ export async function createRemotePlaybackSession(
       "Content-Type": "application/json",
       Authorization: `Bearer ${accessToken}`
     },
-    body: JSON.stringify({ taskId, mode })
+    body: JSON.stringify({ taskId, mode, ...(fileIndex === undefined ? {} : { fileIndex }) })
   });
   const payload = (await response.json().catch(() => ({}))) as RemotePlaybackSession & { error?: string };
   if (!response.ok || !payload.id) {

@@ -308,6 +308,7 @@ export interface RemotePlaybackSubtitle {
 export interface RemotePlaybackSession {
   id: string;
   taskId: string;
+  fileIndex?: number;
   fileName: string;
   mode: RemotePlaybackMode;
   streamUrl: string;

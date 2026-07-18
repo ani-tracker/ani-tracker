@@ -69,6 +69,7 @@ export interface RemoteMediaSessionServiceOptions {
 interface ResolvedMedia {
   filePath: string;
   fileName: string;
+  fileIndex?: number;
   mode: RemotePlaybackMode;
   contentType: string;
   durationSeconds?: number;
@@ -145,7 +146,8 @@ export class RemoteMediaSessionService {
   async createSession(
     taskId: string,
     deviceId: string,
-    requestedMode: RemotePlaybackRequestMode
+    requestedMode: RemotePlaybackRequestMode,
+    requestedFileIndex?: number
   ): Promise<RemotePlaybackSession> {
     await this.cleanupExpiredSessions();
     const task = await this.repository.getDownloadTask(taskId);
@@ -153,7 +155,7 @@ export class RemoteMediaSessionService {
       throw new RemoteMediaSessionError(404, "MEDIA_TASK_NOT_FOUND", "下载任务不存在");
     }
 
-    const media = await this.resolveMedia(task, requestedMode);
+    const media = await this.resolveMedia(task, requestedMode, requestedFileIndex);
     await this.closeMatchingSession(deviceId, taskId);
     await this.reserveSessionSlot();
 
@@ -162,6 +164,7 @@ export class RemoteMediaSessionService {
     const record: MediaSessionRecord = {
       id,
       taskId,
+      fileIndex: media.fileIndex,
       fileName: media.fileName,
       mode: media.mode,
       streamUrl: media.mode === "direct"
@@ -207,7 +210,8 @@ export class RemoteMediaSessionService {
       taskId,
       deviceId,
       mode: record.mode,
-      requestedMode
+      requestedMode,
+      fileIndex: record.fileIndex
     });
     return toPublicSession(record);
   }
@@ -300,24 +304,54 @@ export class RemoteMediaSessionService {
   /** 从已登记媒体或完整下载文件中解析可播放源。 */
   private async resolveMedia(
     task: DownloadTask,
-    requestedMode: RemotePlaybackRequestMode
+    requestedMode: RemotePlaybackRequestMode,
+    requestedFileIndex?: number
   ): Promise<ResolvedMedia> {
+    if (requestedFileIndex !== undefined && (
+      !Number.isSafeInteger(requestedFileIndex) || requestedFileIndex < 0
+    )) {
+      throw new RemoteMediaSessionError(400, "MEDIA_FILE_INVALID", "媒体文件标识无效");
+    }
     const settings = await this.repository.getSettings();
     const extensions = new Set(settings.media.videoExtensions.map(normalizeExtension));
     const mediaFiles = (await this.repository.listMediaFiles())
       .filter((media) => media.downloadTaskId === task.id)
       .sort((left, right) => right.size - left.size);
+    const completedTaskFiles = task.files
+      .filter((file) => file.selected && file.progress >= 1 && extensions.has(extname(file.name).toLowerCase()))
+      .sort((left, right) => right.size - left.size);
+    const requestedTaskFile = requestedFileIndex === undefined
+      ? undefined
+      : completedTaskFiles.find((file) => file.index === requestedFileIndex);
+    if (requestedFileIndex !== undefined && !requestedTaskFile) {
+      throw new RemoteMediaSessionError(409, "MEDIA_FILE_UNAVAILABLE", "指定媒体文件不存在或尚未写入完成");
+    }
 
-    const candidates: Array<{ filePath: string; fileName: string; media?: MediaFile }> = [
-      ...mediaFiles.map((media) => ({ filePath: media.filePath, fileName: media.fileName, media })),
-      ...task.files
-        .filter((file) => file.selected && file.progress >= 1 && extensions.has(extname(file.name).toLowerCase()))
-        .sort((left, right) => right.size - left.size)
-        .map((file) => ({
-          filePath: isAbsolute(file.name) ? file.name : join(task.savePath, file.name),
-          fileName: basename(file.name)
-        }))
-    ];
+    const candidates: Array<{
+      filePath: string;
+      fileName: string;
+      fileIndex?: number;
+      media?: MediaFile;
+    }> = requestedTaskFile
+      ? [{
+          filePath: isAbsolute(requestedTaskFile.name)
+            ? requestedTaskFile.name
+            : join(task.savePath, requestedTaskFile.name),
+          fileName: basename(requestedTaskFile.name),
+          fileIndex: requestedTaskFile.index
+        }]
+      : [
+          ...mediaFiles.map((media) => ({
+            filePath: media.filePath,
+            fileName: media.fileName,
+            media
+          })),
+          ...completedTaskFiles.map((file) => ({
+            filePath: isAbsolute(file.name) ? file.name : join(task.savePath, file.name),
+            fileName: basename(file.name),
+            fileIndex: file.index
+          }))
+        ];
 
     for (const candidate of candidates) {
       const source = await this.validateMediaPath(task.savePath, candidate.filePath);
@@ -331,6 +365,7 @@ export class RemoteMediaSessionService {
       return {
         filePath: source,
         fileName: candidate.fileName,
+        fileIndex: candidate.fileIndex,
         mode: requestedMode === "transcode" ? "hls" : "direct",
         contentType: directContentType(extension),
         durationSeconds: candidate.media?.durationSeconds
@@ -609,6 +644,7 @@ function toPublicSession(session: MediaSessionRecord): RemotePlaybackSession {
   return {
     id: session.id,
     taskId: session.taskId,
+    fileIndex: session.fileIndex,
     fileName: session.fileName,
     mode: session.mode,
     streamUrl: session.streamUrl,

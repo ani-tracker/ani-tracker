@@ -125,6 +125,38 @@ test("RemoteMediaSessionService 按不转码模式直传 MKV 原文件", async (
   assert.equal(asset.contentType, "video/x-matroska");
 });
 
+test("RemoteMediaSessionService 按文件索引选择完成视频并拒绝不可用文件", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "ani-remote-media-test-"));
+  await Promise.all([
+    writeFile(join(directory, "episode-01.mp4"), Buffer.from("episode-01")),
+    writeFile(join(directory, "episode-02.mkv"), Buffer.from("episode-02"))
+  ]);
+  const task: DownloadTask = {
+    ...createTask(directory, "episode-01.mp4"),
+    files: [
+      { id: "file-1", index: 0, name: "episode-01.mp4", size: 10, progress: 1, priority: 1, selected: true },
+      { id: "file-2", index: 1, name: "episode-02.mkv", size: 10, progress: 1, priority: 1, selected: true },
+      { id: "file-3", index: 2, name: "episode-03.mp4", size: 10, progress: 0.5, priority: 1, selected: true }
+    ]
+  };
+  const service = createService(createRepository(task, []));
+  context.after(async () => {
+    await service.stopAll();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const session = await service.createSession(task.id, "device-1", "direct", 1);
+  const asset = await service.getAsset(session.id, "device-1", "file");
+
+  assert.equal(session.fileIndex, 1);
+  assert.equal(session.fileName, "episode-02.mkv");
+  assert.equal(asset.filePath, join(directory, "episode-02.mkv"));
+  await assert.rejects(
+    service.createSession(task.id, "device-1", "direct", 2),
+    (error) => isMediaError(error, "MEDIA_FILE_UNAVAILABLE", 409)
+  );
+});
+
 test("RemoteMediaSessionService 拒绝下载目录之外的登记媒体", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "ani-remote-media-test-"));
   const outsideDirectory = await mkdtemp(join(tmpdir(), "ani-remote-media-outside-"));

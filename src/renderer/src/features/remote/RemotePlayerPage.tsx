@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { useEffect, useMemo, useState } from "react";
 import { appApi } from "@/lib/api";
-import type { DownloadTask } from "@shared/domain";
 import { RemoteVideoPlayer } from "./RemoteVideoPlayer";
+import {
+  buildRemotePlaylist,
+  readPlaylistFileIndex,
+  resolveInitialPlaylistItem,
+  type RemotePlaylistItem
+} from "./remote-player-model";
 
 interface RemotePlayerPageProps {
   taskId: string;
@@ -12,11 +14,19 @@ interface RemotePlayerPageProps {
 
 /** 加载路由指定的下载任务并承载独立播放器页面。 */
 export function RemotePlayerPage({ taskId }: RemotePlayerPageProps) {
-  const [task, setTask] = useState<DownloadTask | null>(null);
+  const [playlist, setPlaylist] = useState<RemotePlaylistItem[]>([]);
+  const [activeItemId, setActiveItemId] = useState<string>();
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const activeItem = useMemo(
+    () => playlist.find((item) => item.id === activeItemId) ?? null,
+    [activeItemId, playlist]
+  );
 
   useEffect(() => {
     let active = true;
+    setLoading(true);
+    setError(null);
     appApi.listDownloads()
       .then((tasks) => {
         if (!active) return;
@@ -25,14 +35,34 @@ export function RemotePlayerPage({ taskId }: RemotePlayerPageProps) {
           setError("播放任务不存在或已被删除");
           return;
         }
-        setTask(matchedTask);
-        document.title = `${matchedTask.name} - Ani Tracker`;
-        console.info("[remote] 独立播放器任务读取完成", { taskId });
+        const items = buildRemotePlaylist(tasks, matchedTask);
+        const initialItem = resolveInitialPlaylistItem(
+          items,
+          taskId,
+          readPlaylistFileIndex(window.location.search)
+        );
+        if (!initialItem) {
+          setError("当前番剧没有已完成的可播放视频");
+          return;
+        }
+        setPlaylist(items);
+        setActiveItemId(initialItem.id);
+        document.title = `${initialItem.fileName} - Ani Tracker`;
+        console.info("[remote] 独立播放器播放列表读取完成", {
+          taskId,
+          itemCount: items.length,
+          fileIndex: initialItem.fileIndex
+        });
       })
       .catch((caught) => {
         if (active) {
           console.error("[remote] 独立播放器任务读取失败", { taskId, error: caught });
           setError(caught instanceof Error ? caught.message : "播放任务读取失败");
+        }
+      })
+      .finally(() => {
+        if (active) {
+          setLoading(false);
         }
       });
 
@@ -41,25 +71,30 @@ export function RemotePlayerPage({ taskId }: RemotePlayerPageProps) {
     };
   }, [taskId]);
 
-  if (task) {
-    return <RemoteVideoPlayer task={task} onClose={closePlayerTab} />;
-  }
+  /** 切换播放项并更新地址，刷新后仍保持当前文件。 */
+  const handleSelectItem = (item: RemotePlaylistItem): void => {
+    setActiveItemId(item.id);
+    const playerUrl = new URL(`/player/${encodeURIComponent(item.task.id)}`, window.location.origin);
+    if (item.fileIndex !== undefined) {
+      playerUrl.searchParams.set("file", String(item.fileIndex));
+    }
+    window.history.replaceState(null, "", `${playerUrl.pathname}${playerUrl.search}`);
+    document.title = `${item.fileName} - Ani Tracker`;
+    console.info("[remote] 播放列表切换文件", {
+      taskId: item.task.id,
+      fileIndex: item.fileIndex
+    });
+  };
 
-  return (
-    <main className="flex min-h-svh items-center justify-center bg-background p-4">
-      {error ? (
-        <Alert className="max-w-lg" variant="destructive">
-          <AlertTitle>播放器无法打开</AlertTitle>
-          <AlertDescription className="flex flex-col items-start gap-3">
-            <p>{error}</p>
-            <Button variant="secondary" onClick={closePlayerTab}>关闭播放器</Button>
-          </AlertDescription>
-        </Alert>
-      ) : (
-        <Skeleton className="aspect-video w-full max-w-5xl" aria-label="正在读取播放任务" />
-      )}
-    </main>
-  );
+  return <RemoteVideoPlayer
+    key={activeItem?.id ?? "loading"}
+    activeItem={activeItem}
+    error={error}
+    loading={loading}
+    onClose={closePlayerTab}
+    onSelectItem={handleSelectItem}
+    playlist={playlist}
+  />;
 }
 
 /** 从独立播放器路径中解析并校验下载任务标识。 */
