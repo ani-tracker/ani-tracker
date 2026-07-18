@@ -144,12 +144,31 @@ export async function createRemotePlaybackSession(
   mode: RemotePlaybackRequestMode,
   fileIndex?: number
 ): Promise<RemotePlaybackSession> {
+  return createRemoteMediaSession("/api/media/sessions", taskId, mode, fileIndex);
+}
+
+/** 为 PotPlayer 或 IINA 创建无需 Cookie 的短期拉流会话。 */
+export async function createRemoteExternalPlaybackSession(
+  taskId: string,
+  mode: RemotePlaybackRequestMode,
+  fileIndex?: number
+): Promise<RemotePlaybackSession> {
+  return createRemoteMediaSession("/api/media/external-sessions", taskId, mode, fileIndex);
+}
+
+/** 调用指定媒体入口创建远程播放会话。 */
+async function createRemoteMediaSession(
+  endpoint: "/api/media/sessions" | "/api/media/external-sessions",
+  taskId: string,
+  mode: RemotePlaybackRequestMode,
+  fileIndex?: number
+): Promise<RemotePlaybackSession> {
   const baseUrl = getRemoteBaseUrl();
   const accessToken = window.localStorage.getItem(REMOTE_TOKEN_STORAGE_KEY);
   if (!baseUrl || !accessToken) {
     throw new Error("当前设备尚未完成远程配对");
   }
-  const response = await fetch(`${baseUrl}/api/media/sessions`, {
+  const response = await fetch(`${baseUrl}${endpoint}`, {
     method: "POST",
     credentials: "same-origin",
     headers: {

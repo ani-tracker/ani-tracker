@@ -2,6 +2,7 @@ import Artplayer, { type Setting } from "artplayer";
 import Hls from "hls.js";
 import {
   ListVideo,
+  MonitorPlay,
   PanelTopClose,
   Play,
   RotateCcw,
@@ -24,7 +25,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { closeRemotePlaybackSession, createRemotePlaybackSession } from "@/lib/api";
+import {
+  closeRemotePlaybackSession,
+  createRemoteExternalPlaybackSession,
+  createRemotePlaybackSession
+} from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import type {
   RemotePlaybackRequestMode,
@@ -32,6 +37,10 @@ import type {
   RemotePlaybackSubtitle
 } from "@shared/contracts";
 import type { RemotePlaylistItem } from "./remote-player-model";
+import {
+  buildExternalPlayerProtocolUrl,
+  detectExternalPlayer
+} from "./external-player-launch";
 
 const TOOLBAR_HIDE_DELAY_MS = 3_000;
 
@@ -54,6 +63,7 @@ export function RemoteVideoPlayer({
   onSelectItem
 }: RemoteVideoPlayerProps) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
+  const artPlayerRef = useRef<Artplayer | null>(null);
   const toolbarTimerRef = useRef<number>();
   const automaticFallbackStartedRef = useRef(false);
   const [requestedMode, setRequestedMode] = useState<RemotePlaybackRequestMode>("direct");
@@ -62,6 +72,11 @@ export function RemoteVideoPlayer({
   const [retryNonce, setRetryNonce] = useState(0);
   const [toolbarVisible, setToolbarVisible] = useState(true);
   const [playlistOpen, setPlaylistOpen] = useState(false);
+  const [externalPlayerOpening, setExternalPlayerOpening] = useState(false);
+  const externalPlayer = useMemo(
+    () => detectExternalPlayer(navigator.userAgent, navigator.platform),
+    []
+  );
   const activeIndex = useMemo(
     () => activeItem ? playlist.findIndex((item) => item.id === activeItem.id) : -1,
     [activeItem, playlist]
@@ -244,6 +259,7 @@ export function RemoteVideoPlayer({
       setPlaybackError("播放器初始化失败，请重试");
       return;
     }
+    artPlayerRef.current = player;
 
     player.on("video:error", () => {
       handlePlaybackError(
@@ -279,6 +295,9 @@ export function RemoteVideoPlayer({
     }
 
     return () => {
+      if (artPlayerRef.current === player) {
+        artPlayerRef.current = null;
+      }
       hls?.destroy();
       player.destroy(true);
     };
@@ -294,6 +313,57 @@ export function RemoteVideoPlayer({
         taskId: activeItem?.task.id,
         requestedMode: value
       });
+    }
+  };
+
+  /** 创建外部拉流会话并调用远程设备本机播放器。 */
+  const handleExternalPlayback = async (): Promise<void> => {
+    if (!activeItem || !externalPlayer || externalPlayerOpening) {
+      return;
+    }
+    const currentPlayer = artPlayerRef.current;
+    const wasPlaying = currentPlayer?.playing ?? false;
+    currentPlayer?.pause();
+    setExternalPlayerOpening(true);
+    const toastId = toast.loading(`正在准备 ${externalPlayer.label} 播放地址`);
+    let externalSession: RemotePlaybackSession | undefined;
+    try {
+      externalSession = await createRemoteExternalPlaybackSession(
+        activeItem.task.id,
+        requestedMode,
+        activeItem.fileIndex
+      );
+      const mediaUrl = new URL(externalSession.streamUrl, window.location.origin).toString();
+      const protocolUrl = buildExternalPlayerProtocolUrl(externalPlayer.kind, mediaUrl);
+      window.location.assign(protocolUrl);
+      toast.info(`已请求打开 ${externalPlayer.label}`, {
+        id: toastId,
+        description: "若播放器未启动，请确认已安装并允许浏览器打开外部应用。"
+      });
+      console.info("[remote] 已下发本地播放器拉流请求", {
+        player: externalPlayer.kind,
+        taskId: activeItem.task.id,
+        fileIndex: activeItem.fileIndex,
+        mode: requestedMode
+      });
+    } catch (caught) {
+      if (externalSession) {
+        void closeRemotePlaybackSession(externalSession.id);
+      }
+      if (wasPlaying && currentPlayer) {
+        void currentPlayer.play().catch(() => undefined);
+      }
+      console.error("[remote] 本地播放器调起失败", {
+        player: externalPlayer.kind,
+        taskId: activeItem.task.id,
+        error: caught
+      });
+      toast.error(`无法打开 ${externalPlayer.label}`, {
+        id: toastId,
+        description: caught instanceof Error ? caught.message : "本地播放器调用失败"
+      });
+    } finally {
+      setExternalPlayerOpening(false);
     }
   };
 
@@ -375,6 +445,15 @@ export function RemoteVideoPlayer({
               <PlayerIconButton label="播放列表" onClick={() => setPlaylistOpen(true)}>
                 <ListVideo />
               </PlayerIconButton>
+              {externalPlayer && (
+                <PlayerIconButton
+                  disabled={externalPlayerOpening || !activeItem}
+                  label={externalPlayerOpening ? `正在准备 ${externalPlayer.label}` : `用 ${externalPlayer.label} 播放`}
+                  onClick={() => void handleExternalPlayback()}
+                >
+                  <MonitorPlay />
+                </PlayerIconButton>
+              )}
               <PlayerIconButton label="隐藏播放信息" onClick={() => setToolbarVisible(false)}>
                 <PanelTopClose />
               </PlayerIconButton>

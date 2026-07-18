@@ -198,6 +198,10 @@
 - 已保留 EmbeddedTorrentEngine 占位实现。
 - 已实现播放器公共接口、抽象基类和 IINA、PotPlayer、mpv、通用播放器子类。
 - 已实现播放器调用和 reveal file IPC。
+- 已支持远程 PWA 调用当前设备本机播放器拉取桌面主机媒体：
+  - Windows 使用 `potplayer:` 协议调用 PotPlayer，macOS 使用 `iina://weblink` 调用 IINA。
+  - 外部播放器使用独立 256-bit 内存票据会话，可读取 Range 原文件或 FFmpeg HLS，不依赖浏览器 Cookie。
+  - 浏览器 ArtPlayer 与外部播放器会话互不替换，调用前暂停网页播放器；不实现本地播放器进度同步。
 - 已实现 IINA 播放进度回写：
   - 通过 IINA 的 mpv JSON IPC 监听 `percent-pos`。
   - 播放进度达到 90% 后将关联单集标记为 `watched`。
@@ -283,7 +287,7 @@ git diff --check
 说明：
 
 - `pnpm.cmd run test:parsers` 当前会编译测试到 `out/test-node`，该目录已在 `.gitignore` 中。
-- Node 测试当前共 `189` 项，包含图片首次缓存、重启命中、并发合并、5GB 上限淘汰、非法目标拒绝和桌面/远程缓存复用覆盖。
+- Node 测试当前共 `192` 项，包含图片缓存、外部播放票据、PotPlayer/IINA 协议、Range/HLS、非法目标拒绝和桌面/远程缓存复用覆盖。
 - 主进程和渲染进程 TypeScript 类型检查通过。
 - 主进程、preload 和 renderer 生产构建通过；完整构建的 qBittorrent 资源准备步骤受运行中进程锁定，待进程退出后复验。
 - `git diff --check` 通过。

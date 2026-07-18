@@ -1,4 +1,4 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
@@ -77,6 +77,8 @@ interface ResolvedMedia {
 }
 
 interface MediaSessionRecord extends RemotePlaybackSession {
+  access: "browser" | "external";
+  externalAccessToken?: string;
   deviceId: string;
   sourcePath: string;
   contentType: string;
@@ -149,6 +151,27 @@ export class RemoteMediaSessionService {
     requestedMode: RemotePlaybackRequestMode,
     requestedFileIndex?: number
   ): Promise<RemotePlaybackSession> {
+    return this.createSessionRecord(taskId, deviceId, requestedMode, requestedFileIndex, "browser");
+  }
+
+  /** 创建供远程设备本地播放器读取的临时无 Cookie 媒体会话。 */
+  async createExternalSession(
+    taskId: string,
+    deviceId: string,
+    requestedMode: RemotePlaybackRequestMode,
+    requestedFileIndex?: number
+  ): Promise<RemotePlaybackSession> {
+    return this.createSessionRecord(taskId, deviceId, requestedMode, requestedFileIndex, "external");
+  }
+
+  /** 创建指定访问形态的媒体会话并统一初始化资源。 */
+  private async createSessionRecord(
+    taskId: string,
+    deviceId: string,
+    requestedMode: RemotePlaybackRequestMode,
+    requestedFileIndex: number | undefined,
+    access: MediaSessionRecord["access"]
+  ): Promise<RemotePlaybackSession> {
     await this.cleanupExpiredSessions();
     const task = await this.repository.getDownloadTask(taskId);
     if (!task) {
@@ -156,11 +179,15 @@ export class RemoteMediaSessionService {
     }
 
     const media = await this.resolveMedia(task, requestedMode, requestedFileIndex);
-    await this.closeMatchingSession(deviceId, taskId);
+    await this.closeMatchingSession(deviceId, taskId, access);
     await this.reserveSessionSlot();
 
     const now = this.clock();
     const id = this.createSessionId();
+    const externalAccessToken = access === "external" ? this.createExternalAccessToken() : undefined;
+    const assetBaseUrl = externalAccessToken
+      ? `/api/media/external/${externalAccessToken}/sessions/${id}`
+      : `/api/media/sessions/${id}`;
     const record: MediaSessionRecord = {
       id,
       taskId,
@@ -168,11 +195,13 @@ export class RemoteMediaSessionService {
       fileName: media.fileName,
       mode: media.mode,
       streamUrl: media.mode === "direct"
-        ? `/api/media/sessions/${id}/file`
-        : `/api/media/sessions/${id}/hls/index.m3u8`,
+        ? `${assetBaseUrl}/file`
+        : `${assetBaseUrl}/hls/index.m3u8`,
       expiresAt: new Date(now + this.sessionTtlMs).toISOString(),
       durationSeconds: media.durationSeconds,
       subtitles: [],
+      access,
+      externalAccessToken,
       deviceId,
       sourcePath: media.filePath,
       contentType: media.contentType,
@@ -211,7 +240,8 @@ export class RemoteMediaSessionService {
       deviceId,
       mode: record.mode,
       requestedMode,
-      fileIndex: record.fileIndex
+      fileIndex: record.fileIndex,
+      access
     });
     return toPublicSession(record);
   }
@@ -219,6 +249,26 @@ export class RemoteMediaSessionService {
   /** 返回指定会话中的直传文件或 HLS 资源。 */
   async getAsset(sessionId: string, deviceId: string, assetName: string): Promise<RemoteMediaAsset> {
     const session = await this.requireSession(sessionId, deviceId);
+    return this.resolveSessionAsset(session, assetName);
+  }
+
+  /** 使用会话专属高熵票据返回外部播放器媒体资源。 */
+  async getExternalAsset(sessionId: string, accessToken: string, assetName: string): Promise<RemoteMediaAsset> {
+    const session = this.sessions.get(sessionId);
+    if (
+      !session
+      || session.access !== "external"
+      || !secureTokenEquals(session.externalAccessToken, accessToken)
+    ) {
+      throw new RemoteMediaSessionError(404, "MEDIA_SESSION_NOT_FOUND", "播放会话不存在或已过期");
+    }
+    session.lastAccessedAt = this.clock();
+    this.refreshExpiration(session);
+    return this.resolveSessionAsset(session, assetName);
+  }
+
+  /** 解析已授权会话中的直传、字幕或 HLS 资源。 */
+  private async resolveSessionAsset(session: MediaSessionRecord, assetName: string): Promise<RemoteMediaAsset> {
     const subtitle = session.subtitles.find((item) => item.url.endsWith(`/subtitles/${assetName}`));
     if (subtitle && /^subtitle-\d{3}\.(?:ass|vtt)$/.test(assetName) && session.temporaryDirectory) {
       const candidate = resolve(session.temporaryDirectory, assetName);
@@ -448,7 +498,7 @@ export class RemoteMediaSessionService {
         label: subtitle.label,
         language: subtitle.language,
         type: subtitle.type,
-        url: `/api/media/sessions/${session.id}/subtitles/${subtitle.assetName}`,
+        url: `${sessionAssetBaseUrl(session)}/subtitles/${subtitle.assetName}`,
         default: subtitle.default
       }));
       this.logger.info("Remote media subtitles prepared", {
@@ -557,10 +607,14 @@ export class RemoteMediaSessionService {
     await Promise.all(expired.map((session) => this.closeSession(session.id, session.deviceId)));
   }
 
-  /** 同一设备重复播放同一任务时替换旧会话。 */
-  private async closeMatchingSession(deviceId: string, taskId: string): Promise<void> {
+  /** 同一设备重复创建相同访问形态的任务时替换旧会话。 */
+  private async closeMatchingSession(
+    deviceId: string,
+    taskId: string,
+    access: MediaSessionRecord["access"]
+  ): Promise<void> {
     const matched = [...this.sessions.values()].filter(
-      (session) => session.deviceId === deviceId && session.taskId === taskId
+      (session) => session.deviceId === deviceId && session.taskId === taskId && session.access === access
     );
     await Promise.all(matched.map((session) => this.closeSession(session.id, session.deviceId)));
   }
@@ -583,6 +637,11 @@ export class RemoteMediaSessionService {
       id = this.randomBytes(24).toString("base64url");
     } while (this.sessions.has(id));
     return id;
+  }
+
+  /** 生成仅存在于内存且可安全放入 URL 路径的外部播放票据。 */
+  private createExternalAccessToken(): string {
+    return this.randomBytes(32).toString("base64url");
   }
 }
 
@@ -637,6 +696,23 @@ function isPathInside(rootDirectory: string, candidatePath: string): boolean {
 function normalizeExtension(value: string): string {
   const normalized = value.trim().toLowerCase();
   return normalized.startsWith(".") ? normalized : `.${normalized}`;
+}
+
+/** 返回媒体会话面向当前访问形态的资源根地址。 */
+function sessionAssetBaseUrl(session: MediaSessionRecord): string {
+  return session.externalAccessToken
+    ? `/api/media/external/${session.externalAccessToken}/sessions/${session.id}`
+    : `/api/media/sessions/${session.id}`;
+}
+
+/** 使用恒定时间比较高熵媒体票据，避免泄露前缀匹配信息。 */
+function secureTokenEquals(expected: string | undefined, actual: string): boolean {
+  if (!expected) {
+    return false;
+  }
+  const expectedBuffer = Buffer.from(expected);
+  const actualBuffer = Buffer.from(actual);
+  return expectedBuffer.length === actualBuffer.length && timingSafeEqual(expectedBuffer, actualBuffer);
 }
 
 /** 复制可公开的会话字段。 */

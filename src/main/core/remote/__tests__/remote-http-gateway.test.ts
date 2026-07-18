@@ -343,6 +343,74 @@ test("媒体会话使用设备 Cookie 输出 206 范围响应", async (context) 
 
   const unauthorized = await fetch(`${gateway.getStatus().baseUrl}${session.streamUrl}`);
   assert.equal(unauthorized.status, 401);
+
+  const unauthorizedExternalCreate = await fetch(
+    `${gateway.getStatus().baseUrl}/api/media/external-sessions`,
+    {
+      method: "POST",
+      headers: jsonHeaders(),
+      body: JSON.stringify({ taskId: task.id, mode: "direct", fileIndex: 0 })
+    }
+  );
+  assert.equal(unauthorizedExternalCreate.status, 401);
+
+  const invalidExternalCreate = await fetch(
+    `${gateway.getStatus().baseUrl}/api/media/external-sessions`,
+    {
+      method: "POST",
+      headers: jsonHeaders(token),
+      body: JSON.stringify({ taskId: task.id, mode: "direct", fileIndex: 0, path: filePath })
+    }
+  );
+  assert.equal(invalidExternalCreate.status, 400);
+
+  const externalCreateResponse = await fetch(
+    `${gateway.getStatus().baseUrl}/api/media/external-sessions`,
+    {
+      method: "POST",
+      headers: jsonHeaders(token),
+      body: JSON.stringify({ taskId: task.id, mode: "direct", fileIndex: 0 })
+    }
+  );
+  assert.equal(externalCreateResponse.status, 200);
+  assert.equal(externalCreateResponse.headers.get("set-cookie"), null);
+  const externalSession = await externalCreateResponse.json() as {
+    id: string;
+    streamUrl: string;
+    subtitles: Array<{ url: string }>;
+  };
+  assert.match(
+    externalSession.streamUrl,
+    /^\/api\/media\/external\/[A-Za-z0-9_-]{43}\/sessions\/[A-Za-z0-9_-]{32}\/file$/
+  );
+
+  const externalRangeResponse = await fetch(
+    `${gateway.getStatus().baseUrl}${externalSession.streamUrl}`,
+    { headers: { Range: "bytes=2-5" } }
+  );
+  assert.equal(externalRangeResponse.status, 206);
+  assert.equal(externalRangeResponse.headers.get("content-range"), "bytes 2-5/10");
+  assert.equal(await externalRangeResponse.text(), "2345");
+
+  const externalHeadResponse = await fetch(
+    `${gateway.getStatus().baseUrl}${externalSession.streamUrl}`,
+    { method: "HEAD", headers: { Range: "bytes=2-5" } }
+  );
+  assert.equal(externalHeadResponse.status, 206);
+  assert.equal(externalHeadResponse.headers.get("content-length"), "4");
+
+  const externalSubtitleResponse = await fetch(
+    `${gateway.getStatus().baseUrl}${externalSession.subtitles[0].url}`
+  );
+  assert.equal(externalSubtitleResponse.status, 200);
+  assert.equal(await externalSubtitleResponse.text(), "WEBVTT\n\n");
+
+  const invalidExternalUrl = externalSession.streamUrl.replace(
+    /\/external\/[A-Za-z0-9_-]{43}\//,
+    `/external/${"A".repeat(43)}/`
+  );
+  const invalidExternalTokenResponse = await fetch(`${gateway.getStatus().baseUrl}${invalidExternalUrl}`);
+  assert.equal(invalidExternalTokenResponse.status, 404);
 });
 
 test("深层前端路由使用根路径资源、nonce CSP 且缺失资源返回 404", async (context) => {

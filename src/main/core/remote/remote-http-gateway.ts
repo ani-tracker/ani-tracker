@@ -4,12 +4,21 @@ import { createServer as createHttpsServer } from "node:https";
 import { type Socket } from "node:net";
 import { extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { randomBytes, randomUUID } from "node:crypto";
-import type { RemoteDeviceInfo, RemoteGatewayStatus, RemotePairingChallenge } from "@shared/contracts";
+import type {
+  RemoteDeviceInfo,
+  RemoteGatewayStatus,
+  RemotePairingChallenge,
+  RemotePlaybackRequestMode
+} from "@shared/contracts";
 import type { RemoteAccessSettings } from "@shared/domain";
 import { logger } from "../logger";
 import { RemoteDeviceAuth, RemoteDeviceAuthError } from "./remote-device-auth";
 import { RemoteRpcDispatcher, RemoteRpcError } from "./remote-rpc-dispatcher";
-import { RemoteMediaSessionError, type RemoteMediaSessionService } from "./remote-media-session-service";
+import {
+  RemoteMediaSessionError,
+  type RemoteMediaAsset,
+  type RemoteMediaSessionService
+} from "./remote-media-session-service";
 import type { RemoteMethodRegistry, RemoteRpcEffect, RemoteRpcScope } from "./remote-method-registry";
 import {
   isTrustedHost,
@@ -314,6 +323,10 @@ export class RemoteHttpGateway {
         await this.handleMediaSessionCreate(request, response);
         return;
       }
+      if (request.method === "POST" && url.pathname === "/api/media/external-sessions") {
+        await this.handleExternalMediaSessionCreate(request, response);
+        return;
+      }
       const mediaRoute = parseMediaRoute(url.pathname);
       if (request.method === "DELETE" && mediaRoute && mediaRoute.assetName === undefined) {
         await this.handleMediaSessionClose(request, response, mediaRoute.sessionId);
@@ -321,6 +334,17 @@ export class RemoteHttpGateway {
       }
       if ((request.method === "GET" || request.method === "HEAD") && mediaRoute?.assetName) {
         await this.handleMediaAsset(request, response, mediaRoute.sessionId, mediaRoute.assetName);
+        return;
+      }
+      const externalMediaRoute = parseExternalMediaRoute(url.pathname);
+      if ((request.method === "GET" || request.method === "HEAD") && externalMediaRoute) {
+        await this.handleExternalMediaAsset(
+          request,
+          response,
+          externalMediaRoute.sessionId,
+          externalMediaRoute.accessToken,
+          externalMediaRoute.assetName
+        );
         return;
       }
       if (request.method === "GET" || request.method === "HEAD") {
@@ -463,31 +487,37 @@ export class RemoteHttpGateway {
     }
     const device = this.requireAuthenticatedDevice(request, false);
     this.consumeRateLimit(`media:${device.id}:write`, 20, 60 * 1000);
-    const body = requireObject(await readJsonBody(request));
-    assertOnlyKeys(body, ["taskId", "mode", "fileIndex"]);
-    if (typeof body.taskId !== "string" || !/^[a-zA-Z0-9._:-]{1,160}$/.test(body.taskId)) {
-      throw new HttpGatewayError(400, "MEDIA_TASK_INVALID", "下载任务标识无效");
-    }
-    if (body.mode !== "direct" && body.mode !== "transcode") {
-      throw new HttpGatewayError(400, "MEDIA_MODE_INVALID", "播放模式无效");
-    }
-    if (body.fileIndex !== undefined && (
-      typeof body.fileIndex !== "number"
-      || !Number.isSafeInteger(body.fileIndex)
-      || body.fileIndex < 0
-    )) {
-      throw new HttpGatewayError(400, "MEDIA_FILE_INVALID", "媒体文件标识无效");
-    }
+    const body = parseMediaSessionCreateBody(await readJsonBody(request));
     const session = await this.mediaSessionService.createSession(
       body.taskId,
       device.id,
       body.mode,
-      body.fileIndex as number | undefined
+      body.fileIndex
     );
     const token = parseBearerToken(request.headers.authorization);
     if (token) {
       response.setHeader("Set-Cookie", createMediaCookie(token, this.protocol === "https"));
     }
+    this.writeJson(response, 200, session);
+  }
+
+  /** 创建可由远程设备本机播放器直接拉流的短期媒体会话。 */
+  private async handleExternalMediaSessionCreate(
+    request: IncomingMessage,
+    response: ServerResponse
+  ): Promise<void> {
+    if (!this.mediaSessionService) {
+      throw new HttpGatewayError(503, "MEDIA_SERVICE_UNAVAILABLE", "远程媒体服务不可用");
+    }
+    const device = this.requireAuthenticatedDevice(request, false);
+    this.consumeRateLimit(`media:${device.id}:write`, 20, 60 * 1000);
+    const body = parseMediaSessionCreateBody(await readJsonBody(request));
+    const session = await this.mediaSessionService.createExternalSession(
+      body.taskId,
+      device.id,
+      body.mode,
+      body.fileIndex
+    );
     this.writeJson(response, 200, session);
   }
 
@@ -522,6 +552,33 @@ export class RemoteHttpGateway {
     const device = this.requireAuthenticatedDevice(request, true);
     this.consumeRateLimit(`media:${device.id}:read`, 600, 60 * 1000);
     const asset = await this.mediaSessionService.getAsset(sessionId, device.id, assetName);
+    this.writeMediaAsset(request, response, sessionId, asset);
+  }
+
+  /** 使用会话票据向 PotPlayer 或 IINA 输出媒体资源。 */
+  private async handleExternalMediaAsset(
+    request: IncomingMessage,
+    response: ServerResponse,
+    sessionId: string,
+    accessToken: string,
+    assetName: string
+  ): Promise<void> {
+    if (!this.mediaSessionService) {
+      throw new HttpGatewayError(503, "MEDIA_SERVICE_UNAVAILABLE", "远程媒体服务不可用");
+    }
+    const remoteAddress = request.socket.remoteAddress ?? "unknown";
+    this.consumeRateLimit(`media:external:${remoteAddress}:read`, 600, 60 * 1000);
+    const asset = await this.mediaSessionService.getExternalAsset(sessionId, accessToken, assetName);
+    this.writeMediaAsset(request, response, sessionId, asset);
+  }
+
+  /** 统一输出原文件 Range、HLS、分片和字幕资源。 */
+  private writeMediaAsset(
+    request: IncomingMessage,
+    response: ServerResponse,
+    sessionId: string,
+    asset: RemoteMediaAsset
+  ): void {
     const fileStats = statSync(asset.filePath);
     const range = asset.direct ? parseByteRange(request.headers.range, fileStats.size) : undefined;
     if (asset.direct && request.headers.range && !range) {
@@ -840,6 +897,18 @@ interface MediaRoute {
   assetName?: string;
 }
 
+interface ExternalMediaRoute {
+  sessionId: string;
+  accessToken: string;
+  assetName: string;
+}
+
+interface MediaSessionCreateBody {
+  taskId: string;
+  mode: RemotePlaybackRequestMode;
+  fileIndex?: number;
+}
+
 /** 解析固定格式的签名图片缓存路由。 */
 function parseImageToken(pathname: string): string | undefined {
   return pathname.match(/^\/api\/images\/([A-Za-z0-9_.-]{20,4096})$/)?.[1];
@@ -854,6 +923,46 @@ function parseMediaRoute(pathname: string): MediaRoute | undefined {
     return undefined;
   }
   return { sessionId: match[1], assetName: match[2] ?? match[3] ?? match[4] };
+}
+
+/** 解析带高熵票据的外部播放器媒体路由。 */
+function parseExternalMediaRoute(pathname: string): ExternalMediaRoute | undefined {
+  const match = pathname.match(
+    /^\/api\/media\/external\/([A-Za-z0-9_-]{43})\/sessions\/([A-Za-z0-9_-]{32})\/(?:(file)|hls\/(index\.m3u8|segment-\d{6}\.ts)|subtitles\/(subtitle-\d{3}\.(?:ass|vtt)))$/
+  );
+  const assetName = match?.[3] ?? match?.[4] ?? match?.[5];
+  if (!match || !assetName) {
+    return undefined;
+  }
+  return {
+    accessToken: match[1],
+    sessionId: match[2],
+    assetName
+  };
+}
+
+/** 校验并返回媒体会话创建参数。 */
+function parseMediaSessionCreateBody(value: unknown): MediaSessionCreateBody {
+  const body = requireObject(value);
+  assertOnlyKeys(body, ["taskId", "mode", "fileIndex"]);
+  if (typeof body.taskId !== "string" || !/^[a-zA-Z0-9._:-]{1,160}$/.test(body.taskId)) {
+    throw new HttpGatewayError(400, "MEDIA_TASK_INVALID", "下载任务标识无效");
+  }
+  if (body.mode !== "direct" && body.mode !== "transcode") {
+    throw new HttpGatewayError(400, "MEDIA_MODE_INVALID", "播放模式无效");
+  }
+  if (body.fileIndex !== undefined && (
+    typeof body.fileIndex !== "number"
+    || !Number.isSafeInteger(body.fileIndex)
+    || body.fileIndex < 0
+  )) {
+    throw new HttpGatewayError(400, "MEDIA_FILE_INVALID", "媒体文件标识无效");
+  }
+  return {
+    taskId: body.taskId,
+    mode: body.mode,
+    ...(body.fileIndex === undefined ? {} : { fileIndex: body.fileIndex as number })
+  };
 }
 
 export interface ByteRange {

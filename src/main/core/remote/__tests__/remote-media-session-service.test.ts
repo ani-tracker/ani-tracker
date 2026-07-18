@@ -66,6 +66,36 @@ test("RemoteMediaSessionService 为浏览器兼容文件创建直传会话", asy
   );
 });
 
+test("RemoteMediaSessionService 为本地播放器创建独立票据会话", async (context) => {
+  const directory = await mkdtemp(join(tmpdir(), "ani-remote-media-test-"));
+  const filePath = join(directory, "episode.mp4");
+  await writeFile(filePath, Buffer.from("0123456789"));
+  const service = createService(createRepository(createTask(directory, "episode.mp4"), []));
+  context.after(async () => {
+    await service.stopAll();
+    await rm(directory, { recursive: true, force: true });
+  });
+
+  const browserSession = await service.createSession("task-1", "device-1", "direct");
+  const externalSession = await service.createExternalSession("task-1", "device-1", "direct");
+  const route = externalSession.streamUrl.match(
+    /^\/api\/media\/external\/([A-Za-z0-9_-]{43})\/sessions\/([A-Za-z0-9_-]{32})\/file$/
+  );
+
+  assert.ok(route);
+  assert.equal(route[2], externalSession.id);
+  assert.notEqual(externalSession.id, browserSession.id);
+  assert.equal(
+    (await service.getExternalAsset(externalSession.id, route[1], "file")).filePath,
+    filePath
+  );
+  assert.equal((await service.getAsset(browserSession.id, "device-1", "file")).filePath, filePath);
+  await assert.rejects(
+    service.getExternalAsset(externalSession.id, "A".repeat(43), "file"),
+    (error) => isMediaError(error, "MEDIA_SESSION_NOT_FOUND", 404)
+  );
+});
+
 test("RemoteMediaSessionService 按实时转码模式为 MP4 启动 FFmpeg HLS", async (context) => {
   const directory = await mkdtemp(join(tmpdir(), "ani-remote-media-test-"));
   const filePath = join(directory, "episode.mp4");
@@ -101,11 +131,21 @@ test("RemoteMediaSessionService 按实时转码模式为 MP4 启动 FFmpeg HLS",
 
   const session = await service.createSession("task-1", "device-1", "transcode");
   const playlist = await service.getAsset(session.id, "device-1", "index.m3u8");
+  const externalSession = await service.createExternalSession("task-1", "device-1", "transcode");
+  const externalRoute = externalSession.streamUrl.match(
+    /^\/api\/media\/external\/([A-Za-z0-9_-]{43})\/sessions\/[A-Za-z0-9_-]{32}\/hls\/index\.m3u8$/
+  );
 
   assert.equal(session.mode, "hls");
+  assert.equal(externalSession.mode, "hls");
+  assert.ok(externalRoute);
   assert.equal(command, "ffmpeg.exe");
   assert.ok(argumentsList.includes("libx264"));
   assert.equal(playlist.contentType, "application/vnd.apple.mpegurl");
+  assert.equal(
+    (await service.getExternalAsset(externalSession.id, externalRoute[1], "index.m3u8")).contentType,
+    "application/vnd.apple.mpegurl"
+  );
 });
 
 test("RemoteMediaSessionService 按不转码模式直传 MKV 原文件", async (context) => {
