@@ -19,10 +19,24 @@ import { RemoteDeviceCredentialStore } from "./core/remote/remote-device-credent
 import { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
 import { RemoteMediaSessionService } from "./core/remote/remote-media-session-service";
 import { RemoteTlsCertificateStore } from "./core/remote/remote-tls-certificate-store";
+import { ImageCacheService } from "./core/cache/image-cache-service";
+import { registerImageCacheProtocol, registerImageCacheScheme } from "./core/cache/image-cache-protocol";
+import { MetadataHttpClient } from "./core/metadata/metadata-http-client";
 
 let mainWindow: BrowserWindow | null = null;
 let quitAfterManagedQbittorrentStops = false;
 const appearanceService = new AppearanceService(() => mainWindow);
+registerImageCacheScheme();
+const imageCacheService = new ImageCacheService({
+  cacheDirectory: join(app.getPath("userData"), "Cache", "images"),
+  fetcher: async (input, options) => {
+    const settings = await repository.getSettings();
+    return new MetadataHttpClient(settings.network.metadataProxy).fetch(input, {
+      ...options,
+      source: "image-cache"
+    });
+  }
+});
 
 const desktopIntegration = new DesktopIntegrationService({
   showMainWindow,
@@ -59,6 +73,7 @@ const remoteDeviceAuth = new RemoteDeviceAuth({
 const remoteGateway = new RemoteHttpGateway(remoteMethodRegistry, {
   auth: remoteDeviceAuth,
   rendererDirectory: join(__dirname, "../renderer"),
+  imageCacheService,
   mediaSessionService: remoteMediaSessionService,
   tlsCertificateStore: new RemoteTlsCertificateStore(join(app.getPath("userData"), "remote-tls"), secretProtector)
 });
@@ -126,9 +141,12 @@ app.whenReady().then(async () => {
   }
 
   await repositoryRuntime.initialize();
+  registerImageCacheProtocol(imageCacheService);
   registerIpcHandlers({
     remoteGateway,
+    imageCacheService,
     onSettingsUpdated: async (settings) => {
+      imageCacheService.setCacheDirectory(join(settings.storage.cacheDir, "images"));
       appearanceService.applySettings(settings.appearance);
       await remoteGateway.applySettings(settings.network.remoteAccess);
       desktopIntegration.applySettings(settings);
@@ -136,6 +154,7 @@ app.whenReady().then(async () => {
     }
   });
   const settings = await repository.getSettings();
+  imageCacheService.setCacheDirectory(join(settings.storage.cacheDir, "images"));
   appearanceService.applySettings(settings.appearance);
   await remoteGateway.applySettings(settings.network.remoteAccess).catch((error: unknown) => remoteGateway.setStartupError(error));
   desktopIntegration.applySettings(settings);

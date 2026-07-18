@@ -22,6 +22,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { CachedImage } from "@/components/cached-image";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -1042,11 +1043,11 @@ function MyAnimeCard({
     <article className="relative overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
       <div className="relative aspect-[16/9] bg-muted">
         {item.anime.coverUrl ? (
-          <img
+          <CachedImage
             alt={titleDisplay.title}
             className="h-full w-full object-cover"
             loading="lazy"
-            src={item.anime.coverUrl}
+            sourceUrl={item.anime.coverUrl}
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center text-muted-foreground">

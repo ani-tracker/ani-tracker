@@ -1,4 +1,8 @@
-import type { RemotePlaybackRequestMode, RemotePlaybackSession } from "@shared/contracts";
+import type {
+  ImageCacheResolveResult,
+  RemotePlaybackRequestMode,
+  RemotePlaybackSession
+} from "@shared/contracts";
 
 type AppClient = NonNullable<Window["aniBridge"]>;
 
@@ -10,6 +14,7 @@ interface RemoteRpcResponse {
 
 const REMOTE_TOKEN_STORAGE_KEY = "ani.remoteAccessToken";
 export const REMOTE_AUTH_CHANGED_EVENT = "ani:remote-auth-changed";
+const imageResolveRequests = new Map<string, Promise<string>>();
 const REMOTE_METHODS = new Set([
   "getDashboard",
   "listNotifications",
@@ -77,7 +82,60 @@ export async function pairRemoteDevice(code: string, deviceName: string): Promis
 /** 清除本机设备令牌，用于重新配对。 */
 export function clearRemoteDeviceToken(): void {
   window.localStorage.removeItem(REMOTE_TOKEN_STORAGE_KEY);
+  imageResolveRequests.clear();
   window.dispatchEvent(new Event(REMOTE_AUTH_CHANGED_EVENT));
+}
+
+/** 将公网图片地址解析为桌面协议或远程同源缓存地址。 */
+export function resolveCachedImageUrl(sourceUrl: string): Promise<string> {
+  const normalizedSourceUrl = sourceUrl.trim();
+  if (!normalizedSourceUrl) {
+    return Promise.reject(new Error("图片地址不能为空"));
+  }
+
+  const existing = imageResolveRequests.get(normalizedSourceUrl);
+  if (existing) {
+    return existing;
+  }
+
+  const request = resolveCachedImageUrlOnce(normalizedSourceUrl).finally(() => {
+    if (imageResolveRequests.get(normalizedSourceUrl) === request) {
+      imageResolveRequests.delete(normalizedSourceUrl);
+    }
+  });
+  imageResolveRequests.set(normalizedSourceUrl, request);
+  return request;
+}
+
+/** 按当前运行环境请求一次签名图片缓存地址。 */
+async function resolveCachedImageUrlOnce(sourceUrl: string): Promise<string> {
+  if (window.aniBridge) {
+    const result = await window.aniBridge.resolveCachedImageUrl(sourceUrl);
+    return result.url;
+  }
+
+  const baseUrl = getRemoteBaseUrl();
+  const accessToken = window.localStorage.getItem(REMOTE_TOKEN_STORAGE_KEY);
+  if (!baseUrl || !accessToken) {
+    throw new Error("当前设备尚未完成远程配对");
+  }
+  const response = await fetch(`${baseUrl}/api/images/resolve`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${accessToken}`
+    },
+    body: JSON.stringify({ url: sourceUrl })
+  });
+  const payload = (await response.json().catch(() => ({}))) as ImageCacheResolveResult & { error?: string };
+  if (!response.ok || !payload.url) {
+    if (response.status === 401) {
+      clearRemoteDeviceToken();
+    }
+    throw new Error(payload.error ?? `图片地址解析失败：${response.status}`);
+  }
+  return new URL(payload.url, `${baseUrl}/`).toString();
 }
 
 /** 为当前远程设备创建绑定下载任务的播放会话。 */

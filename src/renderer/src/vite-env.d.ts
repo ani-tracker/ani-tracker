@@ -37,10 +37,12 @@ import type {
   SelectPlayerExecutableInput,
   TorrentConnectionTestResult
 } from "@shared/contracts";
+import type { ImageCacheResolveResult } from "@shared/contracts";
 
 declare global {
   interface Window {
     aniBridge?: {
+      resolveCachedImageUrl: (sourceUrl: string) => Promise<ImageCacheResolveResult>;
       getDashboard: () => Promise<DashboardData>;
       listNotifications: () => Promise<NotificationRecord[]>;
       getUnreadNotificationCount: () => Promise<number>;

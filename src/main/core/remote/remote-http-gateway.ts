@@ -18,6 +18,7 @@ import {
   normalizePrivateIpv4Addresses
 } from "./remote-network-policy";
 import type { RemoteTlsCertificateBundle, RemoteTlsCertificateStore } from "./remote-tls-certificate-store";
+import { ImageCacheError, type ImageCacheService } from "../cache/image-cache-service";
 
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 18_083;
@@ -41,6 +42,7 @@ export interface RemoteHttpGatewayOptions {
   tlsCertificateStore?: RemoteTlsCertificateStore;
   privateAddressProvider?: () => string[];
   mediaSessionService?: RemoteMediaSessionService;
+  imageCacheService?: ImageCacheService;
 }
 
 interface RateLimitEntry {
@@ -74,6 +76,7 @@ export class RemoteHttpGateway {
   private readonly tlsCertificateStore?: RemoteTlsCertificateStore;
   private readonly privateAddressProvider: () => string[];
   private readonly mediaSessionService?: RemoteMediaSessionService;
+  private readonly imageCacheService?: ImageCacheService;
 
   /** 创建默认仅监听回环地址的远程网关。 */
   constructor(
@@ -92,6 +95,7 @@ export class RemoteHttpGateway {
     this.tlsCertificateStore = options.tlsCertificateStore;
     this.privateAddressProvider = options.privateAddressProvider ?? listPrivateIpv4Addresses;
     this.mediaSessionService = options.mediaSessionService;
+    this.imageCacheService = options.imageCacheService;
     this.dispatcher = new RemoteRpcDispatcher(registry);
   }
 
@@ -297,6 +301,15 @@ export class RemoteHttpGateway {
         await this.handleRpc(request, response, requestId);
         return;
       }
+      if (request.method === "POST" && url.pathname === "/api/images/resolve") {
+        await this.handleImageResolve(request, response);
+        return;
+      }
+      const imageToken = parseImageToken(url.pathname);
+      if ((request.method === "GET" || request.method === "HEAD") && imageToken) {
+        await this.handleImageAsset(request, response, imageToken, request.method === "HEAD");
+        return;
+      }
       if (request.method === "POST" && url.pathname === "/api/media/sessions") {
         await this.handleMediaSessionCreate(request, response);
         return;
@@ -338,6 +351,60 @@ export class RemoteHttpGateway {
     if (!isTrustedOrigin(origin, this.protocol, this.activePort, allowedHostnames)) {
       throw new HttpGatewayError(403, "ORIGIN_FORBIDDEN", "请求 Origin 不受信任");
     }
+  }
+
+  /** 为已配对远程设备签发同源图片缓存地址。 */
+  private async handleImageResolve(request: IncomingMessage, response: ServerResponse): Promise<void> {
+    if (!this.imageCacheService) {
+      throw new HttpGatewayError(503, "IMAGE_CACHE_UNAVAILABLE", "图片缓存服务不可用");
+    }
+    const device = this.requireAuthenticatedDevice(request, false);
+    this.consumeRateLimit(`images:${device.id}:resolve`, 240, 60 * 1000);
+    const body = requireObject(await readJsonBody(request));
+    assertOnlyKeys(body, ["url"]);
+    if (typeof body.url !== "string" || body.url.length > 2_048) {
+      throw new HttpGatewayError(400, "IMAGE_URL_INVALID", "图片地址无效");
+    }
+    this.writeJson(response, 200, { url: this.imageCacheService.createRemotePath(body.url) });
+  }
+
+  /** 从共享磁盘缓存输出远程图片，未命中时由主进程下载一次。 */
+  private async handleImageAsset(
+    request: IncomingMessage,
+    response: ServerResponse,
+    token: string,
+    headOnly: boolean
+  ): Promise<void> {
+    if (!this.imageCacheService) {
+      throw new HttpGatewayError(503, "IMAGE_CACHE_UNAVAILABLE", "图片缓存服务不可用");
+    }
+    this.consumeRateLimit(`images:${request.socket.remoteAddress ?? "unknown"}:read`, 600, 60 * 1000);
+    const asset = await this.imageCacheService.getByToken(token);
+    const etag = `"${asset.cacheKey}"`;
+    response.setHeader("Cache-Control", "private, max-age=86400, immutable");
+    response.setHeader("ETag", etag);
+    if (request.headers["if-none-match"] === etag) {
+      response.statusCode = 304;
+      response.end();
+      return;
+    }
+    response.statusCode = 200;
+    response.setHeader("Content-Type", asset.contentType);
+    response.setHeader("Content-Length", asset.size);
+    response.setHeader("X-Content-Type-Options", "nosniff");
+    if (headOnly) {
+      response.end();
+      return;
+    }
+    const stream = createReadStream(asset.filePath);
+    stream.on("error", (error) => {
+      logger.warn("远程图片缓存读取失败", {
+        cacheKey: asset.cacheKey,
+        errorType: error.name
+      });
+      response.destroy(error);
+    });
+    stream.pipe(response);
   }
 
   /** 返回可供本机或局域网客户端使用的规范网关地址。 */
@@ -619,6 +686,15 @@ export class RemoteHttpGateway {
       this.writeError(response, error.statusCode, error.code, error.message);
       return;
     }
+    if (error instanceof ImageCacheError) {
+      const statusCode = error.code === "IMAGE_TOKEN_INVALID" || error.code === "IMAGE_TOKEN_EXPIRED"
+        ? 404
+        : error.code === "IMAGE_FETCH_FAILED" || error.code === "IMAGE_REDIRECT_INVALID"
+          ? 502
+          : 400;
+      this.writeError(response, statusCode, error.code, error.message);
+      return;
+    }
     logger.error("Remote HTTP request failed", { errorType: error instanceof Error ? error.name : typeof error });
     this.writeError(response, 500, "INTERNAL_ERROR", "远程服务内部错误");
   }
@@ -762,6 +838,11 @@ function createMediaCookie(token: string, secure: boolean): string {
 interface MediaRoute {
   sessionId: string;
   assetName?: string;
+}
+
+/** 解析固定格式的签名图片缓存路由。 */
+function parseImageToken(pathname: string): string | undefined {
+  return pathname.match(/^\/api\/images\/([A-Za-z0-9_.-]{20,4096})$/)?.[1];
 }
 
 /** 解析固定格式的媒体会话路由并拒绝额外路径层级。 */

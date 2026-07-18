@@ -22,8 +22,11 @@ import type {
   RssSubscriptionReleaseQuery,
   SelectPlayerExecutableInput
 } from "@shared/contracts";
+import type { ImageCacheResolveResult } from "@shared/contracts";
 
 const api = {
+  resolveCachedImageUrl: (sourceUrl: string): Promise<ImageCacheResolveResult> =>
+    ipcRenderer.invoke("images:resolveUrl", sourceUrl),
   getDashboard: () => ipcRenderer.invoke("dashboard:get"),
   listNotifications: (): Promise<NotificationRecord[]> => ipcRenderer.invoke("notifications:list"),
   getUnreadNotificationCount: (): Promise<number> => ipcRenderer.invoke("notifications:unreadCount"),

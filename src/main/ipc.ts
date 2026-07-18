@@ -45,6 +45,7 @@ import { PlaybackStatusService } from "./core/media/playback-status-service";
 import { DownloadTaskControlService } from "./core/downloads/download-task-control-service";
 import { PlayerDetectionService } from "./core/platform/player-detection-service";
 import type { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
+import type { ImageCacheService } from "./core/cache/image-cache-service";
 
 export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
@@ -58,9 +59,15 @@ const playbackStatusService = new PlaybackStatusService(repository);
 interface RegisterIpcHandlersOptions {
   onSettingsUpdated?: (settings: AppSettings) => void | Promise<void>;
   remoteGateway?: RemoteHttpGateway;
+  imageCacheService?: ImageCacheService;
 }
 
 export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): void {
+  if (options.imageCacheService) {
+    ipcMain.handle("images:resolveUrl", (_event, sourceUrl: string) => ({
+      url: options.imageCacheService!.createElectronUrl(sourceUrl)
+    }));
+  }
   ipcMain.handle("dashboard:get", () => repository.getDashboard());
   ipcMain.handle("notifications:list", () => repository.listNotifications());
   ipcMain.handle("notifications:unreadCount", () => repository.getUnreadNotificationCount());

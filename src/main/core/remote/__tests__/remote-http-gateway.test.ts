@@ -6,6 +6,7 @@ import { test } from "node:test";
 import { tmpdir } from "node:os";
 import { join, win32 } from "node:path";
 import type { AppSettings, DashboardData, DownloadTask } from "@shared/domain";
+import { ImageCacheService } from "../../cache/image-cache-service";
 import { RemoteDeviceAuth } from "../remote-device-auth";
 import { RemoteHttpGateway, isPathInsideDirectory, parseByteRange } from "../remote-http-gateway";
 import { RemoteMediaSessionService } from "../remote-media-session-service";
@@ -97,6 +98,52 @@ test("RPC 对 scope 不足和跨站 Origin 返回 403", async (context) => {
   });
   assert.equal(forbiddenOrigin.status, 403);
   assert.equal((await forbiddenOrigin.json() as { code: string }).code, "ORIGIN_FORBIDDEN");
+});
+
+test("远程图片读取复用桌面端磁盘缓存并支持 304", async (context) => {
+  const cacheDirectory = await mkdtemp(join(tmpdir(), "ani-shared-image-cache-"));
+  const sourceUrl = "https://images.example.test/poster.png";
+  const imageBody = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a]);
+  let fetchCount = 0;
+  const imageCacheService = new ImageCacheService({
+    cacheDirectory,
+    fetcher: async () => {
+      fetchCount += 1;
+      return new Response(imageBody, { headers: { "Content-Type": "image/png" } });
+    },
+    hostResolver: async () => ["93.184.216.34"],
+    signingSecret: Buffer.alloc(32, 9)
+  });
+  await imageCacheService.get(sourceUrl);
+
+  const gateway = await startGateway({ imageCacheService });
+  context.after(async () => {
+    await gateway.stop();
+    await rm(cacheDirectory, { recursive: true, force: true });
+  });
+  const token = await pairGateway(gateway, "Image Cache Client");
+  const resolveResponse = await fetch(`${gateway.getStatus().baseUrl}/api/images/resolve`, {
+    method: "POST",
+    headers: jsonHeaders(token),
+    body: JSON.stringify({ url: sourceUrl })
+  });
+  assert.equal(resolveResponse.status, 200);
+  const imagePath = (await resolveResponse.json() as { url: string }).url;
+
+  const imageResponse = await fetch(`${gateway.getStatus().baseUrl}${imagePath}`);
+  assert.equal(imageResponse.status, 200);
+  assert.equal(imageResponse.headers.get("content-type"), "image/png");
+  assert.deepEqual(Buffer.from(await imageResponse.arrayBuffer()), imageBody);
+  assert.equal(fetchCount, 1);
+
+  const etag = imageResponse.headers.get("etag");
+  assert.ok(etag);
+  const notModifiedResponse = await fetch(`${gateway.getStatus().baseUrl}${imagePath}`, {
+    headers: { "If-None-Match": etag }
+  });
+  assert.equal(notModifiedResponse.status, 304);
+  assert.equal(notModifiedResponse.headers.get("etag"), etag);
+  assert.equal(fetchCount, 1);
 });
 
 test("请求体超过 64KB 返回 413", async (context) => {
@@ -434,6 +481,7 @@ interface GatewayFixtureOptions {
   privateAddresses?: string[];
   start?: boolean;
   mediaSessionService?: RemoteMediaSessionService;
+  imageCacheService?: ImageCacheService;
 }
 
 /** 在随机端口启动测试网关。 */
@@ -443,6 +491,7 @@ async function startGateway(options: GatewayFixtureOptions = {}): Promise<Remote
     auth: options.auth,
     rendererDirectory: options.rendererDirectory,
     mediaSessionService: options.mediaSessionService,
+    imageCacheService: options.imageCacheService,
     tlsCertificateStore: options.certificateStore,
     privateAddressProvider: () => options.privateAddresses ?? []
   });

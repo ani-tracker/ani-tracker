@@ -12,6 +12,11 @@ import type {
   TorrentFile
 } from "./domain";
 
+/** 返回当前客户端可加载的签名图片缓存地址。 */
+export interface ImageCacheResolveResult {
+  url: string;
+}
+
 export interface AnimeSearchQuery {
   keyword: string;
   includeAliases?: boolean;

@@ -27,6 +27,12 @@
   - 新建 SQLite 数据库直接使用当前平台默认设置模板。
 - 已启用 SQLite schema：`src/main/core/storage/schema.sql`。
 - 已完成 Home、我的追番、新番发现、资源搜索、下载、来源、设置、通知中心等页面。
+- 已实现统一图片磁盘缓存：
+  - 首次加载写入 `storage.cacheDir/images`，后续加载和应用重启后直接复用缓存。
+  - Electron 自定义协议与远程 HTTP/RPC 使用同一缓存服务，远程读取支持 `ETag` 和 `304`。
+  - 默认容量上限为 5GB，单图上限为 20MB，超限时按最近访问时间淘汰旧图片。
+  - 支持 JPEG、PNG、WebP、GIF、AVIF，并拒绝私网地址、异常端口、非法 MIME 和篡改令牌。
+  - 新番发现、我的追番及对应远程页面已统一接入缓存图片组件，并使用 Skeleton 保持加载布局稳定。
 
 ### 新番发现和元数据
 
@@ -270,16 +276,16 @@
 ```powershell
 pnpm.cmd run typecheck
 pnpm.cmd run test:parsers
-pnpm.cmd build
+pnpm.cmd exec electron-vite build
 git diff --check
 ```
 
 说明：
 
 - `pnpm.cmd run test:parsers` 当前会编译测试到 `out/test-node`，该目录已在 `.gitignore` 中。
-- Node 测试当前共 `114` 项，覆盖标题集数边界、远程 torrent 上传、经典/Enhanced 添加结果、真实 hash 确认、确认超时和 SQLite 历史任务合并。
+- Node 测试当前共 `189` 项，包含图片首次缓存、重启命中、并发合并、5GB 上限淘汰、非法目标拒绝和桌面/远程缓存复用覆盖。
 - 主进程和渲染进程 TypeScript 类型检查通过。
-- 生产构建通过，并成功准备 macOS x64 与 Windows x64 qBittorrent 资源。
+- 主进程、preload 和 renderer 生产构建通过；完整构建的 qBittorrent 资源准备步骤受运行中进程锁定，待进程退出后复验。
 - `git diff --check` 通过。
 
 ## 尚未完成

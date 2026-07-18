@@ -9,6 +9,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { CachedImage } from "@/components/cached-image";
 import { appApi } from "@/lib/api";
 import { formatMonth, formatPercent } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
@@ -169,11 +170,11 @@ export function RemoteMyAnimePage() {
             return (
               <Card key={item.id} className="flex min-w-0 flex-col overflow-hidden">
                 {item.anime.coverUrl ? (
-                  <img
+                  <CachedImage
                     alt={titleDisplay.title}
                     className="aspect-video w-full bg-muted object-cover"
                     loading="lazy"
-                    src={item.anime.coverUrl}
+                    sourceUrl={item.anime.coverUrl}
                   />
                 ) : (
                   <div className="flex aspect-video w-full items-center justify-center bg-muted text-muted-foreground">

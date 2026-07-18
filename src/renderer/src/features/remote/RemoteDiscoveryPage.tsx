@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { CachedImage } from "@/components/cached-image";
 import { appApi } from "@/lib/api";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { Anime, MyAnime, Season } from "@shared/domain";
@@ -174,7 +175,7 @@ export function RemoteDiscoveryPage() {
             return (
               <Card key={anime.id} className="flex min-w-0 flex-col overflow-hidden">
                 {anime.coverUrl ? (
-                  <img alt={titleDisplay.title} className="aspect-[16/7] w-full bg-muted object-cover" loading="lazy" src={anime.coverUrl} />
+                  <CachedImage alt={titleDisplay.title} className="aspect-[16/7] w-full bg-muted object-cover" loading="lazy" sourceUrl={anime.coverUrl} />
                 ) : (
                   <div className="flex aspect-[16/7] w-full items-center justify-center bg-muted text-muted-foreground"><ImageOff /></div>
                 )}
