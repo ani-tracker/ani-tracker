@@ -110,6 +110,11 @@ test("mergeSettings 保留旧播放器自定义路径并补入新平台选项", 
 });
 
 function assertSharedDefaults(settings: AppSettings): void {
+  assert.deepEqual(settings.appearance, {
+    themeMode: "system",
+    themePackId: "default",
+    customThemePacks: []
+  });
   assert.equal(settings.download.defaultDownloadDir, join(paths.downloads, "Ani Tracker"));
   assert.equal(settings.download.temporaryDownloadDir, join(paths.userData, "incomplete"));
   assert.equal(settings.download.defaultTorrentEngine, "qbittorrent");

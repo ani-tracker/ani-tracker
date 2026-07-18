@@ -15,6 +15,7 @@ import type {
   Release,
   ReleaseSourceConfig
 } from "@shared/domain";
+import { normalizeAppearanceSettings } from "@shared/theme";
 import type { AppDataFile } from "@shared/persistence/app-data";
 
 /** 定义主进程业务服务使用的应用数据访问能力。 */
@@ -161,6 +162,11 @@ export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>)
   return {
     ...current,
     ...patch,
+    appearance: normalizeAppearanceSettings({
+      ...current.appearance,
+      ...patch.appearance,
+      customThemePacks: patch.appearance?.customThemePacks ?? current.appearance.customThemePacks
+    }),
     download: {
       ...current.download,
       ...patch.download,

@@ -1,6 +1,7 @@
 import { app } from "electron";
 import { join } from "node:path";
 import type { AppSettings, PlayerProfile } from "@shared/domain";
+import { createDefaultAppearanceSettings } from "@shared/theme";
 import { logger } from "../logger";
 
 export interface DefaultSettingsPaths {
@@ -17,6 +18,7 @@ export abstract class DefaultSettingsProvider {
     const userDataDir = this.paths.userData;
 
     return {
+      appearance: createDefaultAppearanceSettings(),
       download: {
         defaultDownloadDir: this.getDefaultDownloadDir(),
         createAnimeFolder: true,

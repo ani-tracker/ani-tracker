@@ -5,10 +5,10 @@ type BadgeTone = "neutral" | "green" | "amber" | "red" | "blue";
 
 const tones: Record<BadgeTone, string> = {
   neutral: "border-border bg-muted text-muted-foreground",
-  green: "border-primary/20 bg-primary/10 text-primary",
-  amber: "border-accent bg-accent text-accent-foreground",
+  green: "border-success/20 bg-success/10 text-success",
+  amber: "border-warning/20 bg-warning/10 text-warning",
   red: "border-destructive/20 bg-destructive/10 text-destructive",
-  blue: "border-sidebar-accent bg-sidebar-accent text-sidebar-accent-foreground"
+  blue: "border-info/20 bg-info/10 text-info"
 };
 
 interface BadgeProps extends HTMLAttributes<HTMLSpanElement> {

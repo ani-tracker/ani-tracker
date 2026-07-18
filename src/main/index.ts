@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { DailyReminderService } from "./core/automation/daily-reminder-service";
 import { logger } from "./core/logger";
 import { DesktopIntegrationService } from "./core/platform/desktop-integration-service";
+import { AppearanceService } from "./core/platform/appearance-service";
 import {
   automationScheduler,
   downloadTaskControlService,
@@ -21,6 +22,7 @@ import { RemoteTlsCertificateStore } from "./core/remote/remote-tls-certificate-
 
 let mainWindow: BrowserWindow | null = null;
 let quitAfterManagedQbittorrentStops = false;
+const appearanceService = new AppearanceService(() => mainWindow);
 
 const desktopIntegration = new DesktopIntegrationService({
   showMainWindow,
@@ -68,7 +70,7 @@ function createWindow(): void {
     minWidth: 720,
     minHeight: 560,
     title: "Ani Tracker",
-    backgroundColor: "#f8fafc",
+    backgroundColor: appearanceService.getWindowBackgroundColor(),
     webPreferences: {
       preload: join(__dirname, "../preload/index.mjs"),
       sandbox: false,
@@ -127,12 +129,14 @@ app.whenReady().then(async () => {
   registerIpcHandlers({
     remoteGateway,
     onSettingsUpdated: async (settings) => {
+      appearanceService.applySettings(settings.appearance);
       await remoteGateway.applySettings(settings.network.remoteAccess);
       desktopIntegration.applySettings(settings);
       await qbittorrentManagedService.applySettings(settings);
     }
   });
   const settings = await repository.getSettings();
+  appearanceService.applySettings(settings.appearance);
   await remoteGateway.applySettings(settings.network.remoteAccess).catch((error: unknown) => remoteGateway.setStartupError(error));
   desktopIntegration.applySettings(settings);
   void qbittorrentManagedService.applySettings(settings);
@@ -162,6 +166,10 @@ app.on("before-quit", (event) => {
 
   event.preventDefault();
   void stopManagedQbittorrentThenQuit();
+});
+
+app.on("will-quit", () => {
+  appearanceService.dispose();
 });
 
 app.on("window-all-closed", () => {

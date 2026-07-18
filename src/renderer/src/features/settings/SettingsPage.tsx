@@ -42,6 +42,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { appApi } from "@/lib/api";
 import { useAsyncData } from "@/lib/use-async-data";
+import { useTheme } from "@/components/theme-provider";
+import { AppearanceSettingsSection } from "./AppearanceSettingsSection";
 import type {
   AutomationSchedulerStatus,
   PlayerDetectionResult,
@@ -52,6 +54,7 @@ import type {
 import type { AppSettings } from "@shared/domain";
 
 export function SettingsPage() {
+  const { commitAppearance } = useTheme();
   const { data, loading } = useAsyncData(appApi.getSettings, []);
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
@@ -188,6 +191,7 @@ export function SettingsPage() {
     try {
       const saved = await appApi.updateSettings(draft);
       setDraft(saved);
+      commitAppearance(saved.appearance);
       const [, , remote] = await Promise.all([
         refreshSchedulerStatus(),
         refreshQbittorrentManagedStatus(),
@@ -216,6 +220,7 @@ export function SettingsPage() {
     setResetState("resetting");
     const saved = await appApi.resetSettingsToDefaults();
     setDraft(saved);
+    commitAppearance(saved.appearance);
     await refreshPlayerDetection(saved.players);
     setQbTest({ state: "idle" });
     await refreshSchedulerStatus();
@@ -379,6 +384,11 @@ export function SettingsPage() {
           </Button>
         </div>
       </div>
+
+      <AppearanceSettingsSection
+        appearance={draft.appearance}
+        onChange={(appearance) => setDraft({ ...draft, appearance })}
+      />
 
       <div className="grid gap-5 xl:grid-cols-2">
         <SettingsSection title="下载目录" description="支持全局默认目录，后续单部番可以覆盖。">

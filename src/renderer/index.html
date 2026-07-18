@@ -10,6 +10,27 @@
     <link rel="icon" href="/icons/ani-tracker.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <title>Ani Tracker</title>
+    <script>
+      (() => {
+        try {
+          const snapshot = JSON.parse(localStorage.getItem("ani.theme.snapshot") || "null");
+          if (!snapshot) return;
+          const root = document.documentElement;
+          const dark = snapshot.resolvedTheme === "dark";
+          root.classList.toggle("dark", dark);
+          root.style.colorScheme = dark ? "dark" : "light";
+          root.dataset.themePack = snapshot.themePackId || "default";
+          if (snapshot.radius) root.style.setProperty("--radius", snapshot.radius);
+          if (snapshot.tokens && typeof snapshot.tokens === "object") {
+            Object.entries(snapshot.tokens).forEach(([name, value]) => {
+              if (typeof value === "string") root.style.setProperty(`--${name}`, value);
+            });
+          }
+        } catch {
+          localStorage.removeItem("ani.theme.snapshot");
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

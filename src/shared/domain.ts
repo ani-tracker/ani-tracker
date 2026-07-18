@@ -1,3 +1,5 @@
+import type { AppearanceSettings } from "./theme";
+
 export type AnimeStatus = "watching" | "planned" | "completed" | "paused" | "dropped";
 
 export type EpisodeStatus =
@@ -351,6 +353,7 @@ export interface NetworkSettings {
 }
 
 export interface AppSettings {
+  appearance: AppearanceSettings;
   download: DownloadSettings;
   storage: StorageSettings;
   players: PlayerProfile[];

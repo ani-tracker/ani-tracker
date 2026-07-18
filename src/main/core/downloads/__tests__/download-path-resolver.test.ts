@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { join } from "node:path";
 import type { AppSettings, MyAnime } from "@shared/domain";
+import { createDefaultAppearanceSettings } from "@shared/theme";
 import { resolveAnimeDownloadPath } from "../download-path-resolver";
 
 test("resolveAnimeDownloadPath applies the configured anime folder template", () => {
@@ -24,6 +25,7 @@ test("resolveAnimeDownloadPath ignores traversal segments in templates", () => {
 
 function createSettings(): AppSettings {
   return {
+    appearance: createDefaultAppearanceSettings(),
     download: {
       defaultDownloadDir: "/downloads/Ani Tracker",
       createAnimeFolder: true,

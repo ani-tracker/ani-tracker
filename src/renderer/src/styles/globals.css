@@ -16,12 +16,25 @@
   --popover-foreground: 215 22% 15%;
   --primary: 172 70% 30%;
   --primary-foreground: 0 0% 100%;
+  --secondary: 210 18% 94%;
+  --secondary-foreground: 215 22% 20%;
   --muted: 210 22% 92%;
   --muted-foreground: 215 12% 42%;
   --accent: 190 34% 91%;
   --accent-foreground: 196 49% 20%;
   --destructive: 350 84% 48%;
   --destructive-foreground: 0 0% 100%;
+  --success: 154 65% 32%;
+  --success-foreground: 0 0% 100%;
+  --warning: 39 92% 43%;
+  --warning-foreground: 31 68% 16%;
+  --info: 205 78% 40%;
+  --info-foreground: 0 0% 100%;
+  --chart-1: 172 70% 30%;
+  --chart-2: 205 78% 40%;
+  --chart-3: 344 66% 44%;
+  --chart-4: 39 92% 43%;
+  --chart-5: 262 50% 52%;
   --sidebar: 0 0% 100%;
   --sidebar-foreground: 215 22% 18%;
   --sidebar-primary: 172 70% 30%;
@@ -34,6 +47,55 @@
   --input: 214 18% 85%;
   --ring: 172 70% 30%;
   --radius: 8px;
+}
+
+.dark {
+  --background: 220 12% 9%;
+  --foreground: 210 20% 94%;
+  --card: 220 11% 12%;
+  --card-foreground: 210 20% 94%;
+  --popover: 220 11% 12%;
+  --popover-foreground: 210 20% 94%;
+  --primary: 171 68% 46%;
+  --primary-foreground: 176 62% 8%;
+  --secondary: 217 10% 18%;
+  --secondary-foreground: 210 18% 91%;
+  --muted: 217 10% 18%;
+  --muted-foreground: 215 12% 66%;
+  --accent: 190 24% 20%;
+  --accent-foreground: 185 42% 88%;
+  --destructive: 350 70% 55%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 151 56% 45%;
+  --success-foreground: 151 70% 8%;
+  --warning: 40 90% 58%;
+  --warning-foreground: 35 76% 10%;
+  --info: 204 80% 62%;
+  --info-foreground: 210 72% 10%;
+  --chart-1: 171 68% 46%;
+  --chart-2: 204 80% 62%;
+  --chart-3: 344 72% 64%;
+  --chart-4: 40 90% 58%;
+  --chart-5: 262 68% 70%;
+  --sidebar: 220 12% 11%;
+  --sidebar-foreground: 210 18% 90%;
+  --sidebar-primary: 171 68% 46%;
+  --sidebar-primary-foreground: 176 62% 8%;
+  --sidebar-accent: 190 24% 20%;
+  --sidebar-accent-foreground: 185 42% 88%;
+  --sidebar-border: 217 10% 24%;
+  --sidebar-ring: 171 68% 46%;
+  --border: 217 10% 24%;
+  --input: 217 10% 24%;
+  --ring: 171 68% 46%;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
 }
 
 * {
@@ -61,4 +123,8 @@ select {
 #root {
   min-height: 100vh;
   min-height: 100dvh;
+}
+
+::selection {
+  background: hsl(var(--primary) / 0.24);
 }

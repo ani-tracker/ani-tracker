@@ -2,7 +2,7 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { ErrorBoundary } from "./components/error-boundary";
-import { Toaster } from "./components/ui/sonner";
+import { ThemeProvider, ThemeToaster } from "./components/theme-provider";
 import "./styles/globals.css";
 
 /** 仅在 Web/PWA 生产环境注册离线缓存，避免干扰 Electron 调试。 */
@@ -24,8 +24,10 @@ void registerWebServiceWorker();
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <App />
-      <Toaster closeButton position="top-right" richColors />
+      <ThemeProvider>
+        <App />
+        <ThemeToaster />
+      </ThemeProvider>
     </ErrorBoundary>
   </React.StrictMode>
 );
