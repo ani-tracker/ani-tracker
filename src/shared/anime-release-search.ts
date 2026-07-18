@@ -39,6 +39,29 @@ export function normalizeReleaseSearchText(value: string): string {
     .toLowerCase();
 }
 
+/** 判断关键词是否能匹配番剧标题、原名或任一别名，用于追番输入联想。 */
+export function matchesAnimeSearchKeyword(anime: Anime, keyword: string): boolean {
+  const normalizedKeyword = normalizeReleaseSearchText(keyword);
+  if (!normalizedKeyword) {
+    return false;
+  }
+
+  const compactKeyword = normalizedKeyword.replace(/\s+/g, "");
+  return buildAnimeReleaseSearchTerms(anime).some((term) => {
+    const normalizedTerm = normalizeReleaseSearchText(term);
+    return normalizedTerm.includes(normalizedKeyword) || normalizedTerm.replace(/\s+/g, "").includes(compactKeyword);
+  });
+}
+
+/** 判断输入是否完整对应番剧标题、原名或别名，用于维持已选择的追番关联。 */
+export function isAnimeSearchTerm(anime: Anime, keyword: string): boolean {
+  const normalizedKeyword = normalizeReleaseSearchText(keyword);
+  return Boolean(
+    normalizedKeyword &&
+    buildAnimeReleaseSearchTerms(anime).some((term) => normalizeReleaseSearchText(term) === normalizedKeyword)
+  );
+}
+
 /** 判断资源标题是否包含目标番剧的任一有效标题，过滤下载源的模糊误匹配。 */
 export function matchesAnimeReleaseTitle(releaseTitle: string, animeTitleTerms: string[]): boolean {
   const normalizedTitle = normalizeReleaseSearchText(releaseTitle);

@@ -2,6 +2,7 @@ import type { AnimeReleaseQuery, ReleaseQuery, ReleaseSearchResult, ReleaseSourc
 import type { Anime, AnimeSourceBinding, FansubGroup, Release, ReleaseSourceConfig } from "@shared/domain";
 import { createHash } from "node:crypto";
 import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle } from "../../../shared/anime-release-search";
+import { releaseMatchesEpisode } from "../../../shared/release-search-input";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import { logger } from "../logger";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
@@ -63,13 +64,15 @@ export class ReleaseSourceService {
       .map((release) => enrichReleaseFromTitle(release, this.fansubs));
 
     const dedupedReleases = dedupeReleases(releases);
+    const episodeReleases = dedupedReleases.filter((release) => releaseMatchesEpisode(release, query.episodeNo));
     const relevantReleases = query.animeId
-      ? dedupedReleases.filter((release) => matchesAnimeReleaseTitle(release.title, [query.keyword]))
-      : dedupedReleases;
+      ? episodeReleases.filter((release) => matchesAnimeReleaseTitle(release.title, [query.keyword]))
+      : episodeReleases;
     if (relevantReleases.length !== dedupedReleases.length) {
-      logger.info("下载资源模糊误匹配已过滤", {
+      logger.info("下载资源搜索结果已按条件过滤", {
         animeId: query.animeId,
         keyword: query.keyword,
+        episodeNo: query.episodeNo,
         filteredCount: dedupedReleases.length - relevantReleases.length
       });
     }
@@ -167,11 +170,14 @@ export class ReleaseSourceService {
         (binding) => binding.sourceId === release.sourceId && binding.confirmed
       );
       const titleMatched = hasConfirmedExactBinding || matchesAnimeReleaseTitle(release.title, terms);
-      return titleMatched && classifyAnimeRelease(release, anime) !== "mismatch";
+      return titleMatched &&
+        classifyAnimeRelease(release, anime) !== "mismatch" &&
+        releaseMatchesEpisode(release, query.episodeNo);
     });
 
     logger.info("Anime release search finished", {
       animeId: anime.id,
+      episodeNo: query.episodeNo,
       sourceCount: sources.length,
       bindingCount: bindings.filter((binding) => binding.confirmed).length,
       releaseCount: relevantReleases.length

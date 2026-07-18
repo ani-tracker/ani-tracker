@@ -3,41 +3,57 @@ import { useEffect, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList
+} from "@/components/ui/command";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from "@/components/ui/select";
+import { InputGroup, InputGroupAddon, InputGroupButton } from "@/components/ui/input-group";
+import { Popover, PopoverAnchor, PopoverContent } from "@/components/ui/popover";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { formatBytes, formatDateTime } from "@/lib/format";
-import { buildAnimeReleaseSearchTerms } from "@shared/anime-release-search";
+import { isAnimeSearchTerm, matchesAnimeSearchKeyword } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
+import { parseReleaseSearchInput } from "@shared/release-search-input";
 import type { ReleaseSearchResult } from "@shared/contracts";
 import type { MyAnime, Release } from "@shared/domain";
 
+interface SearchedContext {
+  mode: "anime" | "keyword";
+  keyword: string;
+  episodeNo?: number;
+  myAnime?: MyAnime;
+}
+
 export function ReleaseSearchPage() {
   const [keyword, setKeyword] = useState("");
-  const [episodeNo, setEpisodeNo] = useState("");
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [selectedAnimeId, setSelectedAnimeId] = useState("");
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ReleaseSearchResult | null>(null);
-  const [searchedTerms, setSearchedTerms] = useState<string[]>([]);
+  const [searchedContext, setSearchedContext] = useState<SearchedContext | null>(null);
   const [addingId, setAddingId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
   const selectedAnime = useMemo(
     () => myAnime.find((item) => item.id === selectedAnimeId) ?? null,
     [myAnime, selectedAnimeId]
+  );
+  const parsedInput = useMemo(() => parseReleaseSearchInput(keyword), [keyword]);
+  const suggestions = useMemo(
+    () => parsedInput.keyword
+      ? myAnime.filter((item) => matchesAnimeSearchKeyword(item.anime, parsedInput.keyword)).slice(0, 8)
+      : [],
+    [myAnime, parsedInput.keyword]
   );
 
   useEffect(() => {
@@ -64,33 +80,58 @@ export function ReleaseSearchPage() {
     };
   }, []);
 
+  /** 更新关键词，并在输入不再对应原番剧时取消关联。 */
+  function updateKeyword(value: string) {
+    const nextInput = parseReleaseSearchInput(value);
+    setKeyword(value);
+    if (selectedAnime && !isAnimeSearchTerm(selectedAnime.anime, nextInput.keyword)) {
+      setSelectedAnimeId("");
+    }
+    setSuggestionsOpen(Boolean(nextInput.keyword));
+  }
+
+  /** 选择联想番剧，并保留输入中已识别的集数。 */
+  function selectAnime(item: MyAnime) {
+    const title = resolveAnimeTitleDisplay(item.anime).title;
+    setSelectedAnimeId(item.id);
+    setKeyword(parsedInput.episodeNo === undefined ? title : `${title} 第 ${parsedInput.episodeNo} 集`);
+    setSuggestionsOpen(false);
+  }
+
+  /** 根据是否关联追番选择番剧级搜索或普通关键词搜索。 */
   async function search() {
-    const terms = buildSearchTerms(selectedAnime, keyword);
-    if (!terms.length) {
-      setMessage({ tone: "error", text: "请输入关键词或选择一部追番" });
+    const input = parseReleaseSearchInput(keyword);
+    if (!input.keyword) {
+      setMessage({ tone: "error", text: "请输入搜索关键词" });
       return;
     }
 
-    const parsedEpisodeNo = parseEpisodeNo(episodeNo);
     setLoading(true);
     setMessage(null);
-    setSearchedTerms(terms);
+    setSuggestionsOpen(false);
 
     try {
-      const results = await Promise.all(
-        terms.map((term) =>
-          appApi.searchReleases({
-            keyword: term,
-            animeId: selectedAnime?.anime.id,
-            episodeNo: parsedEpisodeNo,
-            fansubGroupId: selectedAnime?.defaultFansubGroupId,
-            preferredResolution: selectedAnime?.preferredResolution,
+      const searchResult = selectedAnime
+        ? await appApi.searchAnimeReleases({
+            animeId: selectedAnime.anime.id,
+            episodeNo: input.episodeNo,
+            fansubGroupId: selectedAnime.defaultFansubGroupId,
+            preferredResolution: selectedAnime.preferredResolution,
             limit: 80
           })
-        )
-      );
+        : await appApi.searchReleases({
+            keyword: input.keyword,
+            episodeNo: input.episodeNo,
+            limit: 80
+          });
 
-      setResult(mergeResults(results, terms, selectedAnime?.anime.id, parsedEpisodeNo));
+      setResult({ ...searchResult, releases: sortReleases(searchResult.releases) });
+      setSearchedContext({
+        mode: selectedAnime ? "anime" : "keyword",
+        keyword: input.keyword,
+        episodeNo: input.episodeNo,
+        myAnime: selectedAnime ?? undefined
+      });
     } catch (error) {
       setMessage({
         tone: "error",
@@ -101,18 +142,19 @@ export function ReleaseSearchPage() {
     }
   }
 
+  /** 将当前搜索结果加入下载队列，并沿用执行搜索时的番剧和集数关联。 */
   async function addDownload(releaseId: string) {
     const release = result?.releases.find((item) => item.id === releaseId);
     if (!release) {
       return;
     }
 
-    const parsedEpisodeNo = parseEpisodeNo(episodeNo);
+    const searchedAnime = searchedContext?.myAnime;
     const releaseForDownload: Release = {
       ...release,
-      animeId: selectedAnime?.anime.id ?? release.animeId,
-      episodeNo: parsedEpisodeNo ?? release.episodeNo,
-      fansubGroupId: release.fansubGroupId ?? selectedAnime?.defaultFansubGroupId
+      animeId: searchedAnime?.anime.id ?? release.animeId,
+      episodeNo: searchedContext?.episodeNo ?? release.episodeNo,
+      fansubGroupId: release.fansubGroupId ?? searchedAnime?.defaultFansubGroupId
     };
 
     setAddingId(releaseId);
@@ -152,86 +194,91 @@ export function ReleaseSearchPage() {
 
       <Card className="min-w-0">
         <CardHeader>
-          <CardTitle>搜索条件</CardTitle>
-          <CardDescription>可从追番列表带入别名，也可以直接输入关键词进行搜索。</CardDescription>
+          <CardTitle>搜索资源</CardTitle>
+          <CardDescription>搜索已启用的 RSS、Torznab 和站点来源。</CardDescription>
         </CardHeader>
         <CardContent>
-          <FieldGroup className="gap-3 lg:grid lg:grid-cols-[minmax(12rem,1fr)_7rem_minmax(0,2fr)_auto] lg:items-end">
-            <Field className="min-w-0">
-              <FieldLabel htmlFor="release-anime">番剧范围</FieldLabel>
-              <Select
-                value={selectedAnimeId || "__manual__"}
-                onValueChange={(value) => setSelectedAnimeId(value === "__manual__" ? "" : value)}
-              >
-                <SelectTrigger id="release-anime">
-                  <SelectValue placeholder="选择追番" />
-                </SelectTrigger>
-                <SelectContent className="max-w-[calc(100vw-2rem)]">
-                  <SelectGroup>
-                    <SelectItem value="__manual__">手动关键词</SelectItem>
-                    {myAnime.map((item) => {
-                      const titleDisplay = resolveAnimeTitleDisplay(item.anime);
-                      const optionLabel = titleDisplay.subtitle
-                        ? `${titleDisplay.title} / ${titleDisplay.subtitle}`
-                        : titleDisplay.title;
-
-                      return (
-                        <SelectItem key={item.id} value={item.id}>
-                          {optionLabel}
-                        </SelectItem>
-                      );
-                    })}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-
-            <Field className="min-w-0">
-              <FieldLabel htmlFor="release-episode">集数</FieldLabel>
-              <Input
-                id="release-episode"
-                inputMode="decimal"
-                placeholder="如 12"
-                value={episodeNo}
-                onChange={(event) => setEpisodeNo(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    void search();
-                  }
-                }}
-              />
-            </Field>
-
+          <FieldGroup className="gap-3">
             <Field className="min-w-0">
               <FieldLabel htmlFor="release-keyword">关键词</FieldLabel>
-              <Input
-                id="release-keyword"
-                placeholder={selectedAnime ? "追加关键词，可留空使用番剧别名" : "输入番剧名或字幕组关键词"}
-                value={keyword}
-                onChange={(event) => setKeyword(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    void search();
-                  }
-                }}
-              />
+              <Command className="overflow-visible bg-transparent" shouldFilter={false}>
+                <Popover
+                  open={suggestionsOpen && !selectedAnime && Boolean(parsedInput.keyword)}
+                  onOpenChange={setSuggestionsOpen}
+                >
+                  <PopoverAnchor asChild>
+                    <InputGroup>
+                      <CommandInput
+                        id="release-keyword"
+                        aria-label="资源搜索关键词"
+                        autoComplete="off"
+                        placeholder="输入番剧名、关键词或集数，如：芙莉莲 EP12"
+                        value={keyword}
+                        onValueChange={updateKeyword}
+                        onFocus={() => setSuggestionsOpen(Boolean(parsedInput.keyword))}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            setSuggestionsOpen(false);
+                          }
+                          if (event.key === "Enter" && (!suggestionsOpen || suggestions.length === 0)) {
+                            void search();
+                          }
+                        }}
+                      />
+                      <InputGroupAddon>
+                        <InputGroupButton
+                          variant="primary"
+                          onClick={() => void search()}
+                          disabled={loading || !keyword.trim()}
+                        >
+                          <Search data-icon="inline-start" />
+                          {loading ? "搜索中" : "搜索"}
+                        </InputGroupButton>
+                      </InputGroupAddon>
+                    </InputGroup>
+                  </PopoverAnchor>
+                  <PopoverContent
+                    className="w-[min(32rem,calc(100vw-2rem))] p-0"
+                    align="start"
+                    onOpenAutoFocus={(event) => event.preventDefault()}
+                  >
+                    <CommandList>
+                      <CommandEmpty>未匹配到追番，将按关键词搜索</CommandEmpty>
+                      <CommandGroup heading="我的追番">
+                        {suggestions.map((item) => {
+                          const titleDisplay = resolveAnimeTitleDisplay(item.anime);
+                          return (
+                            <CommandItem
+                              key={item.id}
+                              value={item.id}
+                              onSelect={() => selectAnime(item)}
+                            >
+                              <div className="min-w-0">
+                                <div className="truncate font-medium">{titleDisplay.title}</div>
+                                {titleDisplay.subtitle && (
+                                  <div className="truncate text-xs text-muted-foreground">{titleDisplay.subtitle}</div>
+                                )}
+                              </div>
+                            </CommandItem>
+                          );
+                        })}
+                      </CommandGroup>
+                    </CommandList>
+                  </PopoverContent>
+                </Popover>
+              </Command>
             </Field>
 
-            <Button className="w-full lg:w-auto" onClick={() => void search()} disabled={loading}>
-              <Search data-icon="inline-start" />
-              {loading ? "搜索中" : "搜索"}
-            </Button>
+            {(selectedAnime || parsedInput.episodeNo !== undefined) && (
+              <div className="flex flex-wrap gap-2">
+                {selectedAnime && (
+                  <Badge tone="blue">已关联：{resolveAnimeTitleDisplay(selectedAnime.anime).title}</Badge>
+                )}
+                {parsedInput.episodeNo !== undefined && <Badge>第 {parsedInput.episodeNo} 集</Badge>}
+              </div>
+            )}
           </FieldGroup>
         </CardContent>
-
-        {searchedTerms.length > 0 && (
-          <CardFooter className="flex-wrap gap-2 border-t pt-4 sm:pt-5">
-            <span className="text-sm text-muted-foreground">已使用关键词</span>
-            {searchedTerms.map((term) => (
-              <Badge className="max-w-full truncate" key={term} tone="blue">{term}</Badge>
-            ))}
-          </CardFooter>
-        )}
       </Card>
 
       {loading && !result && (
@@ -264,8 +311,18 @@ export function ReleaseSearchPage() {
       {result && (
         <div className="flex min-w-0 flex-col gap-4">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <div className="text-sm text-muted-foreground">
-              已搜索 {result.searchedSourceIds.length} 个下载源，找到 {result.releases.length} 条资源
+            <div className="min-w-0">
+              {searchedContext && (
+                <div className="truncate text-sm font-medium">
+                  {searchedContext.mode === "anime"
+                    ? `按《${resolveAnimeTitleDisplay(searchedContext.myAnime!.anime).title}》搜索`
+                    : `关键词搜索：${searchedContext.keyword}`}
+                  {searchedContext.episodeNo !== undefined ? ` · 第 ${searchedContext.episodeNo} 集` : ""}
+                </div>
+              )}
+              <div className="text-sm text-muted-foreground">
+                已搜索 {result.searchedSourceIds.length} 个下载源，找到 {result.releases.length} 条资源
+              </div>
             </div>
             {result.errors.length > 0 && <Badge tone="amber">{result.errors.length} 个源异常</Badge>}
           </div>
@@ -315,7 +372,7 @@ export function ReleaseSearchPage() {
                       {(release.fansubName ?? release.fansubGroupId) && (
                         <Badge className="max-w-full truncate">{release.fansubName ?? release.fansubGroupId}</Badge>
                       )}
-                      {release.episodeNo && <Badge>第 {release.episodeNo} 集</Badge>}
+                      {release.episodeNo !== undefined && <Badge>第 {release.episodeNo} 集</Badge>}
                       <ReleaseMetadataBadges metadata={release} />
                       {release.size && <Badge>{formatBytes(release.size)}</Badge>}
                       {typeof release.seeders === "number" && (
@@ -347,51 +404,6 @@ export function ReleaseSearchPage() {
   );
 }
 
-function buildSearchTerms(selectedAnime: MyAnime | null, keyword: string): string[] {
-  if (selectedAnime) {
-    return buildAnimeReleaseSearchTerms(selectedAnime.anime, keyword ? [keyword] : []);
-  }
-
-  return keyword.trim() ? [keyword.trim()] : [];
-}
-
-function mergeResults(
-  results: ReleaseSearchResult[],
-  terms: string[],
-  animeId?: string,
-  episodeNo?: number
-): ReleaseSearchResult {
-  const releases = sortReleases(dedupeReleases(results.flatMap((result) => result.releases)));
-  const searchedSourceIds = unique(results.flatMap((result) => result.searchedSourceIds));
-  const errors = results.flatMap((result) => result.errors);
-
-  return {
-    query: {
-      keyword: terms.join(" / "),
-      animeId,
-      episodeNo,
-      limit: 80
-    },
-    releases,
-    searchedSourceIds,
-    errors
-  };
-}
-
-function dedupeReleases(releases: Release[]): Release[] {
-  const seen = new Set<string>();
-
-  return releases.filter((release) => {
-    const key = release.infoHash ?? release.magnetUrl ?? release.torrentUrl ?? release.title;
-    if (seen.has(key)) {
-      return false;
-    }
-
-    seen.add(key);
-    return true;
-  });
-}
-
 /** 按发布时间倒序排列资源，便于优先查看最新结果。 */
 function sortReleases(releases: Release[]): Release[] {
   return [...releases].sort((left, right) => {
@@ -409,17 +421,4 @@ function sortReleases(releases: Release[]): Release[] {
 
     return rightTime - leftTime;
   });
-}
-
-function parseEpisodeNo(value: string): number | undefined {
-  if (!value.trim()) {
-    return undefined;
-  }
-
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function unique(values: string[]): string[] {
-  return [...new Set(values)];
 }
