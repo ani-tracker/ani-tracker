@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 12;
+export const SQLITE_SCHEMA_VERSION = 13;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -35,6 +35,7 @@ CREATE TABLE IF NOT EXISTS anime_catalog (
   rating_count INTEGER,
   rating_source TEXT,
   external_ids_json TEXT NOT NULL DEFAULT '{}',
+  detail_json TEXT NOT NULL DEFAULT '{}',
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

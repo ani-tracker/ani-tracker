@@ -1,4 +1,7 @@
 import type {
+  AnimeDetailResult,
+} from "@shared/contracts";
+import type {
   Anime,
   DashboardData,
   DownloadTask,
@@ -9,6 +12,7 @@ import type {
   NotificationRecord
 } from "@shared/domain";
 import {
+  sanitizeAnimeDetailResult,
   sanitizeAnimeList,
   sanitizeCount,
   sanitizeDashboard,
@@ -28,6 +32,7 @@ export const REMOTE_RPC_METHOD_NAMES = [
   "markAllNotificationsRead",
   "listMyAnime",
   "listAnimeCatalog",
+  "getAnimeDetail",
   "searchAnimeCatalog",
   "listFansubs",
   "listEpisodes",
@@ -61,6 +66,7 @@ export interface RemoteRpcHandlers {
   markAllNotificationsRead(): MaybePromise<NotificationRecord[]>;
   listMyAnime(): MaybePromise<MyAnime[]>;
   listAnimeCatalog(year?: number, month?: number): MaybePromise<Anime[]>;
+  getAnimeDetail(animeId: string): MaybePromise<AnimeDetailResult>;
   searchAnimeCatalog(keyword: string): MaybePromise<Anime[]>;
   listFansubs(animeId?: string): MaybePromise<FansubGroup[]>;
   listEpisodes(animeId: string): MaybePromise<Episode[]>;
@@ -158,6 +164,7 @@ export function createRemoteMethodRegistry(handlers: RemoteRpcHandlers): RemoteM
       sanitizeAnimeList,
       handlers.listAnimeCatalog
     ),
+    defineMethod("getAnimeDetail", "catalog.read", "read", singleId, sanitizeAnimeDetailResult, handlers.getAnimeDetail),
     defineMethod(
       "searchAnimeCatalog",
       "catalog.read",

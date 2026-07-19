@@ -50,6 +50,10 @@ interface SeasonOption {
 type DiscoverySortKey = "premiereAsc" | "premiereDesc" | "ratingDesc";
 type DiscoveryView = "catalog" | "schedule";
 
+interface DiscoveryPageProps {
+  onOpenAnimeDetail?: (animeId: string) => void;
+}
+
 const seasonOptions: readonly SeasonOption[] = [
   { value: "winter", label: "冬季", shortLabel: "冬", months: [1, 2, 3] },
   { value: "spring", label: "春季", shortLabel: "春", months: [4, 5, 6] },
@@ -65,7 +69,7 @@ const seasonText: Record<Season, string> = {
 };
 
 /** Renders the seasonal anime catalog and its follow actions. */
-export function DiscoveryPage() {
+export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
   const [target, setTarget] = useState<SeasonTarget>(getCurrentSeasonTarget);
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [keyword, setKeyword] = useState("");
@@ -401,6 +405,7 @@ export function DiscoveryPage() {
           followedIds={followedIds}
           items={visibleItems}
           onAdd={addToMyAnime}
+          onOpenDetail={onOpenAnimeDetail}
         />
       ) : (
         <div className="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:gap-x-4 2xl:grid-cols-5">
@@ -411,6 +416,7 @@ export function DiscoveryPage() {
               followed={followedIds.has(anime.id)}
               key={anime.id}
               onAdd={addToMyAnime}
+              onOpenDetail={onOpenAnimeDetail}
               onOpenExternal={openExternalId}
             />
           ))}
@@ -462,12 +468,14 @@ function DiscoveryAnimeCard({
   anime,
   followed,
   onAdd,
+  onOpenDetail,
   onOpenExternal
 }: {
   adding: boolean;
   anime: Anime;
   followed: boolean;
   onAdd: (anime: Anime) => Promise<void>;
+  onOpenDetail?: (animeId: string) => void;
   onOpenExternal: (externalId: ExternalIdBadge) => Promise<void>;
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(anime);
@@ -476,7 +484,12 @@ function DiscoveryAnimeCard({
 
   return (
     <article className="flex min-w-0 flex-col" title={aliasTitle || undefined}>
-      <div className="relative aspect-[2/3] overflow-hidden rounded-lg border bg-muted">
+      <button
+        aria-label={`查看${titleDisplay.title}详情`}
+        className="relative aspect-[2/3] overflow-hidden rounded-lg border bg-muted text-left outline-none ring-offset-background focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+        onClick={() => onOpenDetail?.(anime.id)}
+        type="button"
+      >
         {anime.coverUrl ? (
           <CachedImage
             alt={titleDisplay.title}
@@ -493,10 +506,17 @@ function DiscoveryAnimeCard({
           {anime.rating ? anime.rating.score.toFixed(1) : `${anime.premiereMonth}月`}
         </Badge>
         {followed && <Badge className="absolute left-2 top-2" tone="green">已追番</Badge>}
-      </div>
+      </button>
 
       <div className="mt-3 min-w-0">
-        <h2 className="truncate text-sm font-semibold" title={titleDisplay.title}>{titleDisplay.title}</h2>
+        <button
+          className="block w-full truncate text-left text-sm font-semibold hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={() => onOpenDetail?.(anime.id)}
+          title={titleDisplay.title}
+          type="button"
+        >
+          {titleDisplay.title}
+        </button>
         <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle}>
           {titleDisplay.subtitle ?? formatPremiere(anime)}
         </p>
@@ -552,12 +572,14 @@ function DiscoverySchedule({
   addingAnimeId,
   followedIds,
   items,
-  onAdd
+  onAdd,
+  onOpenDetail
 }: {
   addingAnimeId: string | null;
   followedIds: Set<string>;
   items: Anime[];
   onAdd: (anime: Anime) => Promise<void>;
+  onOpenDetail?: (animeId: string) => void;
 }) {
   const schedule = weekdayOptions.map((weekday) => ({
     ...weekday,
@@ -586,6 +608,7 @@ function DiscoverySchedule({
                     followed={followedIds.has(anime.id)}
                     key={anime.id}
                     onAdd={onAdd}
+                    onOpenDetail={onOpenDetail}
                   />
                 ))}
                 {weekday.items.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">暂无首播</p>}
@@ -610,6 +633,7 @@ function DiscoverySchedule({
                   followed={followedIds.has(anime.id)}
                   key={anime.id}
                   onAdd={onAdd}
+                  onOpenDetail={onOpenDetail}
                 />
               ))}
             </div>
@@ -628,6 +652,7 @@ function DiscoverySchedule({
                 followed={followedIds.has(anime.id)}
                 key={anime.id}
                 onAdd={onAdd}
+                onOpenDetail={onOpenDetail}
               />
             ))}
           </div>
@@ -642,21 +667,27 @@ function DiscoveryScheduleItem({
   adding,
   anime,
   followed,
-  onAdd
+  onAdd,
+  onOpenDetail
 }: {
   adding: boolean;
   anime: Anime;
   followed: boolean;
   onAdd: (anime: Anime) => Promise<void>;
+  onOpenDetail?: (animeId: string) => void;
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(anime);
   return (
     <article className="flex min-w-0 items-start gap-2 rounded-md border-l-2 border-primary bg-card p-3">
-      <div className="min-w-0 flex-1">
+      <button
+        className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        onClick={() => onOpenDetail?.(anime.id)}
+        type="button"
+      >
         <div className="text-xs font-medium text-primary">{formatScheduleDate(anime)}</div>
         <h3 className="mt-1 line-clamp-2 text-sm font-semibold">{titleDisplay.title}</h3>
         <p className="mt-1 truncate text-xs text-muted-foreground">{titleDisplay.subtitle ?? seasonText[anime.season ?? "winter"]}</p>
-      </div>
+      </button>
       <Button
         aria-label={followed ? `${titleDisplay.title}已追番` : `添加${titleDisplay.title}到追番`}
         className="size-11 shrink-0 p-0 md:size-9"

@@ -1,5 +1,5 @@
-import { Bell, Link2, Menu, Play, X, type LucideIcon } from "lucide-react";
-import { type CSSProperties, type ReactNode, useEffect, useRef, useState } from "react";
+import { ArrowLeft, Bell, Link2, Menu, Play, X, type LucideIcon } from "lucide-react";
+import { type CSSProperties, type MutableRefObject, type ReactNode, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -44,6 +44,11 @@ interface AppShellProps {
   onNavigate: (pageId: string) => void;
   status: AppShellStatus;
   unreadCount: number;
+  secondaryView?: {
+    title: string;
+    onBack: () => void;
+  };
+  contentRef?: MutableRefObject<HTMLElement | null>;
 }
 
 /** 跟踪桌面宽视口，驱动 224px 完整栏和 72px 收缩栏切换。 */
@@ -67,11 +72,13 @@ export function AppShell({
   items,
   onNavigate,
   status,
-  unreadCount
+  unreadCount,
+  secondaryView,
+  contentRef
 }: AppShellProps) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const expandedDesktopSidebar = useExpandedDesktopSidebar();
-  const mainRef = useRef<HTMLElement>(null);
+  const mainRef = useRef<HTMLElement | null>(null);
   const activeItem = items.find((item) => item.id === activePageId) ?? items[0];
   const notificationsItem = items.find((item) => item.id === "notifications");
   const visibleUnreadCount = Math.min(unreadCount, 99);
@@ -84,6 +91,14 @@ export function AppShell({
       mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
       mainRef.current?.focus({ preventScroll: true });
     }, 0);
+  }
+
+  /** 将内容滚动容器同时暴露给二级页面的返回恢复逻辑。 */
+  function setMainElement(element: HTMLElement | null) {
+    mainRef.current = element;
+    if (contentRef) {
+      contentRef.current = element;
+    }
   }
 
   return (
@@ -179,35 +194,52 @@ export function AppShell({
         </Sidebar>
 
         <SidebarInset
-          ref={mainRef}
+          ref={setMainElement}
           aria-label={`${activeItem?.label ?? "当前"}页面内容`}
           className="h-screen h-dvh min-h-0 overflow-y-auto outline-none"
           tabIndex={-1}
         >
           <header className="sticky top-0 z-30 flex min-h-16 items-center border-b bg-background px-[max(1rem,var(--safe-area-left))] pt-[var(--safe-area-top)] md:hidden">
-            <Button
-              aria-label="打开主导航"
-              className="size-11 px-0"
-              onClick={() => setMobileNavigationOpen(true)}
-              variant="ghost"
-            >
-              <Menu aria-hidden="true" data-icon="inline-start" />
-            </Button>
-            <div className="min-w-0 flex-1 px-2 text-base font-semibold">{activeItem?.label}</div>
-            {notificationsItem && (
-              <Button
-                aria-label={unreadCount > 0 ? `提醒中心，${unreadCount} 条未读` : "提醒中心"}
-                className="relative size-11 px-0"
-                onClick={() => navigate(notificationsItem.id)}
-                variant="ghost"
-              >
-                <Bell aria-hidden="true" data-icon="inline-start" />
-                {unreadCount > 0 && (
-                  <Badge className="absolute right-0.5 top-0.5 size-4 justify-center p-0 text-[9px]" tone="primary">
-                    {visibleUnreadCount}
-                  </Badge>
+            {secondaryView ? (
+              <>
+                <Button
+                  aria-label="返回上一页"
+                  className="size-11 px-0"
+                  onClick={secondaryView.onBack}
+                  variant="ghost"
+                >
+                  <ArrowLeft aria-hidden="true" data-icon="inline-start" />
+                </Button>
+                <div className="min-w-0 flex-1 px-2 text-base font-semibold">{secondaryView.title}</div>
+                <div aria-hidden="true" className="size-11" />
+              </>
+            ) : (
+              <>
+                <Button
+                  aria-label="打开主导航"
+                  className="size-11 px-0"
+                  onClick={() => setMobileNavigationOpen(true)}
+                  variant="ghost"
+                >
+                  <Menu aria-hidden="true" data-icon="inline-start" />
+                </Button>
+                <div className="min-w-0 flex-1 px-2 text-base font-semibold">{activeItem?.label}</div>
+                {notificationsItem && (
+                  <Button
+                    aria-label={unreadCount > 0 ? `提醒中心，${unreadCount} 条未读` : "提醒中心"}
+                    className="relative size-11 px-0"
+                    onClick={() => navigate(notificationsItem.id)}
+                    variant="ghost"
+                  >
+                    <Bell aria-hidden="true" data-icon="inline-start" />
+                    {unreadCount > 0 && (
+                      <Badge className="absolute right-0.5 top-0.5 size-4 justify-center p-0 text-[9px]" tone="primary">
+                        {visibleUnreadCount}
+                      </Badge>
+                    )}
+                  </Button>
                 )}
-              </Button>
+              </>
             )}
           </header>
 

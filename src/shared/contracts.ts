@@ -6,6 +6,7 @@ import type {
   Episode,
   FansubGroup,
   MediaFile,
+  MyAnime,
   Release,
   ReleaseSourceConfig,
   Season,
@@ -214,6 +215,18 @@ export interface EpisodeReleaseCandidate {
   availabilityScore: number;
   reasons: string[];
   warnings: string[];
+}
+
+export interface AnimeDetailResult {
+  anime: Anime;
+  myAnime?: MyAnime;
+  episodes: Episode[];
+  fansubGroups: FansubGroup[];
+  stale: boolean;
+  partialErrors: Array<{
+    source: string;
+    message: string;
+  }>;
 }
 
 export interface EpisodeReleasePreview {

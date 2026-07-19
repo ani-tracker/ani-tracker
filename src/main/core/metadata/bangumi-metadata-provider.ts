@@ -1,9 +1,17 @@
-import type { Anime, AnimeAlias } from "@shared/domain";
+import type {
+  Anime,
+  AnimeAiringStatus,
+  AnimeAlias,
+  AnimeBroadcastSchedule,
+  AnimeFormat,
+  AnimeStaffCredit
+} from "@shared/domain";
 import { inferAnimeAliasLanguage } from "../../../shared/anime-title";
 import {
   formatMonthStartDate,
   getSeasonInfo,
   isDateInMonth,
+  type AnimeDetailMetadataProvider,
   type MonthlyAnimeMetadataProvider
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
@@ -42,6 +50,9 @@ interface BangumiSubject {
     score?: number;
     total?: number;
   };
+  platform?: string;
+  total_episodes?: number;
+  tags?: Array<{ name?: string; count?: number }>;
 }
 
 interface BangumiInfoboxItem {
@@ -55,7 +66,7 @@ interface BangumiAliasCandidate {
   priority: number;
 }
 
-export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider {
+export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider, AnimeDetailMetadataProvider {
   readonly id = "bangumi";
 
   constructor(
@@ -74,6 +85,21 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider {
     );
 
     return detailedSubjects.map((item) => mapBangumiSubject(item, year, month, seasonInfo.season));
+  }
+
+  /** 按 Bangumi external id 读取单部番剧详情。 */
+  async getAnimeDetail(externalId: string, fallback: Anime): Promise<Anime> {
+    const id = Number(externalId);
+    if (!Number.isSafeInteger(id) || id <= 0) {
+      throw new Error("Bangumi 标识无效");
+    }
+    const subject = await this.fetchDetailById(id);
+    return mapBangumiSubject(
+      subject,
+      fallback.premiereYear,
+      fallback.premiereMonth,
+      fallback.season ?? getSeasonInfo(fallback.premiereMonth).season
+    );
   }
 
   /** Fetches every Bangumi monthly page so second-page shows still get detail aliases for cross-source merge. */
@@ -153,29 +179,31 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider {
   }
 
   private async fetchDetail(item: BangumiSubject): Promise<BangumiSubject> {
-    const url = new URL(`/v0/subjects/${item.id}`, this.baseUrl);
-
     try {
-      const response = await this.httpClient.fetch(url, {
-        source: this.id,
-        headers: {
-          Accept: "application/json",
-          "User-Agent": BANGUMI_USER_AGENT
-        }
-      });
-
-      if (!response.ok) {
-        return item;
-      }
-
       return {
         ...item,
-        ...((await response.json()) as BangumiSubject)
+        ...(await this.fetchDetailById(item.id))
       };
     } catch {
       // Detail enrichment is best-effort; the list record is still useful as a Chinese metadata source.
       return item;
     }
+  }
+
+  /** 请求 Bangumi 单条详情，供月度补全和主动刷新共用。 */
+  private async fetchDetailById(id: number): Promise<BangumiSubject> {
+    const url = new URL(`/v0/subjects/${id}`, this.baseUrl);
+    const response = await this.httpClient.fetch(url, {
+      source: this.id,
+      headers: {
+        Accept: "application/json",
+        "User-Agent": BANGUMI_USER_AGENT
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`Bangumi 详情请求失败: ${response.status} ${response.statusText}`);
+    }
+    return (await response.json()) as BangumiSubject;
   }
 }
 
@@ -206,8 +234,118 @@ function mapBangumiSubject(
     externalIds: {
       bangumi: String(item.id),
       ...buildBangumiExternalIds(item)
-    }
+    },
+    detail: buildBangumiDetail(item, date)
   };
+}
+
+/** 从 Bangumi 结构化字段和 infobox 中提取详情元数据。 */
+function buildBangumiDetail(item: BangumiSubject, premiereDate: string): Anime["detail"] {
+  const endDate = readFirstInfoboxValue(item.infobox, ["放送终了", "播放结束", "上映年度"]);
+  const normalizedEndDate = normalizeBangumiDate(endDate);
+  const episodeCount = normalizePositiveInteger(item.total_episodes)
+    ?? parseFirstPositiveInteger(readFirstInfoboxValue(item.infobox, ["话数", "集数"]));
+  const format = mapBangumiFormat(item.platform ?? readFirstInfoboxValue(item.infobox, ["平台", "类型"]));
+  const studios = readInfoboxValuesByKeys(item.infobox, ["动画制作", "制作", "製作"]);
+  const staff = buildBangumiStaff(item.infobox);
+  const durationMinutes = parseDurationMinutes(
+    readFirstInfoboxValue(item.infobox, ["片长", "单集片长", "时长"])
+  );
+
+  return {
+    format,
+    episodeCount,
+    airingStatus: inferBangumiAiringStatus(premiereDate, normalizedEndDate),
+    endDate: normalizedEndDate,
+    broadcast: buildBangumiBroadcast(item.infobox),
+    genres: item.tags
+      ?.filter((tag) => Boolean(tag.name))
+      .sort((left, right) => (right.count ?? 0) - (left.count ?? 0))
+      .slice(0, 8)
+      .map((tag) => tag.name!),
+    studios,
+    staff,
+    sourceMaterial: readFirstInfoboxValue(item.infobox, ["原作", "原案"]),
+    durationMinutes,
+    contentRating: readFirstInfoboxValue(item.infobox, ["分级", "等级"]),
+    metadataSources: ["bangumi"],
+    refreshedAt: new Date().toISOString()
+  };
+}
+
+function mapBangumiFormat(value: string | undefined): AnimeFormat | undefined {
+  const normalized = value?.toLocaleLowerCase();
+  if (!normalized) return undefined;
+  if (normalized.includes("tv") || normalized.includes("电视")) return "tv";
+  if (normalized.includes("剧场") || normalized.includes("电影") || normalized.includes("movie")) return "movie";
+  if (normalized.includes("ova")) return "ova";
+  if (normalized.includes("web") || normalized.includes("ona") || normalized.includes("网络")) return "ona";
+  if (normalized.includes("music") || normalized.includes("音乐")) return "music";
+  if (normalized.includes("special") || normalized.includes("特别")) return "special";
+  return "unknown";
+}
+
+function inferBangumiAiringStatus(
+  premiereDate: string | undefined,
+  endDate: string | undefined
+): AnimeAiringStatus | undefined {
+  const now = Date.now();
+  if (premiereDate && Date.parse(`${premiereDate}T00:00:00Z`) > now) return "upcoming";
+  if (endDate && Date.parse(`${endDate}T23:59:59Z`) < now) return "finished";
+  if (premiereDate && Date.parse(`${premiereDate}T00:00:00Z`) <= now) return "airing";
+  return undefined;
+}
+
+function buildBangumiBroadcast(infobox: BangumiInfoboxItem[] | undefined): AnimeBroadcastSchedule | undefined {
+  const value = readFirstInfoboxValue(infobox, ["放送星期", "播放星期", "放送时间"]);
+  if (!value) return undefined;
+  const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+  const weekdayText = value.match(/[周週星期]([日一二三四五六天])/u)?.[1];
+  const weekday = weekdayText ? (weekdayText === "天" ? 0 : weekdays.indexOf(weekdayText)) : undefined;
+  const time = value.match(/(?:[01]\d|2[0-3]):[0-5]\d/)?.[0];
+  return (weekday !== undefined && weekday >= 0) || time
+    ? { weekday, time, timezone: "Asia/Tokyo" }
+    : undefined;
+}
+
+function buildBangumiStaff(infobox: BangumiInfoboxItem[] | undefined): AnimeStaffCredit[] | undefined {
+  const roles = ["导演", "原作", "系列构成", "脚本", "人物设定", "音乐", "总作画监督"];
+  const credits = roles.flatMap((role) =>
+    readInfoboxValues(infobox, role).map((name) => ({ name, role, source: "bangumi" }))
+  );
+  return credits.length ? credits : undefined;
+}
+
+function readInfoboxValuesByKeys(infobox: BangumiInfoboxItem[] | undefined, keys: string[]): string[] | undefined {
+  const values = keys.flatMap((key) => readInfoboxValues(infobox, key));
+  return values.length ? [...new Set(values)] : undefined;
+}
+
+function readFirstInfoboxValue(infobox: BangumiInfoboxItem[] | undefined, keys: string[]): string | undefined {
+  return keys.flatMap((key) => readInfoboxValues(infobox, key))[0];
+}
+
+function normalizeBangumiDate(value: string | undefined): string | undefined {
+  const match = value?.match(/(20\d{2})[年./-]\s*(\d{1,2})[月./-]\s*(\d{1,2})/);
+  if (!match) return undefined;
+  return `${match[1]}-${String(Number(match[2])).padStart(2, "0")}-${String(Number(match[3])).padStart(2, "0")}`;
+}
+
+function parseFirstPositiveInteger(value: string | undefined): number | undefined {
+  const parsed = Number(value?.match(/\d+/)?.[0]);
+  return normalizePositiveInteger(parsed);
+}
+
+function parseDurationMinutes(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const hours = Number(value.match(/(\d+(?:\.\d+)?)\s*(?:小时|h)/i)?.[1] ?? 0);
+  const minutes = Number(value.match(/(\d+)\s*(?:分钟|min)/i)?.[1] ?? 0);
+  const total = Math.round(hours * 60 + minutes);
+  return normalizePositiveInteger(total || Number(value.match(/\d+/)?.[0]));
+}
+
+function normalizePositiveInteger(value: number | undefined): number | undefined {
+  return value && Number.isSafeInteger(value) && value > 0 ? value : undefined;
 }
 
 /** 将 Bangumi 评分映射为统一的 10 分制评分。 */

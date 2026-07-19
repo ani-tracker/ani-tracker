@@ -1,9 +1,10 @@
-import type { Anime, AnimeAlias, Season } from "@shared/domain";
+import type { Anime, AnimeAlias, AnimeBroadcastSchedule, AnimeStaffCredit, Season } from "@shared/domain";
 import { inferAnimeAliasLanguage } from "../../../shared/anime-title";
 import {
   formatMonthStartDate,
   getSeasonInfo,
   isDateInMonth,
+  type AnimeDetailMetadataProvider,
   type MonthlyAnimeMetadataProvider
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
@@ -27,9 +28,15 @@ interface MikanDetail {
   coverUrl?: string;
   premiereDate?: string;
   bangumiId?: string;
+  episodeCount?: number;
+  broadcast?: AnimeBroadcastSchedule;
+  genres?: string[];
+  studios?: string[];
+  staff?: AnimeStaffCredit[];
+  durationMinutes?: number;
 }
 
-export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider {
+export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider, AnimeDetailMetadataProvider {
   readonly id = "mikan";
 
   constructor(
@@ -58,6 +65,22 @@ export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider {
       .map(({ candidate, detail }) => mapMikanCandidate(candidate, detail, year, month, seasonInfo.season));
   }
 
+  /** 按 Mikan external id 读取单部番剧详情。 */
+  async getAnimeDetail(externalId: string, fallback: Anime): Promise<Anime> {
+    if (!/^\d+$/.test(externalId)) {
+      throw new Error("Mikan 标识无效");
+    }
+    const detailUrl = new URL(`/Home/Bangumi/${externalId}`, this.baseUrl).toString();
+    const detail = await this.fetchDetailStrict(detailUrl);
+    return mapMikanCandidate(
+      { id: externalId, title: fallback.title, detailUrl },
+      detail,
+      fallback.premiereYear,
+      fallback.premiereMonth,
+      fallback.season ?? getSeasonInfo(fallback.premiereMonth).season
+    );
+  }
+
   private async fetchSeasonHtml(year: number, season: string): Promise<string> {
     const endpoints = ["/Home/BangumiCoverFlowByDayOfWeek", "/Home/Classic"];
     const errors: string[] = [];
@@ -82,10 +105,15 @@ export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider {
 
   private async fetchDetail(detailUrl: string): Promise<MikanDetail> {
     try {
-      return parseMikanDetailHtml(await fetchText(detailUrl, this.httpClient), detailUrl);
+      return await this.fetchDetailStrict(detailUrl);
     } catch {
       return {};
     }
+  }
+
+  /** 请求并解析 Mikan 详情页，主动刷新时保留失败信息。 */
+  private async fetchDetailStrict(detailUrl: string): Promise<MikanDetail> {
+    return parseMikanDetailHtml(await fetchText(detailUrl, this.httpClient), detailUrl);
   }
 }
 
@@ -135,7 +163,13 @@ export function parseMikanDetailHtml(html: string, detailUrl: string): MikanDeta
     summary,
     coverUrl,
     premiereDate: parsePremiereDate(html),
-    bangumiId: html.match(/(?:bgm\.tv|bangumi\.tv|chii\.in)\/subject\/(\d+)/i)?.[1]
+    bangumiId: html.match(/(?:bgm\.tv|bangumi\.tv|chii\.in)\/subject\/(\d+)/i)?.[1],
+    episodeCount: parsePositiveInteger(readLabeledValue(html, "话数") ?? readLabeledValue(html, "集数")),
+    broadcast: parseMikanBroadcast(readLabeledValue(html, "放送星期") ?? readLabeledValue(html, "播放时间")),
+    genres: splitMetadataValues(readLabeledValue(html, "类型") ?? readLabeledValue(html, "标签")),
+    studios: splitMetadataValues(readLabeledValue(html, "动画制作") ?? readLabeledValue(html, "制作")),
+    staff: buildMikanStaff(html),
+    durationMinutes: parseDurationMinutes(readLabeledValue(html, "片长") ?? readLabeledValue(html, "时长"))
   };
 }
 
@@ -165,6 +199,16 @@ function mapMikanCandidate(
     externalIds: {
       mikan: candidate.id,
       ...(detail.bangumiId ? { bangumi: detail.bangumiId } : {})
+    },
+    detail: {
+      episodeCount: detail.episodeCount,
+      broadcast: detail.broadcast,
+      genres: detail.genres,
+      studios: detail.studios,
+      staff: detail.staff,
+      durationMinutes: detail.durationMinutes,
+      metadataSources: ["mikan"],
+      refreshedAt: new Date().toISOString()
     }
   };
 }
@@ -186,6 +230,46 @@ function buildMikanAliases(candidate: MikanCandidate, detail: MikanDetail, title
       language: inferAnimeAliasLanguage(item.alias, item.fallbackLanguage),
       priority: item.priority
     }));
+}
+
+function parseMikanBroadcast(value: string | undefined): AnimeBroadcastSchedule | undefined {
+  if (!value) return undefined;
+  const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
+  const weekdayText = value.match(/[周週星期]([日一二三四五六天])/u)?.[1];
+  const weekday = weekdayText ? (weekdayText === "天" ? 0 : weekdays.indexOf(weekdayText)) : undefined;
+  const time = value.match(/(?:[01]\d|2[0-3]):[0-5]\d/)?.[0];
+  return (weekday !== undefined && weekday >= 0) || time
+    ? { weekday, time, timezone: "Asia/Tokyo" }
+    : undefined;
+}
+
+function buildMikanStaff(html: string): AnimeStaffCredit[] | undefined {
+  const roles = ["导演", "原作", "系列构成", "脚本", "人物设定", "音乐"];
+  const staff = roles.flatMap((role) =>
+    splitMetadataValues(readLabeledValue(html, role))?.map((name) => ({ name, role, source: "mikan" })) ?? []
+  );
+  return staff.length ? staff : undefined;
+}
+
+function splitMetadataValues(value: string | undefined): string[] | undefined {
+  const items = value
+    ?.split(/[、,，/|]/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return items?.length ? [...new Set(items)] : undefined;
+}
+
+function parsePositiveInteger(value: string | undefined): number | undefined {
+  const number = Number(value?.match(/\d+/)?.[0]);
+  return Number.isSafeInteger(number) && number > 0 ? number : undefined;
+}
+
+function parseDurationMinutes(value: string | undefined): number | undefined {
+  if (!value) return undefined;
+  const hours = Number(value.match(/(\d+(?:\.\d+)?)\s*(?:小时|h)/i)?.[1] ?? 0);
+  const minutes = Number(value.match(/(\d+)\s*(?:分钟|min)/i)?.[1] ?? 0);
+  const total = Math.round(hours * 60 + minutes);
+  return total > 0 ? total : parsePositiveInteger(value);
 }
 
 async function fetchText(url: string, httpClient: MetadataHttpClient): Promise<string> {

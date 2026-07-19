@@ -23,6 +23,7 @@ const REMOTE_METHODS = new Set([
   "markAllNotificationsRead",
   "listMyAnime",
   "listAnimeCatalog",
+  "getAnimeDetail",
   "searchAnimeCatalog",
   "listFansubs",
   "listEpisodes",

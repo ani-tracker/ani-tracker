@@ -668,6 +668,9 @@ function createHandlers(): RemoteRpcHandlers {
     markAllNotificationsRead: () => [],
     listMyAnime: () => [],
     listAnimeCatalog: () => [],
+    getAnimeDetail: () => {
+      throw new Error("测试未使用番剧详情");
+    },
     searchAnimeCatalog: () => [],
     listFansubs: () => [],
     listEpisodes: () => [],

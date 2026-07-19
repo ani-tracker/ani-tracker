@@ -8,8 +8,9 @@ import {
   Sparkles,
   Subtitles
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AppShell, type AppShellStatus } from "@/components/app-shell";
+import { AnimeDetailPage, type AnimeDetailLibraryAction } from "@/features/anime-detail/AnimeDetailPage";
 import { DiscoveryPage } from "@/features/discovery/DiscoveryPage";
 import { DownloadsPage } from "@/features/downloads/DownloadsPage";
 import { HomePage } from "@/features/home/HomePage";
@@ -24,6 +25,8 @@ import { RemotePlayerPage, resolveRemotePlayerTaskId } from "@/features/remote/R
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { appApi, getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
+import type { Anime } from "@shared/domain";
+import type { MyAnimePageIntent } from "@/features/my-anime/MyAnimePage";
 
 type PageId = "home" | "myAnime" | "discovery" | "releaseSearch" | "downloads" | "notifications" | "sources" | "settings";
 
@@ -40,17 +43,51 @@ const navItems = [
 
 const remotePageIds: PageId[] = ["home", "myAnime", "discovery", "downloads", "notifications"];
 
+interface AnimeDetailOrigin {
+  pageId: PageId;
+  label: string;
+  scrollTop: number;
+  focusElement: HTMLElement | null;
+}
+
+interface AnimeDetailState {
+  animeId: string;
+  origin: AnimeDetailOrigin;
+}
+
+interface ReleaseSearchIntent {
+  keyword: string;
+  key: number;
+}
+
+interface RenderPageOptions {
+  onOpenAnimeDetail: (animeId: string) => void;
+  onOpenLibraryAction: (animeId: string, action: AnimeDetailLibraryAction) => void;
+  onOpenReleaseSearch: (anime: Anime) => void;
+  myAnimeIntent: MyAnimePageIntent | null;
+  onMyAnimeIntentHandled: () => void;
+  releaseSearchIntent: ReleaseSearchIntent | null;
+}
+
 /** 根据导航标识渲染对应业务页面。 */
-function renderPage(page: PageId, electronClient: boolean) {
+function renderPage(page: PageId, electronClient: boolean, options: RenderPageOptions) {
   switch (page) {
     case "home":
       return <HomePage />;
     case "myAnime":
-      return electronClient ? <MyAnimePage /> : <RemoteMyAnimePage />;
+      return electronClient ? (
+        <MyAnimePage
+          intent={options.myAnimeIntent}
+          onIntentHandled={options.onMyAnimeIntentHandled}
+          onOpenAnimeDetail={options.onOpenAnimeDetail}
+        />
+      ) : <RemoteMyAnimePage onOpenAnimeDetail={options.onOpenAnimeDetail} />;
     case "discovery":
-      return electronClient ? <DiscoveryPage /> : <RemoteDiscoveryPage />;
+      return electronClient ? (
+        <DiscoveryPage onOpenAnimeDetail={options.onOpenAnimeDetail} />
+      ) : <RemoteDiscoveryPage onOpenAnimeDetail={options.onOpenAnimeDetail} />;
     case "releaseSearch":
-      return <ReleaseSearchPage />;
+      return <ReleaseSearchPage initialIntent={options.releaseSearchIntent} />;
     case "downloads":
       return electronClient ? <DownloadsPage /> : <RemoteDownloadsPage />;
     case "notifications":
@@ -65,6 +102,9 @@ function renderPage(page: PageId, electronClient: boolean) {
 /** 渲染适配桌面、平板和移动端的应用壳。 */
 export function App() {
   const [activePage, setActivePage] = useState<PageId>("home");
+  const [detailView, setDetailView] = useState<AnimeDetailState | null>(null);
+  const [myAnimeIntent, setMyAnimeIntent] = useState<MyAnimePageIntent | null>(null);
+  const [releaseSearchIntent, setReleaseSearchIntent] = useState<ReleaseSearchIntent | null>(null);
   const [pairingState, setPairingState] = useState(getRemotePairingState);
   const [unreadCount, setUnreadCount] = useState(0);
   const [shellStatus, setShellStatus] = useState<AppShellStatus>({
@@ -72,6 +112,9 @@ export function App() {
     label: "状态读取中",
     detail: "正在连接服务"
   });
+  const contentRef = useRef<HTMLElement | null>(null);
+  const detailViewRef = useRef<AnimeDetailState | null>(null);
+  detailViewRef.current = detailView;
   const electronClient = isElectronClient();
   const remotePlayerTaskId = electronClient
     ? undefined
@@ -79,6 +122,102 @@ export function App() {
   const availableNavItems = electronClient
     ? navItems
     : navItems.filter((item) => remotePageIds.includes(item.id));
+
+  /** 记录来源页面上下文并进入详情二级视图。 */
+  function openAnimeDetail(animeId: string) {
+    const originItem = navItems.find((item) => item.id === activePage);
+    const origin: AnimeDetailOrigin = {
+      pageId: activePage,
+      label: originItem?.label ?? "上一页",
+      scrollTop: contentRef.current?.scrollTop ?? 0,
+      focusElement: document.activeElement instanceof HTMLElement ? document.activeElement : null
+    };
+    const nextState = { aniView: "animeDetail", animeId };
+    window.history.pushState(nextState, "");
+    setDetailView({ animeId, origin });
+    window.requestAnimationFrame(() => contentRef.current?.scrollTo({ top: 0, behavior: "auto" }));
+  }
+
+  /** 从详情返回来源页，并恢复滚动位置和触发元素焦点。 */
+  function restoreDetailView() {
+    const origin = detailViewRef.current?.origin;
+    setDetailView(null);
+    if (!origin) return;
+    window.requestAnimationFrame(() => {
+      contentRef.current?.scrollTo({ top: origin.scrollTop, behavior: "auto" });
+      origin.focusElement?.focus({ preventScroll: true });
+      console.info("[anime-detail] navigation restored", {
+        pageId: origin.pageId,
+        scrollTop: origin.scrollTop
+      });
+    });
+  }
+
+  /** 关闭详情并切换到指定业务页，供详情快捷操作使用。 */
+  function leaveDetailToPage(pageId: PageId) {
+    if (detailViewRef.current) {
+      window.history.replaceState({ aniView: "page", pageId }, "");
+      setDetailView(null);
+    }
+    setActivePage(pageId);
+    window.requestAnimationFrame(() => contentRef.current?.scrollTo({ top: 0, behavior: "auto" }));
+  }
+
+  /** 从详情页打开追番规则、资源或任务面板。 */
+  function openLibraryAction(animeId: string, action: AnimeDetailLibraryAction) {
+    if (!electronClient) {
+      leaveDetailToPage("myAnime");
+      return;
+    }
+    setMyAnimeIntent({ animeId, action, key: Date.now() });
+    leaveDetailToPage("myAnime");
+  }
+
+  /** 将未追番资源搜索请求带入资源搜索页。 */
+  function openReleaseSearch(anime: Anime) {
+    setReleaseSearchIntent({
+      keyword: anime.title,
+      key: Date.now()
+    });
+    leaveDetailToPage("releaseSearch");
+  }
+
+  /** 主导航切换时退出详情并回到页面顶部。 */
+  function navigatePage(pageId: PageId) {
+    if (detailViewRef.current) {
+      window.history.replaceState({ aniView: "page", pageId }, "");
+      setDetailView(null);
+    }
+    setActivePage(pageId);
+  }
+
+  useEffect(() => {
+    if (!window.history.state?.aniView) {
+      window.history.replaceState({ aniView: "page", pageId: activePage }, "");
+    }
+    const handlePopState = () => {
+      if (detailViewRef.current) {
+        restoreDetailView();
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  useEffect(() => {
+    if (!detailView) return;
+    function handleEscape(event: KeyboardEvent) {
+      const target = event.target as HTMLElement | null;
+      const editable = target?.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(target?.tagName ?? "");
+      const dialogOpen = Boolean(document.querySelector('[role="dialog"][data-state="open"]'));
+      if (event.key === "Escape" && window.matchMedia("(min-width: 768px)").matches && !editable && !dialogOpen) {
+        event.preventDefault();
+        window.history.back();
+      }
+    }
+    window.addEventListener("keydown", handleEscape);
+    return () => window.removeEventListener("keydown", handleEscape);
+  }, [detailView]);
 
   useEffect(() => {
     /** 同步当前窗口与其他标签页的远程鉴权状态。 */
@@ -152,11 +291,31 @@ export function App() {
     <AppShell
       activePageId={activePage}
       items={availableNavItems}
-      onNavigate={(pageId) => setActivePage(pageId as PageId)}
+      onNavigate={(pageId) => navigatePage(pageId as PageId)}
+      contentRef={contentRef}
+      secondaryView={detailView ? { title: "番剧详情", onBack: () => window.history.back() } : undefined}
       status={shellStatus}
       unreadCount={unreadCount}
     >
-      {renderPage(activePage, electronClient)}
+      <div className={detailView ? "hidden" : undefined}>
+        {renderPage(activePage, electronClient, {
+          onOpenAnimeDetail: openAnimeDetail,
+          onOpenLibraryAction: openLibraryAction,
+          onOpenReleaseSearch: openReleaseSearch,
+          myAnimeIntent,
+          onMyAnimeIntentHandled: () => setMyAnimeIntent(null),
+          releaseSearchIntent
+        })}
+      </div>
+      {detailView && (
+        <AnimeDetailPage
+          animeId={detailView.animeId}
+          onBack={() => window.history.back()}
+          onOpenLibraryAction={openLibraryAction}
+          onOpenReleaseSearch={openReleaseSearch}
+          sourceLabel={detailView.origin.label}
+        />
+      )}
     </AppShell>
   );
 }

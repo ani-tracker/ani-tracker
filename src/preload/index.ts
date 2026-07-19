@@ -12,6 +12,7 @@ import type {
 import type {
   AddDownloadUrlInput,
   AddReleaseDownloadInput,
+  AnimeDetailResult,
   AnimeReleaseQuery,
   AnimeDiscoveryQuery,
   ConfirmAnimeSourceBindingInput,
@@ -43,6 +44,9 @@ const api = {
     ipcRenderer.invoke("animeCatalog:list", year, month),
   searchAnimeCatalog: (keyword: string): Promise<Anime[]> => ipcRenderer.invoke("animeCatalog:search", keyword),
   collectAnimeMonth: (query: AnimeDiscoveryQuery) => ipcRenderer.invoke("animeCatalog:collectMonth", query),
+  getAnimeDetail: (animeId: string): Promise<AnimeDetailResult> => ipcRenderer.invoke("animeDetail:get", animeId),
+  refreshAnimeDetail: (animeId: string): Promise<AnimeDetailResult> =>
+    ipcRenderer.invoke("animeDetail:refresh", animeId),
   listEpisodes: (animeId: string) => ipcRenderer.invoke("episodes:list", animeId),
   upsertEpisode: (episode: Episode) => ipcRenderer.invoke("episodes:upsert", episode),
   listEpisodePreferences: (animeId: string) => ipcRenderer.invoke("episodePreferences:list", animeId),

@@ -113,6 +113,69 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   second.close();
 });
 
+test("SQLite v13 保存并恢复番剧详情元数据", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const item = createTestMyAnime();
+  item.anime.detail = {
+    bannerUrl: "https://example.test/banner.jpg",
+    format: "tv",
+    episodeCount: 12,
+    airingStatus: "airing",
+    genres: ["奇幻", "冒险"],
+    studios: ["Test Studio"],
+    staff: [{ name: "测试导演", role: "导演", source: "bangumi" }],
+    ranking: { rank: 9, source: "anilist", category: "评分排行" },
+    metadataSources: ["bangumi", "anilist"],
+    refreshedAt: "2026-07-19T00:00:00.000Z"
+  };
+  await first.repository.upsertMyAnime(item);
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const restored = await second.repository.getAnimeCatalogById(item.anime.id);
+  assert.deepEqual(restored?.detail, item.anime.detail);
+  second.close();
+  assertDatabaseIntegrity(fixture.databasePath);
+});
+
+test("SQLite v12 升级补齐详情列且损坏 JSON 安全回退", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const item = createTestMyAnime();
+  await first.repository.upsertMyAnime(item);
+  first.close();
+
+  const driftedDatabase = new DatabaseConstructor(fixture.databasePath);
+  try {
+    driftedDatabase.exec("ALTER TABLE anime_catalog DROP COLUMN detail_json");
+    driftedDatabase.prepare("UPDATE app_meta SET value = '12' WHERE key = 'schema_version'").run();
+  } finally {
+    driftedDatabase.close();
+  }
+
+  const migrated = createRepositoryRuntime(fixture.options);
+  await migrated.initialize();
+  assert.equal((await migrated.repository.getAnimeCatalogById(item.anime.id))?.detail, undefined);
+  migrated.close();
+
+  const corruptedDatabase = new DatabaseConstructor(fixture.databasePath);
+  try {
+    corruptedDatabase.prepare("UPDATE anime_catalog SET detail_json = '{broken' WHERE id = ?").run(item.anime.id);
+  } finally {
+    corruptedDatabase.close();
+  }
+
+  const recovered = createRepositoryRuntime(fixture.options);
+  await recovered.initialize();
+  assert.equal((await recovered.repository.getAnimeCatalogById(item.anime.id))?.detail, undefined);
+  recovered.close();
+  assertDatabaseIntegrity(fixture.databasePath);
+});
+
 test("SQLite 保存图片取色主题后可在重启时恢复", async () => {
   const fixture = await createFixture();
   const first = createRepositoryRuntime(fixture.options);

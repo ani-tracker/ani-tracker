@@ -19,6 +19,7 @@ import type {
   TorrentFile
 } from "@shared/domain";
 import type { ReleaseSearchResult } from "@shared/contracts";
+import { mergeAnimeDetailMetadata, normalizeAnimeDetailMetadata } from "@shared/anime-detail";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import {
@@ -210,6 +211,17 @@ export class SqliteAppRepository implements AppRepository {
     return sortAnimeCatalog(
       this.all("SELECT * FROM anime_catalog").map((row) => mapAnime(row, aliasesByAnime.get(asString(row.id)) ?? []))
     );
+  }
+
+  /** 按目录标识读取单部番剧及其别名。 */
+  async getAnimeCatalogById(animeId: string): Promise<Anime | undefined> {
+    const row = this.get("SELECT * FROM anime_catalog WHERE id = @animeId", { animeId });
+    if (!row) return undefined;
+    const aliases = this.all(
+      "SELECT * FROM anime_alias WHERE anime_id = @animeId ORDER BY priority DESC",
+      { animeId }
+    ).map(mapAnimeAlias);
+    return mapAnime(row, aliases);
   }
 
   async listNotifications(): Promise<NotificationRecord[]> {
@@ -829,6 +841,10 @@ export class SqliteAppRepository implements AppRepository {
       `);
     }
 
+    if (currentSchemaVersion < 13) {
+      this.ensureColumn("anime_catalog", "detail_json", "detail_json TEXT NOT NULL DEFAULT '{}'");
+    }
+
     if (currentSchemaVersion < 8) {
       this.database.exec(`
         UPDATE my_anime
@@ -1018,6 +1034,7 @@ export class SqliteAppRepository implements AppRepository {
           ...item,
           id: existing.id,
           rating: followedAnimeIds.has(existing.id) ? (existing.rating ?? item.rating) : item.rating,
+          detail: mergeAnimeDetailMetadata(existing.detail, item.detail),
           aliases: mergeAliases(existing.aliases, item.aliases).map((alias) => ({
             ...alias,
             animeId: existing.id
@@ -1089,16 +1106,16 @@ export class SqliteAppRepository implements AppRepository {
     this.run(
       `INSERT INTO anime_catalog (
         id, title, original_title, premiere_date, premiere_year, premiere_month, season, summary,
-        cover_url, rating_score, rating_count, rating_source, external_ids_json, created_at, updated_at
+        cover_url, rating_score, rating_count, rating_source, external_ids_json, detail_json, created_at, updated_at
       ) VALUES (
         @id, @title, @originalTitle, @premiereDate, @premiereYear, @premiereMonth, @season, @summary,
-        @coverUrl, @ratingScore, @ratingCount, @ratingSource, @externalIdsJson, @createdAt, @updatedAt
+        @coverUrl, @ratingScore, @ratingCount, @ratingSource, @externalIdsJson, @detailJson, @createdAt, @updatedAt
       ) ON CONFLICT(id) DO UPDATE SET
         title = excluded.title, original_title = excluded.original_title, premiere_date = excluded.premiere_date,
         premiere_year = excluded.premiere_year, premiere_month = excluded.premiere_month, season = excluded.season,
         summary = excluded.summary, cover_url = excluded.cover_url, rating_score = excluded.rating_score,
         rating_count = excluded.rating_count, rating_source = excluded.rating_source,
-        external_ids_json = excluded.external_ids_json,
+        external_ids_json = excluded.external_ids_json, detail_json = excluded.detail_json,
         updated_at = excluded.updated_at`,
       {
         id: anime.id, title: anime.title, originalTitle: anime.originalTitle ?? null,
@@ -1107,6 +1124,7 @@ export class SqliteAppRepository implements AppRepository {
         coverUrl: anime.coverUrl ?? null, ratingScore: anime.rating?.score ?? null,
         ratingCount: anime.rating?.count ?? null, ratingSource: anime.rating?.source ?? null,
         externalIdsJson: toJson(anime.externalIds),
+        detailJson: toJson(normalizeAnimeDetailMetadata(anime.detail) ?? {}),
         createdAt: timestamp, updatedAt: timestamp
       }
     );
@@ -1835,8 +1853,22 @@ function mapAnime(row: SqliteRow, aliases: Anime["aliases"]): Anime {
     premiereMonth: Number(row.premiere_month), season: optionalString(row.season) as Anime["season"],
     summary: optionalString(row.summary), coverUrl: optionalString(row.cover_url),
     rating: mapAnimeRating(row),
-    externalIds: fromJson<Record<string, string>>(asString(row.external_ids_json))
+    externalIds: fromJson<Record<string, string>>(asString(row.external_ids_json)),
+    detail: parseAnimeDetailJson(asString(row.detail_json), asString(row.id))
   });
+}
+
+/** 安全解析详情 JSON，损坏记录回退为空并保留可用基础字段。 */
+function parseAnimeDetailJson(value: string, animeId: string): Anime["detail"] {
+  try {
+    return normalizeAnimeDetailMetadata(JSON.parse(value));
+  } catch (error) {
+    logger.warn("SQLite 番剧详情 JSON 解析失败", {
+      animeId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return undefined;
+  }
 }
 
 function mapAnimeRating(row: SqliteRow): Anime["rating"] {

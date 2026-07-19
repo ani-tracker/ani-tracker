@@ -1,9 +1,15 @@
 import type { Anime, AnimeAlias, AnimeRating, Season } from "@shared/domain";
+import { mergeAnimeDetailMetadata } from "@shared/anime-detail";
 import { inferAnimeAliasLanguage, isLikelyChineseTitle, isLikelyJapaneseTitle } from "../../../shared/anime-title";
 
 export interface MonthlyAnimeMetadataProvider {
   readonly id: string;
   getAnimeByMonth(year: number, month: number): Promise<Anime[]>;
+}
+
+export interface AnimeDetailMetadataProvider {
+  readonly id: string;
+  getAnimeDetail(externalId: string, fallback: Anime): Promise<Anime>;
 }
 
 export interface MonthSeasonInfo {
@@ -198,6 +204,7 @@ function mergeAnimeMetadata(primary: Anime, secondary: Anime): Anime {
     summary: primary.summary ?? secondary.summary,
     coverUrl: primary.coverUrl ?? secondary.coverUrl,
     rating: pickPreferredRating(primary.rating, secondary.rating),
+    detail: mergeAnimeDetailMetadata(primary.detail, secondary.detail),
     externalIds: {
       ...primary.externalIds,
       ...secondary.externalIds

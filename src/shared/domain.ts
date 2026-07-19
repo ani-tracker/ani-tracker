@@ -25,6 +25,48 @@ export type DownloadStatus =
 
 export type Season = "winter" | "spring" | "summer" | "fall";
 
+export type AnimeFormat = "tv" | "movie" | "ova" | "ona" | "special" | "music" | "unknown";
+
+export type AnimeAiringStatus = "upcoming" | "airing" | "finished" | "hiatus" | "cancelled" | "unknown";
+
+export interface AnimeBroadcastSchedule {
+  weekday?: number;
+  time?: string;
+  timezone?: string;
+}
+
+export interface AnimeStaffCredit {
+  name: string;
+  role: string;
+  source?: string;
+}
+
+export interface AnimeRanking {
+  rank: number;
+  source: string;
+  category?: string;
+}
+
+export interface AnimeDetailMetadata {
+  bannerUrl?: string;
+  format?: AnimeFormat;
+  episodeCount?: number;
+  airingStatus?: AnimeAiringStatus;
+  endDate?: string;
+  nextAiringAt?: string;
+  broadcast?: AnimeBroadcastSchedule;
+  genres?: string[];
+  studios?: string[];
+  staff?: AnimeStaffCredit[];
+  sourceMaterial?: string;
+  durationMinutes?: number;
+  contentRating?: string;
+  demographic?: string;
+  ranking?: AnimeRanking;
+  metadataSources?: string[];
+  refreshedAt?: string;
+}
+
 export type SubtitleLanguage = "chs" | "cht" | "jpn" | "eng";
 
 export type SubtitlePreference = SubtitleLanguage | "multi";
@@ -52,6 +94,7 @@ export interface Anime {
   coverUrl?: string;
   rating?: AnimeRating;
   externalIds: Record<string, string>;
+  detail?: AnimeDetailMetadata;
 }
 
 export interface AnimeRating {

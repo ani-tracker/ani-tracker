@@ -9,6 +9,7 @@ import type {
   MyAnime,
   NotificationRecord
 } from "@shared/domain";
+import type { AnimeDetailResult } from "@shared/contracts";
 
 const HIDDEN_LOCAL_PATH = "本机路径已隐藏";
 const WINDOWS_PATH_PATTERN = /(?:[a-zA-Z]:\\|\\\\)[^\s，。；、]+/g;
@@ -32,6 +33,12 @@ export type RemoteMediaFile = Omit<MediaFile, "filePath"> & {
 export type RemoteDashboardData = Omit<DashboardData, "activeDownloads" | "recentCompleted"> & {
   activeDownloads: RemoteDownloadTask[];
   recentCompleted: RemoteMediaFile[];
+};
+
+export type RemoteAnimeDetailResult = Omit<AnimeDetailResult, "anime" | "myAnime" | "partialErrors"> & {
+  anime: Anime;
+  myAnime?: RemoteMyAnime;
+  partialErrors: AnimeDetailResult["partialErrors"];
 };
 
 /** 将追番记录转换为远程安全 DTO。 */
@@ -92,6 +99,22 @@ export function sanitizeNotificationList(value: unknown): NotificationRecord[] {
 /** 将番剧目录转换为字段白名单 DTO。 */
 export function sanitizeAnimeList(value: unknown): Anime[] {
   return requireArray<Anime>(value, "番剧目录").map(sanitizeAnime);
+}
+
+/** 将番剧详情转换为远程只读 DTO，并沿用目录字段白名单。 */
+export function sanitizeAnimeDetailResult(value: unknown): RemoteAnimeDetailResult {
+  const result = requireRecord<AnimeDetailResult>(value, "番剧详情");
+  const myAnime = result.myAnime ? sanitizeMyAnimeList([result.myAnime])[0] : undefined;
+  return {
+    anime: sanitizeAnime(result.anime),
+    myAnime,
+    episodes: sanitizeEpisodeList(result.episodes),
+    fansubGroups: sanitizeFansubList(result.fansubGroups),
+    stale: Boolean(result.stale),
+    partialErrors: requireArray<AnimeDetailResult["partialErrors"][number]>(result.partialErrors, "详情来源错误").map(
+      (error) => ({ source: redactFreeText(error.source), message: redactFreeText(error.message) })
+    )
+  };
 }
 
 /** 将字幕组列表转换为字段白名单 DTO。 */
@@ -161,7 +184,16 @@ function sanitizeAnime(item: Anime): Anime {
           source: item.rating.source
         }
       : undefined,
-    externalIds: { ...item.externalIds }
+    externalIds: { ...item.externalIds },
+    detail: item.detail
+      ? {
+          ...item.detail,
+          genres: item.detail.genres ? [...item.detail.genres] : undefined,
+          studios: item.detail.studios ? [...item.detail.studios] : undefined,
+          staff: item.detail.staff?.map((credit) => ({ ...credit })),
+          metadataSources: item.detail.metadataSources ? [...item.detail.metadataSources] : undefined
+        }
+      : undefined
   };
 }
 

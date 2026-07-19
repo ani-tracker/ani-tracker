@@ -68,8 +68,12 @@ const animeFilters: Array<{ label: string; value: AnimeFilter }> = [
   { label: "已弃", value: "dropped" }
 ];
 
+interface RemoteMyAnimePageProps {
+  onOpenAnimeDetail?: (animeId: string) => void;
+}
+
 /** 渲染远程客户端的追番列表与只读剧集详情。 */
-export function RemoteMyAnimePage() {
+export function RemoteMyAnimePage({ onOpenAnimeDetail }: RemoteMyAnimePageProps = {}) {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
@@ -208,6 +212,7 @@ export function RemoteMyAnimePage() {
               group={group}
               key={group.key}
               onOpen={setSelectedItem}
+              onOpenAnimeDetail={onOpenAnimeDetail}
             />
           ))}
         </div>
@@ -241,11 +246,13 @@ export function RemoteMyAnimePage() {
 function RemoteAnimeSeasonGroup({
   group,
   downloadSummaries,
-  onOpen
+  onOpen,
+  onOpenAnimeDetail
 }: {
   group: MyAnimeSeasonGroup;
   downloadSummaries: Map<string, RemoteDownloadSummary>;
   onOpen: (item: MyAnime) => void;
+  onOpenAnimeDetail?: (animeId: string) => void;
 }) {
   return (
     <section className="min-w-0">
@@ -259,6 +266,7 @@ function RemoteAnimeSeasonGroup({
             item={item}
             key={item.id}
             onOpen={() => onOpen(item)}
+            onOpenAnimeDetail={() => onOpenAnimeDetail?.(item.anime.id)}
             summary={downloadSummaries.get(item.anime.id) ?? { active: 0, completed: 0, linked: 0 }}
           />
         ))}
@@ -271,17 +279,24 @@ function RemoteAnimeSeasonGroup({
 function RemoteAnimeRow({
   item,
   summary,
-  onOpen
+  onOpen,
+  onOpenAnimeDetail
 }: {
   item: MyAnime;
   summary: RemoteDownloadSummary;
   onOpen: () => void;
+  onOpenAnimeDetail: () => void;
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(item.anime);
 
   return (
     <article className="flex min-w-0 gap-3 border-b p-3 last:border-b-0 sm:gap-4">
-      <div className="aspect-[2/3] w-16 shrink-0 overflow-hidden rounded-md bg-muted sm:w-20">
+      <button
+        aria-label={`查看${titleDisplay.title}详情`}
+        className="aspect-[2/3] w-16 shrink-0 overflow-hidden rounded-md bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-20"
+        onClick={onOpenAnimeDetail}
+        type="button"
+      >
         {item.anime.coverUrl ? (
           <CachedImage
             alt={titleDisplay.title}
@@ -294,12 +309,19 @@ function RemoteAnimeRow({
             <Library />
           </div>
         )}
-      </div>
+      </button>
 
       <div className="grid min-w-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(10rem,0.55fr)_auto] lg:items-center">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
-            <h3 className="truncate text-sm font-semibold" title={titleDisplay.title}>{titleDisplay.title}</h3>
+            <button
+              className="min-w-0 truncate text-left text-sm font-semibold hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={onOpenAnimeDetail}
+              title={titleDisplay.title}
+              type="button"
+            >
+              {titleDisplay.title}
+            </button>
             <Badge className="shrink-0" tone="primary">{animeStatusText[item.status]}</Badge>
           </div>
           <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle ?? "无原名"}>

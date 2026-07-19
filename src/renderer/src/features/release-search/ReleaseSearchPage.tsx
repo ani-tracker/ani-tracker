@@ -56,7 +56,14 @@ interface SearchedContext {
   myAnime?: MyAnime;
 }
 
-export function ReleaseSearchPage() {
+interface ReleaseSearchPageProps {
+  initialIntent?: {
+    keyword: string;
+    key: number;
+  } | null;
+}
+
+export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}) {
   const [keyword, setKeyword] = useState("");
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [selectedAnimeId, setSelectedAnimeId] = useState("");
@@ -113,6 +120,15 @@ export function ReleaseSearchPage() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!initialIntent) return;
+    setKeyword(initialIntent.keyword);
+    setSelectedAnimeId("");
+    setResult(null);
+    setSearchedContext(null);
+    void search(initialIntent.keyword, true);
+  }, [initialIntent?.key]);
+
   /** 更新关键词，并在输入不再对应原番剧时取消关联。 */
   function updateKeyword(value: string) {
     const nextInput = parseReleaseSearchInput(value);
@@ -138,8 +154,8 @@ export function ReleaseSearchPage() {
   }
 
   /** 根据是否关联追番选择番剧级搜索或普通关键词搜索。 */
-  async function search() {
-    const input = parseReleaseSearchInput(keyword);
+  async function search(keywordOverride?: string, forceKeywordMode = false) {
+    const input = parseReleaseSearchInput(keywordOverride ?? keyword);
     if (!input.keyword) {
       setMessage("请输入搜索关键词");
       return;
@@ -150,12 +166,13 @@ export function ReleaseSearchPage() {
     setSuggestionsOpen(false);
 
     try {
-      const searchResult = selectedAnime
+      const activeSelectedAnime = forceKeywordMode ? null : selectedAnime;
+      const searchResult = activeSelectedAnime
         ? await appApi.searchAnimeReleases({
-            animeId: selectedAnime.anime.id,
+            animeId: activeSelectedAnime.anime.id,
             episodeNo: input.episodeNo,
-            fansubGroupId: selectedAnime.defaultFansubGroupId,
-            preferredResolution: selectedAnime.preferredResolution,
+            fansubGroupId: activeSelectedAnime.defaultFansubGroupId,
+            preferredResolution: activeSelectedAnime.preferredResolution,
             limit: 80
           })
         : await appApi.searchReleases({
@@ -166,10 +183,10 @@ export function ReleaseSearchPage() {
 
       setResult(searchResult);
       setSearchedContext({
-        mode: selectedAnime ? "anime" : "keyword",
+        mode: activeSelectedAnime ? "anime" : "keyword",
         keyword: input.keyword,
         episodeNo: input.episodeNo,
-        myAnime: selectedAnime ?? undefined
+        myAnime: activeSelectedAnime ?? undefined
       });
       setPage(1);
       setErrorsExpanded(searchResult.errors.length > 0 && searchResult.releases.length === 0);

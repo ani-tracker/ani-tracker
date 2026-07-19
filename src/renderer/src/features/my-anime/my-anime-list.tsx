@@ -54,6 +54,7 @@ interface MyAnimeRowProps {
   item: MyAnime;
   onOpenActive: () => void;
   onOpenCompleted: () => void;
+  onOpenDetail: () => void;
   onOpenDownloads: () => void;
   onOpenRules: () => void;
   onRemove: () => void;
@@ -90,6 +91,7 @@ export function MyAnimeRow({
   item,
   onOpenActive,
   onOpenCompleted,
+  onOpenDetail,
   onOpenDownloads,
   onOpenRules,
   onRemove
@@ -120,7 +122,12 @@ export function MyAnimeRow({
 
   return (
     <article className="group relative flex min-w-0 gap-3 overflow-hidden rounded-md border bg-card p-3 transition-colors hover:bg-accent/30 sm:gap-4">
-      <div className="relative aspect-[2/3] w-16 shrink-0 overflow-hidden rounded-md bg-muted sm:w-20">
+      <button
+        aria-label={`查看${titleDisplay.title}详情`}
+        className="relative aspect-[2/3] w-16 shrink-0 overflow-hidden rounded-md bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-20"
+        onClick={onOpenDetail}
+        type="button"
+      >
         {item.anime.coverUrl ? (
           <CachedImage
             alt={titleDisplay.title}
@@ -133,14 +140,19 @@ export function MyAnimeRow({
             <ImageOff />
           </div>
         )}
-      </div>
+      </button>
 
       <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(10rem,0.8fr)_auto] md:items-center">
         <div className="min-w-0 self-start md:self-center">
           <div className="flex min-w-0 items-center gap-2">
-            <h2 className="truncate text-sm font-semibold" title={titleDisplay.title}>
+            <button
+              className="min-w-0 truncate text-left text-sm font-semibold hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              onClick={onOpenDetail}
+              title={titleDisplay.title}
+              type="button"
+            >
               {titleDisplay.title}
-            </h2>
+            </button>
             <Badge className="h-5 shrink-0 px-1.5" tone="amber">{ratingText}</Badge>
           </div>
           <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle ?? "无原名"}>

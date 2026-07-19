@@ -6,6 +6,7 @@ import { DesktopIntegrationService } from "./core/platform/desktop-integration-s
 import { AppearanceService } from "./core/platform/appearance-service";
 import {
   automationScheduler,
+  animeDetailService,
   downloadTaskControlService,
   qbittorrentManagedService,
   registerIpcHandlers,
@@ -54,6 +55,7 @@ const remoteMethodRegistry = createRemoteMethodRegistry({
   markAllNotificationsRead: () => repository.markAllNotificationsRead(),
   listMyAnime: () => repository.listMyAnime(),
   listAnimeCatalog: (year, month) => new AnimeDiscoveryService(repository).listCatalog(year, month),
+  getAnimeDetail: (animeId) => animeDetailService.getAnimeDetail(animeId),
   searchAnimeCatalog: (keyword) => new AnimeDiscoveryService(repository).searchCatalog(keyword),
   listFansubs: (animeId) => repository.listFansubs(animeId),
   listEpisodes: (animeId) => repository.listEpisodes(animeId),

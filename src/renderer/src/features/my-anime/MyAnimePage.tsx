@@ -120,8 +120,20 @@ const myAnimeFilters: Array<{ value: MyAnimeFilter; label: string }> = [
 ];
 const releaseSearchCacheTtlMs = 24 * 60 * 60 * 1000;
 
+export interface MyAnimePageIntent {
+  animeId: string;
+  action: "rules" | "resources" | "tasks";
+  key: number;
+}
+
+interface MyAnimePageProps {
+  intent?: MyAnimePageIntent | null;
+  onIntentHandled?: () => void;
+  onOpenAnimeDetail?: (animeId: string) => void;
+}
+
 /** 渲染追番列表并协调规则、资源下载和任务明细抽屉。 */
-export function MyAnimePage() {
+export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAnimePageProps = {}) {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [removeTarget, setRemoveTarget] = useState<MyAnime | null>(null);
   const [statusFilter, setStatusFilter] = useState<MyAnimeFilter>("watching");
@@ -196,6 +208,17 @@ export function MyAnimePage() {
   const groupedItems = useMemo(() => groupMyAnimeBySeason(visibleItems), [visibleItems]);
   const draftPersisted = Boolean(draft && items.some((item) => item.id === draft.id));
   const activeFansubAnimeId = draft && draftPersisted ? draft.anime.id : downloadTarget?.anime.id;
+
+  useEffect(() => {
+    if (!intent || loading) return;
+    const target = items.find((item) => item.anime.id === intent.animeId);
+    if (target) {
+      if (intent.action === "rules") openRulesDrawer(target);
+      if (intent.action === "resources") void openAnimeDownloads(target);
+      if (intent.action === "tasks") openDownloadDetail(target, "all");
+    }
+    onIntentHandled?.();
+  }, [intent?.key, items, loading]);
 
   useEffect(() => {
     let active = true;
@@ -901,6 +924,7 @@ export function MyAnimePage() {
                     downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
                     onOpenActive={() => openDownloadDetail(item, "active")}
                     onOpenCompleted={() => openDownloadDetail(item, "completed")}
+                    onOpenDetail={() => onOpenAnimeDetail?.(item.anime.id)}
                     onOpenDownloads={() => void openAnimeDownloads(item)}
                     onOpenRules={() => openRulesDrawer(item)}
                     onRemove={() => setRemoveTarget(item)}

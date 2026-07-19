@@ -31,6 +31,7 @@ import { FfprobeMediaProbeService } from "./core/media/ffprobe-media-probe-servi
 import { EpisodeReleasePreviewService } from "./core/automation/episode-release-preview-service";
 import { AutomationScheduler } from "./core/automation/automation-scheduler";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
+import { AnimeDetailService } from "./core/metadata/anime-detail-service";
 import { MetadataHttpClient } from "./core/metadata/metadata-http-client";
 import { QbittorrentManagedService } from "./core/downloads/qbittorrent-managed-service";
 import { logger } from "./core/logger";
@@ -57,6 +58,7 @@ export const automationScheduler = new AutomationScheduler(repository, undefined
 });
 export const sourceSyncScheduler = new SourceSyncScheduler(repository);
 export const downloadTaskControlService = new DownloadTaskControlService(repository, qbittorrentManagedService);
+export const animeDetailService = new AnimeDetailService(repository);
 const playbackStatusService = new PlaybackStatusService(repository);
 
 interface RegisterIpcHandlersOptions {
@@ -98,6 +100,8 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   ipcMain.handle("animeCatalog:collectMonth", (_event, query: AnimeDiscoveryQuery) =>
     new AnimeDiscoveryService(repository).collectMonth(query)
   );
+  ipcMain.handle("animeDetail:get", (_event, animeId: string) => animeDetailService.getAnimeDetail(animeId));
+  ipcMain.handle("animeDetail:refresh", (_event, animeId: string) => animeDetailService.refreshAnimeDetail(animeId));
   ipcMain.handle("episodes:list", (_event, animeId: string) => repository.listEpisodes(animeId));
   ipcMain.handle("episodes:upsert", (_event, episode: Episode) => repository.upsertEpisode(episode));
   ipcMain.handle("episodePreferences:list", (_event, animeId: string) => repository.listEpisodePreferences(animeId));

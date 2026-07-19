@@ -210,6 +210,14 @@ function createHandlers(overrides: Partial<RemoteRpcHandlers> = {}): RemoteRpcHa
     markAllNotificationsRead: () => [notification],
     listMyAnime: () => [myAnime],
     listAnimeCatalog: () => [myAnime.anime],
+    getAnimeDetail: () => ({
+      anime: myAnime.anime,
+      myAnime,
+      episodes: [],
+      fansubGroups: [],
+      stale: false,
+      partialErrors: []
+    }),
     searchAnimeCatalog: () => [myAnime.anime],
     listFansubs: () => [],
     listEpisodes: () => [],

@@ -30,6 +30,7 @@ export interface AppRepository {
   getDashboard(): Promise<DashboardData>;
   listMyAnime(): Promise<MyAnime[]>;
   listAnimeCatalog(): Promise<Anime[]>;
+  getAnimeCatalogById(animeId: string): Promise<Anime | undefined>;
   listNotifications(): Promise<NotificationRecord[]>;
   getUnreadNotificationCount(): Promise<number>;
   addNotifications(records: NotificationRecord[]): Promise<NotificationRecord[]>;

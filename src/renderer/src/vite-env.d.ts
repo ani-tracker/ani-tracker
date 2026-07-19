@@ -17,6 +17,7 @@ import type {
 import type {
   AddDownloadUrlInput,
   AddReleaseDownloadInput,
+  AnimeDetailResult,
   AnimeReleaseQuery,
   AnimeSourceBindingState,
   AnimeDiscoveryQuery,
@@ -57,6 +58,8 @@ declare global {
       listAnimeCatalog: (year?: number, month?: number) => Promise<Anime[]>;
       searchAnimeCatalog: (keyword: string) => Promise<Anime[]>;
       collectAnimeMonth: (query: AnimeDiscoveryQuery) => Promise<AnimeDiscoveryResult>;
+      getAnimeDetail: (animeId: string) => Promise<AnimeDetailResult>;
+      refreshAnimeDetail: (animeId: string) => Promise<AnimeDetailResult>;
       listEpisodes: (animeId: string) => Promise<Episode[]>;
       upsertEpisode: (episode: Episode) => Promise<Episode[]>;
       listEpisodePreferences: (animeId: string) => Promise<EpisodePreference[]>;

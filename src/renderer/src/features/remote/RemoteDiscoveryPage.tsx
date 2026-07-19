@@ -35,8 +35,12 @@ const seasonOptions: readonly SeasonOption[] = [
   { value: "fall", label: "秋", months: [10, 11, 12] }
 ];
 
+interface RemoteDiscoveryPageProps {
+  onOpenAnimeDetail?: (animeId: string) => void;
+}
+
 /** 渲染远程客户端可读取的新番季度目录。 */
-export function RemoteDiscoveryPage() {
+export function RemoteDiscoveryPage({ onOpenAnimeDetail }: RemoteDiscoveryPageProps = {}) {
   const currentTarget = getCurrentSeasonTarget();
   const [year, setYear] = useState(currentTarget.year);
   const [season, setSeason] = useState<Season>(currentTarget.season);
@@ -185,6 +189,12 @@ export function RemoteDiscoveryPage() {
             const followed = followedIds.has(anime.id);
             return (
               <article className="min-w-0" key={anime.id}>
+                <button
+                  aria-label={`查看${titleDisplay.title}详情`}
+                  className="block w-full text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => onOpenAnimeDetail?.(anime.id)}
+                  type="button"
+                >
                 <div className="aspect-[2/3] overflow-hidden rounded-md bg-muted">
                   {anime.coverUrl ? (
                     <CachedImage
@@ -224,6 +234,7 @@ export function RemoteDiscoveryPage() {
                     {anime.summary ?? "暂无简介"}
                   </p>
                 </div>
+                </button>
               </article>
             );
           })}
