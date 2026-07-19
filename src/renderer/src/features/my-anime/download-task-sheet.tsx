@@ -1,0 +1,260 @@
+import { Download, FolderOpen, Play } from "lucide-react";
+import { useState } from "react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
+import { Progress } from "@/components/ui/progress";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
+import { WorkbenchSheet } from "@/components/workbench-sheet";
+import { appApi } from "@/lib/api";
+import { cn } from "@/lib/cn";
+import { formatDateTime, formatPercent, formatSpeed } from "@/lib/format";
+import { resolveAnimeTitleDisplay } from "@shared/anime-title";
+import type { DownloadTask, MyAnime } from "@shared/domain";
+
+export type AnimeDownloadDetailFilter = "all" | "active" | "completed";
+
+export interface AnimeDownloadDetailState {
+  item: MyAnime;
+  filter: AnimeDownloadDetailFilter;
+}
+
+interface AnimeDownloadTaskSheetProps {
+  detail: AnimeDownloadDetailState;
+  downloadTasks: DownloadTask[];
+  fansubNames: Map<string, string>;
+  onClose: () => void;
+  onFilterChange: (filter: AnimeDownloadDetailFilter) => void;
+}
+
+const filterOptions: Array<{ value: AnimeDownloadDetailFilter; label: string }> = [
+  { value: "all", label: "全部" },
+  { value: "active", label: "下载中" },
+  { value: "completed", label: "已完成" }
+];
+
+const downloadStatusText: Record<DownloadTask["status"], string> = {
+  queued: "排队中",
+  fetching_metadata: "获取元数据",
+  downloading: "下载中",
+  stalled: "等待连接",
+  paused: "已暂停",
+  checking: "校验中",
+  moving: "移动文件",
+  completed: "已完成",
+  seeding: "做种中",
+  error: "错误",
+  missing_files: "文件缺失"
+};
+
+/** 渲染单部番剧的任务筛选、进度、播放与文件定位侧栏。 */
+export function AnimeDownloadTaskSheet({
+  detail,
+  downloadTasks,
+  fansubNames,
+  onClose,
+  onFilterChange
+}: AnimeDownloadTaskSheetProps) {
+  const titleDisplay = resolveAnimeTitleDisplay(detail.item.anime);
+  const animeTasks = getAnimeDownloadTasks(downloadTasks, detail.item.anime.id);
+  const visibleTasks = filterDownloadTasks(animeTasks, detail.filter);
+  const counts = {
+    all: animeTasks.length,
+    active: animeTasks.filter(isActiveDownload).length,
+    completed: animeTasks.filter(isCompletedDownload).length
+  };
+
+  return (
+    <WorkbenchSheet
+      className="sm:max-w-2xl"
+      description={titleDisplay.subtitle ?? "下载任务明细"}
+      headerContent={
+        <Tabs
+          value={detail.filter}
+          onValueChange={(value) => onFilterChange(value as AnimeDownloadDetailFilter)}
+        >
+          <TabsList className="grid w-full grid-cols-3">
+            {filterOptions.map((filter) => (
+              <TabsTrigger className="min-w-0 px-2" key={filter.value} value={filter.value}>
+                {filter.label} {counts[filter.value]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+      }
+      onClose={onClose}
+      title={titleDisplay.title}
+    >
+      {visibleTasks.length > 0 ? (
+        <div className="flex min-w-0 flex-col gap-3">
+          {visibleTasks.map((task) => (
+            <DownloadTaskCard key={task.id} task={task} fansubNames={fansubNames} />
+          ))}
+        </div>
+      ) : (
+        <Empty className="min-h-56 p-4 md:p-8">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><Download /></EmptyMedia>
+            <EmptyTitle>暂无下载任务</EmptyTitle>
+            <EmptyDescription>当前筛选下没有下载任务。</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+    </WorkbenchSheet>
+  );
+}
+
+/** 判断任务是否处于需要持续关注的活动状态。 */
+export function isActiveDownload(task: DownloadTask): boolean {
+  return ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(
+    task.status
+  );
+}
+
+/** 判断任务是否拥有已完成内容。 */
+export function isCompletedDownload(task: DownloadTask): boolean {
+  return task.status === "completed" || task.status === "seeding";
+}
+
+/** 渲染单个下载任务的完整进度与文件动作。 */
+function DownloadTaskCard({ task, fansubNames }: { task: DownloadTask; fansubNames: Map<string, string> }) {
+  const fansubName = (task.fansubGroupId ? fansubNames.get(task.fansubGroupId) : undefined) ?? task.fansubName ?? "未识别字幕组";
+  const playableFilePath = resolveTaskFilePath(task, true);
+  const revealFilePath = resolveTaskFilePath(task, false);
+  const [activeFileAction, setActiveFileAction] = useState<"play" | "reveal" | null>(null);
+  const [fileActionError, setFileActionError] = useState<string | null>(null);
+
+  /** 播放已完成视频或在文件管理器中定位下载文件。 */
+  async function runFileAction(action: "play" | "reveal") {
+    const filePath = action === "play" ? playableFilePath : revealFilePath;
+    if (!filePath) return;
+
+    setActiveFileAction(action);
+    try {
+      if (action === "play") await appApi.playMedia(filePath);
+      else await appApi.revealMedia(filePath);
+      setFileActionError(null);
+    } catch (error) {
+      setFileActionError(error instanceof Error ? error.message : action === "play" ? "播放失败" : "打开目录失败");
+    } finally {
+      setActiveFileAction(null);
+    }
+  }
+
+  return (
+    <article className="rounded-md border bg-background p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            {task.episodeNo !== undefined && <Badge tone="blue">第 {task.episodeNo} 集</Badge>}
+            <Badge tone={getDownloadStatusTone(task.status)}>{downloadStatusText[task.status]}</Badge>
+            <Badge>{fansubName}</Badge>
+            <ReleaseMetadataBadges metadata={task} />
+          </div>
+          <h3 className="mt-2 truncate text-sm font-medium" title={task.name}>{task.name}</h3>
+        </div>
+        <div className="shrink-0 text-sm font-medium tabular-nums">{formatPercent(task.progress)}</div>
+      </div>
+
+      <Progress className="mt-3" value={task.progress} />
+
+      <dl className="mt-4 grid grid-cols-1 gap-x-4 gap-y-2 text-xs sm:grid-cols-2">
+        <DownloadTaskMeta className="sm:col-span-2" label="保存路径" value={task.savePath} />
+        <DownloadTaskMeta label="创建时间" value={formatDateTime(task.createdAt)} />
+        <DownloadTaskMeta label="完成时间" value={formatDateTime(task.completedAt)} />
+        <DownloadTaskMeta label="下载速度" value={formatSpeed(task.downloadSpeed)} />
+        <DownloadTaskMeta label="上传速度" value={formatSpeed(task.uploadSpeed)} />
+      </dl>
+
+      {isCompletedDownload(task) && (
+        <div className="mt-4 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
+          {fileActionError && (
+            <Alert className="min-w-0 flex-1" variant="destructive">
+              <AlertTitle>文件操作失败</AlertTitle>
+              <AlertDescription>{fileActionError}</AlertDescription>
+            </Alert>
+          )}
+          <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto">
+            <Button
+              aria-label="播放已完成视频"
+              className="h-11 px-2 text-xs sm:h-8"
+              disabled={!playableFilePath || activeFileAction !== null}
+              onClick={() => void runFileAction("play")}
+              title={playableFilePath ? "播放已完成视频" : "未找到可播放的视频文件"}
+              variant="outline"
+            >
+              <Play data-icon="inline-start" />
+              播放
+            </Button>
+            <Button
+              aria-label="打开文件目录"
+              className="h-11 px-2 text-xs sm:h-8"
+              disabled={!revealFilePath || activeFileAction !== null}
+              onClick={() => void runFileAction("reveal")}
+              title={revealFilePath ? "打开文件所在目录" : "未找到已完成文件"}
+              variant="outline"
+            >
+              <FolderOpen data-icon="inline-start" />
+              打开目录
+            </Button>
+          </div>
+        </div>
+      )}
+    </article>
+  );
+}
+
+/** 渲染任务定义列表中的单项元信息。 */
+function DownloadTaskMeta({ className, label, value }: { className?: string; label: string; value: string }) {
+  return (
+    <div className={cn("min-w-0", className)}>
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="mt-1 truncate font-medium" title={value}>{value}</dd>
+    </div>
+  );
+}
+
+/** 读取并按集数、创建时间排序某部番的下载任务。 */
+function getAnimeDownloadTasks(downloadTasks: DownloadTask[], animeId: string): DownloadTask[] {
+  return downloadTasks
+    .filter((task) => task.animeId === animeId)
+    .sort((left, right) => {
+      const episodeOrder = (right.episodeNo ?? -1) - (left.episodeNo ?? -1);
+      return episodeOrder || right.createdAt.localeCompare(left.createdAt);
+    });
+}
+
+/** 按当前标签筛选下载任务。 */
+function filterDownloadTasks(downloadTasks: DownloadTask[], filter: AnimeDownloadDetailFilter): DownloadTask[] {
+  if (filter === "active") return downloadTasks.filter(isActiveDownload);
+  if (filter === "completed") return downloadTasks.filter(isCompletedDownload);
+  return downloadTasks;
+}
+
+/** 将任务状态映射为语义标签色。 */
+function getDownloadStatusTone(status: DownloadTask["status"]): "neutral" | "green" | "amber" | "red" | "blue" {
+  if (status === "completed" || status === "seeding") return "green";
+  if (status === "error" || status === "missing_files") return "red";
+  if (status === "paused" || status === "stalled") return "amber";
+  if (status === "downloading") return "blue";
+  return "neutral";
+}
+
+/** 选择任务中的完整视频文件，并生成播放器或文件管理器可用的绝对路径。 */
+function resolveTaskFilePath(task: DownloadTask, videoOnly: boolean): string | undefined {
+  const completedFiles = task.files.filter((file) => file.selected && file.progress >= 1);
+  const videoFile = completedFiles.find((file) => /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i.test(file.name));
+  const targetFile = videoOnly ? videoFile : videoFile ?? completedFiles[0];
+  return targetFile ? joinDownloadFilePath(task.savePath, targetFile.name) : undefined;
+}
+
+/** 按任务保存路径的格式拼接 qBittorrent 返回的相对文件名。 */
+function joinDownloadFilePath(savePath: string, fileName: string): string {
+  if (/^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(fileName)) return fileName;
+  const separator = savePath.includes("\\") ? "\\" : "/";
+  const basePath = savePath.replace(/[\\/]+$/, "");
+  const relativePath = fileName.replace(/^[\\/]+/, "").replace(/[\\/]+/g, separator);
+  return `${basePath}${separator}${relativePath}`;
+}

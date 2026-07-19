@@ -1,0 +1,259 @@
+import { Download, ImageOff, MoreHorizontal, SlidersHorizontal } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CachedImage } from "@/components/cached-image";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuGroup,
+  DropdownMenuItem,
+  DropdownMenuTrigger
+} from "@/components/ui/dropdown-menu";
+import { Progress } from "@/components/ui/progress";
+import { formatMonth } from "@/lib/format";
+import { resolveAnimeTitleDisplay } from "@shared/anime-title";
+import type { AnimeStatus, MyAnime } from "@shared/domain";
+import {
+  formatSubtitleLanguages,
+  formatVideoBitDepth,
+  resolveSubtitleLanguages
+} from "@shared/release-metadata";
+
+const statusText: Record<AnimeStatus, string> = {
+  watching: "在追",
+  planned: "想看",
+  completed: "已完成",
+  paused: "暂停",
+  dropped: "已弃"
+};
+
+const seasonLabels = {
+  winter: "冬季",
+  spring: "春季",
+  summer: "夏季",
+  fall: "秋季"
+} as const;
+
+export interface MyAnimeDownloadSummary {
+  active: number;
+  completed: number;
+  linked: number;
+}
+
+export interface MyAnimeSeasonGroup {
+  key: string;
+  label: string;
+  order: number;
+  items: MyAnime[];
+}
+
+interface MyAnimeRowProps {
+  defaultFansubName: string;
+  downloadSummary: MyAnimeDownloadSummary;
+  item: MyAnime;
+  onOpenActive: () => void;
+  onOpenCompleted: () => void;
+  onOpenDownloads: () => void;
+  onOpenRules: () => void;
+  onRemove: () => void;
+}
+
+/** 按首播年份和季度归组追番，并优先展示较新的季度。 */
+export function groupMyAnimeBySeason(items: MyAnime[]): MyAnimeSeasonGroup[] {
+  const groups = new Map<string, MyAnimeSeasonGroup>();
+  for (const item of items) {
+    const season = item.anime.season ?? resolveSeasonFromMonth(item.anime.premiereMonth);
+    const key = `${item.anime.premiereYear}-${season}`;
+    const group = groups.get(key) ?? {
+      key,
+      label: `${item.anime.premiereYear} 年 ${seasonLabels[season]}`,
+      order: item.anime.premiereYear * 10 + seasonOrder(season),
+      items: []
+    };
+    group.items.push(item);
+    groups.set(key, group);
+  }
+
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      items: [...group.items].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
+    }))
+    .sort((left, right) => right.order - left.order);
+}
+
+/** 渲染追番紧凑条目，并承载资源、规则与任务快捷入口。 */
+export function MyAnimeRow({
+  defaultFansubName,
+  downloadSummary,
+  item,
+  onOpenActive,
+  onOpenCompleted,
+  onOpenDownloads,
+  onOpenRules,
+  onRemove
+}: MyAnimeRowProps) {
+  const titleDisplay = resolveAnimeTitleDisplay(item.anime);
+  const ratingText = item.anime.rating ? item.anime.rating.score.toFixed(1) : "暂无";
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuCloseTimerRef = useRef<number>();
+
+  /** 取消操作菜单的延迟关闭。 */
+  function cancelMenuClose(): void {
+    if (menuCloseTimerRef.current !== undefined) {
+      window.clearTimeout(menuCloseTimerRef.current);
+      menuCloseTimerRef.current = undefined;
+    }
+  }
+
+  /** 鼠标离开菜单交互区后延迟关闭操作菜单。 */
+  function scheduleMenuClose(): void {
+    cancelMenuClose();
+    menuCloseTimerRef.current = window.setTimeout(() => {
+      setMenuOpen(false);
+      menuCloseTimerRef.current = undefined;
+    }, 500);
+  }
+
+  useEffect(() => () => cancelMenuClose(), []);
+
+  return (
+    <article className="group relative flex min-w-0 gap-3 overflow-hidden rounded-md border bg-card p-3 transition-colors hover:bg-accent/30 sm:gap-4">
+      <div className="relative aspect-[2/3] w-16 shrink-0 overflow-hidden rounded-md bg-muted sm:w-20">
+        {item.anime.coverUrl ? (
+          <CachedImage
+            alt={titleDisplay.title}
+            className="size-full object-cover"
+            loading="lazy"
+            sourceUrl={item.anime.coverUrl}
+          />
+        ) : (
+          <div className="flex size-full items-center justify-center text-muted-foreground">
+            <ImageOff />
+          </div>
+        )}
+      </div>
+
+      <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(10rem,0.8fr)_auto] md:items-center">
+        <div className="min-w-0 self-start md:self-center">
+          <div className="flex min-w-0 items-center gap-2">
+            <h2 className="truncate text-sm font-semibold" title={titleDisplay.title}>
+              {titleDisplay.title}
+            </h2>
+            <Badge className="h-5 shrink-0 px-1.5" tone="amber">{ratingText}</Badge>
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle ?? "无原名"}>
+            {titleDisplay.subtitle ?? "无原名"}
+          </p>
+          <div className="mt-2 flex min-w-0 flex-wrap gap-1.5">
+            <Badge>{formatMonth(item.anime.premiereYear, item.anime.premiereMonth)}</Badge>
+            <Badge tone="primary">{statusText[item.status]}</Badge>
+            <Badge tone={item.autoDownload ? "green" : "neutral"}>{item.autoDownload ? "自动" : "手动"}</Badge>
+            <Badge className="max-w-full truncate" title={defaultFansubName}>{defaultFansubName}</Badge>
+            {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
+            {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
+            {item.preferredBitDepth && <Badge>{formatVideoBitDepth(item.preferredBitDepth)}</Badge>}
+            {resolveSubtitleLanguages(item.preferredSubtitleLanguages, item.preferredSubtitle).length > 0 && (
+              <Badge>
+                {formatSubtitleLanguages(resolveSubtitleLanguages(item.preferredSubtitleLanguages, item.preferredSubtitle))}
+              </Badge>
+            )}
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          <div className="flex items-end justify-between gap-3 text-xs">
+            <span className="text-muted-foreground">单集进度</span>
+            <span className="font-semibold tabular-nums text-primary">
+              {String(downloadSummary.completed).padStart(2, "0")} / {String(Math.max(downloadSummary.linked, downloadSummary.completed)).padStart(2, "0")}
+            </span>
+          </div>
+          <Progress
+            className="mt-2 h-1.5"
+            value={downloadSummary.linked ? downloadSummary.completed / downloadSummary.linked : 0}
+          />
+          <div className="mt-2 flex gap-2 text-xs text-muted-foreground">
+            <Button className="h-auto min-h-0 p-0 text-xs" onClick={onOpenActive} variant="ghost">
+              下载中 {downloadSummary.active}
+            </Button>
+            <Button className="h-auto min-h-0 p-0 text-xs" onClick={onOpenCompleted} variant="ghost">
+              已完成 {downloadSummary.completed}
+            </Button>
+          </div>
+        </div>
+
+        <div className="flex min-w-0 items-center gap-2 md:justify-end">
+          <Button className="min-w-0 flex-1 px-2 md:flex-none" onClick={onOpenDownloads}>
+            <Download data-icon="inline-start" />
+            <span className="hidden sm:inline">下载资源</span>
+          </Button>
+          <Button className="min-w-0 flex-1 px-2 md:flex-none" onClick={onOpenRules} variant="outline">
+            <SlidersHorizontal data-icon="inline-start" />
+            <span className="hidden sm:inline">规则</span>
+          </Button>
+          <DropdownMenu
+            modal={false}
+            open={menuOpen}
+            onOpenChange={(open) => {
+              cancelMenuClose();
+              setMenuOpen(open);
+            }}
+          >
+            <DropdownMenuTrigger asChild>
+              <Button
+                aria-label="更多操作"
+                className="size-11 p-0 md:size-9"
+                onPointerEnter={(event) => {
+                  if (event.pointerType === "mouse") {
+                    cancelMenuClose();
+                    setMenuOpen(true);
+                  }
+                }}
+                onPointerLeave={(event) => {
+                  if (event.pointerType === "mouse") scheduleMenuClose();
+                }}
+                title="更多操作"
+                type="button"
+                variant="outline"
+              >
+                <MoreHorizontal />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent
+              align="end"
+              className="w-36"
+              onPointerEnter={(event) => {
+                if (event.pointerType === "mouse") cancelMenuClose();
+              }}
+              onPointerLeave={(event) => {
+                if (event.pointerType === "mouse") scheduleMenuClose();
+              }}
+            >
+              <DropdownMenuGroup>
+                <DropdownMenuItem onSelect={onOpenActive}>查看进行中</DropdownMenuItem>
+                <DropdownMenuItem onSelect={onOpenCompleted}>查看已完成</DropdownMenuItem>
+                <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onRemove}>
+                  移除追番
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+/** 将月份映射为自然季度。 */
+function resolveSeasonFromMonth(month: number): keyof typeof seasonLabels {
+  if (month <= 3) return "winter";
+  if (month <= 6) return "spring";
+  if (month <= 9) return "summer";
+  return "fall";
+}
+
+/** 返回季度排序值。 */
+function seasonOrder(season: keyof typeof seasonLabels): number {
+  return { winter: 1, spring: 2, summer: 3, fall: 4 }[season];
+}

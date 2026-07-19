@@ -1,18 +1,10 @@
-import { AlertTriangle, CalendarDays, Check, ChevronDown, ChevronRight, Download, FolderOpen, ImageOff, Link2, MoreHorizontal, Play, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink, X } from "lucide-react";
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { AlertTriangle, CalendarDays, Check, ChevronDown, ChevronRight, Download, Link2, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Drawer } from "@/components/ui/drawer";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from "@/components/ui/dropdown-menu";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -22,12 +14,31 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
-import { CachedImage } from "@/components/cached-image";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { FilterToolbar, Page, PageActions, PageHeader, PageHeading } from "@/components/page-layout";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
+import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { formatBytes, formatMonth, formatPercent } from "@/lib/format";
+import { formatBytes, formatPercent } from "@/lib/format";
+import {
+  AnimeDownloadTaskSheet,
+  isActiveDownload,
+  isCompletedDownload,
+  type AnimeDownloadDetailFilter,
+  type AnimeDownloadDetailState
+} from "@/features/my-anime/download-task-sheet";
+import { groupMyAnimeBySeason, MyAnimeRow } from "@/features/my-anime/my-anime-list";
+import {
+  countReleaseFamilyEpisodes,
+  getReleaseVersionLabel,
+  groupReleaseFamilyEpisodes,
+  groupReleaseVersions,
+  isReleaseSelectable,
+  releaseKey,
+  type ReleaseEpisodeFamilyGroup,
+  type ReleaseVersionFamily
+} from "@/features/my-anime/release-groups";
 import { buildAnimeReleaseSearchTerms, classifyAnimeRelease } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { AddReleaseDownloadInput, AnimeSourceBindingState, AnimeSourceCandidate, EpisodeReleasePreview, ReleaseSearchResult, RssSubscriptionReleaseResult } from "@shared/contracts";
@@ -45,13 +56,7 @@ import type {
   SubtitleLanguage,
   VideoBitDepth
 } from "@shared/domain";
-import {
-  formatSubtitleLanguages,
-  formatVideoBitDepth,
-  getSubtitleCoverage,
-  resolveSubtitleLanguages,
-  subtitleLanguageText
-} from "@shared/release-metadata";
+import { formatSubtitleLanguages, formatVideoBitDepth, resolveSubtitleLanguages, subtitleLanguageText } from "@shared/release-metadata";
 
 const statusText: Record<AnimeStatus, string> = {
   watching: "在追",
@@ -93,13 +98,9 @@ const unknownFansubFilter = "__unknown__";
 const batchAddingReleaseId = "__batch__";
 const emptySelectValue = "__empty__";
 type DownloadResourceTab = "rss" | "search";
-type AnimeDownloadDetailFilter = "all" | "active" | "completed";
+type MyAnimeFilter = "all" | AnimeStatus;
+type RulesTab = "basic" | "download" | "rss" | "episodes";
 const defaultRssRefreshIntervalMinutes = 20;
-
-interface AnimeDownloadDetailState {
-  item: MyAnime;
-  filter: AnimeDownloadDetailFilter;
-}
 
 interface RssReleaseGroupState {
   subscription: AnimeRssSubscription;
@@ -113,10 +114,9 @@ interface RssSubscriptionDraft {
   preferredSubtitleLanguages?: SubtitleLanguage[];
 }
 
-const downloadDetailFilters: Array<{ value: AnimeDownloadDetailFilter; label: string }> = [
+const myAnimeFilters: Array<{ value: MyAnimeFilter; label: string }> = [
   { value: "all", label: "全部" },
-  { value: "active", label: "下载中" },
-  { value: "completed", label: "已完成" }
+  ...statusOptions.map(([value, label]) => ({ value, label }))
 ];
 const releaseSearchCacheTtlMs = 24 * 60 * 60 * 1000;
 
@@ -124,9 +124,12 @@ const releaseSearchCacheTtlMs = 24 * 60 * 60 * 1000;
 export function MyAnimePage() {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [removeTarget, setRemoveTarget] = useState<MyAnime | null>(null);
+  const [statusFilter, setStatusFilter] = useState<MyAnimeFilter>("watching");
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
   const [animeFansubs, setAnimeFansubs] = useState<FansubGroup[]>([]);
   const [draft, setDraft] = useState<MyAnime | null>(null);
+  const [draftBaseline, setDraftBaseline] = useState<string | null>(null);
+  const [discardRulesDialogOpen, setDiscardRulesDialogOpen] = useState(false);
   const [downloadTarget, setDownloadTarget] = useState<MyAnime | null>(null);
   const [downloadDetail, setDownloadDetail] = useState<AnimeDownloadDetailState | null>(null);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
@@ -186,6 +189,11 @@ export function MyAnimePage() {
     () => new Map(mergeFansubGroups(fansubs, animeFansubs).map((group) => [group.id, group.name])),
     [fansubs, animeFansubs]
   );
+  const visibleItems = useMemo(
+    () => items.filter((item) => statusFilter === "all" || item.status === statusFilter),
+    [items, statusFilter]
+  );
+  const groupedItems = useMemo(() => groupMyAnimeBySeason(visibleItems), [visibleItems]);
   const draftPersisted = Boolean(draft && items.some((item) => item.id === draft.id));
   const activeFansubAnimeId = draft && draftPersisted ? draft.anime.id : downloadTarget?.anime.id;
 
@@ -241,21 +249,6 @@ export function MyAnimePage() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [downloadDetail]);
-
-  useEffect(() => {
-    if (!draft) {
-      return;
-    }
-
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === "Escape") {
-        setDraft(null);
-      }
-    }
-
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [draft]);
 
   useEffect(() => {
     let active = true;
@@ -325,6 +318,7 @@ export function MyAnimePage() {
 
       setItems(updated);
       setDraft(null);
+      setDraftBaseline(null);
       setMessage({ tone: "success", text: "追番规则已保存" });
     } catch (error) {
       setMessage({
@@ -349,6 +343,7 @@ export function MyAnimePage() {
       setItems(updated);
       if (draft?.id === item.id) {
         setDraft(null);
+        setDraftBaseline(null);
       }
       if (downloadTarget?.id === item.id) {
         closeAnimeDownloads();
@@ -471,6 +466,7 @@ export function MyAnimePage() {
     const target = cloneMyAnime(item);
     const nextTab: DownloadResourceTab = getEnabledRssSubscriptions(target).length > 0 ? "rss" : "search";
     setDraft(null);
+    setDraftBaseline(null);
     setDownloadTarget(target);
     setDownloadResourceTab(nextTab);
     setAnimeReleaseFansubId(target.defaultFansubGroupId ?? "");
@@ -508,7 +504,35 @@ export function MyAnimePage() {
   function openRulesDrawer(item: MyAnime) {
     closeAnimeDownloads();
     closeDownloadDetail();
-    setDraft(cloneMyAnime(item));
+    const nextDraft = cloneMyAnime(item);
+    setDraft(nextDraft);
+    setDraftBaseline(serializeMyAnimeDraft(nextDraft));
+  }
+
+  /** 打开新增追番规则侧栏，并记录初始草稿用于退出确认。 */
+  function openNewAnimeDrawer() {
+    closeAnimeDownloads();
+    closeDownloadDetail();
+    const nextDraft = createEmptyDraft();
+    setDraft(nextDraft);
+    setDraftBaseline(serializeMyAnimeDraft(nextDraft));
+  }
+
+  /** 请求关闭规则侧栏；草稿发生变化时先要求确认。 */
+  function requestCloseRules() {
+    if (draft && draftBaseline !== serializeMyAnimeDraft(draft)) {
+      setDiscardRulesDialogOpen(true);
+      return;
+    }
+    setDraft(null);
+    setDraftBaseline(null);
+  }
+
+  /** 放弃当前规则草稿并关闭侧栏。 */
+  function discardRulesDraft() {
+    setDraft(null);
+    setDraftBaseline(null);
+    setDiscardRulesDialogOpen(false);
   }
 
   /** 查询某部追番的下载资源，默认使用 1 天缓存，强制刷新时绕过缓存。 */
@@ -821,23 +845,16 @@ export function MyAnimePage() {
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <header className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-normal">我的追番</h1>
-          <p className="mt-1 text-sm text-muted-foreground">按首播年月管理，默认字幕组会用于自动下载。</p>
-        </div>
-        <Button
-          className="min-h-11 w-full sm:min-h-9 sm:w-auto"
-          onClick={() => {
-            closeAnimeDownloads();
-            setDraft(createEmptyDraft());
-          }}
-        >
+    <Page>
+      <PageHeader>
+        <PageHeading description="按季度管理追番进度、下载偏好、字幕组与单集规则。" title="我的追番" />
+        <PageActions>
+          <Button className="w-full sm:w-auto" onClick={openNewAnimeDrawer}>
           <Plus data-icon="inline-start" />
           添加追番
-        </Button>
-      </header>
+          </Button>
+        </PageActions>
+      </PageHeader>
 
       {message && (
         <Alert variant={message.tone === "error" ? "destructive" : "default"}>
@@ -847,20 +864,50 @@ export function MyAnimePage() {
         </Alert>
       )}
 
-      {items.length > 0 ? (
-        <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
-          {items.map((item) => (
-            <MyAnimeCard
-              key={item.id}
-              item={item}
-              defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
-              downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
-              onOpenActive={() => openDownloadDetail(item, "active")}
-              onOpenCompleted={() => openDownloadDetail(item, "completed")}
-              onOpenDownloads={() => void openAnimeDownloads(item)}
-              onOpenRules={() => openRulesDrawer(item)}
-              onRemove={() => setRemoveTarget(item)}
-            />
+      <FilterToolbar>
+        <Tabs
+          className="min-w-0 flex-1"
+          value={statusFilter}
+          onValueChange={(value) => setStatusFilter(value as MyAnimeFilter)}
+        >
+          <TabsList className="grid h-auto w-full grid-cols-3 sm:w-fit sm:grid-cols-6" aria-label="筛选追番状态">
+            {myAnimeFilters.map((filter) => (
+              <TabsTrigger className="min-w-0 px-2" key={filter.value} value={filter.value}>
+                {filter.label}
+                <span className="ml-1 text-xs tabular-nums">
+                  {filter.value === "all" ? items.length : items.filter((item) => item.status === filter.value).length}
+                </span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <span className="text-xs text-muted-foreground">显示 {visibleItems.length} 部</span>
+      </FilterToolbar>
+
+      {groupedItems.length > 0 ? (
+        <div className="flex min-w-0 flex-col gap-7">
+          {groupedItems.map((group) => (
+            <section className="min-w-0" key={group.key}>
+              <div className="mb-2 flex items-center justify-between gap-3 border-b pb-2">
+                <h2 className="text-sm font-semibold">{group.label}</h2>
+                <span className="text-xs text-muted-foreground">{group.items.length} 部</span>
+              </div>
+              <div className="flex min-w-0 flex-col gap-2">
+                {group.items.map((item) => (
+                  <MyAnimeRow
+                    key={item.id}
+                    item={item}
+                    defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
+                    downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
+                    onOpenActive={() => openDownloadDetail(item, "active")}
+                    onOpenCompleted={() => openDownloadDetail(item, "completed")}
+                    onOpenDownloads={() => void openAnimeDownloads(item)}
+                    onOpenRules={() => openRulesDrawer(item)}
+                    onRemove={() => setRemoveTarget(item)}
+                  />
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       ) : (
@@ -869,8 +916,8 @@ export function MyAnimePage() {
             <EmptyMedia variant="icon">
               <CalendarDays />
             </EmptyMedia>
-            <EmptyTitle>暂无追番</EmptyTitle>
-            <EmptyDescription>当前还没有追番。</EmptyDescription>
+            <EmptyTitle>{items.length ? "没有匹配的追番" : "暂无追番"}</EmptyTitle>
+            <EmptyDescription>{items.length ? "请选择其他状态筛选。" : "当前还没有追番。"}</EmptyDescription>
           </EmptyHeader>
         </Empty>
       )}
@@ -891,7 +938,7 @@ export function MyAnimePage() {
           saving={saving}
           onAddEpisode={() => void addNextEpisode()}
           onAddRelease={(episode, release) => void addEpisodeReleaseDownload(episode, release)}
-          onCancel={() => setDraft(null)}
+          onCancel={requestCloseRules}
           onChange={setDraft}
           onFansubChange={(episode, fansubGroupId) => void updateEpisodeFansub(episode, fansubGroupId)}
           onPreviewReleases={(episode) => void previewEpisodeReleases(episode)}
@@ -901,10 +948,12 @@ export function MyAnimePage() {
       )}
 
       {downloadTarget && (
-        <Drawer
-          ariaLabel="资源搜索"
-          className="overflow-x-hidden sm:max-w-5xl"
+        <WorkbenchSheet
+          bodyClassName="flex flex-col overflow-hidden"
+          className="sm:max-w-5xl"
+          description={`${resolveAnimeTitleDisplay(downloadTarget.anime).subtitle ?? "追番资源"} · ${animeReleases.length + animeRssReleaseGroups.reduce((total, group) => total + group.releases.length, 0)} 个资源`}
           onClose={closeAnimeDownloads}
+          title={`下载资源 · ${resolveAnimeTitleDisplay(downloadTarget.anime).title}`}
         >
           <AnimeDownloadPanel
             addingReleaseId={addingReleaseId}
@@ -914,9 +963,7 @@ export function MyAnimePage() {
             errors={animeReleaseErrors}
             fansubNames={fansubNames}
             fansubs={animeFansubs}
-            listClassName="min-h-0 flex-1 overflow-y-auto pr-1"
             loading={animeReleaseLoading}
-            panelClassName="h-full overflow-hidden rounded-none border-0 shadow-none"
             releases={animeReleases}
             rssGroups={animeRssReleaseGroups}
             rssLoading={animeRssReleaseLoading}
@@ -928,7 +975,6 @@ export function MyAnimePage() {
             onAddRelease={(release) => void addAnimeReleaseDownload(release)}
             onAddRssSubscription={(subscription) => void addAnimeRssSubscription(subscription)}
             onAddSelected={(releases) => void addAnimeReleaseDownloads(releases)}
-            onClose={closeAnimeDownloads}
             onFansubChange={setAnimeReleaseFansubId}
             onConfirmSourceCandidate={(candidate) => void confirmAnimeSourceCandidate(candidate)}
             onRemoveSourceBinding={(sourceId) => void removeAnimeSourceBinding(sourceId)}
@@ -946,11 +992,11 @@ export function MyAnimePage() {
               }
             }}
           />
-        </Drawer>
+        </WorkbenchSheet>
       )}
 
       {downloadDetail && (
-        <AnimeDownloadDetailDrawer
+        <AnimeDownloadTaskSheet
           detail={downloadDetail}
           downloadTasks={downloadTasks}
           fansubNames={fansubNames}
@@ -972,252 +1018,40 @@ export function MyAnimePage() {
         title="确认移除追番？"
       />
 
-    </div>
+      <ConfirmActionDialog
+        confirmLabel="放弃修改"
+        description="当前规则尚未保存，关闭后本次修改将丢失。"
+        onConfirm={discardRulesDraft}
+        onOpenChange={setDiscardRulesDialogOpen}
+        open={discardRulesDialogOpen}
+        title="放弃未保存的规则？"
+      />
+
+    </Page>
   );
 }
 
 /** 渲染追番列表加载中的结构化占位状态。 */
 function MyAnimePageSkeleton() {
   return (
-    <div className="flex min-w-0 flex-col gap-5" aria-busy="true" aria-label="正在加载追番列表">
+    <Page aria-busy="true" aria-label="正在加载追番列表">
       <div className="flex flex-col gap-2">
         <Skeleton className="h-7 w-32" />
         <Skeleton className="h-4 w-72 max-w-full" />
       </div>
-      <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-4">
+      <div className="flex min-w-0 flex-col gap-2">
         {["anime-1", "anime-2", "anime-3", "anime-4"].map((item) => (
-          <Card key={item}>
-            <Skeleton className="aspect-video w-full rounded-b-none" />
-            <CardHeader>
-              <Skeleton className="h-5 w-3/4" />
+          <div className="flex gap-4 border p-3" key={item}>
+            <Skeleton className="aspect-[2/3] w-16 shrink-0 rounded-md" />
+            <div className="flex min-w-0 flex-1 flex-col gap-3 py-1">
+              <Skeleton className="h-5 w-2/3" />
               <Skeleton className="h-4 w-1/2" />
-            </CardHeader>
-            <CardContent className="flex flex-col gap-3">
-              <Skeleton className="h-12 w-full" />
-              <Skeleton className="h-8 w-full" />
-            </CardContent>
-          </Card>
+              <Skeleton className="h-2 w-full" />
+            </div>
+          </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-/** 渲染我的追番卡片，并承载右上角快捷操作入口。 */
-function MyAnimeCard({
-  item,
-  defaultFansubName,
-  downloadSummary,
-  onOpenActive,
-  onOpenCompleted,
-  onOpenDownloads,
-  onOpenRules,
-  onRemove
-}: {
-  item: MyAnime;
-  defaultFansubName: string;
-  downloadSummary: ReturnType<typeof summarizeAnimeDownloads>;
-  onOpenActive: () => void;
-  onOpenCompleted: () => void;
-  onOpenDownloads: () => void;
-  onOpenRules: () => void;
-  onRemove: () => void;
-}) {
-  const titleDisplay = resolveAnimeTitleDisplay(item.anime);
-  const ratingText = item.anime.rating ? item.anime.rating.score.toFixed(1) : "暂无";
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuCloseTimerRef = useRef<number>();
-
-  /** 取消操作菜单的延迟关闭，重新进入时从下一次离开重新计时。 */
-  function cancelMenuClose(): void {
-    if (menuCloseTimerRef.current !== undefined) {
-      window.clearTimeout(menuCloseTimerRef.current);
-      menuCloseTimerRef.current = undefined;
-    }
-  }
-
-  /** 鼠标离开菜单交互区后延迟关闭操作菜单。 */
-  function scheduleMenuClose(): void {
-    cancelMenuClose();
-    menuCloseTimerRef.current = window.setTimeout(() => {
-      setMenuOpen(false);
-      menuCloseTimerRef.current = undefined;
-    }, 500);
-  }
-
-  useEffect(() => () => cancelMenuClose(), []);
-
-  return (
-    <article className="relative overflow-hidden rounded-lg border bg-card shadow-sm transition-shadow hover:shadow-md focus-within:shadow-md">
-      <div className="relative aspect-[16/9] bg-muted">
-        {item.anime.coverUrl ? (
-          <CachedImage
-            alt={titleDisplay.title}
-            className="h-full w-full object-cover"
-            loading="lazy"
-            sourceUrl={item.anime.coverUrl}
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-muted-foreground">
-            <ImageOff className="h-8 w-8" />
-          </div>
-        )}
-
-        <Badge className="absolute left-3 top-3 shadow-sm" tone="amber">
-          {ratingText}
-        </Badge>
-
-        <DropdownMenu
-          modal={false}
-          open={menuOpen}
-          onOpenChange={(open) => {
-            cancelMenuClose();
-            setMenuOpen(open);
-          }}
-        >
-          <DropdownMenuTrigger asChild>
-            <Button
-              className="absolute right-3 top-3 z-10 size-11 p-0 shadow-sm md:min-h-8 md:size-8"
-              type="button"
-              variant="outline"
-              aria-label="显示操作"
-              title="显示操作"
-              onPointerEnter={(event) => {
-                if (event.pointerType === "mouse") {
-                  cancelMenuClose();
-                  setMenuOpen(true);
-                }
-              }}
-              onPointerLeave={(event) => {
-                if (event.pointerType === "mouse") {
-                  scheduleMenuClose();
-                }
-              }}
-            >
-              <MoreHorizontal />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent
-            align="end"
-            className="w-32"
-            onPointerEnter={(event) => {
-              if (event.pointerType === "mouse") {
-                cancelMenuClose();
-              }
-            }}
-            onPointerLeave={(event) => {
-              if (event.pointerType === "mouse") {
-                scheduleMenuClose();
-              }
-            }}
-          >
-            <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={onOpenDownloads}>下载资源</DropdownMenuItem>
-              <DropdownMenuItem onSelect={onOpenRules}>规则</DropdownMenuItem>
-              <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onRemove}>
-                删除
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
-
-      <div className="flex flex-col gap-3 p-3">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold" title={titleDisplay.title}>
-            {titleDisplay.title}
-          </h2>
-          <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle ?? "无原名"}>
-            {titleDisplay.subtitle ?? "无原名"}
-          </p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-          <span className="inline-flex items-center gap-1">
-            <CalendarDays className="h-3.5 w-3.5" />
-            {formatMonth(item.anime.premiereYear, item.anime.premiereMonth)}
-          </span>
-          <Badge>{statusText[item.status]}</Badge>
-          <Badge tone={item.autoDownload ? "green" : "neutral"}>{item.autoDownload ? "自动" : "手动"}</Badge>
-        </div>
-
-        <p className="line-clamp-2 min-h-10 text-xs leading-5 text-muted-foreground" title={item.anime.summary ?? "暂无简介"}>
-          {item.anime.summary ?? "暂无简介"}
-        </p>
-
-        <div className="grid grid-cols-3 gap-2 text-xs">
-          <CardMetric
-            label="已完成"
-            value={downloadSummary.completed}
-            tone="green"
-            onClick={onOpenCompleted}
-          />
-          <CardMetric
-            label="下载中"
-            value={downloadSummary.active}
-            tone="blue"
-            onClick={onOpenActive}
-          />
-          <CardMetric label="关联集" value={downloadSummary.linked} />
-        </div>
-
-        <div className="flex min-w-0 flex-wrap gap-2">
-          <Badge className="max-w-full truncate" title={defaultFansubName}>
-            {defaultFansubName}
-          </Badge>
-          {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
-          {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
-          {item.preferredBitDepth && <Badge>{formatVideoBitDepth(item.preferredBitDepth)}</Badge>}
-          {resolveSubtitleLanguages(item.preferredSubtitleLanguages, item.preferredSubtitle).length > 0 && (
-            <Badge>
-              {formatSubtitleLanguages(resolveSubtitleLanguages(item.preferredSubtitleLanguages, item.preferredSubtitle))}
-            </Badge>
-          )}
-        </div>
-      </div>
-    </article>
-  );
-}
-
-/** 渲染卡片内的下载统计指标。 */
-function CardMetric({
-  label,
-  value,
-  tone = "neutral",
-  onClick
-}: {
-  label: string;
-  value: number;
-  tone?: "neutral" | "green" | "blue";
-  onClick?: () => void;
-}) {
-  const toneClassName = tone === "neutral" ? "text-foreground" : "text-primary";
-  const content = (
-    <>
-      <div className={cn("text-sm font-semibold tabular-nums", toneClassName)}>{value}</div>
-      <div className="mt-0.5 truncate text-muted-foreground">{label}</div>
-    </>
-  );
-
-  if (onClick) {
-    return (
-      <Button
-        aria-label={`查看${label}任务，共 ${value} 集`}
-        className="h-auto min-h-0 w-full flex-col items-stretch gap-0 px-2 py-1.5 text-left md:min-h-0"
-        title={`查看${label}任务`}
-        type="button"
-        variant="secondary"
-        onClick={onClick}
-      >
-        {content}
-      </Button>
-    );
-  }
-
-  return (
-    <div className="rounded-md bg-muted/60 px-2 py-1.5">
-      {content}
-    </div>
+    </Page>
   );
 }
 
@@ -1265,21 +1099,44 @@ function RulesDrawer({
   onPreviewReleases: (episode: Episode) => void;
   onAddRelease: (episode: Episode, release: Release) => void;
 }) {
+  const [activeTab, setActiveTab] = useState<RulesTab>("basic");
+  const titleDisplay = resolveAnimeTitleDisplay(draft.anime);
+
   return (
-    <Drawer
-      ariaLabel="追番规则"
-      className="overflow-x-hidden overflow-y-auto bg-background p-3 sm:max-w-3xl sm:p-4"
+    <WorkbenchSheet
+      description={titleDisplay.subtitle ?? (draftPersisted ? "编辑追番规则" : "创建新的追番")}
+      footer={
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button onClick={onCancel} variant="outline">取消</Button>
+          <Button onClick={onSave} disabled={saving}>
+            <Save data-icon="inline-start" />
+            {saving ? "保存中" : "保存规则"}
+          </Button>
+        </div>
+      }
+      headerContent={
+        <Tabs value={activeTab} onValueChange={(value) => setActiveTab(value as RulesTab)}>
+          <TabsList className="grid h-auto w-full grid-cols-2 sm:grid-cols-4">
+            <TabsTrigger value="basic">基础信息</TabsTrigger>
+            <TabsTrigger value="download">下载偏好</TabsTrigger>
+            <TabsTrigger value="rss">RSS 订阅</TabsTrigger>
+            <TabsTrigger value="episodes">单集规则</TabsTrigger>
+          </TabsList>
+        </Tabs>
+      }
       onClose={onCancel}
+      title={draftPersisted ? `追番规则 · ${titleDisplay.title}` : "添加追番"}
     >
       <div className="flex min-w-0 flex-col gap-4">
+        {activeTab !== "episodes" && (
         <RulesPanel
+          activeTab={activeTab}
           draft={draft}
           fansubs={fansubs}
-          saving={saving}
           onChange={onChange}
-          onCancel={onCancel}
-          onSave={onSave}
         />
+        )}
+        {activeTab === "episodes" && (
         <EpisodeRulesPanel
           draft={draft}
           persisted={draftPersisted}
@@ -1298,220 +1155,22 @@ function RulesDrawer({
           onPreviewReleases={onPreviewReleases}
           onAddRelease={onAddRelease}
         />
-      </div>
-    </Drawer>
-  );
-}
-
-function AnimeDownloadDetailDrawer({
-  detail,
-  downloadTasks,
-  fansubNames,
-  onFilterChange,
-  onClose
-}: {
-  detail: AnimeDownloadDetailState;
-  downloadTasks: DownloadTask[];
-  fansubNames: Map<string, string>;
-  onFilterChange: (filter: AnimeDownloadDetailFilter) => void;
-  onClose: () => void;
-}) {
-  const titleDisplay = resolveAnimeTitleDisplay(detail.item.anime);
-  const animeTasks = getAnimeDownloadTasks(downloadTasks, detail.item.anime.id);
-  const visibleTasks = filterAnimeDownloadDetailTasks(animeTasks, detail.filter);
-  const counts = {
-    all: animeTasks.length,
-    active: animeTasks.filter(isActiveDownload).length,
-    completed: animeTasks.filter(isCompletedDownload).length
-  };
-
-  return (
-    <Drawer
-      ariaLabel="下载明细"
-      className="flex flex-col sm:max-w-2xl"
-      onClose={onClose}
-    >
-      <div className="flex items-start justify-between gap-3 border-b p-4 sm:gap-4 sm:p-5">
-        <div className="min-w-0">
-          <h2 className="truncate text-lg font-semibold tracking-normal">{titleDisplay.title}</h2>
-          <p className="mt-1 truncate text-sm text-muted-foreground">{titleDisplay.subtitle ?? "下载任务明细"}</p>
-        </div>
-        <Button variant="ghost" onClick={onClose} aria-label="关闭下载明细" title="关闭下载明细">
-          <X data-icon="inline-start" />
-        </Button>
-      </div>
-
-      <div className="border-b p-4">
-        <Tabs
-          value={detail.filter}
-          onValueChange={(value) => onFilterChange(value as AnimeDownloadDetailFilter)}
-        >
-          <TabsList className="grid w-full grid-cols-3">
-            {downloadDetailFilters.map((filter) => (
-              <TabsTrigger className="min-w-0 px-2" key={filter.value} value={filter.value}>
-                {filter.label} {counts[filter.value]}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {visibleTasks.length > 0 ? (
-          <div className="flex min-w-0 flex-col gap-3">
-            {visibleTasks.map((task) => (
-              <DownloadDetailTaskCard key={task.id} task={task} fansubNames={fansubNames} />
-            ))}
-          </div>
-        ) : (
-          <Empty className="min-h-56 p-4 md:p-8">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <Download />
-              </EmptyMedia>
-              <EmptyTitle>暂无下载任务</EmptyTitle>
-              <EmptyDescription>当前筛选下没有下载任务。</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
         )}
       </div>
-    </Drawer>
-  );
-}
-
-function DownloadDetailTaskCard({
-  task,
-  fansubNames
-}: {
-  task: DownloadTask;
-  fansubNames: Map<string, string>;
-}) {
-  const fansubName = (task.fansubGroupId ? fansubNames.get(task.fansubGroupId) : undefined) ?? task.fansubName ?? "未识别字幕组";
-  const playableFilePath = resolveDownloadTaskFilePath(task, true);
-  const revealFilePath = resolveDownloadTaskFilePath(task, false);
-  const [activeFileAction, setActiveFileAction] = useState<"play" | "reveal" | null>(null);
-  const [fileActionError, setFileActionError] = useState<string | null>(null);
-
-  /** 播放已完成视频或在文件管理器中定位下载文件。 */
-  async function runFileAction(action: "play" | "reveal") {
-    const filePath = action === "play" ? playableFilePath : revealFilePath;
-    if (!filePath) {
-      return;
-    }
-
-    setActiveFileAction(action);
-    try {
-      if (action === "play") {
-        await appApi.playMedia(filePath);
-      } else {
-        await appApi.revealMedia(filePath);
-      }
-      setFileActionError(null);
-    } catch (error) {
-      setFileActionError(error instanceof Error ? error.message : action === "play" ? "播放失败" : "打开目录失败");
-    } finally {
-      setActiveFileAction(null);
-    }
-  }
-
-  return (
-    <article className="rounded-md border bg-background p-4">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            {task.episodeNo !== undefined && <Badge tone="blue">第 {task.episodeNo} 集</Badge>}
-            <Badge tone={getDownloadStatusTone(task.status)}>{downloadStatusText[task.status]}</Badge>
-            <Badge>{fansubName}</Badge>
-            <ReleaseMetadataBadges metadata={task} />
-          </div>
-          <h3 className="mt-2 truncate text-sm font-medium" title={task.name}>
-            {task.name}
-          </h3>
-        </div>
-        <div className="shrink-0 text-sm font-medium tabular-nums">{formatPercent(task.progress)}</div>
-      </div>
-
-      <Progress className="mt-3" value={getProgressWidth(task.progress)} />
-
-      <dl className="mt-4 grid grid-cols-1 gap-x-4 gap-y-2 text-xs sm:grid-cols-2">
-        <DownloadDetailMeta label="保存路径" value={task.savePath} className="sm:col-span-2" />
-        <DownloadDetailMeta label="创建时间" value={formatDateTime(task.createdAt)} />
-        <DownloadDetailMeta label="完成时间" value={task.completedAt ? formatDateTime(task.completedAt) : "未完成"} />
-        <DownloadDetailMeta label="下载速度" value={formatSpeedText(task.downloadSpeed)} />
-        <DownloadDetailMeta label="上传速度" value={formatSpeedText(task.uploadSpeed)} />
-      </dl>
-
-      {isCompletedDownload(task) && (
-        <div className="mt-4 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
-          {fileActionError && (
-            <Alert className="min-w-0 flex-1" variant="destructive">
-              <AlertTitle>文件操作失败</AlertTitle>
-              <AlertDescription>{fileActionError}</AlertDescription>
-            </Alert>
-          )}
-          <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto">
-            <Button
-              className="h-11 px-2 text-xs sm:h-8"
-              variant="outline"
-              aria-label="播放已完成视频"
-              title={playableFilePath ? "播放已完成视频" : "未找到可播放的视频文件"}
-              disabled={!playableFilePath || activeFileAction !== null}
-              onClick={() => void runFileAction("play")}
-            >
-              <Play data-icon="inline-start" />
-              播放
-            </Button>
-            <Button
-              className="h-11 px-2 text-xs sm:h-8"
-              variant="outline"
-              aria-label="打开文件目录"
-              title={revealFilePath ? "打开文件所在目录" : "未找到已完成文件"}
-              disabled={!revealFilePath || activeFileAction !== null}
-              onClick={() => void runFileAction("reveal")}
-            >
-              <FolderOpen data-icon="inline-start" />
-              打开目录
-            </Button>
-          </div>
-        </div>
-      )}
-    </article>
-  );
-}
-
-function DownloadDetailMeta({
-  label,
-  value,
-  className
-}: {
-  label: string;
-  value: string;
-  className?: string;
-}) {
-  return (
-    <div className={cn("min-w-0", className)}>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="mt-1 truncate font-medium" title={value}>
-        {value}
-      </dd>
-    </div>
+    </WorkbenchSheet>
   );
 }
 
 function RulesPanel({
+  activeTab,
   draft,
   fansubs,
-  saving,
-  onChange,
-  onCancel,
-  onSave
+  onChange
 }: {
+  activeTab: Exclude<RulesTab, "episodes">;
   draft: MyAnime | null;
   fansubs: FansubGroup[];
-  saving: boolean;
   onChange: (item: MyAnime | null) => void;
-  onCancel: () => void;
-  onSave: () => void;
 }) {
   if (!draft) {
     return (
@@ -1534,16 +1193,22 @@ function RulesPanel({
     );
   }
 
+  if (activeTab === "rss") {
+    return <RssSubscriptionsEditor draft={draft} onChange={onChange} />;
+  }
+
   return (
-    <Card>
-      <CardHeader className="flex-row items-start justify-between gap-4">
-        <CardTitle>追番规则</CardTitle>
-        <Button variant="ghost" onClick={onCancel} aria-label="关闭编辑" title="关闭编辑">
-          <X data-icon="inline-start" />
-        </Button>
+    <Card className="border-0 shadow-none">
+      <CardHeader className="px-0 pt-0">
+        <CardTitle>{activeTab === "basic" ? "基础信息" : "下载偏好"}</CardTitle>
+        <CardDescription>
+          {activeTab === "basic" ? "维护标题、首播时间和追番状态。" : "设置自动下载、字幕组与技术规格偏好。"}
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <FieldGroup className="gap-4">
+          {activeTab === "basic" ? (
+            <>
           <TextField
             label="番剧名称"
             value={draft.anime.title}
@@ -1635,6 +1300,9 @@ function RulesPanel({
               })
             }
           />
+            </>
+          ) : (
+            <>
           <SelectField
             label="默认字幕组"
             value={draft.defaultFansubGroupId ?? ""}
@@ -1733,15 +1401,10 @@ function RulesPanel({
               })
             }
           />
-          <RssSubscriptionsEditor draft={draft} onChange={onChange} />
+            </>
+          )}
         </FieldGroup>
       </CardContent>
-      <CardFooter>
-        <Button className="min-h-11 w-full sm:min-h-9" onClick={onSave} disabled={saving}>
-          <Save data-icon="inline-start" />
-          {saving ? "保存中" : "保存规则"}
-        </Button>
-      </CardFooter>
     </Card>
   );
 }
@@ -1942,8 +1605,6 @@ function AnimeDownloadPanel({
   sourceBindingState,
   sourceBindingLoading,
   sourceBindingActionKey,
-  panelClassName,
-  listClassName,
   onTabChange,
   onConfirmSourceCandidate,
   onRemoveSourceBinding,
@@ -1954,8 +1615,7 @@ function AnimeDownloadPanel({
   onForceRefresh,
   onAddRelease,
   onAddRssSubscription,
-  onAddSelected,
-  onClose
+  onAddSelected
 }: {
   target: MyAnime;
   releases: Release[];
@@ -1973,8 +1633,6 @@ function AnimeDownloadPanel({
   sourceBindingState: AnimeSourceBindingState | null;
   sourceBindingLoading: boolean;
   sourceBindingActionKey: string | null;
-  panelClassName?: string;
-  listClassName?: string;
   onTabChange: (tab: DownloadResourceTab) => void;
   onConfirmSourceCandidate: (candidate: AnimeSourceCandidate) => void;
   onRemoveSourceBinding: (sourceId: string) => void;
@@ -1986,7 +1644,6 @@ function AnimeDownloadPanel({
   onAddRelease: (release: Release) => void;
   onAddRssSubscription: (subscription: RssSubscriptionDraft) => void;
   onAddSelected: (releases: Release[]) => void;
-  onClose: () => void;
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(target.anime);
   const [groupCollapseOverrides, setGroupCollapseOverrides] = useState<Record<string, boolean>>({});
@@ -2142,19 +1799,6 @@ function AnimeDownloadPanel({
   }
 
   return (
-    <Card
-      className={cn(
-        "flex min-h-0 flex-col",
-        panelClassName
-      )}
-    >
-      <CardHeader className="flex-row items-start justify-between gap-4 p-3 pb-0 sm:p-4 sm:pb-0 [@media(max-height:760px)]:p-2 [@media(max-height:760px)]:pb-0">
-        <CardTitle>资源搜索</CardTitle>
-        <Button className="size-11 p-0 sm:size-9" variant="ghost" onClick={onClose} aria-label="关闭资源搜索" title="关闭资源搜索">
-          <X />
-        </Button>
-      </CardHeader>
-      <CardContent className="flex min-h-0 flex-1 flex-col p-3 pt-3 sm:p-4 sm:pt-3 [@media(max-height:760px)]:p-2 [@media(max-height:760px)]:pt-2">
         <div className="flex min-h-0 flex-1 flex-col gap-3 [@media(max-height:760px)]:gap-2">
         <div className="grid shrink-0 items-center gap-2 md:grid-cols-2">
           <div className="min-w-0">
@@ -2280,7 +1924,7 @@ function AnimeDownloadPanel({
             <span className="sr-only">{activeTab === "rss" ? "正在读取 RSS 订阅" : "正在查询发布资源"}</span>
           </div>
         ) : (
-          <div className={cn("grid auto-rows-max content-start gap-3", listClassName)}>
+          <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-3 overflow-y-auto pr-1">
             {activeTab === "rss"
               ? rssGroups.map((group, groupIndex) => {
                   const groupKey = `rss:${group.subscription.id}`;
@@ -2415,8 +2059,6 @@ function AnimeDownloadPanel({
           </div>
         )}
         </div>
-      </CardContent>
-    </Card>
   );
 }
 
@@ -2543,20 +2185,6 @@ function ReleaseGroupHeader({
   );
 }
 
-interface ReleaseVersionFamily {
-  key: string;
-  releases: Release[];
-  selectedRelease: Release;
-  episodeKey: string;
-  episodeLabel: string;
-}
-
-interface ReleaseEpisodeFamilyGroup {
-  key: string;
-  label: string;
-  families: ReleaseVersionFamily[];
-}
-
 /** 渲染合并后的资源族行，并提供语言版本选择。 */
 function ReleaseDownloadRow({
   family,
@@ -2659,195 +2287,6 @@ function ReleaseDownloadRow({
       </div>
     </div>
   );
-}
-
-/** 按 episode 将已合并的资源族再次归组。 */
-function groupReleaseFamilyEpisodes(families: ReleaseVersionFamily[]): ReleaseEpisodeFamilyGroup[] {
-  const groups = new Map<string, ReleaseEpisodeFamilyGroup>();
-  for (const family of families) {
-    const group = groups.get(family.episodeKey) ?? {
-      key: family.episodeKey,
-      label: family.episodeLabel,
-      families: []
-    };
-    group.families.push(family);
-    groups.set(family.episodeKey, group);
-  }
-
-  return [...groups.values()];
-}
-
-/** 统计资源族覆盖的唯一集数或连集范围数量。 */
-function countReleaseFamilyEpisodes(families: ReleaseVersionFamily[]): number {
-  return new Set(families.map((family) => family.episodeKey)).size;
-}
-
-/** 将同一资源的字幕、编码、位深和分辨率版本合并为一个资源族。 */
-function groupReleaseVersions(
-  releases: Release[],
-  preferences: MyAnime,
-  selections: Record<string, string> = {}
-): ReleaseVersionFamily[] {
-  const families = new Map<string, ReleaseVersionFamily>();
-  for (const release of releases) {
-    const key = buildReleaseFamilyKey(release);
-    const family = families.get(key) ?? createReleaseVersionFamily(key, release);
-    family.releases.push(release);
-    families.set(key, family);
-  }
-
-  return [...families.values()]
-    .map((family) => {
-      const ordered = sortReleaseVersions(family.releases, preferences);
-      const selectedRelease =
-        family.releases.find((item) => releaseKey(item) === selections[family.key]) ?? ordered[0] ?? family.releases[0];
-      return {
-        ...family,
-        releases: ordered,
-        selectedRelease
-      };
-    })
-    .sort((left, right) => {
-      const leftEpisode = releaseEpisodeOrder(left.selectedRelease);
-      const rightEpisode = releaseEpisodeOrder(right.selectedRelease);
-      if (leftEpisode !== rightEpisode) {
-        return rightEpisode - leftEpisode;
-      }
-
-      return right.selectedRelease.publishedAt.localeCompare(left.selectedRelease.publishedAt);
-    });
-}
-
-/** 创建资源族初始结构，后续同类 release 会追加到 releases。 */
-function createReleaseVersionFamily(key: string, release: Release): ReleaseVersionFamily {
-  return {
-    key,
-    releases: [],
-    selectedRelease: release,
-    episodeKey: getReleaseEpisodeKey(release),
-    episodeLabel: getReleaseEpisodeLabel(release)
-  };
-}
-
-/** 构造忽略字幕、编码、位深和分辨率差异的资源族键。 */
-function buildReleaseFamilyKey(release: Release): string {
-  return [
-    release.sourceId,
-    release.fansubGroupId ?? normalizeFamilyText(release.fansubName ?? ""),
-    getReleaseEpisodeKey(release),
-    normalizeFamilyText(stripReleaseVariantTokens(release.title))
-  ].join("|");
-}
-
-/** 生成单集或连集范围的稳定分组键。 */
-function getReleaseEpisodeKey(release: Release): string {
-  if (release.episodeRange) {
-    return `range:${release.episodeRange.start}-${release.episodeRange.end}`;
-  }
-  if (release.episodeNo === undefined) {
-    return release.contentKind === "batch" ? `batch:${release.seriesSeasonNo ?? "unknown"}` : "unknown";
-  }
-  return `episode:${release.episodeNo}`;
-}
-
-/** 生成资源行展示用的单集或连集范围文案。 */
-function getReleaseEpisodeLabel(release: Release): string {
-  if (release.episodeRange) {
-    return `第 ${formatEpisodeNumber(release.episodeRange.start)}-${formatEpisodeNumber(release.episodeRange.end)} 集`;
-  }
-  if (release.episodeNo === undefined) {
-    return release.contentKind === "batch" ? "合集" : "未识别集数";
-  }
-  return `第 ${formatEpisodeNumber(release.episodeNo)} 集`;
-}
-
-/** 将单集或连集范围转换为排序用的数值。 */
-function releaseEpisodeOrder(release: Release): number {
-  if (release.episodeRange) {
-    return release.episodeRange.end;
-  }
-  return release.episodeNo ?? -1;
-}
-
-/** 按字幕、编码、位深和分辨率偏好排列同一资源族内的版本。 */
-function sortReleaseVersions(releases: Release[], preferences: MyAnime): Release[] {
-  return [...releases].sort((left, right) => {
-    const leftScore = getReleaseVersionPreferenceScore(left, preferences);
-    const rightScore = getReleaseVersionPreferenceScore(right, preferences);
-    if (leftScore !== rightScore) {
-      return rightScore - leftScore;
-    }
-
-    const leftDate = right.publishedAt.localeCompare(left.publishedAt);
-    if (leftDate !== 0) {
-      return leftDate;
-    }
-
-    return releaseKey(left).localeCompare(releaseKey(right));
-  });
-}
-
-/** 计算资源版本对追番技术偏好的命中分。 */
-function getReleaseVersionPreferenceScore(release: Release, preferences: MyAnime): number {
-  let score = 0;
-  const preferredSubtitleLanguages = resolveSubtitleLanguages(
-    preferences.preferredSubtitleLanguages,
-    preferences.preferredSubtitle
-  );
-  if (preferredSubtitleLanguages.length > 0) {
-    score += getSubtitleCoverage(release, preferredSubtitleLanguages) * 10;
-  }
-  if (preferences.preferredResolution && release.resolution === preferences.preferredResolution) {
-    score += 5;
-  }
-  if (preferences.preferredCodec && release.normalizedVideoCodec === preferences.preferredCodec) {
-    score += 5;
-  }
-  if (preferences.preferredBitDepth && release.bitDepth === preferences.preferredBitDepth) {
-    score += 6;
-  }
-  return score;
-}
-
-/** 生成资源版本下拉框中的完整技术信息文案。 */
-function getReleaseVersionLabel(release: Release, preferences: MyAnime, active = false): string {
-  const preferredText = getReleaseVersionPreferenceScore(release, preferences) > 0 ? "偏好匹配" : "";
-  const parts = [
-    formatSubtitleLanguages(release.subtitleLanguages, release.subtitle),
-    release.normalizedVideoCodec ?? release.declaredVideoCodec ?? "编码未知",
-    formatVideoBitDepth(release.bitDepth),
-    release.resolution ?? "",
-    release.sourceName
-  ].filter(Boolean);
-  return `${active ? "当前 · " : ""}${parts.join(" · ")}${preferredText ? ` · ${preferredText}` : ""}`;
-}
-
-/** 归一化资源族键中的标题片段。 */
-function normalizeFamilyText(value: string): string {
-  return value
-    .normalize("NFKC")
-    .toLocaleLowerCase()
-    .replace(/[\s_./\-]+/g, " ")
-    .replace(/\[(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)\]/gi, "")
-    .replace(/[【\[][^】\]]*(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)[^】\]]*[】\]]/gi, "")
-    .replace(/(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|内封|内嵌|字幕)/gi, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-/** 去除资源族中允许切换的技术变量，保留 WEB-DL、BDRip 等版本类型。 */
-function stripReleaseVariantTokens(value: string): string {
-  return value
-    .replace(/(?:chs|cht|gb|big5|multi|简体|繁体|简繁|繁简|简日|繁日|日语|日語|英文|英语|英語|内封|内嵌|字幕)/gi, " ")
-    .replace(/\b(?:h\.?264|x264|avc|h\.?265|x265|hevc|av1|vp9)\b/gi, " ")
-    .replace(/\b(?:8|10|12)\s*[- ]?\s*bits?\b|\b(?:hi10p|main\s*10)\b/gi, " ")
-    .replace(/\b(?:720p|1080p|2160p|4k|1280x720|1920x1080|3840x2160)\b/gi, " ")
-    .replace(/[\[【(（]\s*[\]】)）]/g, " ");
-}
-
-/** 格式化集数，整数补齐两位，小数保持原样。 */
-function formatEpisodeNumber(value: number): string {
-  return Number.isInteger(value) ? String(value).padStart(2, "0") : String(value);
 }
 
 /** 展示精确下载源的绑定状态和待确认候选。 */
@@ -3297,78 +2736,6 @@ function countDownloadEpisodes(downloadTasks: DownloadTask[]): number {
   return new Set(downloadTasks.map((task) => task.episodeNo).filter((value) => value !== undefined)).size;
 }
 
-function isActiveDownload(task: DownloadTask): boolean {
-  return ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(
-    task.status
-  );
-}
-
-/** 读取并按集数、创建时间排序某部番的下载任务。 */
-function getAnimeDownloadTasks(downloadTasks: DownloadTask[], animeId: string): DownloadTask[] {
-  return downloadTasks
-    .filter((task) => task.animeId === animeId)
-    .sort((left, right) => {
-      const leftEpisode = left.episodeNo ?? -1;
-      const rightEpisode = right.episodeNo ?? -1;
-      if (leftEpisode !== rightEpisode) {
-        return rightEpisode - leftEpisode;
-      }
-
-      return right.createdAt.localeCompare(left.createdAt);
-    });
-}
-
-function filterAnimeDownloadDetailTasks(
-  downloadTasks: DownloadTask[],
-  filter: AnimeDownloadDetailFilter
-): DownloadTask[] {
-  if (filter === "active") {
-    return downloadTasks.filter(isActiveDownload);
-  }
-
-  if (filter === "completed") {
-    return downloadTasks.filter(isCompletedDownload);
-  }
-
-  return downloadTasks;
-}
-
-function getDownloadStatusTone(status: DownloadTask["status"]): "neutral" | "green" | "amber" | "red" | "blue" {
-  if (status === "completed" || status === "seeding") return "green";
-  if (status === "error" || status === "missing_files") return "red";
-  if (status === "paused" || status === "stalled") return "amber";
-  if (status === "downloading") return "blue";
-  return "neutral";
-}
-
-function getProgressWidth(progress: number): number {
-  return Math.max(0, Math.min(100, Math.round(progress * 100)));
-}
-
-/** 选择任务中的完整视频文件，并生成播放器或文件管理器可用的绝对路径。 */
-function resolveDownloadTaskFilePath(task: DownloadTask, videoOnly: boolean): string | undefined {
-  const completedFiles = task.files.filter((file) => file.selected && file.progress >= 1);
-  const videoFile = completedFiles.find((file) => /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i.test(file.name));
-  const targetFile = videoOnly ? videoFile : videoFile ?? completedFiles[0];
-  if (!targetFile) {
-    return undefined;
-  }
-
-  return joinDownloadFilePath(task.savePath, targetFile.name);
-}
-
-/** 按任务保存路径的格式拼接 qBittorrent 返回的相对文件名。 */
-function joinDownloadFilePath(savePath: string, fileName: string): string {
-  if (/^(?:[A-Za-z]:[\\/]|\/|\\\\)/.test(fileName)) {
-    return fileName;
-  }
-
-  const separator = savePath.includes("\\") ? "\\" : "/";
-  const basePath = savePath.replace(/[\\/]+$/, "");
-  const relativePath = fileName.replace(/^[\\/]+/, "").replace(/[\\/]+/g, separator);
-  return `${basePath}${separator}${relativePath}`;
-}
-
 function buildSearchTerms(item: MyAnime): string[] {
   return buildAnimeReleaseSearchTerms(item.anime, [], 8);
 }
@@ -3551,40 +2918,12 @@ function findReleaseDownloadTask(tasks: DownloadTask[], release: Release): Downl
   });
 }
 
-/** 判断资源是否可被批量选择下载。 */
-function isReleaseSelectable(release: Release, linkedTasks: DownloadTask[], anime: MyAnime["anime"]): boolean {
-  return classifyAnimeRelease(release, anime) === "current" &&
-    Boolean(release.magnetUrl ?? release.torrentUrl) &&
-    !findReleaseDownloadTask(linkedTasks, release);
-}
-
-function isCompletedDownload(task: DownloadTask): boolean {
-  return task.status === "completed" || task.status === "seeding";
-}
-
-function formatDateTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString();
-}
-
-function formatSpeedText(value: number): string {
-  return `${formatBytes(value)}/s`;
-}
-
 function getReleaseFansubName(release: Release, fansubNames: Map<string, string>): string {
   if (!release.fansubGroupId) {
     return release.fansubName ?? "未识别字幕组";
   }
 
   return fansubNames.get(release.fansubGroupId) ?? release.fansubName ?? release.fansubGroupId;
-}
-
-function releaseKey(release: Release): string {
-  return release.infoHash ?? release.magnetUrl ?? release.torrentUrl ?? `${release.sourceId}:${release.title}`;
 }
 
 function formatReleaseDate(value: string): string {
@@ -3711,6 +3050,11 @@ function SelectField({
       </Select>
     </Field>
   );
+}
+
+/** 序列化规则草稿，用于判断侧栏是否存在未保存修改。 */
+function serializeMyAnimeDraft(item: MyAnime): string {
+  return JSON.stringify(item);
 }
 
 /** 使用 shadcn ToggleGroup 编辑可多选的字幕语言偏好。 */
