@@ -1,9 +1,17 @@
-import { AlertCircle, CheckCircle2, Download, PackageSearch, Search } from "lucide-react";
+import {
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  Download,
+  Link2,
+  PackageSearch,
+  Search
+} from "lucide-react";
 import { type FocusEvent as ReactFocusEvent, useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Command,
   CommandEmpty,
@@ -15,7 +23,18 @@ import {
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupButton } from "@/components/ui/input-group";
+import {
+  Pagination,
+  PaginationContent,
+  PaginationEllipsis,
+  PaginationItem,
+  PaginationLink,
+  PaginationNext,
+  PaginationPrevious
+} from "@/components/ui/pagination";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Page, PageHeader, PageHeading } from "@/components/page-layout";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { formatBytes, formatDateTime } from "@/lib/format";
@@ -26,6 +45,9 @@ import type { ReleaseSearchResult } from "@shared/contracts";
 import type { MyAnime, Release } from "@shared/domain";
 
 const MAX_ANIME_SUGGESTIONS = 10;
+const RESULTS_PER_PAGE = 10;
+
+type ReleaseSortKey = "match" | "published" | "seeders";
 
 interface SearchedContext {
   mode: "anime" | "keyword";
@@ -43,7 +65,11 @@ export function ReleaseSearchPage() {
   const [result, setResult] = useState<ReleaseSearchResult | null>(null);
   const [searchedContext, setSearchedContext] = useState<SearchedContext | null>(null);
   const [addingId, setAddingId] = useState<string | null>(null);
-  const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [addedReleaseIds, setAddedReleaseIds] = useState<Set<string>>(new Set());
+  const [message, setMessage] = useState<string | null>(null);
+  const [sortKey, setSortKey] = useState<ReleaseSortKey>("match");
+  const [page, setPage] = useState(1);
+  const [errorsExpanded, setErrorsExpanded] = useState(false);
 
   const selectedAnime = useMemo(
     () => myAnime.find((item) => item.id === selectedAnimeId) ?? null,
@@ -58,6 +84,17 @@ export function ReleaseSearchPage() {
       : [],
     [myAnime, parsedInput.keyword]
   );
+  const sortedReleases = useMemo(
+    () => sortReleases(result?.releases ?? [], sortKey),
+    [result?.releases, sortKey]
+  );
+  const pageCount = Math.max(1, Math.ceil(sortedReleases.length / RESULTS_PER_PAGE));
+  const currentPage = Math.min(page, pageCount);
+  const visibleReleases = sortedReleases.slice(
+    (currentPage - 1) * RESULTS_PER_PAGE,
+    currentPage * RESULTS_PER_PAGE
+  );
+  const pageItems = createPaginationItems(currentPage, pageCount);
 
   useEffect(() => {
     let active = true;
@@ -65,17 +102,10 @@ export function ReleaseSearchPage() {
     appApi
       .listMyAnime()
       .then((items) => {
-        if (active) {
-          setMyAnime(items);
-        }
+        if (active) setMyAnime(items);
       })
       .catch((error) => {
-        if (active) {
-          setMessage({
-            tone: "error",
-            text: error instanceof Error ? error.message : "加载追番列表失败"
-          });
-        }
+        if (active) setMessage(error instanceof Error ? error.message : "加载追番列表失败");
       });
 
     return () => {
@@ -103,10 +133,7 @@ export function ReleaseSearchPage() {
 
   /** 焦点离开输入框和候选列表后关闭联想内容。 */
   function closeSuggestionsOnBlur(event: ReactFocusEvent<HTMLDivElement>) {
-    if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget as Node)) {
-      return;
-    }
-
+    if (event.relatedTarget && event.currentTarget.contains(event.relatedTarget as Node)) return;
     window.setTimeout(() => setSuggestionsOpen(false), 0);
   }
 
@@ -114,7 +141,7 @@ export function ReleaseSearchPage() {
   async function search() {
     const input = parseReleaseSearchInput(keyword);
     if (!input.keyword) {
-      setMessage({ tone: "error", text: "请输入搜索关键词" });
+      setMessage("请输入搜索关键词");
       return;
     }
 
@@ -137,18 +164,17 @@ export function ReleaseSearchPage() {
             limit: 80
           });
 
-      setResult({ ...searchResult, releases: sortReleases(searchResult.releases) });
+      setResult(searchResult);
       setSearchedContext({
         mode: selectedAnime ? "anime" : "keyword",
         keyword: input.keyword,
         episodeNo: input.episodeNo,
         myAnime: selectedAnime ?? undefined
       });
+      setPage(1);
+      setErrorsExpanded(searchResult.errors.length > 0 && searchResult.releases.length === 0);
     } catch (error) {
-      setMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "资源搜索失败"
-      });
+      setMessage(error instanceof Error ? error.message : "资源搜索失败");
     } finally {
       setLoading(false);
     }
@@ -157,9 +183,7 @@ export function ReleaseSearchPage() {
   /** 将当前搜索结果加入下载队列，并沿用执行搜索时的番剧和集数关联。 */
   async function addDownload(releaseId: string) {
     const release = result?.releases.find((item) => item.id === releaseId);
-    if (!release) {
-      return;
-    }
+    if (!release) return;
 
     const searchedAnime = searchedContext?.myAnime;
     const releaseForDownload: Release = {
@@ -178,136 +202,115 @@ export function ReleaseSearchPage() {
         episodeNo: releaseForDownload.episodeNo,
         fansubGroupId: releaseForDownload.fansubGroupId
       });
-      setMessage({ tone: "success", text: "已添加到下载队列" });
+      setAddedReleaseIds((current) => new Set(current).add(releaseId));
+      toast.success("已添加到下载队列");
     } catch (error) {
-      setMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "添加下载失败"
-      });
+      setMessage(error instanceof Error ? error.message : "添加下载失败");
     } finally {
       setAddingId(null);
     }
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <div className="min-w-0">
-        <h1 className="text-2xl font-semibold tracking-normal">资源搜索</h1>
-        <p className="mt-1 text-sm text-muted-foreground">统一搜索已启用的 RSS、Torznab 和站点适配器，结果会自动解析字幕语言、编码、位深和清晰度。</p>
-      </div>
+    <Page aria-busy={loading}>
+      <PageHeader>
+        <PageHeading
+          description="搜索已启用来源，自动解析字幕、编码、位深和清晰度。"
+          title="资源搜索"
+        />
+      </PageHeader>
 
       {message && (
-        <Alert variant={message.tone === "error" ? "destructive" : "default"}>
-          {message.tone === "error" ? <AlertCircle /> : <CheckCircle2 />}
-          <AlertTitle>{message.tone === "error" ? "操作未完成" : "操作完成"}</AlertTitle>
-          <AlertDescription>{message.text}</AlertDescription>
+        <Alert variant="destructive">
+          <AlertCircle />
+          <AlertTitle>操作未完成</AlertTitle>
+          <AlertDescription>{message}</AlertDescription>
         </Alert>
       )}
 
-      <Card className="min-w-0">
-        <CardHeader>
-          <CardTitle>搜索资源</CardTitle>
-          <CardDescription>搜索已启用的 RSS、Torznab 和站点来源。</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FieldGroup className="gap-3">
-            <Field className="min-w-0">
-              <FieldLabel htmlFor="release-keyword">关键词</FieldLabel>
-              <Command
-                className="overflow-visible bg-transparent"
-                shouldFilter={false}
-                onBlur={closeSuggestionsOnBlur}
-              >
-                <InputGroup>
-                  <CommandInput
-                    id="release-keyword"
-                    aria-label="资源搜索关键词"
-                    autoComplete="off"
-                    placeholder="输入番剧名、关键词或集数，如：芙莉莲 EP12"
-                    value={keyword}
-                    onValueChange={updateKeyword}
-                    onFocus={() => setSuggestionsOpen(Boolean(parsedInput.keyword))}
-                    onKeyDown={(event) => {
-                      if (event.key === "Escape") {
-                        setSuggestionsOpen(false);
-                      }
-                      if (event.key === "Enter" && (!suggestionsOpen || suggestions.length === 0)) {
-                        void search();
-                      }
-                    }}
-                  />
-                  <InputGroupAddon>
-                    <InputGroupButton
-                      variant="primary"
-                      onClick={() => void search()}
-                      disabled={loading || !keyword.trim()}
-                    >
-                      <Search data-icon="inline-start" />
-                      {loading ? "搜索中" : "搜索"}
-                    </InputGroupButton>
-                  </InputGroupAddon>
-                </InputGroup>
+      <section className="relative min-w-0 rounded-md border bg-card p-4">
+        <FieldGroup className="gap-3">
+          <Field className="min-w-0">
+            <FieldLabel className="sr-only" htmlFor="release-keyword">资源搜索关键词</FieldLabel>
+            <Command
+              className="relative overflow-visible bg-transparent"
+              shouldFilter={false}
+              onBlur={closeSuggestionsOnBlur}
+            >
+              <InputGroup className="h-12 md:h-12">
+                <InputGroupAddon className="pl-3 pr-0 text-muted-foreground">
+                  <Search />
+                </InputGroupAddon>
+                <CommandInput
+                  id="release-keyword"
+                  aria-label="资源搜索关键词"
+                  autoComplete="off"
+                  placeholder="输入番剧名、关键词或集数，如：芙莉莲 EP12"
+                  value={keyword}
+                  onValueChange={updateKeyword}
+                  onFocus={() => setSuggestionsOpen(Boolean(parsedInput.keyword))}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") setSuggestionsOpen(false);
+                    if (event.key === "Enter" && (!suggestionsOpen || suggestions.length === 0)) void search();
+                  }}
+                />
+                <InputGroupAddon>
+                  <InputGroupButton
+                    className="min-h-10 bg-primary px-5 text-primary-foreground hover:bg-primary/90"
+                    onClick={() => void search()}
+                    disabled={loading || !keyword.trim()}
+                  >
+                    {loading ? "搜索中" : "搜索"}
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
 
-                {suggestionsOpen && !selectedAnime && Boolean(parsedInput.keyword) && (
-                  <CommandList variant="suggestions" className="mt-2 max-h-[min(26rem,50vh)]">
-                    <CommandEmpty>我的追番中没有匹配项</CommandEmpty>
-                    {suggestions.length > 0 && (
-                      <CommandGroup heading={`我的追番（${suggestions.length}）`}>
-                        {suggestions.map((item) => {
-                          const titleDisplay = resolveAnimeTitleDisplay(item.anime);
-                          return (
-                            <CommandItem
-                              key={item.id}
-                              value={item.id}
-                              onSelect={() => selectAnime(item)}
-                            >
-                              <div className="min-w-0">
-                                <div className="truncate font-medium">{titleDisplay.title}</div>
-                                {titleDisplay.subtitle && (
-                                  <div className="truncate text-xs text-muted-foreground">{titleDisplay.subtitle}</div>
-                                )}
+              {suggestionsOpen && !selectedAnime && Boolean(parsedInput.keyword) && (
+                <CommandList
+                  variant="suggestions"
+                  className="absolute left-0 right-0 top-full mt-2 max-h-[min(26rem,50vh)]"
+                >
+                  <CommandEmpty>我的追番中没有匹配项</CommandEmpty>
+                  {suggestions.length > 0 && (
+                    <CommandGroup heading={`我的追番（${suggestions.length}）`}>
+                      {suggestions.map((item) => {
+                        const titleDisplay = resolveAnimeTitleDisplay(item.anime);
+                        return (
+                          <CommandItem key={item.id} value={item.id} onSelect={() => selectAnime(item)}>
+                            <div className="min-w-0">
+                              <div className="truncate font-medium">{titleDisplay.title}</div>
+                              <div className="truncate text-xs text-muted-foreground">
+                                {titleDisplay.subtitle ?? `默认字幕组：${item.defaultFansubGroupId ?? "未设置"}`}
                               </div>
-                            </CommandItem>
-                          );
-                        })}
-                      </CommandGroup>
-                    )}
-                  </CommandList>
-                )}
-              </Command>
-            </Field>
+                            </div>
+                          </CommandItem>
+                        );
+                      })}
+                    </CommandGroup>
+                  )}
+                </CommandList>
+              )}
+            </Command>
+          </Field>
 
-            {(selectedAnime || parsedInput.episodeNo !== undefined) && (
-              <div className="flex flex-wrap gap-2">
-                {selectedAnime && (
-                  <Badge tone="blue">已关联：{resolveAnimeTitleDisplay(selectedAnime.anime).title}</Badge>
-                )}
-                {parsedInput.episodeNo !== undefined && <Badge>第 {parsedInput.episodeNo} 集</Badge>}
-              </div>
-            )}
-          </FieldGroup>
-        </CardContent>
-      </Card>
+          {(selectedAnime || parsedInput.episodeNo !== undefined) && (
+            <div className="flex flex-wrap gap-2">
+              {selectedAnime && (
+                <Badge tone="primary">
+                  <Link2 className="mr-1 size-3" />
+                  已关联：《{resolveAnimeTitleDisplay(selectedAnime.anime).title}》
+                </Badge>
+              )}
+              {parsedInput.episodeNo !== undefined && <Badge>第 {parsedInput.episodeNo} 集</Badge>}
+            </div>
+          )}
+        </FieldGroup>
+      </section>
 
-      {loading && !result && (
-        <div className="grid grid-cols-1 gap-3 lg:grid-cols-2" aria-label="正在搜索资源">
-          {Array.from({ length: 4 }, (_, index) => (
-            <Card key={index}>
-              <CardHeader>
-                <Skeleton className="h-5 w-4/5" />
-                <Skeleton className="h-4 w-1/3" />
-              </CardHeader>
-              <CardContent className="flex flex-col gap-3">
-                <Skeleton className="h-6 w-full" />
-                <Skeleton className="h-4 w-2/3" />
-              </CardContent>
-            </Card>
-          ))}
-        </div>
-      )}
+      {loading && !result && <ReleaseSearchSkeleton />}
 
       {!loading && !result && (
-        <Empty>
+        <Empty className="min-h-72">
           <EmptyHeader>
             <EmptyMedia variant="icon"><PackageSearch /></EmptyMedia>
             <EmptyTitle>等待搜索资源</EmptyTitle>
@@ -317,116 +320,214 @@ export function ReleaseSearchPage() {
       )}
 
       {result && (
-        <div className="flex min-w-0 flex-col gap-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <section className="flex min-w-0 flex-col gap-4">
+          <div className="flex min-w-0 flex-col gap-3 border-b-2 border-foreground pb-3 sm:flex-row sm:items-end sm:justify-between">
             <div className="min-w-0">
               {searchedContext && (
-                <div className="truncate text-sm font-medium">
+                <div className="break-words text-sm font-semibold">
                   {searchedContext.mode === "anime"
                     ? `按《${resolveAnimeTitleDisplay(searchedContext.myAnime!.anime).title}》搜索`
                     : `关键词搜索：${searchedContext.keyword}`}
                   {searchedContext.episodeNo !== undefined ? ` · 第 ${searchedContext.episodeNo} 集` : ""}
                 </div>
               )}
-              <div className="text-sm text-muted-foreground">
-                已搜索 {result.searchedSourceIds.length} 个下载源，找到 {result.releases.length} 条资源
+              <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <span>已搜索 {result.searchedSourceIds.length} 个下载源</span>
+                <span>找到 {result.releases.length} 条资源</span>
+                {result.errors.length > 0 && <span className="text-destructive">{result.errors.length} 个源异常</span>}
               </div>
             </div>
-            {result.errors.length > 0 && <Badge tone="amber">{result.errors.length} 个源异常</Badge>}
+            <Field className="w-full sm:w-40">
+              <FieldLabel className="sr-only" htmlFor="release-sort">排序方式</FieldLabel>
+              <Select
+                value={sortKey}
+                onValueChange={(value) => {
+                  setSortKey(value as ReleaseSortKey);
+                  setPage(1);
+                }}
+              >
+                <SelectTrigger id="release-sort">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="match">匹配优先</SelectItem>
+                    <SelectItem value="published">最新发布</SelectItem>
+                    <SelectItem value="seeders">做种最多</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
           </div>
 
           {result.errors.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle>下载源异常</CardTitle>
-                <CardDescription>其余下载源的搜索结果仍然可用。</CardDescription>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                {result.errors.map((error, index) => (
-                  <Alert key={`${error.sourceId}-${index}`}>
-                    <AlertCircle />
-                    <AlertTitle>{error.sourceId}</AlertTitle>
-                    <AlertDescription>{error.message}</AlertDescription>
-                  </Alert>
-                ))}
-              </CardContent>
-            </Card>
+            <Alert variant={result.releases.length === 0 ? "destructive" : "default"}>
+              <AlertCircle />
+              <AlertTitle className="flex min-w-0 items-center justify-between gap-3">
+                <span>{result.releases.length === 0 ? "下载源搜索失败" : "部分下载源异常"}</span>
+                <Button
+                  className="size-9 p-0"
+                  variant="ghost"
+                  aria-expanded={errorsExpanded}
+                  aria-label={errorsExpanded ? "收起来源异常" : "展开来源异常"}
+                  onClick={() => setErrorsExpanded((current) => !current)}
+                >
+                  {errorsExpanded ? <ChevronUp /> : <ChevronDown />}
+                </Button>
+              </AlertTitle>
+              <AlertDescription>
+                {errorsExpanded ? (
+                  <ul className="mt-2 flex flex-col gap-2">
+                    {result.errors.map((error, index) => (
+                      <li className="break-words" key={`${error.sourceId}-${index}`}>
+                        <span className="font-medium">{error.sourceId}：</span>{error.message}
+                      </li>
+                    ))}
+                  </ul>
+                ) : "其余下载源的搜索结果仍然可用。"}
+              </AlertDescription>
+            </Alert>
           )}
 
-          {result.releases.length > 0 ? (
-            <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
-              {result.releases.map((release) => (
-                <Card key={release.id} className="min-w-0">
-                  <CardHeader className="gap-3 sm:flex-row sm:items-start sm:justify-between">
-                    <div className="min-w-0">
-                      <CardTitle className="break-words leading-snug" title={release.title}>{release.title}</CardTitle>
-                      <CardDescription className="mt-2" title={release.publishedAt}>
-                        发布时间：{formatDateTime(release.publishedAt)}
-                      </CardDescription>
+          {visibleReleases.length > 0 ? (
+            <div className="min-w-0 divide-y overflow-hidden rounded-md border bg-card">
+              {visibleReleases.map((release) => {
+                const added = addedReleaseIds.has(release.id);
+                return (
+                  <article
+                    className="flex min-w-0 flex-col gap-3 p-4 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between"
+                    key={release.id}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <h2 className="break-words text-sm font-semibold leading-5" title={release.title}>{release.title}</h2>
+                      <div className="mt-2 flex flex-wrap gap-1.5">
+                        <Badge className="max-w-full truncate" tone="blue">{release.sourceName}</Badge>
+                        {(release.fansubName ?? release.fansubGroupId) && (
+                          <Badge className="max-w-full truncate">{release.fansubName ?? release.fansubGroupId}</Badge>
+                        )}
+                        {release.episodeNo !== undefined && <Badge>第 {release.episodeNo} 集</Badge>}
+                        <ReleaseMetadataBadges metadata={release} />
+                        {release.size && <Badge>{formatBytes(release.size)}</Badge>}
+                        {typeof release.seeders === "number" && (
+                          <Badge tone={release.seeders > 0 ? "green" : "neutral"}>{release.seeders} 做种</Badge>
+                        )}
+                      </div>
+                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                        <span>发布于 {formatDateTime(release.publishedAt)}</span>
+                        {release.infoHash && <span title={release.infoHash}>Hash {release.infoHash.slice(0, 12)}</span>}
+                        {(release.magnetUrl || release.torrentUrl) && (
+                          <span>{release.magnetUrl ? "磁力链接" : "Torrent 文件"}</span>
+                        )}
+                      </div>
                     </div>
                     <Button
-                      className="w-full flex-none sm:w-auto"
-                      variant="outline"
+                      className="w-full shrink-0 sm:w-auto"
+                      variant={added ? "secondary" : "primary"}
                       onClick={() => void addDownload(release.id)}
-                      disabled={addingId === release.id}
+                      disabled={addingId === release.id || added}
                     >
                       <Download data-icon="inline-start" />
-                      {addingId === release.id ? "添加中" : "添加下载"}
+                      {addingId === release.id ? "添加中" : added ? "已加入" : "添加下载"}
                     </Button>
-                  </CardHeader>
-                  <CardContent className="flex flex-col gap-3">
-                    <div className="flex flex-wrap gap-2">
-                      <Badge className="max-w-full truncate" tone="blue">{release.sourceName}</Badge>
-                      {(release.fansubName ?? release.fansubGroupId) && (
-                        <Badge className="max-w-full truncate">{release.fansubName ?? release.fansubGroupId}</Badge>
-                      )}
-                      {release.episodeNo !== undefined && <Badge>第 {release.episodeNo} 集</Badge>}
-                      <ReleaseMetadataBadges metadata={release} />
-                      {release.size && <Badge>{formatBytes(release.size)}</Badge>}
-                      {typeof release.seeders === "number" && (
-                        <Badge tone={release.seeders > 0 ? "green" : "neutral"}>{release.seeders} 做种</Badge>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                      {release.infoHash && <span title={release.infoHash}>Hash：{release.infoHash.slice(0, 12)}</span>}
-                      {(release.magnetUrl || release.torrentUrl) && (
-                        <span>{release.magnetUrl ? "磁力链接" : "Torrent 文件"}</span>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
+                  </article>
+                );
+              })}
             </div>
           ) : (
-            <Empty>
+            <Empty className="min-h-64">
               <EmptyHeader>
                 <EmptyMedia variant="icon"><PackageSearch /></EmptyMedia>
-                <EmptyTitle>没有找到资源</EmptyTitle>
+                <EmptyTitle>{result.errors.length ? "所有来源均未返回资源" : "没有找到资源"}</EmptyTitle>
                 <EmptyDescription>请检查下载源是否启用，或换用日文名、罗马音再次搜索。</EmptyDescription>
               </EmptyHeader>
             </Empty>
           )}
-        </div>
+
+          {sortedReleases.length > RESULTS_PER_PAGE && (
+            <div className="flex flex-col gap-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <span>
+                显示 {(currentPage - 1) * RESULTS_PER_PAGE + 1}-
+                {Math.min(currentPage * RESULTS_PER_PAGE, sortedReleases.length)} / 共 {sortedReleases.length} 条
+              </span>
+              <Pagination className="w-auto justify-start sm:justify-end">
+                <PaginationContent>
+                  <PaginationItem>
+                    <PaginationPrevious
+                      disabled={currentPage === 1}
+                      onClick={() => setPage((value) => Math.max(1, value - 1))}
+                    />
+                  </PaginationItem>
+                  {pageItems.map((item) => (
+                    <PaginationItem key={String(item)}>
+                      {typeof item === "number" ? (
+                        <PaginationLink isActive={item === currentPage} onClick={() => setPage(item)}>
+                          {item}
+                        </PaginationLink>
+                      ) : (
+                        <PaginationEllipsis />
+                      )}
+                    </PaginationItem>
+                  ))}
+                  <PaginationItem>
+                    <PaginationNext
+                      disabled={currentPage === pageCount}
+                      onClick={() => setPage((value) => Math.min(pageCount, value + 1))}
+                    />
+                  </PaginationItem>
+                </PaginationContent>
+              </Pagination>
+            </div>
+          )}
+        </section>
       )}
+    </Page>
+  );
+}
+
+/** 渲染搜索进行中的稳定列表骨架。 */
+function ReleaseSearchSkeleton() {
+  return (
+    <div className="divide-y overflow-hidden rounded-md border" aria-label="正在搜索资源">
+      {Array.from({ length: 4 }, (_, index) => (
+        <div className="flex flex-col gap-3 p-4" key={index}>
+          <Skeleton className="h-5 w-4/5" />
+          <Skeleton className="h-6 w-2/3" />
+        </div>
+      ))}
     </div>
   );
 }
 
-/** 按发布时间倒序排列资源，便于优先查看最新结果。 */
-function sortReleases(releases: Release[]): Release[] {
-  return [...releases].sort((left, right) => {
-    const leftTime = new Date(left.publishedAt).getTime();
-    const rightTime = new Date(right.publishedAt).getTime();
-    if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) {
-      return right.publishedAt.localeCompare(left.publishedAt);
-    }
-    if (Number.isNaN(leftTime)) {
-      return 1;
-    }
-    if (Number.isNaN(rightTime)) {
-      return -1;
-    }
+/** 按用户选择的规则排列资源，同时保留匹配排序的原始顺序。 */
+function sortReleases(releases: Release[], sortKey: ReleaseSortKey): Release[] {
+  if (sortKey === "match") return [...releases];
+  if (sortKey === "seeders") {
+    return [...releases].sort((left, right) => (right.seeders ?? -1) - (left.seeders ?? -1));
+  }
 
-    return rightTime - leftTime;
-  });
+  return [...releases].sort((left, right) => comparePublishedAt(right.publishedAt, left.publishedAt));
+}
+
+/** 比较两个来源发布时间，并在日期无效时退回字符串排序。 */
+function comparePublishedAt(left: string, right: string): number {
+  const leftTime = new Date(left).getTime();
+  const rightTime = new Date(right).getTime();
+  if (Number.isNaN(leftTime) && Number.isNaN(rightTime)) return left.localeCompare(right);
+  if (Number.isNaN(leftTime)) return 1;
+  if (Number.isNaN(rightTime)) return -1;
+  return leftTime - rightTime;
+}
+
+/** 为长结果集生成紧凑且稳定的页码序列。 */
+function createPaginationItems(currentPage: number, pageCount: number): Array<number | string> {
+  if (pageCount <= 7) return Array.from({ length: pageCount }, (_, index) => index + 1);
+
+  const items: Array<number | string> = [1];
+  const start = Math.max(2, currentPage - 1);
+  const end = Math.min(pageCount - 1, currentPage + 1);
+  if (start > 2) items.push("ellipsis-start");
+  for (let value = start; value <= end; value += 1) items.push(value);
+  if (end < pageCount - 1) items.push("ellipsis-end");
+  items.push(pageCount);
+  return items;
 }
