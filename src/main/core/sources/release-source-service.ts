@@ -1,5 +1,5 @@
 import type { AnimeReleaseQuery, ReleaseQuery, ReleaseSearchResult, ReleaseSource } from "@shared/contracts";
-import type { Anime, AnimeSourceBinding, FansubGroup, Release, ReleaseSourceConfig } from "@shared/domain";
+import type { Anime, AnimeSourceBinding, AnimeStatus, FansubGroup, Release, ReleaseSourceConfig } from "@shared/domain";
 import { createHash } from "node:crypto";
 import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle, normalizeReleaseSearchText } from "../../../shared/anime-release-search";
 import { releaseMatchesEpisode } from "../../../shared/release-search-input";
@@ -15,7 +15,8 @@ import { RssReleaseSource } from "./rss-source";
 import { TorznabReleaseSource } from "./torznab-source";
 import { createSourceHttpClient } from "./source-http-client";
 
-const MAX_RELEASE_SEARCH_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+export const COMPLETED_ANIME_RELEASE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_RELEASE_SEARCH_CACHE_TTL_MS = COMPLETED_ANIME_RELEASE_CACHE_TTL_MS;
 const releaseSearchCache = new Map<string, { expiresAt: number; result: ReleaseSearchResult }>();
 
 export class ReleaseSourceService {
@@ -29,17 +30,14 @@ export class ReleaseSourceService {
   async search(query: ReleaseQuery): Promise<ReleaseSearchResult> {
     const cacheKey = this.buildCacheKey(query);
     if (cacheKey && !query.forceRefresh) {
-      const cached = releaseSearchCache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now()) {
+      const cached = await this.loadReleaseSearchCache(cacheKey);
+      if (cached) {
         logger.info("下载资源搜索命中缓存", {
           animeId: query.animeId,
           keyword: query.keyword,
-          releaseCount: cached.result.releases.length
+          releaseCount: cached.releases.length
         });
-        return cloneSearchResult(cached.result, query);
-      }
-      if (cached) {
-        releaseSearchCache.delete(cacheKey);
+        return cloneSearchResult(cached, query);
       }
     }
 
@@ -94,10 +92,7 @@ export class ReleaseSourceService {
     };
 
     if (cacheKey) {
-      releaseSearchCache.set(cacheKey, {
-        expiresAt: Date.now() + normalizeCacheTtlMs(query.cacheTtlMs),
-        result: cloneSearchResult(result)
-      });
+      await this.saveReleaseSearchCache(cacheKey, query.cacheTtlMs, result);
       logger.info("下载资源搜索结果已缓存", {
         animeId: query.animeId,
         keyword: query.keyword,
@@ -116,13 +111,10 @@ export class ReleaseSourceService {
   ): Promise<ReleaseSearchResult> {
     const cacheKey = this.buildAnimeCacheKey(anime, query, bindings);
     if (cacheKey && !query.forceRefresh) {
-      const cached = releaseSearchCache.get(cacheKey);
-      if (cached && cached.expiresAt > Date.now()) {
-        logger.info("番剧资源搜索命中缓存", { animeId: anime.id, releaseCount: cached.result.releases.length });
-        return cloneSearchResult(cached.result);
-      }
+      const cached = await this.loadReleaseSearchCache(cacheKey);
       if (cached) {
-        releaseSearchCache.delete(cacheKey);
+        logger.info("番剧资源搜索命中缓存", { animeId: anime.id, releaseCount: cached.releases.length });
+        return cloneSearchResult(cached);
       }
     }
 
@@ -212,10 +204,7 @@ export class ReleaseSourceService {
       errors
     };
     if (cacheKey) {
-      releaseSearchCache.set(cacheKey, {
-        expiresAt: Date.now() + normalizeCacheTtlMs(query.cacheTtlMs),
-        result: cloneSearchResult(result)
-      });
+      await this.saveReleaseSearchCache(cacheKey, query.cacheTtlMs, result);
     }
     return result;
   }
@@ -252,7 +241,8 @@ export class ReleaseSourceService {
         episodeNo: query.episodeNo,
         fansubGroupId: query.fansubGroupId,
         preferredResolution: query.preferredResolution,
-        limit: query.limit
+        limit: query.limit,
+        cacheTtlMs: normalizeCacheTtlMs(query.cacheTtlMs)
       },
       sourceSignature,
       fansubSignature
@@ -284,7 +274,8 @@ export class ReleaseSourceService {
         episodeNo: query.episodeNo,
         fansubGroupId: query.fansubGroupId,
         preferredResolution: query.preferredResolution,
-        limit: query.limit
+        limit: query.limit,
+        cacheTtlMs: normalizeCacheTtlMs(query.cacheTtlMs)
       },
       bindings: bindings
         .filter((binding) => binding.confirmed)
@@ -313,6 +304,62 @@ export class ReleaseSourceService {
   private async persistCachedReleases(releases: Release[]): Promise<void> {
     if (typeof this.repository?.upsertCachedReleases === "function") {
       await this.repository.upsertCachedReleases(releases);
+    }
+  }
+
+  /** 优先读取进程缓存，并在未命中时恢复 SQLite 查询缓存。 */
+  private async loadReleaseSearchCache(cacheKey: string): Promise<ReleaseSearchResult | undefined> {
+    const memoryEntry = releaseSearchCache.get(cacheKey);
+    if (memoryEntry?.expiresAt && memoryEntry.expiresAt > Date.now()) {
+      return cloneSearchResult(memoryEntry.result);
+    }
+    if (memoryEntry) {
+      releaseSearchCache.delete(cacheKey);
+    }
+
+    if (typeof this.repository?.getReleaseSearchCache !== "function") {
+      return undefined;
+    }
+    try {
+      const persistedEntry = await this.repository.getReleaseSearchCache(cacheKey);
+      const expiresAt = Date.parse(persistedEntry?.expiresAt ?? "");
+      if (!persistedEntry || !Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+        return undefined;
+      }
+      const result = cloneSearchResult(persistedEntry.result);
+      releaseSearchCache.set(cacheKey, { expiresAt, result });
+      return cloneSearchResult(result);
+    } catch (error) {
+      logger.warn("资源查询缓存读取失败，将继续访问下载源", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return undefined;
+    }
+  }
+
+  /** 同时保存进程与 SQLite 查询缓存，持久化失败不影响本次搜索结果。 */
+  private async saveReleaseSearchCache(
+    cacheKey: string,
+    requestedTtlMs: number | undefined,
+    result: ReleaseSearchResult
+  ): Promise<void> {
+    const ttlMs = normalizeCacheTtlMs(requestedTtlMs);
+    const expiresAt = Date.now() + ttlMs;
+    const cachedResult = cloneSearchResult(result);
+    releaseSearchCache.set(cacheKey, { expiresAt, result: cachedResult });
+
+    if (typeof this.repository?.upsertReleaseSearchCache !== "function") {
+      return;
+    }
+    try {
+      await this.repository.upsertReleaseSearchCache(cacheKey, {
+        expiresAt: new Date(expiresAt).toISOString(),
+        result: cloneSearchResult(cachedResult)
+      });
+    } catch (error) {
+      logger.warn("资源查询缓存持久化失败", {
+        message: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 }
@@ -426,7 +473,15 @@ function formatReleaseSourceError(error: unknown): string {
   return message;
 }
 
-/** 规范化资源搜索缓存时间，避免超过 1 天。 */
+/** 完结作品固定复用七天缓存，其他状态沿用调用方刷新周期。 */
+export function resolveAnimeReleaseCacheTtlMs(
+  status: AnimeStatus,
+  requestedTtlMs?: number
+): number | undefined {
+  return status === "completed" ? COMPLETED_ANIME_RELEASE_CACHE_TTL_MS : requestedTtlMs;
+}
+
+/** 规范化资源搜索缓存时间，避免超过完结作品的七天上限。 */
 function normalizeCacheTtlMs(value: number | undefined): number {
   if (!value || !Number.isFinite(value)) {
     return 0;

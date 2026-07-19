@@ -20,8 +20,9 @@ import type { AppRepository } from "../repositories/app-repository";
 import { evaluateAutomaticDownload, rankReleases, type ReleaseMatchResult } from "../releases/release-matcher";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { MetadataHttpClient } from "../metadata/metadata-http-client";
-import { ReleaseSourceService } from "../sources/release-source-service";
+import { ReleaseSourceService, resolveAnimeReleaseCacheTtlMs } from "../sources/release-source-service";
 import { RssReleaseSource } from "../sources/rss-source";
+import { createSourceHttpClient } from "../sources/source-http-client";
 import { AnimeSourceBindingService } from "../source-bindings/anime-source-binding-service";
 
 const DEFAULT_RSS_REFRESH_INTERVAL_MINUTES = 20;
@@ -399,15 +400,16 @@ async function fetchRssSubscriptionReleases(
   subscription: AnimeRssSubscription
 ): Promise<Release[]> {
   const rssUrl = validateRssUrl(subscription.url);
+  const sourceConfig = {
+    id: `rss-subscription:${subscription.id}`,
+    name: subscription.name,
+    kind: "rss" as const,
+    enabled: true,
+    rssUrl
+  };
   const source = new RssReleaseSource(
-    {
-      id: `rss-subscription:${subscription.id}`,
-      name: subscription.name,
-      kind: "rss",
-      enabled: true,
-      rssUrl
-    },
-    input.httpClient
+    sourceConfig,
+    createSourceHttpClient(sourceConfig, input.httpClient)
   );
   const rssReleases = await source.searchReleases({
     keyword: "",
@@ -442,7 +444,8 @@ async function searchEpisodeReleases(
     episodeNo: episode.episodeNo,
     fansubGroupId: fansubGroupId ?? anime.defaultFansubGroupId,
     preferredResolution: anime.preferredResolution,
-    limit: 80
+    limit: 80,
+    cacheTtlMs: resolveAnimeReleaseCacheTtlMs(anime.status)
   }, bindings)];
 }
 

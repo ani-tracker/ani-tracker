@@ -18,6 +18,7 @@ import type {
   ReleaseSourceSyncState,
   TorrentFile
 } from "@shared/domain";
+import type { ReleaseSearchResult } from "@shared/contracts";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import {
@@ -33,7 +34,7 @@ import { defaultSourceConfigs } from "../sources/default-source-configs";
 import { createDefaultSettingsProvider, type DefaultSettingsProvider } from "../platform/default-settings-provider";
 import { createSeedData } from "../storage/seed-data";
 import { SQLITE_SCHEMA, SQLITE_SCHEMA_VERSION } from "../storage/sqlite-schema";
-import type { AppRepository } from "./app-repository";
+import type { AppRepository, ReleaseSearchCacheEntry } from "./app-repository";
 import {
   buildDailyReminderSummary,
   findExistingDownloadTask,
@@ -599,6 +600,59 @@ export class SqliteAppRepository implements AppRepository {
     return this.run("DELETE FROM release WHERE published_at < @before", { before }).changes;
   }
 
+  /** 读取未过期的资源查询结果，损坏或过期记录会被自动清理。 */
+  async getReleaseSearchCache(cacheKey: string): Promise<ReleaseSearchCacheEntry | undefined> {
+    const row = this.get(
+      "SELECT result_json, expires_at FROM release_search_cache WHERE cache_key = @cacheKey",
+      { cacheKey }
+    );
+    if (!row) {
+      return undefined;
+    }
+
+    const expiresAt = asString(row.expires_at);
+    const expiresAtMs = Date.parse(expiresAt);
+    if (!Number.isFinite(expiresAtMs) || expiresAtMs <= Date.now()) {
+      this.run("DELETE FROM release_search_cache WHERE cache_key = @cacheKey", { cacheKey });
+      return undefined;
+    }
+
+    try {
+      return {
+        expiresAt,
+        result: fromJson<ReleaseSearchResult>(asString(row.result_json))
+      };
+    } catch (error) {
+      this.run("DELETE FROM release_search_cache WHERE cache_key = @cacheKey", { cacheKey });
+      logger.warn("SQLite 资源查询缓存损坏，已清理", {
+        message: error instanceof Error ? error.message : String(error)
+      });
+      return undefined;
+    }
+  }
+
+  /** 保存资源查询结果，使缓存有效期可跨应用重启。 */
+  async upsertReleaseSearchCache(cacheKey: string, entry: ReleaseSearchCacheEntry): Promise<void> {
+    const updatedAt = nowIso();
+    this.transaction(() => {
+      this.run("DELETE FROM release_search_cache WHERE expires_at <= @updatedAt", { updatedAt });
+      this.run(
+        `INSERT INTO release_search_cache (cache_key, result_json, expires_at, updated_at)
+         VALUES (@cacheKey, @resultJson, @expiresAt, @updatedAt)
+         ON CONFLICT(cache_key) DO UPDATE SET
+           result_json = excluded.result_json,
+           expires_at = excluded.expires_at,
+           updated_at = excluded.updated_at`,
+        {
+          cacheKey,
+          resultJson: toJson(entry.result),
+          expiresAt: entry.expiresAt,
+          updatedAt
+        }
+      );
+    });
+  }
+
   async upsertMyAnime(item: MyAnime): Promise<MyAnime[]> {
     const saved: MyAnime = { ...item, addedAt: item.addedAt || nowIso(), updatedAt: nowIso() };
     this.transaction(() => {
@@ -648,6 +702,7 @@ export class SqliteAppRepository implements AppRepository {
 
   /** 维护历史与首启数据中的字幕组引用及下载集数元数据。 */
   private maintainStoredData(): void {
+    this.run("DELETE FROM release_search_cache WHERE expires_at <= @now", { now: nowIso() });
     this.mergeDuplicateFansubGroups();
     this.normalizeFansubGroupData();
     this.repairStoredDownloadEpisodeMetadata();
@@ -783,6 +838,20 @@ export class SqliteAppRepository implements AppRepository {
 
     if (currentSchemaVersion < 11) {
       this.ensureColumn("release_source_sync_state", "request_host", "request_host TEXT");
+    }
+
+    if (currentSchemaVersion < 12) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS release_search_cache (
+          cache_key TEXT PRIMARY KEY,
+          result_json TEXT NOT NULL,
+          expires_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_release_search_cache_expires_at
+          ON release_search_cache (expires_at);
+      `);
     }
 
     if (currentSchemaVersion < 8) {
@@ -937,7 +1006,7 @@ export class SqliteAppRepository implements AppRepository {
   private clearAllData(): void {
     for (const table of [
       "notification", "media_file", "torrent_file", "download_task", "episode_preference", "episode",
-      "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_fansub_group", "anime_alias", "release", "anime_catalog", "fansub_group",
+      "release_search_cache", "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_fansub_group", "anime_alias", "release", "anime_catalog", "fansub_group",
       "release_source", "app_settings", "app_state", "app_meta"
     ]) {
       this.database.exec(`DELETE FROM ${table}`);

@@ -105,17 +105,18 @@
 ### 资源来源和匹配
 
 - 已实现下载源网络策略：
-  - 每个来源独立保存代理开关和 250ms 至 60 秒的最小采集间隔。
-  - Mikan、DMHY、AniBT、ACGNX 默认开启来源代理并使用 1500ms 间隔，Prowlarr 默认直连并使用 250ms 间隔。
-  - RSS、Torznab、DMHY、Mikan、AniBT、ACGNX 已统一接入同一 HTTP 客户端，不再存在绕过代理的全局 `fetch`。
+  - 每个来源独立保存代理开关和 250ms 至 60 秒的最小采集间隔；AniBT 运行时强制不低于 3000ms。
+  - Mikan、DMHY、ACGNX 默认开启来源代理并使用 1500ms 间隔，AniBT 默认开启来源代理并使用 3000ms 间隔，Prowlarr 默认直连并使用 250ms 间隔。
+  - RSS、Torznab、DMHY、Mikan、AniBT、ACGNX 与追番 RSS 已统一接入同域请求队列，不再存在绕过限流的全局 `fetch`。
   - 同域名并发数为 1，间隔增加最多 20% 抖动，相同并发请求会合并。
-  - 403/429 遵守 `Retry-After` 并按 1、5、15、30 分钟退避；连续失败 3 次至少熔断 30 分钟。
-  - 请求时间、失败次数和退避截止时间保存到 SQLite，应用重启后继续生效。
+  - 403 按 10、20、30 分钟逐级熔断；429 按 1、5、15、30 分钟保护并遵守 `Retry-After`；连续失败 3 次至少熔断 30 分钟。
+  - 请求时间、失败次数和熔断截止时间保存到 SQLite，应用重启后继续生效；到期后同域队列只放行一个半开探测请求。
 - 已实现每日下载源增量同步：
   - 默认每天本地时间 09:00 执行，可在下载源页面启停、修改时间或立即同步。
   - 应用启动时按来源检查当天成功记录，仅补跑未同步或失败来源。
   - RSS 使用 ETag/Last-Modified 条件请求，其余来源按稳定资源 ID 增量写入。
   - 资源缓存跨重启参与搜索兜底，并自动清理 90 天前数据。
+  - 已完结追番的资源搜索结果在 SQLite 缓存 7 天，应用重启后仍可直接命中；连载作品继续使用页面或自动检查配置的刷新周期。
   - 部分来源失败不会重复采集成功来源，失败摘要写入通知中心。
 
 - 已实现 RSS 和 Torznab release source adapter。
@@ -133,13 +134,13 @@
   - 使用 `anibt.net/api/bgm/search` 将关键词匹配到番剧条目。
   - 优先读取 `anibt.net/rss/anime.xml` 的番剧 RSS，必要时回退到 `anibt.net/rss/magnets.xml` 最新资源 RSS。
   - 解析 AniBT RSS 扩展字段、内嵌 torrent 元数据、magnet、torrent、infoHash、发布时间、体积、集数、分辨率、字幕语言和编码标签。
-  - 对请求设置超时并打印关键搜索日志。
+  - 对请求设置超时、标准浏览器请求头和关键搜索日志；适配器与追番 RSS 共用 3000ms 最低间隔和 403/429 熔断。
 - 已实现 ACGNX / 末日动漫资源库 site adapter：
   - 优先尝试公开 API 风格响应，兼容 `data/items/results/list/torrents/resources` 等常见返回结构。
   - API 返回 HTML 或不可用时使用站点搜索 HTML 解析兜底。
   - 解析标题、magnet、torrent、infoHash、发布时间、体积和 seeders。
   - 默认来源地址可配置，便于 ACGNX 域名或 API 路径变化后直接调整。
-- 已新增默认禁用来源 `anibt` 和 `acgnx`，初始化与来源查询会自动补齐这两个来源。
+- 已新增默认启用来源 `anibt` 和默认禁用来源 `acgnx`，初始化与来源查询会自动补齐这两个来源。
 - 已新增 Mikan/DMHY/AniBT/ACGNX 解析样例测试：
   - 覆盖 DMHY 资源行中的标题、magnet、torrent、发布时间、体积和媒体字段解析。
   - 覆盖 Mikan 搜索结果中的 Episode、Download torrent、magnet、体积和兜底 torrent 地址生成。
@@ -305,9 +306,9 @@ git diff --check
 说明：
 
 - `pnpm.cmd run test:parsers` 当前会编译测试到 `out/test-node`，该目录已在 `.gitignore` 中。
-- Node 测试当前共 `199` 项，包含来源限速/请求合并、跨重启退避、每日补跑、SQLite 增量缓存、远程 PWA、图片缓存和媒体播放覆盖。
+- Node 测试当前共 `212` 项，包含来源限速/请求合并、403/429 熔断、跨重启查询缓存、每日补跑、SQLite 增量缓存、远程 PWA、图片缓存和媒体播放覆盖。
 - 主进程和渲染进程 TypeScript 类型检查通过。
-- 主进程、preload 和 renderer 生产构建通过；完整构建的 qBittorrent 资源准备步骤受运行中进程锁定，待进程退出后复验。
+- 主进程、preload、renderer 和 qBittorrent 资源准备均已通过完整生产构建；仅保留已知 ESM warning，不影响产物。
 - `git diff --check` 通过。
 
 ## 尚未完成

@@ -127,7 +127,7 @@ export class SourceSyncService {
       id: `source-sync-${result.finishedAt}`,
       kind: "system",
       title: "部分下载源同步失败",
-      body: `${result.errors.length} 个来源未完成同步，已按退避策略等待下次重试。`,
+      body: `${result.errors.length} 个来源未完成同步，已按熔断策略等待下次重试。`,
       severity: "warning",
       createdAt: result.finishedAt
     };

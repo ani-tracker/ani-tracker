@@ -1,0 +1,42 @@
+import type { ReleaseSourceConfig } from "./domain";
+
+export const DEFAULT_SOURCE_REQUEST_INTERVAL_MS = 1_500;
+export const MIN_SOURCE_REQUEST_INTERVAL_MS = 250;
+export const MAX_SOURCE_REQUEST_INTERVAL_MS = 60_000;
+export const ANIBT_MIN_REQUEST_INTERVAL_MS = 3_000;
+
+type SourceRequestTarget = Pick<ReleaseSourceConfig, "id" | "name" | "baseUrl" | "rssUrl">;
+
+/** 判断下载源或实际请求地址是否指向 AniBT。 */
+export function isAniBtRequestTarget(source: SourceRequestTarget, requestUrl?: string | URL): boolean {
+  const identity = `${source.id} ${source.name}`.toLowerCase();
+  if (identity.includes("anibt")) {
+    return true;
+  }
+
+  return [source.baseUrl, source.rssUrl, requestUrl?.toString()].some((value) => isAniBtUrl(value));
+}
+
+/** 返回下载源允许配置的最小请求间隔。 */
+export function getSourceMinimumRequestIntervalMs(
+  source: SourceRequestTarget,
+  requestUrl?: string | URL
+): number {
+  return isAniBtRequestTarget(source, requestUrl)
+    ? ANIBT_MIN_REQUEST_INTERVAL_MS
+    : MIN_SOURCE_REQUEST_INTERVAL_MS;
+}
+
+/** 判断 URL 是否使用 AniBT 主域或其子域。 */
+function isAniBtUrl(value?: string): boolean {
+  if (!value) {
+    return false;
+  }
+
+  try {
+    const hostname = new URL(value).hostname.toLowerCase();
+    return hostname === "anibt.net" || hostname.endsWith(".anibt.net");
+  } catch {
+    return value.toLowerCase().includes("anibt.net");
+  }
+}

@@ -13,7 +13,7 @@ import { getSubtitleCoverage, resolveSubtitleLanguages } from "@shared/release-m
 import type { AppRepository } from "./core/repositories/app-repository";
 import { createRepositoryRuntime } from "./core/repositories/repository-runtime";
 import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
-import { ReleaseSourceService } from "./core/sources/release-source-service";
+import { ReleaseSourceService, resolveAnimeReleaseCacheTtlMs } from "./core/sources/release-source-service";
 import type {
   AddDownloadUrlInput,
   AddReleaseDownloadInput,
@@ -37,6 +37,7 @@ import { logger } from "./core/logger";
 import { resolveAnimeDownloadPath } from "./core/downloads/download-path-resolver";
 import { addReleaseTorrentToEngine, addTorrentAddressToEngine } from "./core/downloads/torrent-resource-adder";
 import { RssReleaseSource } from "./core/sources/rss-source";
+import { createSourceHttpClient } from "./core/sources/source-http-client";
 import { AnimeSourceBindingService } from "./core/source-bindings/anime-source-binding-service";
 import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
 import { AnimeFansubDiscoveryService } from "./core/fansubs/anime-fansub-discovery-service";
@@ -367,9 +368,13 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     ]);
     const httpClient = new MetadataHttpClient(settings.network.metadataProxy);
     const bindingState = await new AnimeSourceBindingService(repository, httpClient).getState(query.animeId, false);
+    const effectiveQuery = {
+      ...query,
+      cacheTtlMs: resolveAnimeReleaseCacheTtlMs(followedAnime.status, query.cacheTtlMs)
+    };
     const result = await new ReleaseSourceService(sources, fansubs, httpClient, repository).searchAnime(
       followedAnime.anime,
-      query,
+      effectiveQuery,
       bindingState.bindings
     );
     await repository.observeAnimeFansubs(query.animeId, result.releases);
@@ -541,15 +546,17 @@ async function searchRssSubscriptionReleases(query: RssSubscriptionReleaseQuery)
   });
   try {
     const rssUrl = validateRssUrl(subscription.url);
+    const sourceConfig = {
+      id: `rss-subscription:${query.subscriptionId}`,
+      name: subscription.name,
+      kind: "rss" as const,
+      enabled: true,
+      rssUrl
+    };
+    const metadataHttpClient = new MetadataHttpClient(settings.network.metadataProxy);
     const source = new RssReleaseSource(
-      {
-        id: `rss-subscription:${query.subscriptionId}`,
-        name: subscription.name,
-        kind: "rss",
-        enabled: true,
-        rssUrl
-      },
-      new MetadataHttpClient(settings.network.metadataProxy)
+      sourceConfig,
+      createSourceHttpClient(sourceConfig, metadataHttpClient)
     );
     const releases = await source.searchReleases({
       keyword: "",

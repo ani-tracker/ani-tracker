@@ -2,7 +2,7 @@ import type { AnimeSourceCandidate, ReleaseQuery, ReleaseSource } from "@shared/
 import type { Anime, Release, ReleaseSourceConfig, SubtitlePreference } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { logger } from "../logger";
-import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
+import { DESKTOP_BROWSER_ACCEPT_LANGUAGE, DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import type { ReleaseHttpClient } from "./mikan-source";
 import { parseXml, textValue, toArray } from "./xml";
@@ -154,7 +154,7 @@ export class AniBtReleaseSource implements ReleaseSource {
     });
 
     if (!response.ok) {
-      throw new Error(`AniBT BGM search failed: ${response.status} ${response.statusText}`);
+      throw createAniBtResponseError("番剧匹配", response);
     }
 
     const payload = (await response.json()) as AniBtBgmSearchResponse;
@@ -197,7 +197,7 @@ export class AniBtReleaseSource implements ReleaseSource {
     });
 
     if (!response.ok) {
-      throw new Error(`AniBT RSS source failed: ${response.status} ${response.statusText}`);
+      throw createAniBtResponseError("RSS", response);
     }
 
     return parseAniBtRss(await response.text(), this.config);
@@ -207,6 +207,7 @@ export class AniBtReleaseSource implements ReleaseSource {
 export function createAniBtHeaders(config: ReleaseSourceConfig, accept: string): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: accept,
+    "Accept-Language": DESKTOP_BROWSER_ACCEPT_LANGUAGE,
     "User-Agent": DESKTOP_BROWSER_USER_AGENT
   };
 
@@ -382,4 +383,15 @@ function decodeHtml(value: string): string {
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** 将 AniBT 访问保护响应转换为可执行的用户提示。 */
+function createAniBtResponseError(operation: string, response: Response): Error {
+  if (response.status === 403) {
+    return new Error(`AniBT ${operation}暂时被站点拒绝（403），请保持单一网络出口并在熔断结束后重试`);
+  }
+  if (response.status === 429) {
+    return new Error(`AniBT ${operation}请求过于频繁（429），请等待站点允许后重试`);
+  }
+  return new Error(`AniBT ${operation}请求失败：${response.status} ${response.statusText}`.trim());
 }

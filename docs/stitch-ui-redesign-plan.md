@@ -126,3 +126,20 @@ D4 随 UI 改版默认全量切换，仅替换默认主题定义；不删除主�
 - 不修改主进程业务契约、下载引擎和持久化结构，除非 UI 实施发现真实缺口并另行审核。
 
 图片取色通过 [image-to-ani-theme-prompt.md](./image-to-ani-theme-prompt.md) 在外部视觉模型中完成，输出文件直接使用设置页现有导入流程。
+
+## 12. 最终验收记录
+
+自动验收日期：2026-07-19
+
+| 验收项 | 结果 | 记录 |
+| --- | --- | --- |
+| TypeScript | 通过 | `pnpm.cmd run typecheck` 无错误 |
+| 主题规范 | 通过 | 浅色、深色各 38 个令牌，对比度检查通过 |
+| Node 回归 | 通过 | `pnpm.cmd run test:parsers`，212/212 通过 |
+| 生产构建 | 通过 | 主进程、preload、renderer 与 qBittorrent 资源准备完成 |
+| 差异质量 | 通过 | `git diff --check` 无错误，源码区无 TypeScript 生成产物 |
+| AniBT 连通性 | 通过 | 单一 `127.0.0.1:7897` 代理出口实测返回 HTTP 200 |
+| AniBT 保护 | 通过 | 3 秒同域限流、403 10/20/30 分钟熔断、429 `Retry-After`、半开单探测均有自动测试 |
+| 完结缓存 | 通过 | 7 天查询缓存写入 SQLite，跨重启命中时不访问源站 |
+
+P1-P8 已完成实现和自动验收。真实系统主题联动、四档视口视觉、真实 qBittorrent、远程设备权限与自然发生的 AniBT 异常反馈仍需人工确认，逐项操作见 [stitch-ui-manual-acceptance-checklist.md](./stitch-ui-manual-acceptance-checklist.md)。人工验收不得通过高频访问主动诱发 Cloudflare 403。

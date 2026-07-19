@@ -46,6 +46,19 @@ test("图片取色主题规范示例可直接导入", () => {
   assert.equal(result.ok, true, result.errors.join("；"));
 });
 
+test("主题包导出 JSON 可无损重新导入", () => {
+  const example = JSON.parse(readFileSync("docs/image-palette-example.ani-theme.json", "utf8")) as unknown;
+  const imported = validateThemePack(example);
+  assert.ok(imported.pack);
+
+  const exportedJson = `${JSON.stringify(imported.pack, null, 2)}\n`;
+  const roundTrip = validateThemePack(JSON.parse(exportedJson));
+
+  assert.equal(Buffer.byteLength(exportedJson, "utf8") < 128 * 1024, true);
+  assert.equal(roundTrip.ok, true, roundTrip.errors.join("；"));
+  assert.deepEqual(roundTrip.pack, imported.pack);
+});
+
 test("内置主题包满足 WCAG AA 文字与焦点可见性对比度", () => {
   for (const pack of BUILT_IN_THEME_PACKS) {
     for (const mode of ["light", "dark"] as const satisfies readonly ResolvedThemeMode[]) {

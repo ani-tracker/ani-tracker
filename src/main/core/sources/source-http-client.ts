@@ -1,4 +1,9 @@
 import type { ReleaseSourceConfig, ReleaseSourceSyncState } from "@shared/domain";
+import {
+  getSourceMinimumRequestIntervalMs,
+  MAX_SOURCE_REQUEST_INTERVAL_MS,
+  MIN_SOURCE_REQUEST_INTERVAL_MS
+} from "@shared/source-network-policy";
 import { logger } from "../logger";
 import {
   MetadataHttpClient,
@@ -7,8 +12,8 @@ import {
 import type { AppRepository } from "../repositories/app-repository";
 import type { ReleaseHttpClient } from "./mikan-source";
 
-const MAX_REQUEST_INTERVAL_MS = 60_000;
-const ACCESS_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
+const FORBIDDEN_CIRCUIT_BACKOFF_MS = [10 * 60_000, 20 * 60_000, 30 * 60_000] as const;
+const RATE_LIMIT_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
 const TRANSIENT_BACKOFF_MS = [30_000, 2 * 60_000, 30 * 60_000] as const;
 const CIRCUIT_FAILURE_COUNT = 3;
 const CIRCUIT_BACKOFF_MS = 30 * 60_000;
@@ -29,7 +34,7 @@ export interface SourceRequestSchedulerOptions {
   sleep?: (delayMs: number) => Promise<void>;
 }
 
-/** 按域名串行调度下载源请求，并持久化站点退避状态。 */
+/** 按域名串行调度下载源请求，并持久化站点熔断状态。 */
 export class SourceRequestScheduler {
   private readonly hostQueues = new Map<string, HostQueueState>();
   private readonly inFlightRequests = new Map<string, Promise<Response>>();
@@ -91,7 +96,7 @@ export class SourceRequestScheduler {
         try {
           const sourceState = await this.loadState(config.id, stateStore);
           await this.assertNotBlocked(config, sourceState, host, stateStore);
-          const intervalMs = normalizeRequestInterval(config.requestIntervalMs);
+          const intervalMs = normalizeRequestInterval(config, url);
           const persistedNextAt = parseTime(sourceState.lastRequestAt) + intervalMs;
           const waitUntil = Math.max(queue.nextAllowedAtMs, persistedNextAt);
           await this.sleep(Math.max(0, waitUntil - this.now()));
@@ -135,7 +140,10 @@ export class SourceRequestScheduler {
     host: string,
     stateStore?: SourceRequestStateStore
   ): Promise<void> {
-    const states = stateStore ? await stateStore.listSourceSyncStates() : [...this.sourceStates.values()];
+    const states = [
+      ...this.sourceStates.values(),
+      ...(stateStore ? await stateStore.listSourceSyncStates() : [])
+    ];
     const hostBlockedUntilMs = states
       .filter((item) => item.requestHost === host)
       .reduce((latest, item) => Math.max(latest, parseTime(item.backoffUntil)), 0);
@@ -144,7 +152,7 @@ export class SourceRequestScheduler {
       return;
     }
     const seconds = Math.max(1, Math.ceil((blockedUntilMs - this.now()) / 1000));
-    throw new Error(`${config.name} 正在退避保护中，请 ${seconds} 秒后重试`);
+    throw new Error(`${config.name} 正在熔断保护中，请 ${seconds} 秒后重试`);
   }
 
   private async recordResponse(
@@ -165,7 +173,7 @@ export class SourceRequestScheduler {
         requestFailureCount: failureCount,
         backoffUntil: new Date(this.now() + backoffMs).toISOString()
       }, stateStore);
-      logger.warn("下载源触发访问保护", {
+      logger.warn("下载源访问熔断器已开启", {
         sourceId: config.id,
         status: response.status,
         failureCount,
@@ -202,7 +210,7 @@ export class SourceRequestScheduler {
     error: unknown,
     stateStore?: SourceRequestStateStore
   ): Promise<void> {
-    if (error instanceof Error && error.message.includes("正在退避保护中")) {
+    if (error instanceof Error && error.message.includes("正在熔断保护中")) {
       return;
     }
     const current = await this.loadState(config.id, stateStore);
@@ -252,11 +260,16 @@ function createEmptyState(sourceId: string): ReleaseSourceSyncState {
   return { sourceId, requestFailureCount: 0 };
 }
 
-function normalizeRequestInterval(value?: number): number {
-  if (!Number.isFinite(value)) {
-    return 0;
+/** 规范化来源间隔，并强制执行站点级访问频率下限。 */
+function normalizeRequestInterval(config: ReleaseSourceConfig, requestUrl: string): number {
+  const siteMinimumMs = getSourceMinimumRequestIntervalMs(config, requestUrl);
+  if (!Number.isFinite(config.requestIntervalMs)) {
+    return siteMinimumMs === MIN_SOURCE_REQUEST_INTERVAL_MS ? 0 : siteMinimumMs;
   }
-  return Math.max(250, Math.min(MAX_REQUEST_INTERVAL_MS, Math.round(value!)));
+  return Math.max(
+    siteMinimumMs,
+    Math.min(MAX_SOURCE_REQUEST_INTERVAL_MS, Math.round(config.requestIntervalMs!))
+  );
 }
 
 function supportsSourceRequestStateStore(value: AppRepository | undefined): value is AppRepository {
@@ -267,10 +280,11 @@ function supportsSourceRequestStateStore(value: AppRepository | undefined): valu
 
 function resolveAccessBackoffMs(response: Response, failureCount: number, nowMs: number): number {
   const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"), nowMs);
-  const index = Math.min(ACCESS_BACKOFF_MS.length - 1, Math.max(0, failureCount - 1));
+  const schedule = response.status === 403 ? FORBIDDEN_CIRCUIT_BACKOFF_MS : RATE_LIMIT_BACKOFF_MS;
+  const index = Math.min(schedule.length - 1, Math.max(0, failureCount - 1));
   const configured = failureCount >= CIRCUIT_FAILURE_COUNT
-    ? Math.max(CIRCUIT_BACKOFF_MS, ACCESS_BACKOFF_MS[index])
-    : ACCESS_BACKOFF_MS[index];
+    ? Math.max(CIRCUIT_BACKOFF_MS, schedule[index])
+    : schedule[index];
   return Math.max(configured, retryAfterMs);
 }
 

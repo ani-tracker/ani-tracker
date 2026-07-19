@@ -1,12 +1,19 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
+import type { ReleaseSearchResult } from "@shared/contracts";
 import type { Anime, AnimeSourceBinding, ReleaseSourceConfig } from "@shared/domain";
+import type { AppRepository } from "../../repositories/app-repository";
 import { defaultSourceConfigs } from "../default-source-configs";
 import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
 import { AniBtReleaseSource, createAniBtHeaders, parseAniBtRss } from "../anibt-source";
 import { parseDmhyList } from "../dmhy-source";
 import { MikanReleaseSource, parseMikanReleaseList, parseMikanSubgroups, type ReleaseHttpClient } from "../mikan-source";
-import { createReleaseSource, ReleaseSourceService } from "../release-source-service";
+import {
+  COMPLETED_ANIME_RELEASE_CACHE_TTL_MS,
+  createReleaseSource,
+  ReleaseSourceService,
+  resolveAnimeReleaseCacheTtlMs
+} from "../release-source-service";
 import { RssReleaseSource } from "../rss-source";
 import { TorznabReleaseSource } from "../torznab-source";
 import { parseXml, textValue, toArray } from "../xml";
@@ -269,6 +276,9 @@ test("AniBT source uses configured token headers", async (t) => {
   const releases = await source.searchReleases({ keyword: "", limit: 1 });
 
   assert.equal(inputs[0], "https://anibt.net/rss/magnets.xml?limit=50");
+  assert.equal(requestHeaders[0].Accept, "application/rss+xml,application/xml,text/xml");
+  assert.match(requestHeaders[0]["Accept-Language"], /^zh-CN/);
+  assert.match(requestHeaders[0]["User-Agent"], /Mozilla\/5\.0/);
   assert.equal(requestHeaders[0].Authorization, "Bearer test-token");
   assert.equal(requestHeaders[0]["X-API-Key"], "test-token");
   assert.equal(releases.length, 1);
@@ -291,6 +301,25 @@ test("AniBT 按已绑定 Bangumi ID 精确读取番剧 RSS", async (t) => {
   const releases = await new AniBtReleaseSource(anibtConfig).listReleasesByAnimeId("528828", 30);
   assert.equal(releases.length, 1);
   assert.match(releases[0].title, /凡人修仙传/);
+});
+
+test("AniBT 403 返回单一出口和熔断提示", async () => {
+  const httpClient: ReleaseHttpClient = {
+    async fetch() {
+      return new Response("forbidden", { status: 403, statusText: "Forbidden" });
+    }
+  };
+
+  await assert.rejects(
+    new AniBtReleaseSource(anibtConfig, httpClient).listReleasesByAnimeId("528828", 30),
+    /保持单一网络出口并在熔断结束后重试/
+  );
+});
+
+test("完结作品资源缓存固定为七天", () => {
+  assert.equal(resolveAnimeReleaseCacheTtlMs("completed", 60_000), COMPLETED_ANIME_RELEASE_CACHE_TTL_MS);
+  assert.equal(resolveAnimeReleaseCacheTtlMs("watching", 60_000), 60_000);
+  assert.equal(resolveAnimeReleaseCacheTtlMs("planned"), undefined);
 });
 
 test("Mikan 按已绑定番组 ID 精确读取 RSS", async () => {
@@ -447,8 +476,12 @@ test("parseAcgnxHtml 解析 ACGNX HTML 搜索行中的下载地址和做种数",
 });
 
 test("RssReleaseSource 解析 RSS item 的下载地址、体积和媒体字段", async (t) => {
-  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     assert.equal(String(input), rssConfig.rssUrl);
+    const headers = init?.headers as Record<string, string>;
+    assert.match(headers.Accept, /application\/rss\+xml/);
+    assert.match(headers["Accept-Language"], /^zh-CN/);
+    assert.match(headers["User-Agent"], /Mozilla\/5\.0/);
 
     return new Response(
       `
@@ -554,6 +587,51 @@ test("ReleaseSourceService 在缓存有效期内复用资源搜索结果并支�
   assert.equal(first.releases[0].id, "rss-cache-test:cache-guid-1");
   assert.equal(cached.releases[0].id, "rss-cache-test:cache-guid-1");
   assert.equal(refreshed.releases[0].id, "rss-cache-test:cache-guid-2");
+});
+
+test("ReleaseSourceService 重启后优先复用持久化查询缓存", async () => {
+  const query = {
+    keyword: "跨重启完结缓存专用查询",
+    limit: 10,
+    cacheTtlMs: COMPLETED_ANIME_RELEASE_CACHE_TTL_MS
+  };
+  const persistedResult: ReleaseSearchResult = {
+    query,
+    releases: [{
+      id: "anibt:persisted-search-cache",
+      title: "[测试组] 跨重启完结缓存专用查询 - 01 [1080p]",
+      sourceId: "anibt",
+      sourceName: "AniBT",
+      publishedAt: "2026-07-18T00:00:00.000Z"
+    }],
+    searchedSourceIds: ["anibt"],
+    errors: []
+  };
+  let fetchCount = 0;
+  const repository = {
+    async getReleaseSearchCache() {
+      return { expiresAt: "2099-01-01T00:00:00.000Z", result: persistedResult };
+    }
+  } as unknown as AppRepository;
+  const httpClient: ReleaseHttpClient = {
+    async fetch() {
+      fetchCount += 1;
+      return new Response("unexpected", { status: 500 });
+    }
+  };
+  const service = new ReleaseSourceService(
+    [{ ...rssConfig, id: "rss-persisted-cache-test" }],
+    [],
+    httpClient,
+    repository
+  );
+
+  const result = await service.search(query);
+
+  assert.equal(fetchCount, 0);
+  assert.equal(result.releases.length, 1);
+  assert.equal(result.releases[0].id, persistedResult.releases[0].id);
+  assert.equal(result.releases[0].title, persistedResult.releases[0].title);
 });
 
 test("TorznabReleaseSource 解析 torznab attr、enclosure 和查询参数", async (t) => {

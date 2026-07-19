@@ -3,7 +3,7 @@ import type { Release } from "@shared/domain";
 import { buildAnimeReleaseSearchTerms } from "../../../shared/anime-release-search";
 import type { AppRepository } from "../repositories/app-repository";
 import { rankReleases } from "../releases/release-matcher";
-import { ReleaseSourceService } from "../sources/release-source-service";
+import { ReleaseSourceService, resolveAnimeReleaseCacheTtlMs } from "../sources/release-source-service";
 import { AnimeSourceBindingService } from "../source-bindings/anime-source-binding-service";
 import { MetadataHttpClient } from "../metadata/metadata-http-client";
 
@@ -45,7 +45,10 @@ export class EpisodeReleasePreviewService {
       fansubGroupId: preferredFansubGroupId,
       preferredResolution: anime.preferredResolution,
       limit: 80,
-      cacheTtlMs: settings.automation.checkIntervalMinutes * 60 * 1000
+      cacheTtlMs: resolveAnimeReleaseCacheTtlMs(
+        anime.status,
+        settings.automation.checkIntervalMinutes * 60 * 1000
+      )
     }, bindingState.bindings)];
     const releases = dedupeReleases(searchResults.flatMap((result) => result.releases)).map((release) => ({
       ...release,

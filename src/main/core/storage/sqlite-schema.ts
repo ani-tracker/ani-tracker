@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 11;
+export const SQLITE_SCHEMA_VERSION = 12;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -202,6 +202,16 @@ CREATE TABLE IF NOT EXISTS release (
 
 CREATE INDEX IF NOT EXISTS idx_release_lookup
   ON release (anime_id, episode_no, fansub_group_id, published_at);
+
+CREATE TABLE IF NOT EXISTS release_search_cache (
+  cache_key TEXT PRIMARY KEY,
+  result_json TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_release_search_cache_expires_at
+  ON release_search_cache (expires_at);
 
 CREATE TABLE IF NOT EXISTS download_task (
   id TEXT PRIMARY KEY,

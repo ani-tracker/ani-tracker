@@ -16,8 +16,14 @@ import type {
   ReleaseSourceConfig,
   ReleaseSourceSyncState
 } from "@shared/domain";
+import type { ReleaseSearchResult } from "@shared/contracts";
 import { normalizeAppearanceSettings } from "@shared/theme";
 import type { AppDataFile } from "@shared/persistence/app-data";
+
+export interface ReleaseSearchCacheEntry {
+  expiresAt: string;
+  result: ReleaseSearchResult;
+}
 
 /** 定义主进程业务服务使用的应用数据访问能力。 */
 export interface AppRepository {
@@ -63,6 +69,8 @@ export interface AppRepository {
   listCachedReleases(sourceIds?: string[], limit?: number): Promise<Release[]>;
   upsertCachedReleases(releases: Release[]): Promise<number>;
   pruneCachedReleases(before: string): Promise<number>;
+  getReleaseSearchCache(cacheKey: string): Promise<ReleaseSearchCacheEntry | undefined>;
+  upsertReleaseSearchCache(cacheKey: string, entry: ReleaseSearchCacheEntry): Promise<void>;
   upsertMyAnime(item: MyAnime): Promise<MyAnime[]>;
   removeMyAnime(itemId: string): Promise<MyAnime[]>;
 }

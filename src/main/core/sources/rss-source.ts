@@ -2,7 +2,7 @@ import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { normalizeReleaseSearchText } from "../../../shared/anime-release-search";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
-import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
+import { DESKTOP_BROWSER_ACCEPT_LANGUAGE, DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { defaultMetadataHttpClient, type MetadataFetchOptions } from "../metadata/metadata-http-client";
 import { parseXml, textValue, toArray } from "./xml";
 
@@ -76,6 +76,8 @@ export class RssReleaseSource implements ReleaseSource {
     const response = await this.httpClient.fetch(this.config.rssUrl, {
       source: "rss-release",
       headers: {
+        Accept: "application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": DESKTOP_BROWSER_ACCEPT_LANGUAGE,
         "User-Agent": DESKTOP_BROWSER_USER_AGENT
       }
     });

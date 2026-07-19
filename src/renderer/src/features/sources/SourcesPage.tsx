@@ -39,6 +39,11 @@ import { cn } from "@/lib/cn";
 import { useAsyncData } from "@/lib/use-async-data";
 import type { SourceSyncSchedulerStatus } from "@shared/contracts";
 import type { AppSettings, MetadataProxySettings, ReleaseSourceConfig, SourceKind } from "@shared/domain";
+import {
+  DEFAULT_SOURCE_REQUEST_INTERVAL_MS,
+  getSourceMinimumRequestIntervalMs,
+  MAX_SOURCE_REQUEST_INTERVAL_MS
+} from "@shared/source-network-policy";
 
 const kindText: Record<SourceKind, string> = {
   rss: "RSS",
@@ -85,7 +90,7 @@ export function SourcesPage() {
       setCredentials(Object.fromEntries(data.map((source) => [source.id, source.apiKey ?? ""])));
       setIntervalDrafts(Object.fromEntries(data.map((source) => [
         source.id,
-        String(normalizeSourceInterval(source.requestIntervalMs))
+        String(normalizeSourceInterval(source.requestIntervalMs, source))
       ])));
     }
   }, [data]);
@@ -146,7 +151,7 @@ export function SourcesPage() {
       () => appApi.upsertSource({
         ...source,
         useProxy: !(source.useProxy ?? false),
-        requestIntervalMs: normalizeSourceInterval(source.requestIntervalMs)
+        requestIntervalMs: normalizeSourceInterval(source.requestIntervalMs, source)
       }),
       "下载源代理策略更新失败"
     );
@@ -154,7 +159,7 @@ export function SourcesPage() {
 
   /** 保存单个下载源的最小采集间隔。 */
   async function saveSourceInterval(source: ReleaseSourceConfig) {
-    const requestIntervalMs = normalizeSourceInterval(Number(intervalDrafts[source.id]));
+    const requestIntervalMs = normalizeSourceInterval(Number(intervalDrafts[source.id]), source);
     await runSourceMutation(
       source,
       () => appApi.upsertSource({ ...source, requestIntervalMs }),
@@ -174,17 +179,20 @@ export function SourcesPage() {
     setDraftErrors(nextErrors);
     if (Object.keys(nextErrors).length > 0) return;
 
-    const source: ReleaseSourceConfig = {
+    const sourceBase: ReleaseSourceConfig = {
       id: createSourceId(name),
       name,
       kind: draft.kind,
       enabled: true,
       useProxy: false,
-      requestIntervalMs: 1_500,
       rssUrl: draft.kind === "rss" ? url : undefined,
       baseUrl: draft.kind !== "rss" ? url : undefined,
       apiKey: draft.kind !== "rss" ? draft.apiKey.trim() || undefined : undefined,
       tags: [draft.kind]
+    };
+    const source: ReleaseSourceConfig = {
+      ...sourceBase,
+      requestIntervalMs: normalizeSourceInterval(undefined, sourceBase)
     };
 
     setAddingSource(true);
@@ -532,16 +540,21 @@ export function SourcesPage() {
                                   <Input
                                     id={`source-interval-${source.id}`}
                                     type="number"
-                                    min={250}
-                                    max={60000}
+                                    min={getSourceMinimumRequestIntervalMs(source)}
+                                    max={MAX_SOURCE_REQUEST_INTERVAL_MS}
                                     step={250}
-                                    value={intervalDrafts[source.id] ?? "1500"}
+                                    value={intervalDrafts[source.id] ?? String(normalizeSourceInterval(source.requestIntervalMs, source))}
                                     onChange={(event) => setIntervalDrafts({ ...intervalDrafts, [source.id]: event.target.value })}
                                   />
                                   <Button variant="outline" disabled={Boolean(sourceMutationId)} onClick={() => void saveSourceInterval(source)}>
                                     <Save data-icon="inline-start" />保存
                                   </Button>
                                 </div>
+                                <FieldDescription>
+                                  {getSourceMinimumRequestIntervalMs(source) > 250
+                                    ? "AniBT 同域请求固定不低于 3000 毫秒，避免触发站点访问保护。"
+                                    : "同一域名请求会串行执行，并遵循服务端退避响应头。"}
+                                </FieldDescription>
                               </Field>
                               {canUseCredential(source) ? (
                                 <Field>
@@ -719,9 +732,11 @@ function getSourceSyncSettings(settings: AppSettings | null): { enabled: boolean
   };
 }
 
-function normalizeSourceInterval(value?: number): number {
-  if (!Number.isFinite(value)) return 1_500;
-  return Math.max(250, Math.min(60_000, Math.round(value!)));
+/** 规范化下载源间隔，并同步展示站点级最低限制。 */
+function normalizeSourceInterval(value: number | undefined, source: ReleaseSourceConfig): number {
+  const minimumMs = getSourceMinimumRequestIntervalMs(source);
+  if (!Number.isFinite(value)) return Math.max(DEFAULT_SOURCE_REQUEST_INTERVAL_MS, minimumMs);
+  return Math.max(minimumMs, Math.min(MAX_SOURCE_REQUEST_INTERVAL_MS, Math.round(value!)));
 }
 
 function formatOptionalDateTime(value?: string): string {

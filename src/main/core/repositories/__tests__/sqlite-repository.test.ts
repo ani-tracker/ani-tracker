@@ -1,11 +1,13 @@
 import { strict as assert } from "node:assert";
-import { access, mkdir, mkdtemp, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import type Database from "better-sqlite3";
 import * as BetterSqlite3Module from "better-sqlite3";
+import type { ReleaseSearchResult } from "@shared/contracts";
 import type { MyAnime } from "@shared/domain";
+import { validateThemePack } from "@shared/theme";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
 import { enrichReleaseFromTitle } from "../../releases/release-title-parser";
 import { createSeedData } from "../../storage/seed-data";
@@ -111,6 +113,68 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   second.close();
 });
 
+test("SQLite 保存图片取色主题后可在重启时恢复", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const imported = validateThemePack(JSON.parse(
+    await readFile("docs/image-palette-example.ani-theme.json", "utf8")
+  ));
+  assert.ok(imported.pack);
+
+  await first.repository.updateSettings({
+    appearance: {
+      themeMode: "dark",
+      themePackId: imported.pack.id,
+      customThemePacks: [imported.pack]
+    }
+  });
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const restored = (await second.repository.getSettings()).appearance;
+  assert.equal(restored.themeMode, "dark");
+  assert.equal(restored.themePackId, imported.pack.id);
+  assert.deepEqual(restored.customThemePacks, [imported.pack]);
+  second.close();
+});
+
+test("SQLite 资源查询缓存可跨重启恢复并自动淘汰过期项", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const result: ReleaseSearchResult = {
+    query: { keyword: "完结缓存测试", limit: 10, cacheTtlMs: 7 * 24 * 60 * 60 * 1000 },
+    releases: [{
+      id: "anibt:completed-cache",
+      title: "[测试组] 完结缓存测试 - 01 [1080p]",
+      sourceId: "anibt",
+      sourceName: "AniBT",
+      publishedAt: "2026-07-18T00:00:00.000Z"
+    }],
+    searchedSourceIds: ["anibt"],
+    errors: []
+  };
+  await first.repository.upsertReleaseSearchCache("completed-cache", {
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    result
+  });
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const restored = await second.repository.getReleaseSearchCache("completed-cache");
+  assert.deepEqual(restored?.result, result);
+
+  await second.repository.upsertReleaseSearchCache("expired-cache", {
+    expiresAt: "2000-01-01T00:00:00.000Z",
+    result
+  });
+  assert.equal(await second.repository.getReleaseSearchCache("expired-cache"), undefined);
+  second.close();
+});
+
 test("SQLite 重启后保留下载源网络策略、退避状态和增量资源", async () => {
   const fixture = await createFixture();
   const first = createRepositoryRuntime(fixture.options);
@@ -118,7 +182,7 @@ test("SQLite 重启后保留下载源网络策略、退避状态和增量资源"
   const anibt = (await first.repository.listSources()).find((source) => source.id === "anibt");
   assert.ok(anibt);
   assert.equal(anibt.useProxy, true);
-  assert.equal(anibt.requestIntervalMs, 1_500);
+  assert.equal(anibt.requestIntervalMs, 3_000);
   await first.repository.upsertSource({ ...anibt, useProxy: false, requestIntervalMs: 2_750 });
   await first.repository.upsertSourceSyncState({
     sourceId: anibt.id,
