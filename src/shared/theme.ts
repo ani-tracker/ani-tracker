@@ -298,6 +298,30 @@ export const BUILT_IN_THEME_PACKS: readonly ThemePackManifest[] = [
 const BUILT_IN_THEME_IDS = new Set(BUILT_IN_THEME_PACKS.map((pack) => pack.id));
 const THEME_TOKEN_NAME_SET = new Set<string>(THEME_TOKEN_NAMES);
 const MANIFEST_KEYS = new Set(["schemaVersion", "id", "name", "version", "author", "description", "style", "tokens"]);
+const TEXT_CONTRAST_PAIRS = [
+  ["background", "foreground"],
+  ["card", "card-foreground"],
+  ["popover", "popover-foreground"],
+  ["primary", "primary-foreground"],
+  ["secondary", "secondary-foreground"],
+  ["muted", "muted-foreground"],
+  ["accent", "accent-foreground"],
+  ["destructive", "destructive-foreground"],
+  ["success", "success-foreground"],
+  ["warning", "warning-foreground"],
+  ["info", "info-foreground"],
+  ["sidebar", "sidebar-foreground"],
+  ["sidebar-primary", "sidebar-primary-foreground"],
+  ["sidebar-accent", "sidebar-accent-foreground"]
+] as const satisfies ReadonlyArray<readonly [ThemeTokenName, ThemeTokenName]>;
+const CONTROL_CONTRAST_PAIRS = [
+  ["background", "input"],
+  ["background", "ring"],
+  ["card", "input"],
+  ["card", "ring"]
+] as const satisfies ReadonlyArray<readonly [ThemeTokenName, ThemeTokenName]>;
+const MINIMUM_TEXT_CONTRAST = 4.5;
+const MINIMUM_CONTROL_CONTRAST = 3;
 
 /** 创建全新的默认外观设置，避免共享可变数组。 */
 export function createDefaultAppearanceSettings(): AppearanceSettings {
@@ -405,6 +429,12 @@ export function validateThemePack(value: unknown): ThemePackValidationResult {
   if (!isRecord(value.tokens)) {
     errors.push("主题包缺少 tokens 对象");
   }
+  if (light) {
+    validateTokenContrast(light, "浅色", errors);
+  }
+  if (dark) {
+    validateTokenContrast(dark, "深色", errors);
+  }
 
   if (errors.length > 0 || !light || !dark || typeof radius !== "string") {
     return { ok: false, errors };
@@ -478,17 +508,20 @@ export function hslChannelsToHex(value: string): string {
 
 /** 为可编辑背景色选择对比度更高的前景色。 */
 export function readableForegroundForHsl(value: string): string {
-  const hex = hslChannelsToHex(value);
-  const channels = [1, 3, 5].map((index) => Number.parseInt(hex.slice(index, index + 2), 16) / 255);
-  const luminance = channels
-    .map((channel) => channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
-    .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
-  const whiteContrast = 1.05 / (luminance + 0.05);
-  const darkContrast = (luminance + 0.05) / 0.065;
-  return whiteContrast >= darkContrast ? "0 0% 100%" : "215 22% 15%";
+  const white = "0 0% 100%";
+  const dark = "215 22% 15%";
+  const whiteContrast = contrastRatio(value, white);
+  const darkContrast = contrastRatio(value, dark);
+  if (Math.max(whiteContrast, darkContrast) >= MINIMUM_TEXT_CONTRAST) {
+    return whiteContrast >= darkContrast ? white : dark;
+  }
+
+  // 中间亮度可能与带色深前景都不足 4.5:1，使用纯黑保证可读性。
+  return "0 0% 0%";
 }
 
 function validateTokenSet(value: unknown, label: string, errors: string[]): ThemeTokens | undefined {
+  const initialErrorCount = errors.length;
   if (!isRecord(value)) {
     errors.push(`${label}令牌必须是对象`);
     return undefined;
@@ -507,7 +540,55 @@ function validateTokenSet(value: unknown, label: string, errors: string[]): Them
     }
     tokens[token] = tokenValue;
   }
-  return errors.length > 0 ? undefined : tokens;
+  return errors.length > initialErrorCount ? undefined : tokens;
+}
+
+/** 校验主题文字、输入边界和焦点环均满足 WCAG 对比度要求。 */
+function validateTokenContrast(tokens: ThemeTokens, label: string, errors: string[]): void {
+  for (const [background, foreground] of TEXT_CONTRAST_PAIRS) {
+    const ratio = contrastRatio(tokens[background], tokens[foreground]);
+    if (ratio < MINIMUM_TEXT_CONTRAST) {
+      errors.push(
+        `${label}主题 ${foreground} 与 ${background} 的文字对比度仅 ${ratio.toFixed(2)}:1，至少需要 ${MINIMUM_TEXT_CONTRAST}:1`
+      );
+    }
+  }
+  for (const [surface, control] of CONTROL_CONTRAST_PAIRS) {
+    const ratio = contrastRatio(tokens[surface], tokens[control]);
+    if (ratio < MINIMUM_CONTROL_CONTRAST) {
+      errors.push(
+        `${label}主题 ${control} 与 ${surface} 的控件对比度仅 ${ratio.toFixed(2)}:1，至少需要 ${MINIMUM_CONTROL_CONTRAST}:1`
+      );
+    }
+  }
+}
+
+/** 计算两个 HSL 主题颜色间的 WCAG 对比度。 */
+function contrastRatio(first: string, second: string): number {
+  const firstLuminance = relativeLuminance(first);
+  const secondLuminance = relativeLuminance(second);
+  return (Math.max(firstLuminance, secondLuminance) + 0.05)
+    / (Math.min(firstLuminance, secondLuminance) + 0.05);
+}
+
+/** 将 HSL 主题颜色转换为 WCAG 相对亮度。 */
+function relativeLuminance(value: string): number {
+  const [hue, saturationPercent, lightnessPercent] = parseHslChannels(value) ?? [0, 0, 0];
+  const saturation = saturationPercent / 100;
+  const lightness = lightnessPercent / 100;
+  const chroma = (1 - Math.abs(2 * lightness - 1)) * saturation;
+  const secondary = chroma * (1 - Math.abs((hue / 60) % 2 - 1));
+  const offset = lightness - chroma / 2;
+  const rgb = hue < 60 ? [chroma, secondary, 0]
+    : hue < 120 ? [secondary, chroma, 0]
+      : hue < 180 ? [0, chroma, secondary]
+        : hue < 240 ? [0, secondary, chroma]
+          : hue < 300 ? [secondary, 0, chroma]
+            : [chroma, 0, secondary];
+  return rgb
+    .map((channel) => channel + offset)
+    .map((channel) => channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4)
+    .reduce((sum, channel, index) => sum + channel * [0.2126, 0.7152, 0.0722][index], 0);
 }
 
 function parseHslChannels(value: string): [number, number, number] | undefined {

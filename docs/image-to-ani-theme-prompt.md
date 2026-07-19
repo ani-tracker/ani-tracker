@@ -6,6 +6,8 @@
 
 将一张参考图片转换为 Ani-tracker 可直接导入的 `.ani-theme.json` v1 主题文件。生成过程在支持图片理解的模型中完成，Ani-tracker 本身不需要连接 AI 服务。
 
+可导入的完整字段示例见 [image-palette-example.ani-theme.json](./image-palette-example.ani-theme.json)。示例与设置页使用同一套格式、令牌白名单和 WCAG 对比度校验。
+
 ## 使用方法
 
 1. 向支持图片理解的模型上传一张参考图片。

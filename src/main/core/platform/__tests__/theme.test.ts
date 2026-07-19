@@ -1,4 +1,5 @@
 import { strict as assert } from "node:assert";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
   BUILT_IN_THEME_PACKS,
@@ -7,6 +8,7 @@ import {
   hexToHslChannels,
   hslChannelsToHex,
   normalizeAppearanceSettings,
+  readableForegroundForHsl,
   validateThemePack,
   type ResolvedThemeMode,
   type ThemeTokenName,
@@ -36,6 +38,12 @@ test("内置主题包均满足完整 schema", () => {
     const result = validateThemePack(pack);
     assert.equal(result.ok, true, `${pack.id}: ${result.errors.join("；")}`);
   }
+});
+
+test("图片取色主题规范示例可直接导入", () => {
+  const example = JSON.parse(readFileSync("docs/image-palette-example.ani-theme.json", "utf8")) as unknown;
+  const result = validateThemePack(example);
+  assert.equal(result.ok, true, result.errors.join("；"));
 });
 
 test("内置主题包满足 WCAG AA 文字与焦点可见性对比度", () => {
@@ -76,6 +84,18 @@ test("主题校验拒绝未知令牌和不安全字段", () => {
   assert.ok(result.errors.some((error) => error.includes("未知令牌")));
 });
 
+test("主题校验拒绝文字和控件对比度不足的用户主题", () => {
+  const candidate = clonePack(BUILT_IN_THEME_PACKS[0]);
+  candidate.id = "custom-low-contrast";
+  candidate.tokens.dark["muted-foreground"] = candidate.tokens.dark.muted;
+  candidate.tokens.light.ring = candidate.tokens.light.background;
+
+  const result = validateThemePack(candidate);
+  assert.equal(result.ok, false);
+  assert.ok(result.errors.some((error) => error.includes("深色主题 muted-foreground") && error.includes("4.5:1")));
+  assert.ok(result.errors.some((error) => error.includes("浅色主题 ring") && error.includes("3:1")));
+});
+
 test("外观设置保留有效用户主题并回退未知主题 ID", () => {
   const custom = clonePack(BUILT_IN_THEME_PACKS[1]);
   custom.id = "custom-coral";
@@ -100,6 +120,12 @@ test("外观设置保留有效用户主题并回退未知主题 ID", () => {
 test("主题颜色可在十六进制与 HSL 通道间稳定转换", () => {
   const hsl = hexToHslChannels("#14816f");
   assert.equal(hslChannelsToHex(hsl), "#14816f");
+});
+
+test("自动前景色在中间亮度背景上仍满足文字对比度", () => {
+  const background = "0 0% 50%";
+  const foreground = readableForegroundForHsl(background);
+  assert.ok(contrastRatio(foreground, background) >= 4.5);
 });
 
 function clonePack(pack: ThemePackManifest): ThemePackManifest {
