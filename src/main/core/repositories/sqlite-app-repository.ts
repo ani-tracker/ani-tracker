@@ -267,41 +267,16 @@ export class SqliteAppRepository implements AppRepository {
   }
 
   async upsertAnimeCatalog(items: Anime[]): Promise<{ items: Anime[]; addedCount: number; existingCount: number }> {
-    const catalog = await this.listAnimeCatalog();
-    const followedAnimeIds = new Set((await this.listMyAnime()).map((item) => item.anime.id));
-    let addedCount = 0;
-    let existingCount = 0;
-    for (const item of items) {
-      const index = catalog.findIndex((anime) => isSameAnime(anime, item));
-      if (index >= 0) {
-        const existing = catalog[index];
-        catalog[index] = {
-          ...existing,
-          ...item,
-          id: existing.id,
-          rating: followedAnimeIds.has(existing.id) ? (existing.rating ?? item.rating) : item.rating,
-          aliases: mergeAliases(existing.aliases, item.aliases).map((alias) => ({
-            ...alias,
-            animeId: existing.id
-          })),
-          externalIds: { ...existing.externalIds, ...item.externalIds }
-        };
-        existingCount += 1;
-      } else {
-        catalog.push(item);
-        addedCount += 1;
-      }
-    }
-    const deduped = mergeAnimeMetadataBatches([{ source: "catalog", items: catalog }]);
-    this.transaction(() => {
-      for (const anime of deduped) this.upsertAnime(anime);
-      const keepIds = new Set(deduped.map((anime) => anime.id));
-      for (const row of this.all("SELECT id FROM anime_catalog")) {
-        const id = asString(row.id);
-        if (!keepIds.has(id)) this.run("DELETE FROM anime_catalog WHERE id = @id", { id });
-      }
-    });
-    return { items: sortAnimeCatalog(deduped), addedCount, existingCount };
+    return this.persistAnimeCatalog(items);
+  }
+
+  /** 采集成功后在单个事务中替换目标月份，其他月份和被业务引用的记录保持不变。 */
+  async replaceAnimeCatalogMonth(
+    year: number,
+    month: number,
+    items: Anime[]
+  ): Promise<{ items: Anime[]; addedCount: number; existingCount: number }> {
+    return this.persistAnimeCatalog(items, { year, month });
   }
 
   async clearAnimeCatalog(): Promise<void> {
@@ -1014,7 +989,102 @@ export class SqliteAppRepository implements AppRepository {
     this.setMeta("schema_version", String(SQLITE_SCHEMA_VERSION));
   }
 
+  /** 合并并持久化目录；传入月份时先移除该月未引用缓存，再原子提交。 */
+  private async persistAnimeCatalog(
+    items: Anime[],
+    replaceMonth?: { year: number; month: number }
+  ): Promise<{ items: Anime[]; addedCount: number; existingCount: number }> {
+    const currentCatalog = await this.listAnimeCatalog();
+    const referencedAnimeIds = this.readReferencedAnimeIds();
+    const followedAnimeIds = new Set(
+      this.all("SELECT anime_id FROM my_anime").map((row) => asString(row.anime_id))
+    );
+    const catalog = replaceMonth
+      ? currentCatalog.filter((anime) =>
+          anime.premiereYear !== replaceMonth.year ||
+          anime.premiereMonth !== replaceMonth.month ||
+          referencedAnimeIds.has(anime.id)
+        )
+      : [...currentCatalog];
+    let addedCount = 0;
+    let existingCount = 0;
+
+    for (const item of items) {
+      const index = catalog.findIndex((anime) => isSameAnime(anime, item));
+      if (index >= 0) {
+        const existing = catalog[index];
+        catalog[index] = {
+          ...existing,
+          ...item,
+          id: existing.id,
+          rating: followedAnimeIds.has(existing.id) ? (existing.rating ?? item.rating) : item.rating,
+          aliases: mergeAliases(existing.aliases, item.aliases).map((alias) => ({
+            ...alias,
+            animeId: existing.id
+          })),
+          externalIds: { ...existing.externalIds, ...item.externalIds }
+        };
+        existingCount += 1;
+      } else {
+        catalog.push(item);
+        addedCount += 1;
+      }
+    }
+
+    const deduped = mergeAnimeMetadataBatches([{ source: "catalog", items: catalog }]);
+    const keepIds = new Set([...deduped.map((anime) => anime.id), ...referencedAnimeIds]);
+    const deleteIds = this.all("SELECT id FROM anime_catalog")
+      .map((row) => asString(row.id))
+      .filter((id) => !keepIds.has(id));
+
+    this.transaction(() => {
+      for (const id of deleteIds) {
+        this.run("DELETE FROM anime_catalog WHERE id = @id", { id });
+      }
+      for (const anime of deduped) {
+        this.upsertAnime(anime);
+      }
+    });
+
+    if (replaceMonth) {
+      logger.info("Anime catalog month replaced", {
+        year: replaceMonth.year,
+        month: replaceMonth.month,
+        removedCount: deleteIds.length,
+        collectedCount: items.length,
+        retainedReferencedCount: referencedAnimeIds.size
+      });
+    }
+
+    return {
+      items: await this.listAnimeCatalog(),
+      addedCount,
+      existingCount
+    };
+  }
+
+  /** 读取不能随目录缓存清理的番剧标识。 */
+  private readReferencedAnimeIds(): Set<string> {
+    return new Set(
+      this.all(
+        `SELECT anime_id AS id FROM my_anime
+         UNION SELECT anime_id AS id FROM episode
+         UNION SELECT anime_id AS id FROM download_task WHERE anime_id IS NOT NULL
+         UNION SELECT anime_id AS id FROM media_file WHERE anime_id IS NOT NULL`
+      ).map((row) => asString(row.id))
+    );
+  }
+
   private upsertAnime(anime: Anime): void {
+    const normalizedAliases = normalizeAnimeAliasesForPersistence(anime);
+    if (normalizedAliases.changed) {
+      logger.warn("Anime aliases normalized before SQLite write", {
+        animeId: anime.id,
+        inputCount: anime.aliases.length,
+        persistedCount: normalizedAliases.aliases.length,
+        duplicateIds: normalizedAliases.duplicateIds
+      });
+    }
     const timestamp = nowIso();
     this.run(
       `INSERT INTO anime_catalog (
@@ -1041,7 +1111,7 @@ export class SqliteAppRepository implements AppRepository {
       }
     );
     this.run("DELETE FROM anime_alias WHERE anime_id = @animeId", { animeId: anime.id });
-    for (const alias of anime.aliases) {
+    for (const alias of normalizedAliases.aliases) {
       this.run(
         `INSERT INTO anime_alias (id, anime_id, alias, language, priority)
          VALUES (@id, @animeId, @alias, @language, @priority)`,
@@ -1695,6 +1765,67 @@ export class SqliteAppRepository implements AppRepository {
     this.ensureColumn("download_task", "subtitle_languages_json", "subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
     this.ensureColumn("download_task", "subtitle", "subtitle TEXT");
   }
+}
+
+/** 写库前按别名文本去重，并基于最终番剧标识重建唯一别名标识。 */
+function normalizeAnimeAliasesForPersistence(anime: Anime): {
+  aliases: Anime["aliases"];
+  changed: boolean;
+  duplicateIds: string[];
+} {
+  const candidates: Anime["aliases"] = [];
+  const aliasIndexByKey = new Map<string, number>();
+  const seenIds = new Set<string>();
+  const duplicateIds = new Set<string>();
+
+  for (const alias of anime.aliases) {
+    const value = alias.alias.trim();
+    const key = normalizeAnimeAliasKey(value);
+    if (!key) {
+      continue;
+    }
+
+    if (seenIds.has(alias.id)) {
+      duplicateIds.add(alias.id);
+    } else {
+      seenIds.add(alias.id);
+    }
+
+    const existingIndex = aliasIndexByKey.get(key);
+    if (existingIndex !== undefined) {
+      if (alias.priority > candidates[existingIndex].priority) {
+        candidates[existingIndex] = { ...alias, alias: value };
+      }
+      continue;
+    }
+
+    aliasIndexByKey.set(key, candidates.length);
+    candidates.push({ ...alias, alias: value });
+  }
+
+  const aliases = candidates.map((alias, index) => ({
+    ...alias,
+    id: `${anime.id}-alias-${index + 1}`,
+    animeId: anime.id
+  }));
+  const changed = aliases.length !== anime.aliases.length || aliases.some((alias, index) => {
+    const original = anime.aliases[index];
+    return !original ||
+      alias.id !== original.id ||
+      alias.animeId !== original.animeId ||
+      alias.alias !== original.alias;
+  });
+
+  return {
+    aliases,
+    changed,
+    duplicateIds: [...duplicateIds]
+  };
+}
+
+/** 生成用于别名语义去重的稳定键。 */
+function normalizeAnimeAliasKey(value: string): string {
+  return value.normalize("NFKC").toLocaleLowerCase();
 }
 
 function mapAnime(row: SqliteRow, aliases: Anime["aliases"]): Anime {

@@ -39,6 +39,11 @@ export interface AppRepository {
   searchAnimeCatalog(keyword: string): Promise<Anime[]>;
   listAnimeCatalogByMonth(year: number, month: number): Promise<Anime[]>;
   upsertAnimeCatalog(items: Anime[]): Promise<{ items: Anime[]; addedCount: number; existingCount: number }>;
+  replaceAnimeCatalogMonth(
+    year: number,
+    month: number,
+    items: Anime[]
+  ): Promise<{ items: Anime[]; addedCount: number; existingCount: number }>;
   clearAnimeCatalog(): Promise<void>;
   listAnimeSourceBindings(animeId: string): Promise<AnimeSourceBinding[]>;
   upsertAnimeSourceBinding(binding: AnimeSourceBinding): Promise<AnimeSourceBinding[]>;

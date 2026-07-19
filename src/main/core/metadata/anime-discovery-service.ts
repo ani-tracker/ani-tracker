@@ -32,13 +32,19 @@ export class AnimeDiscoveryService {
 
   async collectMonth(query: AnimeDiscoveryQuery): Promise<AnimeDiscoveryResult> {
     const existing = await this.repository.listAnimeCatalogByMonth(query.year, query.month);
-    if (query.forceRefresh) {
-      await this.repository.clearAnimeCatalog();
-    }
-
     const result = await this.collectFromProviders(query.year, query.month);
     if (result.items.length) {
-      const upserted = await this.repository.upsertAnimeCatalog(result.items);
+      const upserted = query.forceRefresh
+        ? await this.repository.replaceAnimeCatalogMonth(query.year, query.month, result.items)
+        : await this.repository.upsertAnimeCatalog(result.items);
+
+      if (query.forceRefresh) {
+        logger.info("新番月度缓存已原子替换", {
+          year: query.year,
+          month: query.month,
+          collectedCount: result.items.length
+        });
+      }
 
       return {
         query,
@@ -54,9 +60,9 @@ export class AnimeDiscoveryService {
 
     return {
       query,
-      items: query.forceRefresh ? [] : existing,
+      items: existing,
       addedCount: 0,
-      existingCount: query.forceRefresh ? 0 : existing.length,
+      existingCount: existing.length,
       source: result.source,
       errors: result.errors.length ? result.errors : ["新番采集没有返回结果"]
     };
