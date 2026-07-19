@@ -52,7 +52,7 @@ export function MetricStrip({ className, ...props }: HTMLAttributes<HTMLDivEleme
   return (
     <div
       className={cn(
-        "grid min-w-0 grid-cols-2 divide-x divide-y overflow-hidden rounded-md border bg-card sm:divide-y-0",
+        "grid min-w-0 grid-cols-2 gap-px overflow-hidden rounded-md border bg-border",
         className
       )}
       {...props}
@@ -73,7 +73,7 @@ export function MetricItem({
   className?: string;
 }) {
   return (
-    <div className={cn("min-w-0 px-4 py-3", className)}>
+    <div className={cn("min-w-0 bg-card px-4 py-3", className)}>
       <div className="truncate text-xs font-medium text-muted-foreground">{label}</div>
       <div className="mt-1 truncate text-xl font-semibold tabular-nums">{value}</div>
       {detail && <div className="mt-1 truncate text-xs text-muted-foreground">{detail}</div>}

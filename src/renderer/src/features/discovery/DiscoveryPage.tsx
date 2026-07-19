@@ -1,22 +1,22 @@
 import {
   AlertCircle,
   CalendarDays,
+  CalendarRange,
   CalendarPlus,
   CheckCircle2,
   ExternalLink,
   ImageOff,
+  LayoutGrid,
   Plus,
   RotateCcw,
-  Search,
-  Star
+  Search
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
-import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
+import { Field, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -28,7 +28,9 @@ import {
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CachedImage } from "@/components/cached-image";
+import { FilterToolbar, Page, PageActions, PageHeader, PageHeading } from "@/components/page-layout";
 import { appApi } from "@/lib/api";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { Anime, MyAnime, Season } from "@shared/domain";
@@ -46,6 +48,7 @@ interface SeasonOption {
 }
 
 type DiscoverySortKey = "premiereAsc" | "premiereDesc" | "ratingDesc";
+type DiscoveryView = "catalog" | "schedule";
 
 const seasonOptions: readonly SeasonOption[] = [
   { value: "winter", label: "冬季", shortLabel: "冬", months: [1, 2, 3] },
@@ -68,6 +71,7 @@ export function DiscoveryPage() {
   const [keyword, setKeyword] = useState("");
   const [appliedKeyword, setAppliedKeyword] = useState("");
   const [sortKey, setSortKey] = useState<DiscoverySortKey>("premiereAsc");
+  const [viewMode, setViewMode] = useState<DiscoveryView>("catalog");
   const [items, setItems] = useState<Anime[]>([]);
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [loading, setLoading] = useState(true);
@@ -244,13 +248,10 @@ export function DiscoveryPage() {
     : `${target.year} ${activeSeason.label} · ${visibleItems.length} 部`;
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-normal">新番发现</h1>
-          <p className="mt-1 text-sm text-muted-foreground">按播出季度浏览新番，可按月份缩小范围。</p>
-        </div>
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+    <Page>
+      <PageHeader>
+        <PageHeading description="按季度浏览新番目录，并在时间表中查看首播安排。" title="新番发现" />
+        <PageActions className="grid grid-cols-1 sm:grid-cols-2">
           <Button className="w-full" variant="outline" onClick={() => void collectSeason(true)} disabled={collecting}>
             <RotateCcw data-icon="inline-start" />
             {collecting ? `刷新中 ${collectProgress}/3` : "强制刷新季度"}
@@ -259,8 +260,8 @@ export function DiscoveryPage() {
             <CalendarPlus data-icon="inline-start" />
             {collectingLabel}
           </Button>
-        </div>
-      </div>
+        </PageActions>
+      </PageHeader>
 
       {message && (
         <Alert variant={message.tone === "error" ? "destructive" : "default"}>
@@ -270,9 +271,8 @@ export function DiscoveryPage() {
         </Alert>
       )}
 
-      <Card className="min-w-0 overflow-hidden">
-        <CardHeader className="border-b">
-          <div className="flex min-w-0 flex-col gap-3 md:grid md:grid-cols-[128px_minmax(0,1fr)_140px] md:items-end">
+      <FilterToolbar className="items-stretch sm:flex-col sm:items-stretch">
+          <div className="flex min-w-0 flex-col gap-3 md:grid md:grid-cols-[128px_minmax(0,1fr)_auto_140px] md:items-end">
             <Field className="min-w-0">
               <FieldLabel className="sr-only" htmlFor="discovery-year">选择年份</FieldLabel>
               <Select
@@ -305,12 +305,27 @@ export function DiscoveryPage() {
               </TabsList>
             </Tabs>
 
+            <ToggleGroup
+              aria-label="选择新番视图"
+              className="grid grid-cols-2"
+              type="single"
+              value={viewMode}
+              onValueChange={(value) => value && setViewMode(value as DiscoveryView)}
+            >
+              <ToggleGroupItem value="catalog">
+                <LayoutGrid />
+                图鉴
+              </ToggleGroupItem>
+              <ToggleGroupItem value="schedule">
+                <CalendarRange />
+                时间表
+              </ToggleGroupItem>
+            </ToggleGroup>
+
             <div className="text-sm font-medium tabular-nums md:text-right">{resultLabel}</div>
           </div>
-        </CardHeader>
 
-        <CardContent className="pt-4 sm:pt-5">
-          <FieldGroup className="gap-3 lg:grid lg:grid-cols-[minmax(0,auto)_160px_minmax(0,1fr)_auto] lg:items-end">
+          <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,auto)_160px_minmax(0,1fr)_auto] lg:items-end">
             <Field className="min-w-0">
               <FieldLabel className="sr-only">选择月份</FieldLabel>
               <Tabs
@@ -367,132 +382,38 @@ export function DiscoveryPage() {
               <Search data-icon="inline-start" />
               搜索
             </Button>
-          </FieldGroup>
-        </CardContent>
-      </Card>
+          </div>
+      </FilterToolbar>
 
       {loading ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" aria-label="正在加载季度新番目录">
-          {Array.from({ length: 6 }, (_, index) => (
-            <Card key={index} className="overflow-hidden">
-              <Skeleton className="aspect-[16/7] w-full rounded-none" />
-              <CardHeader>
-                <Skeleton className="h-5 w-2/3" />
-                <Skeleton className="h-4 w-1/2" />
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2">
-                <Skeleton className="h-4 w-full" />
-                <Skeleton className="h-4 w-5/6" />
-              </CardContent>
-            </Card>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5" aria-label="正在加载季度新番目录">
+          {Array.from({ length: 10 }, (_, index) => (
+            <div className="flex min-w-0 flex-col gap-3" key={index}>
+              <Skeleton className="aspect-[2/3] w-full rounded-lg" />
+              <Skeleton className="h-5 w-4/5" />
+              <Skeleton className="h-4 w-3/5" />
+            </div>
           ))}
         </div>
+      ) : viewMode === "schedule" ? (
+        <DiscoverySchedule
+          addingAnimeId={addingAnimeId}
+          followedIds={followedIds}
+          items={visibleItems}
+          onAdd={addToMyAnime}
+        />
       ) : (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {visibleItems.map((anime) => {
-            const followed = followedIds.has(anime.id);
-            const externalIds = buildExternalIdBadges(anime);
-            const titleDisplay = resolveAnimeTitleDisplay(anime);
-            const hiddenAliases = titleDisplay.aliases.slice(2);
-
-            return (
-              <Card key={anime.id} className="flex h-full min-w-0 flex-col overflow-hidden">
-                {anime.coverUrl ? (
-                  <CachedImage
-                    alt={titleDisplay.title}
-                    className="aspect-[16/7] w-full bg-muted object-cover"
-                    loading="lazy"
-                    sourceUrl={anime.coverUrl}
-                  />
-                ) : (
-                  <div className="flex aspect-[16/7] w-full items-center justify-center bg-muted text-muted-foreground">
-                    <ImageOff className="h-6 w-6" />
-                  </div>
-                )}
-
-                <CardHeader className="flex-row items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <CardTitle className="truncate" title={titleDisplay.title}>
-                      {titleDisplay.title}
-                    </CardTitle>
-                    <CardDescription className="mt-1 truncate" title={titleDisplay.subtitle}>
-                      {titleDisplay.subtitle ?? "无别名"}
-                    </CardDescription>
-                  </div>
-                  <Badge className="flex-none" tone={followed ? "green" : "blue"}>
-                    {followed ? "已追番" : `${anime.premiereMonth} 月`}
-                  </Badge>
-                </CardHeader>
-
-                <CardContent className="flex flex-1 flex-col gap-3">
-                  <div className="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                    <CalendarDays className="h-3.5 w-3.5 flex-none" />
-                    <span>{formatPremiere(anime)}</span>
-                    {anime.season && <span>· {seasonText[anime.season]}</span>}
-                    <span className="inline-flex items-center gap-1">
-                      <Star className="h-3.5 w-3.5 flex-none text-primary" />
-                      {formatAnimeRating(anime)}
-                    </span>
-                  </div>
-
-                  <p className="line-clamp-2 min-h-12 text-sm leading-6 text-muted-foreground">
-                    {anime.summary ?? "暂无简介"}
-                  </p>
-
-                  {titleDisplay.aliases.length > 0 && (
-                    <div className="flex min-h-6 flex-wrap gap-2">
-                      {titleDisplay.aliases.slice(0, 2).map((alias) => (
-                        <Badge key={alias.id} className="max-w-[220px] truncate" title={alias.alias}>
-                          {alias.alias}
-                        </Badge>
-                      ))}
-                      {hiddenAliases.length > 0 && (
-                        <Badge title={hiddenAliases.map((alias) => alias.alias).join("\n")}>
-                          +{hiddenAliases.length}
-                        </Badge>
-                      )}
-                    </div>
-                  )}
-
-                  {externalIds.length > 0 && (
-                    <div className="flex flex-wrap gap-2">
-                      {externalIds.map((externalId) =>
-                        externalId.url ? (
-                          <Button
-                            key={externalId.key}
-                            className="max-w-full"
-                            title={`${externalId.label}: ${externalId.value}`}
-                            type="button"
-                            variant="outline"
-                            onClick={() => void openExternalId(externalId)}
-                          >
-                            <span className="min-w-0 truncate">{externalId.label} {externalId.value}</span>
-                            <ExternalLink data-icon="inline-end" />
-                          </Button>
-                        ) : (
-                          <Badge className="max-w-full truncate" key={externalId.key} title={`${externalId.label}: ${externalId.value}`}>
-                            {externalId.label} {externalId.value}
-                          </Badge>
-                        )
-                      )}
-                    </div>
-                  )}
-                </CardContent>
-
-                <CardFooter className="mt-auto">
-                  <Button
-                    className="w-full"
-                    variant={followed ? "secondary" : "outline"}
-                    disabled={followed || addingAnimeId === anime.id}
-                    onClick={() => void addToMyAnime(anime)}
-                  >
-                    <Plus data-icon="inline-start" />
-                    {followed ? "已在我的追番" : addingAnimeId === anime.id ? "添加中" : "添加追番"}
-                  </Button>
-                </CardFooter>
-              </Card>
-            );
-          })}
+        <div className="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:gap-x-4 2xl:grid-cols-5">
+          {visibleItems.map((anime) => (
+            <DiscoveryAnimeCard
+              adding={addingAnimeId === anime.id}
+              anime={anime}
+              followed={followedIds.has(anime.id)}
+              key={anime.id}
+              onAdd={addToMyAnime}
+              onOpenExternal={openExternalId}
+            />
+          ))}
 
           {visibleItems.length === 0 && (
             <Empty className="col-span-full">
@@ -531,8 +452,249 @@ export function DiscoveryPage() {
           )}
         </div>
       )}
+    </Page>
+  );
+}
+
+/** 渲染无外层装饰卡片的 2:3 新番海报项。 */
+function DiscoveryAnimeCard({
+  adding,
+  anime,
+  followed,
+  onAdd,
+  onOpenExternal
+}: {
+  adding: boolean;
+  anime: Anime;
+  followed: boolean;
+  onAdd: (anime: Anime) => Promise<void>;
+  onOpenExternal: (externalId: ExternalIdBadge) => Promise<void>;
+}) {
+  const titleDisplay = resolveAnimeTitleDisplay(anime);
+  const externalIds = buildExternalIdBadges(anime).filter((item) => item.url).slice(0, 2);
+  const aliasTitle = titleDisplay.aliases.map((alias) => alias.alias).join("\n");
+
+  return (
+    <article className="flex min-w-0 flex-col" title={aliasTitle || undefined}>
+      <div className="relative aspect-[2/3] overflow-hidden rounded-lg border bg-muted">
+        {anime.coverUrl ? (
+          <CachedImage
+            alt={titleDisplay.title}
+            className="size-full object-cover"
+            loading="lazy"
+            sourceUrl={anime.coverUrl}
+          />
+        ) : (
+          <div className="flex size-full items-center justify-center text-muted-foreground">
+            <ImageOff className="size-7" />
+          </div>
+        )}
+        <Badge className="absolute right-2 top-2" tone="primary">
+          {anime.rating ? anime.rating.score.toFixed(1) : `${anime.premiereMonth}月`}
+        </Badge>
+        {followed && <Badge className="absolute left-2 top-2" tone="green">已追番</Badge>}
+      </div>
+
+      <div className="mt-3 min-w-0">
+        <h2 className="truncate text-sm font-semibold" title={titleDisplay.title}>{titleDisplay.title}</h2>
+        <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle}>
+          {titleDisplay.subtitle ?? formatPremiere(anime)}
+        </p>
+        <div className="mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+          <CalendarDays className="size-4 shrink-0" />
+          <span className="truncate">{formatPremiere(anime)}</span>
+        </div>
+      </div>
+
+      {externalIds.length > 0 && (
+        <div className="mt-2 grid grid-cols-2 gap-2">
+          {externalIds.map((externalId) => (
+            <Button
+              className="min-w-0 px-2"
+              key={externalId.key}
+              onClick={() => void onOpenExternal(externalId)}
+              title={`${externalId.label}: ${externalId.value}`}
+              type="button"
+              variant="ghost"
+            >
+              <span className="truncate">{externalId.label}</span>
+              <ExternalLink data-icon="inline-end" />
+            </Button>
+          ))}
+        </div>
+      )}
+
+      <Button
+        className="mt-2 w-full"
+        disabled={followed || adding}
+        onClick={() => void onAdd(anime)}
+        variant={followed ? "secondary" : "primary"}
+      >
+        <Plus data-icon="inline-start" />
+        {followed ? "已在追番" : adding ? "添加中" : "添加追番"}
+      </Button>
+    </article>
+  );
+}
+
+const weekdayOptions = [
+  { day: 1, label: "周一" },
+  { day: 2, label: "周二" },
+  { day: 3, label: "周三" },
+  { day: 4, label: "周四" },
+  { day: 5, label: "周五" },
+  { day: 6, label: "周六" },
+  { day: 0, label: "周日" }
+] as const;
+
+/** 按首播日期将季度目录组织为桌面周网格和移动单列时间表。 */
+function DiscoverySchedule({
+  addingAnimeId,
+  followedIds,
+  items,
+  onAdd
+}: {
+  addingAnimeId: string | null;
+  followedIds: Set<string>;
+  items: Anime[];
+  onAdd: (anime: Anime) => Promise<void>;
+}) {
+  const schedule = weekdayOptions.map((weekday) => ({
+    ...weekday,
+    items: items.filter((anime) => getAnimeWeekday(anime) === weekday.day)
+  }));
+  const undatedItems = items.filter((anime) => getAnimeWeekday(anime) === null);
+
+  if (items.length === 0) {
+    return <DiscoveryEmptySchedule />;
+  }
+
+  return (
+    <div className="min-w-0">
+      <div className="hidden overflow-x-auto pb-2 md:block">
+        <div className="grid min-w-[1120px] grid-cols-7 divide-x border-y">
+          {schedule.map((weekday) => (
+            <section className="min-w-0 px-2 pb-3" key={weekday.day}>
+              <div className="sticky top-0 border-b bg-background py-3 text-xs font-semibold">
+                {weekday.label} <span className="text-muted-foreground">{weekday.items.length}</span>
+              </div>
+              <div className="mt-2 flex flex-col gap-2">
+                {weekday.items.map((anime) => (
+                  <DiscoveryScheduleItem
+                    adding={addingAnimeId === anime.id}
+                    anime={anime}
+                    followed={followedIds.has(anime.id)}
+                    key={anime.id}
+                    onAdd={onAdd}
+                  />
+                ))}
+                {weekday.items.length === 0 && <p className="py-4 text-center text-xs text-muted-foreground">暂无首播</p>}
+              </div>
+            </section>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-5 md:hidden">
+        {schedule.map((weekday) => (
+          <section key={weekday.day}>
+            <div className="flex items-center justify-between border-b pb-2 text-sm font-semibold">
+              <span>{weekday.label}</span>
+              <Badge>{weekday.items.length} 部</Badge>
+            </div>
+            <div className="mt-2 flex flex-col gap-2">
+              {weekday.items.map((anime) => (
+                <DiscoveryScheduleItem
+                  adding={addingAnimeId === anime.id}
+                  anime={anime}
+                  followed={followedIds.has(anime.id)}
+                  key={anime.id}
+                  onAdd={onAdd}
+                />
+              ))}
+            </div>
+          </section>
+        ))}
+      </div>
+
+      {undatedItems.length > 0 && (
+        <section className="mt-5 border-t pt-4">
+          <h2 className="text-sm font-semibold">首播日期待定 · {undatedItems.length}</h2>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {undatedItems.map((anime) => (
+              <DiscoveryScheduleItem
+                adding={addingAnimeId === anime.id}
+                anime={anime}
+                followed={followedIds.has(anime.id)}
+                key={anime.id}
+                onAdd={onAdd}
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
+}
+
+/** 渲染时间表中的紧凑新番条目。 */
+function DiscoveryScheduleItem({
+  adding,
+  anime,
+  followed,
+  onAdd
+}: {
+  adding: boolean;
+  anime: Anime;
+  followed: boolean;
+  onAdd: (anime: Anime) => Promise<void>;
+}) {
+  const titleDisplay = resolveAnimeTitleDisplay(anime);
+  return (
+    <article className="flex min-w-0 items-start gap-2 rounded-md border-l-2 border-primary bg-card p-3">
+      <div className="min-w-0 flex-1">
+        <div className="text-xs font-medium text-primary">{formatScheduleDate(anime)}</div>
+        <h3 className="mt-1 line-clamp-2 text-sm font-semibold">{titleDisplay.title}</h3>
+        <p className="mt-1 truncate text-xs text-muted-foreground">{titleDisplay.subtitle ?? seasonText[anime.season ?? "winter"]}</p>
+      </div>
+      <Button
+        aria-label={followed ? `${titleDisplay.title}已追番` : `添加${titleDisplay.title}到追番`}
+        className="size-11 shrink-0 p-0 md:size-9"
+        disabled={followed || adding}
+        onClick={() => void onAdd(anime)}
+        title={followed ? "已追番" : "添加追番"}
+        variant={followed ? "secondary" : "outline"}
+      >
+        {followed ? <CheckCircle2 /> : <Plus />}
+      </Button>
+    </article>
+  );
+}
+
+/** 渲染时间表无结果状态。 */
+function DiscoveryEmptySchedule() {
+  return (
+    <Empty>
+      <EmptyHeader>
+        <EmptyMedia variant="icon"><CalendarRange /></EmptyMedia>
+        <EmptyTitle>暂无时间表条目</EmptyTitle>
+        <EmptyDescription>当前筛选条件下没有可展示的新番首播安排。</EmptyDescription>
+      </EmptyHeader>
+    </Empty>
+  );
+}
+
+/** 返回新番首播日期对应的星期索引。 */
+function getAnimeWeekday(anime: Anime): number | null {
+  if (!anime.premiereDate) return null;
+  const date = new Date(`${anime.premiereDate.slice(0, 10)}T00:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date.getDay();
+}
+
+/** 格式化时间表条目的首播日期。 */
+function formatScheduleDate(anime: Anime): string {
+  const parts = anime.premiereDate?.match(/^\d{4}-(\d{2})-(\d{2})/);
+  return parts ? `${Number(parts[1])} 月 ${Number(parts[2])} 日` : "日期待定";
 }
 
 const externalIdText: Record<string, string> = {
@@ -639,15 +801,6 @@ function formatPremiere(anime: Anime): string {
     return `${Number(dateParts[1])} 月 ${Number(dateParts[2])} 日首播`;
   }
   return `${anime.premiereYear} 年 ${anime.premiereMonth} 月首播`;
-}
-
-function formatAnimeRating(anime: Anime): string {
-  if (!anime.rating) {
-    return "暂无评分";
-  }
-
-  const countText = anime.rating.count ? ` / ${anime.rating.count} 人` : "";
-  return `${anime.rating.score.toFixed(1)}${countText}`;
 }
 
 /** Builds ordered metadata-source badges for an anime entry. */

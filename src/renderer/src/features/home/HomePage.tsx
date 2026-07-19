@@ -9,25 +9,23 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
+import { MetricItem, MetricStrip, Page, PageHeader, PageHeading } from "@/components/page-layout";
 import { appApi, isElectronClient } from "@/lib/api";
 import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
 import { useAsyncData } from "@/lib/use-async-data";
 import type { AnimeStatus, MyAnime } from "@shared/domain";
 
-const animeStatusText: Record<AnimeStatus, string> = {
-  watching: "在追",
-  planned: "想看",
-  completed: "已完成",
-  paused: "暂停",
-  dropped: "已弃"
-};
-
-const animeStatusOptions = Object.entries(animeStatusText) as Array<[AnimeStatus, string]>;
-
 /** 加载首页看板和追番状态统计所需数据。 */
 async function loadHomeData() {
-  const [dashboard, myAnime] = await Promise.all([appApi.getDashboard(), appApi.listMyAnime()]);
-  return { dashboard, myAnime };
+  const [dashboard, myAnime, notifications] = await Promise.all([
+    appApi.getDashboard(),
+    appApi.listMyAnime(),
+    appApi.listNotifications().catch((error) => {
+      console.warn("[home] 未读提醒读取失败，首页其余数据继续展示", error);
+      return [];
+    })
+  ]);
+  return { dashboard, myAnime, notifications };
 }
 
 /** 渲染首页追番、下载与提醒概览。 */
@@ -52,17 +50,23 @@ export function HomePage() {
   const data = homeData.dashboard;
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-normal">今日追番</h1>
-        <p className="mt-1 text-sm text-muted-foreground">更新、下载和需要处理的任务会集中出现在这里。</p>
-      </header>
+    <Page>
+      <PageHeader>
+        <PageHeading
+          description={`${formatReminderDate(data.dailyReminder.date)}，更新、下载与异常集中处理。`}
+          title="今日追番"
+        />
+      </PageHeader>
 
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 lg:gap-4">
-        {animeStatusOptions.map(([status, label]) => (
-          <AnimeStatusStat key={status} label={label} value={countMyAnimeStatus(homeData.myAnime, status)} />
-        ))}
-      </div>
+      <MetricStrip className="sm:grid-cols-4">
+        <MetricItem label="在追" value={countMyAnimeStatus(homeData.myAnime, "watching")} />
+        <MetricItem label="今日更新" value={data.dailyReminder.total} />
+        <MetricItem label="下载中" value={data.activeDownloads.length} />
+        <MetricItem
+          label="未读提醒"
+          value={homeData.notifications.filter((item) => !item.readAt).length}
+        />
+      </MetricStrip>
 
       <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.8fr)]">
         <Card className="min-w-0">
@@ -328,30 +332,23 @@ export function HomePage() {
           )}
         </CardContent>
       </Card>
-    </div>
+    </Page>
   );
 }
 
 /** 渲染首页加载中的结构化占位状态。 */
 function HomePageSkeleton() {
   return (
-    <div className="flex min-w-0 flex-col gap-5" aria-busy="true" aria-label="正在加载首页">
+    <Page aria-busy="true" aria-label="正在加载首页">
       <div className="flex flex-col gap-2">
         <Skeleton className="h-7 w-32" />
         <Skeleton className="h-4 w-72 max-w-full" />
       </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5 lg:gap-4">
-        {animeStatusOptions.map(([status]) => (
-          <Card key={status}>
-            <CardHeader>
-              <Skeleton className="h-4 w-16" />
-            </CardHeader>
-            <CardContent>
-              <Skeleton className="h-7 w-10" />
-            </CardContent>
-          </Card>
+      <MetricStrip className="sm:grid-cols-4">
+        {["watching", "today", "downloading", "unread"].map((status) => (
+          <MetricItem key={status} label={<Skeleton className="h-4 w-16" />} value={<Skeleton className="h-7 w-10" />} />
         ))}
-      </div>
+      </MetricStrip>
       <div className="grid gap-5 xl:grid-cols-2">
         {["daily", "pending"].map((section) => (
           <Card key={section}>
@@ -366,21 +363,7 @@ function HomePageSkeleton() {
           </Card>
         ))}
       </div>
-    </div>
-  );
-}
-
-/** 渲染单个追番状态统计卡片。 */
-function AnimeStatusStat({ label, value }: { label: string; value: number }) {
-  return (
-    <Card className="min-w-0">
-      <CardHeader>
-        <CardTitle>{label}</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <div className="text-2xl font-semibold tabular-nums">{value}</div>
-      </CardContent>
-    </Card>
+    </Page>
   );
 }
 
