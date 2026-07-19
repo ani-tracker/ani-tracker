@@ -152,9 +152,11 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
   const [animeReleaseErrors, setAnimeReleaseErrors] = useState<ReleaseSearchResult["errors"]>([]);
   const [animeRssReleaseGroups, setAnimeRssReleaseGroups] = useState<RssReleaseGroupState[]>([]);
   const [animeRssReleaseLoading, setAnimeRssReleaseLoading] = useState(false);
+  const [animeRssReleaseResolved, setAnimeRssReleaseResolved] = useState(false);
   const [downloadResourceTab, setDownloadResourceTab] = useState<DownloadResourceTab>("rss");
   const [animeReleaseFansubId, setAnimeReleaseFansubId] = useState("");
   const [animeReleaseLoading, setAnimeReleaseLoading] = useState(false);
+  const [animeReleaseResolved, setAnimeReleaseResolved] = useState(false);
   const [sourceBindingState, setSourceBindingState] = useState<AnimeSourceBindingState | null>(null);
   const [sourceBindingLoading, setSourceBindingLoading] = useState(false);
   const [sourceBindingActionKey, setSourceBindingActionKey] = useState<string | null>(null);
@@ -493,6 +495,11 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
     setDownloadTarget(target);
     setDownloadResourceTab(nextTab);
     setAnimeReleaseFansubId(target.defaultFansubGroupId ?? "");
+    setAnimeReleases([]);
+    setAnimeReleaseErrors([]);
+    setAnimeRssReleaseGroups([]);
+    setAnimeReleaseResolved(false);
+    setAnimeRssReleaseResolved(false);
     void refreshAnimeSourceBindings(target.anime.id);
     if (nextTab === "rss") {
       await searchAnimeRssReleases(target);
@@ -507,6 +514,8 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
     setAnimeReleaseErrors([]);
     setAnimeRssReleaseGroups([]);
     setAnimeReleaseFansubId("");
+    setAnimeReleaseResolved(false);
+    setAnimeRssReleaseResolved(false);
     setSourceBindingState(null);
     setSourceBindingActionKey(null);
   }
@@ -599,6 +608,7 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
       });
     } finally {
       setAnimeReleaseLoading(false);
+      setAnimeReleaseResolved(true);
     }
   }
 
@@ -706,6 +716,7 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
       });
     } finally {
       setAnimeRssReleaseLoading(false);
+      setAnimeRssReleaseResolved(true);
     }
   }
 
@@ -988,9 +999,11 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
             fansubNames={fansubNames}
             fansubs={animeFansubs}
             loading={animeReleaseLoading}
+            resolved={animeReleaseResolved}
             releases={animeReleases}
             rssGroups={animeRssReleaseGroups}
             rssLoading={animeRssReleaseLoading}
+            rssResolved={animeRssReleaseResolved}
             selectedFansubId={animeReleaseFansubId}
             sourceBindingActionKey={sourceBindingActionKey}
             sourceBindingLoading={sourceBindingLoading}
@@ -1623,7 +1636,9 @@ function AnimeDownloadPanel({
   activeTab,
   selectedFansubId,
   loading,
+  resolved,
   rssLoading,
+  rssResolved,
   addingReleaseId,
   batchAdding,
   sourceBindingState,
@@ -1651,7 +1666,9 @@ function AnimeDownloadPanel({
   activeTab: DownloadResourceTab;
   selectedFansubId: string;
   loading: boolean;
+  resolved: boolean;
   rssLoading: boolean;
+  rssResolved: boolean;
   addingReleaseId: string | null;
   batchAdding: boolean;
   sourceBindingState: AnimeSourceBindingState | null;
@@ -1686,6 +1703,7 @@ function AnimeDownloadPanel({
     : dedupeReleaseErrors(errors);
   const unknownFansubCount = tabReleases.filter((release) => !release.fansubGroupId).length;
   const activeLoading = activeTab === "rss" ? rssLoading : loading;
+  const activeResolved = activeTab === "rss" ? rssResolved : resolved;
   const sourceFailed = currentTabReleases.length === 0 && otherTabReleases.length === 0 && visibleErrors.length > 0;
   const linkedTasks = downloadTasks.filter((task) => task.animeId === target.anime.id);
   const releaseSignature = tabReleases.map(releaseKey).join("|");
@@ -1930,6 +1948,12 @@ function AnimeDownloadPanel({
           onToggleAll={toggleAllVisibleReleases}
         />
 
+        {activeLoading && activeResolved && (
+          <p aria-live="polite" className="shrink-0 text-xs text-muted-foreground" role="status">
+            正在更新资源，当前结果会保留到刷新完成。
+          </p>
+        )}
+
         {activeTab === "search" && visibleErrors.length > 0 && (
           <div className="flex flex-col gap-2">
             {visibleErrors.slice(0, 3).map((error, index) => (
@@ -1941,7 +1965,7 @@ function AnimeDownloadPanel({
           </div>
         )}
 
-        {activeLoading ? (
+        {activeLoading && !activeResolved ? (
           <div className="flex flex-col gap-3 py-2" aria-busy="true">
             <Skeleton className="h-16 w-full" />
             <Skeleton className="h-16 w-full" />

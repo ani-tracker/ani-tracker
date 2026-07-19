@@ -249,6 +249,7 @@ test("BangumiMetadataProvider 分页采集第二页番组并补充详情别名",
   assert.ok(skeletonKnight);
   assert.equal(skeletonKnight.title, "骸骨骑士大人异世界冒险中 第二季");
   assert.equal(skeletonKnight.originalTitle, "骸骨騎士様、只今異世界へお出掛け中Ⅱ");
+  assert.equal(skeletonKnight.externalIds.mal, "60522");
   assert.deepEqual(skeletonKnight.rating, { score: 7.3, count: 123, source: "bangumi" });
   assert.ok(skeletonKnight.aliases.some((alias) => alias.alias === "Skeleton Knight in Another World Season 2"));
 });
@@ -310,6 +311,58 @@ test("mergeAnimeMetadataBatches 用 Bangumi 详情英文别名桥接 AniList 和
     anilist: "185542",
     mal: "60522",
     mikan: "3983"
+  });
+});
+
+test("mergeAnimeMetadataBatches 通过 MAL 桥接带篇章后缀的跨来源记录", () => {
+  const items = mergeAnimeMetadataBatches([
+    {
+      source: "bangumi",
+      items: [
+        createAnime({
+          id: "bangumi-rezero-4",
+          title: "Re: 从零开始的异世界生活 第四季 丧失篇",
+          originalTitle: "Re:ゼロから始める異世界生活 4th season 喪失編",
+          externalIds: { bangumi: "999001", mal: "99901" }
+        })
+      ]
+    },
+    {
+      source: "mikan",
+      items: [
+        createAnime({
+          id: "mikan-rezero-4",
+          title: "Re: 从零开始的异世界生活 第四季 丧失篇",
+          externalIds: { bangumi: "999001", mikan: "4999" }
+        })
+      ]
+    },
+    {
+      source: "anilist",
+      items: [
+        createAnime({
+          id: "anilist-rezero-4",
+          title: "Re:ゼロから始める異世界生活 4th Season",
+          aliases: [
+            createAlias(
+              "anilist-rezero-4",
+              "Re:Zero kara Hajimeru Isekai Seikatsu 4th Season",
+              "romaji",
+              90
+            )
+          ],
+          externalIds: { anilist: "299901", mal: "99901" }
+        })
+      ]
+    }
+  ]);
+
+  assert.equal(items.length, 1);
+  assert.deepEqual(items[0].externalIds, {
+    bangumi: "999001",
+    mal: "99901",
+    mikan: "4999",
+    anilist: "299901"
   });
 });
 
@@ -476,6 +529,7 @@ class FakeBangumiHttpClient {
         },
         infobox: [
           { key: "中文名", value: "骸骨骑士大人异世界冒险中 第二季" },
+          { key: "关联", value: "https://myanimelist.net/anime/60522" },
           {
             key: "别名",
             value: [
