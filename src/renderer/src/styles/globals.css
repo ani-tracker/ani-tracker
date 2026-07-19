@@ -7,7 +7,6 @@
   --safe-area-right: env(safe-area-inset-right, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-left: env(safe-area-inset-left, 0px);
-  --mobile-navigation-height: 4rem;
   --background: 7 100% 98%;
   --foreground: 4 23% 12%;
   --card: 0 0% 100%;

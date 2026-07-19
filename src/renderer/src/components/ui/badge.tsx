@@ -1,10 +1,11 @@
 import type { HTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 
-type BadgeTone = "neutral" | "green" | "amber" | "red" | "blue";
+type BadgeTone = "neutral" | "primary" | "green" | "amber" | "red" | "blue";
 
 const tones: Record<BadgeTone, string> = {
   neutral: "border-border bg-muted text-muted-foreground",
+  primary: "border-primary/20 bg-primary text-primary-foreground",
   green: "border-success/20 bg-success/10 text-success",
   amber: "border-warning/20 bg-warning/10 text-warning",
   red: "border-destructive/20 bg-destructive/10 text-destructive",

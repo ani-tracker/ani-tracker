@@ -3,38 +3,13 @@ import {
   Download,
   Home,
   Library,
-  Menu,
-  PlayCircle,
   Search,
   Settings,
   Sparkles,
   Subtitles
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import {
-  MobileNavigation,
-  MobileNavigationButton,
-  MobileNavigationList,
-  Sidebar,
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupContent,
-  SidebarHeader,
-  SidebarInset,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarProvider
-} from "@/components/ui/sidebar";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuTrigger
-} from "@/components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { AppShell, type AppShellStatus } from "@/components/app-shell";
 import { DiscoveryPage } from "@/features/discovery/DiscoveryPage";
 import { DownloadsPage } from "@/features/downloads/DownloadsPage";
 import { HomePage } from "@/features/home/HomePage";
@@ -48,7 +23,7 @@ import { RemoteMyAnimePage } from "@/features/remote/RemoteMyAnimePage";
 import { RemotePlayerPage, resolveRemotePlayerTaskId } from "@/features/remote/RemotePlayerPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
-import { getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
+import { appApi, getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
 
 type PageId = "home" | "myAnime" | "discovery" | "releaseSearch" | "downloads" | "notifications" | "sources" | "settings";
 
@@ -63,7 +38,6 @@ const navItems = [
   { id: "settings", label: "设置", icon: Settings }
 ] satisfies Array<{ id: PageId; label: string; icon: typeof Home }>;
 
-const mobilePrimaryPageIds: PageId[] = ["home", "myAnime", "discovery", "releaseSearch", "downloads"];
 const remotePageIds: PageId[] = ["home", "myAnime", "discovery", "downloads", "notifications"];
 
 /** 根据导航标识渲染对应业务页面。 */
@@ -92,6 +66,12 @@ function renderPage(page: PageId, electronClient: boolean) {
 export function App() {
   const [activePage, setActivePage] = useState<PageId>("home");
   const [pairingState, setPairingState] = useState(getRemotePairingState);
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [shellStatus, setShellStatus] = useState<AppShellStatus>({
+    state: "unknown",
+    label: "状态读取中",
+    detail: "正在连接服务"
+  });
   const electronClient = isElectronClient();
   const remotePlayerTaskId = electronClient
     ? undefined
@@ -99,10 +79,6 @@ export function App() {
   const availableNavItems = electronClient
     ? navItems
     : navItems.filter((item) => remotePageIds.includes(item.id));
-  const mobilePrimaryNavItems = availableNavItems.filter(
-    (item) => !electronClient || mobilePrimaryPageIds.includes(item.id)
-  );
-  const mobileMoreNavItems = availableNavItems.filter((item) => !mobilePrimaryNavItems.includes(item));
 
   useEffect(() => {
     /** 同步当前窗口与其他标签页的远程鉴权状态。 */
@@ -119,6 +95,51 @@ export function App() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!electronClient && pairingState.needsPairing) {
+      return;
+    }
+    let active = true;
+
+    /** 刷新应用壳所需的未读数与下载服务状态。 */
+    async function refreshShellState() {
+      const [unreadResult, serviceResult] = await Promise.allSettled([
+        appApi.getUnreadNotificationCount(),
+        electronClient ? appApi.getQbittorrentManagedStatus() : Promise.resolve(null)
+      ]);
+      if (!active) {
+        return;
+      }
+      if (unreadResult.status === "fulfilled") {
+        setUnreadCount(unreadResult.value);
+      } else {
+        console.warn("[app-shell] 未读提醒数量刷新失败", unreadResult.reason);
+      }
+
+      if (!electronClient) {
+        setShellStatus({ state: "online", label: "桌面端在线", detail: "远程同步已连接" });
+      } else if (serviceResult.status === "fulfilled" && serviceResult.value) {
+        setShellStatus(serviceResult.value.running
+          ? { state: "online", label: "下载服务正常", detail: "qBittorrent 已连接" }
+          : { state: "idle", label: "下载服务待机", detail: serviceResult.value.enabled ? "下载核心未运行" : "托管核心未启用" });
+      } else {
+        setShellStatus({ state: "unknown", label: "服务状态未知", detail: "稍后自动重试" });
+        if (serviceResult.status === "rejected") {
+          console.warn("[app-shell] 下载服务状态刷新失败", serviceResult.reason);
+        }
+      }
+    }
+
+    void refreshShellState();
+    const refreshTimer = window.setInterval(() => void refreshShellState(), 30_000);
+    window.addEventListener("focus", refreshShellState);
+    return () => {
+      active = false;
+      window.clearInterval(refreshTimer);
+      window.removeEventListener("focus", refreshShellState);
+    };
+  }, [electronClient, pairingState.needsPairing]);
+
   if (remotePlayerTaskId) {
     return <RemotePlayerPage taskId={remotePlayerTaskId} />;
   }
@@ -128,131 +149,14 @@ export function App() {
   }
 
   return (
-    <SidebarProvider>
-      <Sidebar
-        aria-label="主导航"
-        className="hidden pt-[var(--safe-area-top)] md:flex md:w-[var(--sidebar-width-icon)] lg:w-[var(--sidebar-width)]"
-      >
-        <SidebarHeader className="flex h-16 items-center justify-center px-2 lg:px-5">
-          <div className="flex items-center gap-3">
-            <div className="flex size-9 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-              <PlayCircle className="size-5" />
-            </div>
-            <div className="hidden lg:block">
-              <div className="text-sm font-semibold">Ani Tracker</div>
-              <div className="text-xs text-sidebar-foreground/60">追番与下载管理</div>
-            </div>
-          </div>
-        </SidebarHeader>
-
-        <SidebarContent className="px-2 lg:px-3">
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <TooltipProvider delayDuration={300}>
-                <SidebarMenu>
-                  {availableNavItems.map((item) => {
-                    const Icon = item.icon;
-                    const selected = activePage === item.id;
-
-                    return (
-                      <SidebarMenuItem key={item.id}>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <SidebarMenuButton
-                              aria-current={selected ? "page" : undefined}
-                              aria-label={item.label}
-                              className="justify-center px-0 lg:justify-start lg:px-3"
-                              isActive={selected}
-                              onClick={() => setActivePage(item.id)}
-                            >
-                              <Icon />
-                              <span className="hidden lg:inline">{item.label}</span>
-                            </SidebarMenuButton>
-                          </TooltipTrigger>
-                          <TooltipContent className="hidden md:block lg:hidden" side="right">
-                            {item.label}
-                          </TooltipContent>
-                        </Tooltip>
-                      </SidebarMenuItem>
-                    );
-                  })}
-                </SidebarMenu>
-              </TooltipProvider>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        </SidebarContent>
-
-        <SidebarFooter className="hidden text-xs text-sidebar-foreground/60 lg:block">
-          <div className="font-medium text-sidebar-foreground">
-            {electronClient ? "内置下载核心" : "受限远程模式"}
-          </div>
-          <div className="mt-1">{electronClient ? "qBittorrent 兼容模式预留" : "已连接桌面端"}</div>
-        </SidebarFooter>
-      </Sidebar>
-
-      <SidebarInset className="min-h-screen min-h-dvh">
-        <div
-          className="pb-[calc(var(--mobile-navigation-height)+var(--safe-area-bottom)+1rem)] pl-[max(1rem,var(--safe-area-left))] pr-[max(1rem,var(--safe-area-right))] pt-[max(1rem,var(--safe-area-top))] md:p-5 lg:p-6"
-        >
-          {renderPage(activePage, electronClient)}
-        </div>
-      </SidebarInset>
-
-      <MobileNavigation aria-label="移动端主导航">
-        <MobileNavigationList>
-          {mobilePrimaryNavItems.map((item) => {
-            const Icon = item.icon;
-            const selected = activePage === item.id;
-
-            return (
-              <li className="flex min-w-0 list-none" key={item.id}>
-                <MobileNavigationButton
-                  aria-current={selected ? "page" : undefined}
-                  aria-label={item.label}
-                  isActive={selected}
-                  onClick={() => setActivePage(item.id)}
-                >
-                  <Icon />
-                  <span>{item.label}</span>
-                </MobileNavigationButton>
-              </li>
-            );
-          })}
-          {mobileMoreNavItems.length > 0 && (
-            <li className="flex min-w-0 list-none">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <MobileNavigationButton
-                    aria-current={mobileMoreNavItems.some((item) => item.id === activePage) ? "page" : undefined}
-                    aria-label="更多导航"
-                    isActive={mobileMoreNavItems.some((item) => item.id === activePage)}
-                  >
-                    <Menu />
-                    <span>更多</span>
-                  </MobileNavigationButton>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-40" side="top" sideOffset={8}>
-                  <DropdownMenuGroup>
-                    {mobileMoreNavItems.map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <DropdownMenuItem
-                          className="min-h-11"
-                          key={item.id}
-                          onSelect={() => setActivePage(item.id)}
-                        >
-                          <Icon />
-                          {item.label}
-                        </DropdownMenuItem>
-                      );
-                    })}
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </li>
-          )}
-        </MobileNavigationList>
-      </MobileNavigation>
-    </SidebarProvider>
+    <AppShell
+      activePageId={activePage}
+      items={availableNavItems}
+      onNavigate={(pageId) => setActivePage(pageId as PageId)}
+      status={shellStatus}
+      unreadCount={unreadCount}
+    >
+      {renderPage(activePage, electronClient)}
+    </AppShell>
   );
 }

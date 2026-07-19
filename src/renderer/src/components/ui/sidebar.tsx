@@ -66,8 +66,8 @@ export function SidebarProvider({
         data-sidebar-wrapper=""
         style={
           {
-            "--sidebar-width": "16rem",
-            "--sidebar-width-icon": "3.5rem",
+            "--sidebar-width": "14rem",
+            "--sidebar-width-icon": "4.5rem",
             ...style
           } as CSSProperties
         }
@@ -99,7 +99,7 @@ export const Sidebar = forwardRef<HTMLElement, HTMLAttributes<HTMLElement>>(func
     <aside
       ref={ref}
       className={cn(
-        "sticky top-0 flex h-screen h-dvh max-h-screen max-h-dvh w-[var(--sidebar-width)] shrink-0 flex-col self-start border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width]",
+        "group/sidebar sticky top-0 flex h-screen h-dvh max-h-screen max-h-dvh w-[var(--sidebar-width)] shrink-0 flex-col self-start border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width]",
         "data-[state=collapsed]:w-[var(--sidebar-width-icon)]",
         className
       )}
@@ -162,7 +162,6 @@ export const SidebarGroupContent = forwardRef<HTMLDivElement, HTMLAttributes<HTM
     return <div ref={ref} className={cn("flex flex-col gap-1", className)} {...props} />;
   }
 );
-
 export const SidebarMenu = forwardRef<HTMLUListElement, HTMLAttributes<HTMLUListElement>>(function SidebarMenu(
   { className, ...props },
   ref
@@ -183,7 +182,7 @@ type SidebarMenuButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 const sidebarMenuButtonSizes: Record<NonNullable<SidebarMenuButtonProps["size"]>, string> = {
-  default: "min-h-11 px-3",
+  default: "min-h-10 px-3",
   sm: "h-8 px-2",
   lg: "h-12 px-3"
 };
@@ -194,11 +193,11 @@ export const SidebarMenuButton = forwardRef<HTMLButtonElement, SidebarMenuButton
       <button
         ref={ref}
         className={cn(
-          "flex w-full items-center gap-3 overflow-hidden rounded-md text-left text-sm transition-colors",
+          "flex w-full items-center gap-3 overflow-hidden rounded-sm border-l-2 border-transparent text-left text-sm transition-colors",
           "text-sidebar-foreground outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
           "focus-visible:ring-2 focus-visible:ring-sidebar-ring disabled:pointer-events-none disabled:opacity-50",
-          "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground",
-          "[&>svg]:h-4 [&>svg]:w-4 [&>svg]:shrink-0",
+          "data-[active=true]:border-sidebar-primary data-[active=true]:bg-sidebar-accent data-[active=true]:font-semibold data-[active=true]:text-sidebar-primary",
+          "[&>svg]:size-5 [&>svg]:shrink-0",
           sidebarMenuButtonSizes[size],
           className
         )}
@@ -233,63 +232,6 @@ export const SidebarTrigger = forwardRef<HTMLButtonElement, ButtonHTMLAttributes
       >
         <PanelLeft />
       </button>
-    );
-  }
-);
-
-type MobileNavigationButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  isActive?: boolean;
-};
-
-/** 提供移动端固定底部导航容器，并处理设备安全区。 */
-export const MobileNavigation = forwardRef<HTMLElement, HTMLAttributes<HTMLElement>>(function MobileNavigation(
-  { className, ...props },
-  ref
-) {
-  return (
-    <nav
-      ref={ref}
-      className={cn(
-        "fixed inset-x-0 bottom-0 z-40 border-t border-sidebar-border bg-sidebar text-sidebar-foreground",
-        "pb-[var(--safe-area-bottom)] pl-[var(--safe-area-left)] pr-[var(--safe-area-right)] md:hidden",
-        className
-      )}
-      {...props}
-    />
-  );
-});
-
-/** 以等宽网格承载移动端高频入口和更多菜单，避免窄屏横向拖动。 */
-export const MobileNavigationList = forwardRef<HTMLUListElement, HTMLAttributes<HTMLUListElement>>(
-  function MobileNavigationList({ className, ...props }, ref) {
-    return (
-      <ul
-        ref={ref}
-        className={cn("grid min-h-[var(--mobile-navigation-height)] grid-cols-6", className)}
-        {...props}
-      />
-    );
-  }
-);
-
-/** 渲染移动端导航按钮，并向辅助技术暴露当前选中状态。 */
-export const MobileNavigationButton = forwardRef<HTMLButtonElement, MobileNavigationButtonProps>(
-  function MobileNavigationButton({ className, isActive = false, type = "button", ...props }, ref) {
-    return (
-      <button
-        ref={ref}
-        className={cn(
-          "flex min-h-14 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 overflow-hidden px-1 text-[11px] leading-tight transition-colors [&>span]:max-w-full [&>span]:whitespace-nowrap",
-          "text-sidebar-foreground/70 outline-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
-          "focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring",
-          "data-[active=true]:bg-sidebar-accent data-[active=true]:font-medium data-[active=true]:text-sidebar-accent-foreground",
-          "[&>svg]:size-5 [&>svg]:shrink-0",
-          className
-        )}
-        data-active={isActive}
-        type={type}
-        {...props}
-      />
     );
   }
 );

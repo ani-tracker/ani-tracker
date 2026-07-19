@@ -1,7 +1,7 @@
 import { forwardRef, type ButtonHTMLAttributes } from "react";
 import { cn } from "@/lib/cn";
 
-type ButtonVariant = "primary" | "secondary" | "ghost" | "outline" | "destructive";
+type ButtonVariant = "primary" | "secondary" | "ghost" | "outline" | "destructive" | "navigation";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   variant?: ButtonVariant;
@@ -12,7 +12,8 @@ const variants: Record<ButtonVariant, string> = {
   secondary: "bg-accent text-accent-foreground hover:bg-accent/80",
   ghost: "hover:bg-accent hover:text-accent-foreground",
   outline: "border border-border bg-background hover:bg-accent",
-  destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+  destructive: "bg-destructive text-destructive-foreground hover:bg-destructive/90",
+  navigation: "border-l-2 border-transparent text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:border-sidebar-primary data-[active=true]:bg-sidebar-accent data-[active=true]:font-semibold data-[active=true]:text-sidebar-primary"
 };
 
 /** 渲染统一尺寸、状态和图标规则的命令按钮。 */
