@@ -62,7 +62,10 @@ export function SidebarProvider({
   return (
     <SidebarContext.Provider value={value}>
       <div
-        className={cn("flex min-h-screen min-h-dvh w-full bg-background text-foreground", className)}
+        className={cn(
+          "fixed inset-0 flex h-screen h-dvh max-h-screen max-h-dvh w-full overflow-hidden bg-background text-foreground",
+          className
+        )}
         data-sidebar-wrapper=""
         style={
           {

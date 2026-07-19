@@ -181,7 +181,7 @@ export function AppShell({
         <SidebarInset
           ref={mainRef}
           aria-label={`${activeItem?.label ?? "当前"}页面内容`}
-          className="h-screen h-dvh overflow-y-auto outline-none"
+          className="h-screen h-dvh min-h-0 overflow-y-auto outline-none"
           tabIndex={-1}
         >
           <header className="sticky top-0 z-30 flex min-h-16 items-center border-b bg-background px-[max(1rem,var(--safe-area-left))] pt-[var(--safe-area-top)] md:hidden">
