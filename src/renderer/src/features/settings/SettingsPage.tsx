@@ -43,6 +43,7 @@ import { Switch } from "@/components/ui/switch";
 import { appApi } from "@/lib/api";
 import { useAsyncData } from "@/lib/use-async-data";
 import { useTheme } from "@/components/theme-provider";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { AppearanceSettingsSection } from "./AppearanceSettingsSection";
 import type {
   AutomationSchedulerStatus,
@@ -59,6 +60,7 @@ export function SettingsPage() {
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [resetState, setResetState] = useState<"idle" | "resetting" | "reset">("idle");
+  const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [schedulerStatus, setSchedulerStatus] = useState<AutomationSchedulerStatus | null>(null);
   const [qbManagedStatus, setQbManagedStatus] = useState<QbittorrentManagedStatus | null>(null);
   const [qbManagedAction, setQbManagedAction] = useState<"idle" | "starting" | "stopping">("idle");
@@ -212,21 +214,22 @@ export function SettingsPage() {
   }
 
   async function resetSettingsToDefaults() {
-    const confirmed = window.confirm("确认恢复平台默认配置模板？当前设置会被覆盖。");
-    if (!confirmed) {
-      return;
-    }
-
     setResetState("resetting");
-    const saved = await appApi.resetSettingsToDefaults();
-    setDraft(saved);
-    commitAppearance(saved.appearance);
-    await refreshPlayerDetection(saved.players);
-    setQbTest({ state: "idle" });
-    await refreshSchedulerStatus();
-    await refreshQbittorrentManagedStatus();
-    setResetState("reset");
-    window.setTimeout(() => setResetState("idle"), 1200);
+    try {
+      const saved = await appApi.resetSettingsToDefaults();
+      setDraft(saved);
+      commitAppearance(saved.appearance);
+      await refreshPlayerDetection(saved.players);
+      setQbTest({ state: "idle" });
+      await refreshSchedulerStatus();
+      await refreshQbittorrentManagedStatus();
+      setResetState("reset");
+      window.setTimeout(() => setResetState("idle"), 1200);
+    } catch (error) {
+      setResetState("idle");
+      toast.error(error instanceof Error ? error.message : "恢复默认设置失败");
+      throw error;
+    }
   }
 
   async function testQbittorrent() {
@@ -372,7 +375,7 @@ export function SettingsPage() {
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button
             variant="outline"
-            onClick={() => void resetSettingsToDefaults()}
+            onClick={() => setResetDialogOpen(true)}
             disabled={resetState === "resetting" || saveState === "saving"}
           >
             <RotateCcw data-icon="inline-start" />
@@ -1243,6 +1246,15 @@ export function SettingsPage() {
           </div>
         )}
       </SettingsSection>
+
+      <ConfirmActionDialog
+        confirmLabel="恢复默认"
+        description="当前未保存的设置将被平台默认配置覆盖，主题与运行参数也会立即更新。"
+        onConfirm={resetSettingsToDefaults}
+        onOpenChange={setResetDialogOpen}
+        open={resetDialogOpen}
+        title="确认恢复默认设置？"
+      />
     </div>
   );
 }

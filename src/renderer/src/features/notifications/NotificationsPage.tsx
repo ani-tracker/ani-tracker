@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Bell, CheckCheck, Trash2 } from "lucide-react";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,6 +31,7 @@ export function NotificationsPage() {
   const [items, setItems] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const electronClient = isElectronClient();
 
   const unreadCount = useMemo(() => items.filter((item) => !item.readAt).length, [items]);
@@ -63,14 +65,15 @@ export function NotificationsPage() {
     setItems(await appApi.markAllNotificationsRead());
   }
 
-  /** 确认后清空全部提醒记录。 */
+  /** 清空全部提醒记录，并将失败反馈保留在页面。 */
   async function clearAll() {
-    const confirmed = window.confirm("确认清空所有提醒记录？");
-    if (!confirmed) {
-      return;
+    try {
+      setItems(await appApi.clearNotifications());
+      setMessage(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "清空提醒失败");
+      throw error;
     }
-
-    setItems(await appApi.clearNotifications());
   }
 
   if (loading) {
@@ -98,7 +101,7 @@ export function NotificationsPage() {
             <Button
               className="min-h-11 min-w-0 px-2 sm:min-h-9 sm:px-3"
               variant="outline"
-              onClick={() => void clearAll()}
+              onClick={() => setClearDialogOpen(true)}
               disabled={!items.length}
             >
               <Trash2 data-icon="inline-start" />
@@ -178,6 +181,15 @@ export function NotificationsPage() {
           )}
         </CardContent>
       </Card>
+
+      <ConfirmActionDialog
+        confirmLabel="清空提醒"
+        description="全部提醒记录将被永久清空，此操作无法撤销。"
+        onConfirm={clearAll}
+        onOpenChange={setClearDialogOpen}
+        open={clearDialogOpen}
+        title="确认清空提醒？"
+      />
     </div>
   );
 }

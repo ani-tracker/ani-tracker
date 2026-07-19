@@ -23,6 +23,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CachedImage } from "@/components/cached-image";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -122,6 +123,7 @@ const releaseSearchCacheTtlMs = 24 * 60 * 60 * 1000;
 /** 渲染追番列表并协调规则、资源下载和任务明细抽屉。 */
 export function MyAnimePage() {
   const [items, setItems] = useState<MyAnime[]>([]);
+  const [removeTarget, setRemoveTarget] = useState<MyAnime | null>(null);
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
   const [animeFansubs, setAnimeFansubs] = useState<FansubGroup[]>([]);
   const [draft, setDraft] = useState<MyAnime | null>(null);
@@ -342,12 +344,6 @@ export function MyAnimePage() {
   }
 
   async function removeItem(item: MyAnime) {
-    const titleDisplay = resolveAnimeTitleDisplay(item.anime);
-    const confirmed = window.confirm(`确认从我的追番移除「${titleDisplay.title}」？`);
-    if (!confirmed) {
-      return;
-    }
-
     try {
       const updated = await appApi.removeMyAnime(item.id);
       setItems(updated);
@@ -366,6 +362,7 @@ export function MyAnimePage() {
         tone: "error",
         text: error instanceof Error ? error.message : "移除追番失败"
       });
+      throw error;
     }
   }
 
@@ -862,7 +859,7 @@ export function MyAnimePage() {
               onOpenCompleted={() => openDownloadDetail(item, "completed")}
               onOpenDownloads={() => void openAnimeDownloads(item)}
               onOpenRules={() => openRulesDrawer(item)}
-              onRemove={() => void removeItem(item)}
+              onRemove={() => setRemoveTarget(item)}
             />
           ))}
         </div>
@@ -963,6 +960,17 @@ export function MyAnimePage() {
           }
         />
       )}
+
+      <ConfirmActionDialog
+        confirmLabel="移除追番"
+        description={removeTarget
+          ? `「${resolveAnimeTitleDisplay(removeTarget.anime).title}」及其追番规则将被移除，已下载文件不会被删除。`
+          : "该追番及其规则将被移除。"}
+        onConfirm={() => removeTarget ? removeItem(removeTarget) : undefined}
+        onOpenChange={(open) => !open && setRemoveTarget(null)}
+        open={Boolean(removeTarget)}
+        title="确认移除追番？"
+      />
 
     </div>
   );

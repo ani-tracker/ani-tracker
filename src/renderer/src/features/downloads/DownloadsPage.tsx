@@ -13,6 +13,7 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format";
@@ -39,6 +40,7 @@ export function DownloadsPage() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [mutatingTaskId, setMutatingTaskId] = useState<string | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<DownloadTask | null>(null);
   const [mutatingFileId, setMutatingFileId] = useState<string | null>(null);
   const [scanningTaskId, setScanningTaskId] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState("");
@@ -63,7 +65,7 @@ export function DownloadsPage() {
     }
   }, []);
 
-  async function mutateTask(taskId: string, action: "pause" | "resume" | "remove") {
+  async function mutateTask(taskId: string, action: "pause" | "resume" | "remove"): Promise<boolean> {
     setMutatingTaskId(taskId);
     try {
       const updated =
@@ -74,8 +76,10 @@ export function DownloadsPage() {
             : await appApi.removeDownload(taskId, false);
       setTasks(updated);
       setError(null);
+      return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "下载任务操作失败");
+      return false;
     } finally {
       setMutatingTaskId(null);
     }
@@ -301,6 +305,7 @@ export function DownloadsPage() {
                               mutatingFileId={mutatingFileId}
                               scanningTaskId={scanningTaskId}
                               onMutate={mutateTask}
+                              onRequestRemove={setRemoveTarget}
                               onScan={scanTask}
                               onToggleFile={toggleFileSelection}
                             />
@@ -324,6 +329,21 @@ export function DownloadsPage() {
             </Empty>
           )}
       </div>
+
+      <ConfirmActionDialog
+        confirmLabel="移除任务"
+        description={removeTarget
+          ? `下载任务「${removeTarget.name}」将从队列中移除，已下载文件会保留。`
+          : "该下载任务将从队列中移除。"}
+        onConfirm={async () => {
+          if (removeTarget && !(await mutateTask(removeTarget.id, "remove"))) {
+            throw new Error("下载任务移除失败");
+          }
+        }}
+        onOpenChange={(open) => !open && setRemoveTarget(null)}
+        open={Boolean(removeTarget)}
+        title="确认移除下载任务？"
+      />
     </div>
   );
 }
@@ -334,6 +354,7 @@ function DownloadTaskRow({
   mutatingFileId,
   scanningTaskId,
   onMutate,
+  onRequestRemove,
   onScan,
   onToggleFile
 }: {
@@ -341,7 +362,8 @@ function DownloadTaskRow({
   mutatingTaskId: string | null;
   mutatingFileId: string | null;
   scanningTaskId: string | null;
-  onMutate: (taskId: string, action: "pause" | "resume" | "remove") => Promise<void>;
+  onMutate: (taskId: string, action: "pause" | "resume" | "remove") => Promise<boolean>;
+  onRequestRemove: (task: DownloadTask) => void;
   onScan: (taskId: string) => Promise<void>;
   onToggleFile: (task: DownloadTask, file: DownloadTask["files"][number]) => Promise<void>;
 }) {
@@ -399,7 +421,7 @@ function DownloadTaskRow({
                     aria-label="移除任务"
                     title="移除任务"
                     disabled={mutatingTaskId === task.id}
-                    onClick={() => void onMutate(task.id, "remove")}
+                    onClick={() => onRequestRemove(task)}
                   >
                     <Trash2 />
                   </Button>
