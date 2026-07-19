@@ -13,9 +13,10 @@ import {
   Upload
 } from "lucide-react";
 import { toast } from "sonner";
+import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldTitle } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -26,14 +27,6 @@ import {
   SelectTrigger,
   SelectValue
 } from "@/components/ui/select";
-import {
-  Sheet,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle
-} from "@/components/ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { useTheme } from "@/components/theme-provider";
 import {
@@ -74,7 +67,7 @@ export function AppearanceSettingsSection({ appearance, onChange }: AppearanceSe
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [editorOpen, setEditorOpen] = useState(false);
   const [editingPack, setEditingPack] = useState<ThemePackManifest | null>(null);
-  const [deleteArmed, setDeleteArmed] = useState(false);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const themePacks = listAvailableThemePacks(appearance);
   const selectedPack = resolveThemePack(appearance);
   const selectedIsCustom = appearance.customThemePacks.some((pack) => pack.id === selectedPack.id);
@@ -86,16 +79,8 @@ export function AppearanceSettingsSection({ appearance, onChange }: AppearanceSe
   useEffect(() => () => clearPreview(), [clearPreview]);
 
   useEffect(() => {
-    setDeleteArmed(false);
+    setDeleteDialogOpen(false);
   }, [appearance.themePackId]);
-
-  useEffect(() => {
-    if (!deleteArmed) {
-      return;
-    }
-    const timer = window.setTimeout(() => setDeleteArmed(false), 4_000);
-    return () => window.clearTimeout(timer);
-  }, [deleteArmed]);
 
   /** 更新明暗模式，空值表示用户再次点击当前选项，应保持原值。 */
   function updateThemeMode(value: string) {
@@ -124,6 +109,12 @@ export function AppearanceSettingsSection({ appearance, onChange }: AppearanceSe
     }
     setEditingPack(cloned);
     setEditorOpen(true);
+  }
+
+  /** 关闭主题编辑器并清理尚未应用的本地编辑副本。 */
+  function closeEditor() {
+    setEditorOpen(false);
+    setEditingPack(null);
   }
 
   /** 校验并写入编辑后的用户主题，最终持久化仍由设置页保存按钮负责。 */
@@ -162,14 +153,9 @@ export function AppearanceSettingsSection({ appearance, onChange }: AppearanceSe
     toast.success("主题样式已恢复默认");
   }
 
-  /** 两次点击确认后删除当前用户主题，避免误操作。 */
+  /** 删除当前用户主题并回退至内置默认主题。 */
   function deleteSelectedTheme() {
     if (!selectedIsCustom) {
-      return;
-    }
-    if (!deleteArmed) {
-      setDeleteArmed(true);
-      toast.warning("再次点击删除按钮以确认");
       return;
     }
     onChange({
@@ -177,7 +163,7 @@ export function AppearanceSettingsSection({ appearance, onChange }: AppearanceSe
       themePackId: DEFAULT_THEME_PACK_ID,
       customThemePacks: appearance.customThemePacks.filter((pack) => pack.id !== selectedPack.id)
     });
-    setDeleteArmed(false);
+    setDeleteDialogOpen(false);
     toast.success("用户主题已删除，请保存设置");
   }
 
@@ -224,15 +210,15 @@ export function AppearanceSettingsSection({ appearance, onChange }: AppearanceSe
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <Palette />
-          外观
-        </CardTitle>
-        <CardDescription>明暗模式与主题包分别管理。</CardDescription>
-      </CardHeader>
-      <CardContent>
+    <div className="overflow-hidden rounded-md border bg-card">
+      <header className="flex items-start gap-3 border-b bg-muted px-4 py-3 sm:px-5">
+        <Palette aria-hidden="true" className="mt-0.5 size-5 text-primary" />
+        <div className="min-w-0">
+          <h3 className="font-semibold">主题与显示</h3>
+          <p className="text-sm text-muted-foreground">明暗模式与主题包分别管理，选择后立即预览。</p>
+        </div>
+      </header>
+      <div className="p-4 sm:p-5">
         <FieldGroup>
           <Field orientation="responsive">
             <div className="min-w-36">
@@ -301,8 +287,8 @@ export function AppearanceSettingsSection({ appearance, onChange }: AppearanceSe
             onChange={(event) => void importTheme(event)}
           />
         </FieldGroup>
-      </CardContent>
-      <CardFooter className="flex flex-wrap gap-2">
+      </div>
+      <footer className="flex flex-wrap gap-2 border-t px-4 py-3 sm:px-5">
         <Button variant="outline" onClick={() => openEditor(selectedPack, true)}>
           <Plus data-icon="inline-start" />
           复制为自定义
@@ -322,21 +308,35 @@ export function AppearanceSettingsSection({ appearance, onChange }: AppearanceSe
           导出
         </Button>
         {selectedIsCustom && (
-          <Button variant={deleteArmed ? "destructive" : "outline"} onClick={deleteSelectedTheme}>
+          <Button variant="destructive" onClick={() => setDeleteDialogOpen(true)}>
             <Trash2 data-icon="inline-start" />
-            {deleteArmed ? "确认删除" : "删除"}
+            删除
           </Button>
         )}
-      </CardFooter>
+      </footer>
 
-      <Sheet open={editorOpen} onOpenChange={setEditorOpen}>
-        <SheetContent className="w-full overflow-y-auto sm:max-w-lg">
-          <SheetHeader>
-            <SheetTitle>编辑用户主题</SheetTitle>
-            <SheetDescription>修改开放的语义颜色和全局圆角。</SheetDescription>
-          </SheetHeader>
+      {editorOpen && (
+        <WorkbenchSheet
+          className="sm:max-w-xl"
+          description="修改开放的语义颜色和全局圆角，应用后仍需保存设置。"
+          footer={(
+            <div className="flex flex-wrap justify-end gap-2">
+              <Button variant="outline" onClick={resetEditedTheme}>
+                <RotateCcw data-icon="inline-start" />
+                恢复默认样式
+              </Button>
+              <Button variant="outline" onClick={closeEditor}>取消</Button>
+              <Button onClick={saveEditedTheme}>
+                <Copy data-icon="inline-start" />
+                应用主题
+              </Button>
+            </div>
+          )}
+          onClose={closeEditor}
+          title="编辑用户主题"
+        >
           {editingPack && (
-            <FieldGroup className="py-5">
+            <FieldGroup>
               <Field>
                 <FieldLabel htmlFor="theme-pack-name">主题名称</FieldLabel>
                 <Input
@@ -364,20 +364,18 @@ export function AppearanceSettingsSection({ appearance, onChange }: AppearanceSe
               <ThemeModeEditor mode="dark" pack={editingPack} onChange={setEditingPack} />
             </FieldGroup>
           )}
-          <SheetFooter>
-            <Button variant="outline" onClick={resetEditedTheme}>
-              <RotateCcw data-icon="inline-start" />
-              恢复默认样式
-            </Button>
-            <Button variant="outline" onClick={() => setEditorOpen(false)}>取消</Button>
-            <Button onClick={saveEditedTheme}>
-              <Copy data-icon="inline-start" />
-              应用主题
-            </Button>
-          </SheetFooter>
-        </SheetContent>
-      </Sheet>
-    </Card>
+        </WorkbenchSheet>
+      )}
+
+      <ConfirmActionDialog
+        confirmLabel="删除主题"
+        description={`主题“${selectedPack.name}”将从用户主题列表中移除，并切换回默认主题。`}
+        onConfirm={deleteSelectedTheme}
+        onOpenChange={setDeleteDialogOpen}
+        open={deleteDialogOpen}
+        title="确认删除用户主题？"
+      />
+    </div>
   );
 }
 

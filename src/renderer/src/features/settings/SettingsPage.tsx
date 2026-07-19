@@ -3,6 +3,7 @@ import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import {
   Copy,
+  Download,
   FileSearch,
   FolderCog,
   FolderOpen,
@@ -10,6 +11,7 @@ import {
   KeyRound,
   Languages,
   Monitor,
+  Palette,
   PlayCircle,
   Power,
   RefreshCw,
@@ -54,10 +56,35 @@ import type {
 } from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
 
+type SettingsCategoryId =
+  | "appearance"
+  | "storage"
+  | "interface"
+  | "remote"
+  | "media"
+  | "download"
+  | "automation";
+
+const settingsCategories: Array<{
+  id: SettingsCategoryId;
+  label: string;
+  icon: typeof Palette;
+}> = [
+  { id: "appearance", label: "外观", icon: Palette },
+  { id: "storage", label: "存储与目录", icon: HardDrive },
+  { id: "interface", label: "语言与桌面集成", icon: Monitor },
+  { id: "remote", label: "远程设备", icon: Smartphone },
+  { id: "media", label: "播放器与媒体", icon: PlayCircle },
+  { id: "download", label: "下载核心", icon: Download },
+  { id: "automation", label: "自动化", icon: RefreshCw }
+];
+
 export function SettingsPage() {
   const { commitAppearance } = useTheme();
   const { data, loading } = useAsyncData(appApi.getSettings, []);
   const [draft, setDraft] = useState<AppSettings | null>(null);
+  const [persistedSettings, setPersistedSettings] = useState<AppSettings | null>(null);
+  const [activeCategory, setActiveCategory] = useState<SettingsCategoryId>("appearance");
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [resetState, setResetState] = useState<"idle" | "resetting" | "reset">("idle");
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
@@ -75,13 +102,41 @@ export function SettingsPage() {
   const [playerDetection, setPlayerDetection] = useState<PlayerDetectionResult | null>(null);
   const [playerDetectionState, setPlayerDetectionState] = useState<"idle" | "detecting" | "error">("idle");
   const [playerDetectionError, setPlayerDetectionError] = useState<string | null>(null);
+  const settingsReady = !loading && Boolean(data && draft);
 
   useEffect(() => {
     if (data) {
       setDraft(data);
+      setPersistedSettings(data);
       void refreshPlayerDetection(data.players);
     }
   }, [data]);
+
+  useEffect(() => {
+    if (!settingsReady) {
+      return;
+    }
+    const sections = settingsCategories
+      .map((category) => document.getElementById(`settings-${category.id}`))
+      .filter((section): section is HTMLElement => Boolean(section));
+    if (sections.length === 0) {
+      return;
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const activeEntry = entries
+          .filter((entry) => entry.isIntersecting)
+          .sort((left, right) => right.intersectionRatio - left.intersectionRatio)[0];
+        if (activeEntry) {
+          setActiveCategory(activeEntry.target.id.replace("settings-", "") as SettingsCategoryId);
+        }
+      },
+      { rootMargin: "-24% 0px -62% 0px", threshold: [0.1, 0.35, 0.65] }
+    );
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, [settingsReady]);
 
   useEffect(() => {
     void refreshSchedulerStatus();
@@ -193,6 +248,7 @@ export function SettingsPage() {
     try {
       const saved = await appApi.updateSettings(draft);
       setDraft(saved);
+      setPersistedSettings(saved);
       commitAppearance(saved.appearance);
       const [, , remote] = await Promise.all([
         refreshSchedulerStatus(),
@@ -218,6 +274,7 @@ export function SettingsPage() {
     try {
       const saved = await appApi.resetSettingsToDefaults();
       setDraft(saved);
+      setPersistedSettings(saved);
       commitAppearance(saved.appearance);
       await refreshPlayerDetection(saved.players);
       setQbTest({ state: "idle" });
@@ -240,6 +297,8 @@ export function SettingsPage() {
     setQbTest({ state: "testing", message: "正在测试 qBittorrent 连接..." });
     const saved = await appApi.updateSettings(draft);
     setDraft(saved);
+    setPersistedSettings(saved);
+    commitAppearance(saved.appearance);
     const result = await appApi.testQbittorrent();
     setQbTest({
       state: result.ok ? "success" : "error",
@@ -256,6 +315,8 @@ export function SettingsPage() {
     try {
       const saved = await appApi.updateSettings(draft);
       setDraft(saved);
+      setPersistedSettings(saved);
+      commitAppearance(saved.appearance);
       const status = await appApi.startQbittorrentManaged();
       setQbManagedStatus(status);
       setQbTest({
@@ -357,6 +418,15 @@ export function SettingsPage() {
     }
   }
 
+  /** 滚动至指定设置分区，并让导航立即反映当前选择。 */
+  function navigateToCategory(categoryId: SettingsCategoryId) {
+    setActiveCategory(categoryId);
+    document.getElementById(`settings-${categoryId}`)?.scrollIntoView({
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      block: "start"
+    });
+  }
+
   const playerOptions = draft.players.filter((player) =>
     !playerDetection || playerDetection.candidates.some((candidate) => candidate.profileId === player.id)
   );
@@ -364,15 +434,19 @@ export function SettingsPage() {
   const selectedPlayer = draft.players.find((player) => player.id === selectedPlayerId);
   const selectedCandidate = playerDetection?.candidates.find((candidate) => candidate.profileId === selectedPlayerId);
   const autoCandidate = playerDetection?.candidates.find((candidate) => candidate.profileId === playerDetection.detectedProfileId);
+  const hasUnsavedChanges = persistedSettings ? !areSettingsEqual(draft, persistedSettings) : false;
 
   return (
-    <div className="flex flex-col gap-5">
-      <div className="flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-normal">设置</h1>
-          <p className="mt-1 text-sm text-muted-foreground">目录、下载引擎、播放器和提醒规则集中管理。</p>
+    <div className="flex min-w-0 flex-col gap-6">
+      <header className="sticky top-[calc(4rem+var(--safe-area-top))] z-20 -mx-4 flex flex-wrap items-center justify-between gap-3 border-b bg-background px-4 py-3 md:top-0 md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold">设置</h1>
+            {hasUnsavedChanges && <Badge tone="amber">有未保存修改</Badge>}
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">目录、下载引擎、播放器和自动化规则集中管理。</p>
         </div>
-        <div className="flex flex-wrap items-center justify-end gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             variant="outline"
             onClick={() => setResetDialogOpen(true)}
@@ -381,19 +455,37 @@ export function SettingsPage() {
             <RotateCcw data-icon="inline-start" />
             {resetState === "resetting" ? "恢复中" : resetState === "reset" ? "已恢复" : "恢复默认"}
           </Button>
-          <Button onClick={saveSettings} disabled={saveState === "saving" || resetState === "resetting"}>
+          <Button
+            onClick={saveSettings}
+            disabled={!hasUnsavedChanges || saveState === "saving" || resetState === "resetting"}
+          >
             <Save data-icon="inline-start" />
             {saveState === "saving" ? "保存中" : saveState === "saved" ? "已保存" : "保存"}
           </Button>
         </div>
-      </div>
+      </header>
 
-      <AppearanceSettingsSection
-        appearance={draft.appearance}
-        onChange={(appearance) => setDraft({ ...draft, appearance })}
-      />
+      <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[15rem_minmax(0,1fr)]">
+        <SettingsCategoryNavigation activeCategory={activeCategory} onNavigate={navigateToCategory} />
 
-      <div className="grid gap-5 xl:grid-cols-2">
+        <div className="flex min-w-0 flex-col gap-12">
+          <SettingsCategory
+            description="明暗模式、主题预设与导入的用户主题包。"
+            id="appearance"
+            title="外观"
+          >
+            <AppearanceSettingsSection
+              appearance={draft.appearance}
+              onChange={(appearance) => setDraft({ ...draft, appearance })}
+            />
+          </SettingsCategory>
+
+          <SettingsCategory
+            description="默认下载目录、未完成目录和应用用户数据位置。"
+            id="storage"
+            title="存储与目录"
+          >
+            <div className="grid gap-5 xl:grid-cols-2">
         <SettingsSection title="下载目录" description="支持全局默认目录，后续单部番可以覆盖。">
           <div className="flex flex-col gap-4">
             <ToggleSetting
@@ -474,6 +566,15 @@ export function SettingsPage() {
         </SettingsSection>
       </div>
 
+          </SettingsCategory>
+
+          <SettingsCategory
+            description="语言、标题显示规则和桌面端后台行为。"
+            id="interface"
+            title="语言与桌面集成"
+          >
+            <div className="flex flex-col gap-5">
+
       <SettingsSection title="语言与标题" description="界面语言保持固定，番剧元数据按当前标题策略展示和检索。">
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
           <SettingRow icon={<Languages className="h-4 w-4" />} label="界面语言" value="简体中文" />
@@ -516,8 +617,15 @@ export function SettingsPage() {
           />
         </div>
       </SettingsSection>
+            </div>
+          </SettingsCategory>
 
-      <SettingsSection title="远程设备" description="管理通过一次性配对码登记的浏览器和移动设备。">
+          <SettingsCategory
+            description="局域网 HTTPS、一次性配对码和已配对设备的访问范围。"
+            id="remote"
+            title="远程设备"
+          >
+      <SettingsSection title="远程服务与设备" description="管理通过一次性配对码登记的浏览器和移动设备。">
         <div className="flex flex-col gap-4">
           <div className="grid gap-4 lg:grid-cols-2">
             <ToggleSetting
@@ -684,6 +792,15 @@ export function SettingsPage() {
         </div>
       </SettingsSection>
 
+          </SettingsCategory>
+
+          <SettingsCategory
+            description="默认播放器、可执行文件路径与媒体文件扫描参数。"
+            id="media"
+            title="播放器与媒体"
+          >
+            <div className="flex flex-col gap-5">
+
       <SettingsSection title="播放器配置" description="按当前操作系统提供播放器选项。">
         <div className="flex flex-col gap-4">
           <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
@@ -811,6 +928,15 @@ export function SettingsPage() {
           />
         </div>
       </SettingsSection>
+
+            </div>
+          </SettingsCategory>
+
+          <SettingsCategory
+            description="qBittorrent 连接方式、速率限制、做种策略和内置进程状态。"
+            id="download"
+            title="下载核心"
+          >
 
       <SettingsSection title="下载核心配置">
         <div className="flex flex-col gap-4">
@@ -1146,7 +1272,15 @@ export function SettingsPage() {
         </div>
       </SettingsSection>
 
-      <SettingsSection title="自动化">
+          </SettingsCategory>
+
+          <SettingsCategory
+            description="扫描节奏、新集通知、自动下载和默认字幕组缺失策略。"
+            id="automation"
+            title="自动化"
+          >
+
+      <SettingsSection title="扫描与下载规则">
         <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
           <SelectSetting
             label="定时扫描"
@@ -1246,6 +1380,9 @@ export function SettingsPage() {
           </div>
         )}
       </SettingsSection>
+          </SettingsCategory>
+        </div>
+      </div>
 
       <ConfirmActionDialog
         confirmLabel="恢复默认"
@@ -1264,6 +1401,84 @@ function parseExtensions(value: string): string[] {
     .split(",")
     .map((item) => item.trim())
     .filter(Boolean);
+}
+
+/** 以持久化快照为准判断草稿是否真的发生变更。 */
+function areSettingsEqual(left: AppSettings, right: AppSettings): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+/** 渲染桌面分区导航与小屏幕的等价选择器。 */
+function SettingsCategoryNavigation({
+  activeCategory,
+  onNavigate
+}: {
+  activeCategory: SettingsCategoryId;
+  onNavigate: (categoryId: SettingsCategoryId) => void;
+}) {
+  const selectId = useId();
+
+  return (
+    <aside className="min-w-0">
+      <nav aria-label="设置分区" className="sticky top-24 hidden max-h-[calc(100dvh-7rem)] flex-col gap-1 overflow-y-auto rounded-md border bg-card p-2 xl:flex">
+        {settingsCategories.map((category) => {
+          const Icon = category.icon;
+          return (
+            <Button
+              aria-current={activeCategory === category.id ? "location" : undefined}
+              className="w-full justify-start"
+              data-active={activeCategory === category.id}
+              key={category.id}
+              onClick={() => onNavigate(category.id)}
+              variant="navigation"
+            >
+              <Icon aria-hidden="true" data-icon="inline-start" />
+              <span className="truncate">{category.label}</span>
+            </Button>
+          );
+        })}
+      </nav>
+
+      <Field className="xl:hidden">
+        <FieldLabel htmlFor={selectId}>设置分区</FieldLabel>
+        <Select value={activeCategory} onValueChange={(value) => onNavigate(value as SettingsCategoryId)}>
+          <SelectTrigger id={selectId}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectGroup>
+              {settingsCategories.map((category) => (
+                <SelectItem key={category.id} value={category.id}>{category.label}</SelectItem>
+              ))}
+            </SelectGroup>
+          </SelectContent>
+        </Select>
+      </Field>
+    </aside>
+  );
+}
+
+/** 提供符合 Stitch 长页层级的设置分区锚点。 */
+function SettingsCategory({
+  id,
+  title,
+  description,
+  children
+}: {
+  id: SettingsCategoryId;
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="scroll-mt-[calc(12rem+var(--safe-area-top))] md:scroll-mt-24" id={`settings-${id}`}>
+      <header className="border-b pb-3">
+        <h2 className="text-xl font-semibold">{title}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      </header>
+      <div className="mt-5">{children}</div>
+    </section>
+  );
 }
 
 function formatSchedulerState(status: AutomationSchedulerStatus | null): string {
@@ -1308,7 +1523,7 @@ function SettingsSection({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>{title}</CardTitle>
+        <CardTitle><h3>{title}</h3></CardTitle>
         {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
       <CardContent>{children}</CardContent>
