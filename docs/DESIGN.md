@@ -54,13 +54,13 @@ typography:
     fontSize: 48px
     fontWeight: '800'
     lineHeight: '1.1'
-    letterSpacing: -0.02em
+    letterSpacing: 0
   headline-lg:
     fontFamily: Inter
     fontSize: 30px
     fontWeight: '700'
     lineHeight: 36px
-    letterSpacing: -0.01em
+    letterSpacing: 0
   headline-lg-mobile:
     fontFamily: Inter
     fontSize: 24px
@@ -86,18 +86,18 @@ typography:
     fontSize: 12px
     fontWeight: '600'
     lineHeight: 16px
-    letterSpacing: 0.05em
+    letterSpacing: 0
   label-sm:
     fontFamily: Inter
     fontSize: 11px
     fontWeight: '500'
     lineHeight: 14px
 rounded:
-  sm: 0.5rem
-  DEFAULT: 1rem
-  md: 1.5rem
-  lg: 2rem
-  xl: 3rem
+  sm: 0.125rem
+  DEFAULT: 0.375rem
+  md: 0.5rem
+  lg: 0.5rem
+  xl: 0.5rem
   full: 9999px
 spacing:
   page-margin: 24px
@@ -111,7 +111,7 @@ spacing:
 ## Brand & Style
 The design system is built on an "Anime Editorial" narrative, blending the high-density information of a manga layout with the professional structure of a premium digital publication. The aesthetic is rooted in **Minimalism** and **Modern Corporate** styles, favoring functional density and structural integrity over decorative flair.
 
-The UI should evoke a sense of curated authority. It treats anime data as high-end editorial content, using sharp lines, intentional whitespace, and a monochromatic foundation punctuated by vibrant, meaningful color. While the structure is rigid, the pill-shaped roundedness provides a modern, high-end digital feel that bridges the gap between physical print and fluid software.
+The UI should evoke a sense of curated authority. It treats anime data as high-end editorial content, using sharp lines, intentional whitespace, and a monochromatic foundation punctuated by vibrant, meaningful color. Small radii keep the interface precise while preserving enough softness for repeated desktop workflows.
 
 ## Colors
 The palette is inspired by the printing process. **Paper White** serves as the canvas, providing a warm, non-clinical background. **Ink Black** is used for all primary text and structural borders to ensure maximum legibility and a classic editorial feel.
@@ -121,7 +121,7 @@ The palette is inspired by the printing process. **Paper White** serves as the c
 ## Typography
 This design system utilizes **Inter** as the sole typeface to maintain a systematic, utilitarian aesthetic. The hierarchy is driven by weight and capitalization rather than excessive scale changes.
 
-- **Headlines:** Use Bold or ExtraBold weights with slight negative letter-spacing to mimic editorial mastheads.
+- **Headlines:** Use Bold or ExtraBold weights with zero letter-spacing to keep dense headings stable across platforms.
 - **Labels:** Small caps or uppercase labels are used for metadata (e.g., Studio, Season, Status) to create a distinct visual texture compared to body copy.
 - **Body:** Standardized at 14px for high-density information tracking, ensuring that large lists and grids remain legible without excessive scrolling.
 
@@ -138,15 +138,15 @@ This design system avoids traditional shadows to maintain its "ink on paper" aes
 - **Muted Overlays:** When a modal is active, the background is dimmed with a 40% Ink Black tint to maintain focus.
 
 ## Shapes
-The shape language is disciplined but approachable with significant roundedness.
-- **Buttons and Inputs:** Use a 1rem (16px) radius to feel modern and "pill-shaped."
-- **Media Containers:** Anime posters and thumbnails use a 2rem (32px) radius to frame the imagery with soft, distinct corners.
-- **Selection States:** Active tabs or selected list items use the default 1rem radius to maintain the rounded visual language.
+The shape language is disciplined and geometric.
+- **Buttons and Inputs:** Use a 6px radius to feel precise and technical.
+- **Media Containers:** Anime posters and thumbnails use an 8px radius to soften imagery without becoming decorative.
+- **Selection States:** Active tabs or selected list items use 0px or 6px according to their container hierarchy.
 
 ## Components
-- **Buttons:** High-contrast blocks. Primary buttons use Coral Red with white text and a pill-shaped profile. Ghost buttons use a 1px Ink Black border.
-- **Anime Cards:** Standardized 2:3 aspect ratio for posters with large 32px corner radii. Title and metadata are placed directly below the image with no internal card padding, emphasizing the grid.
-- **Status Chips:** Small, pill-shaped badges. Use semantic background colors at 10% opacity with full-saturation text for high readability.
-- **Input Fields:** 1px border with a 1rem (16px) radius. On focus, the border color shifts to Ink Black with a 2px "ring" offset.
-- **Lists:** High-density rows with 1px bottom borders. Hover states should trigger a subtle `#F0F1F2` background fill with rounded selection corners.
-- **Navigation:** A sidebar or top-bar navigation using "Ink Black" text and minimal icons. The active state is indicated by a pill-shaped background or a 2px solid Coral Red stroke.
+- **Buttons:** High-contrast 6px blocks. Primary buttons use Coral Red with white text. Ghost buttons use a 1px Ink Black border.
+- **Anime Cards:** Standardized 2:3 poster ratio with 8px corners. Title and metadata sit directly below the image without a decorative outer card.
+- **Status Chips:** Small rectangular badges with 2px corners. Use semantic background colors at low opacity with readable text.
+- **Input Fields:** 1px border with a 6px radius. On focus, the border shifts to Ink Black with a 2px ring offset.
+- **Lists:** High-density rows with 1px bottom borders. Hover states use a subtle semantic muted fill.
+- **Navigation:** A sidebar or top bar using Ink Black text and minimal icons. The active state uses a Coral Red left stroke and restrained accent fill.
