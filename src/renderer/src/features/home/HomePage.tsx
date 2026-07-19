@@ -296,42 +296,44 @@ export function HomePage() {
         </Card>
       </div>
 
-      <Card className="min-w-0">
-        <CardHeader>
-          <CardTitle>下载源状态</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {data.sourceHealth.length > 0 ? (
-            <div className="grid min-w-0 gap-x-5 gap-y-2 md:grid-cols-2 xl:grid-cols-3">
-              {data.sourceHealth.map((source) => (
-                <div key={source.sourceId} className="flex min-w-0 items-center justify-between gap-3 py-2">
-                  <div className="min-w-0">
-                    <div className="truncate text-sm font-medium" title={source.name}>
-                      {source.name}
+      {electronClient && (
+        <Card className="min-w-0">
+          <CardHeader>
+            <CardTitle>下载源状态</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {data.sourceHealth.length > 0 ? (
+              <div className="grid min-w-0 gap-x-5 gap-y-2 md:grid-cols-2 xl:grid-cols-3">
+                {data.sourceHealth.map((source) => (
+                  <div key={source.sourceId} className="flex min-w-0 items-center justify-between gap-3 py-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium" title={source.name}>
+                        {source.name}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        最近检查 {source.lastCheckedAt ?? "--"}
+                      </div>
                     </div>
-                    <div className="mt-1 truncate text-xs text-muted-foreground">
-                      最近检查 {source.lastCheckedAt ?? "--"}
-                    </div>
+                    <Badge className="shrink-0" tone={source.status === "ok" ? "green" : "amber"}>
+                      {source.status === "ok" ? "正常" : "待检查"}
+                    </Badge>
                   </div>
-                  <Badge className="shrink-0" tone={source.status === "ok" ? "green" : "amber"}>
-                    {source.status === "ok" ? "正常" : "待检查"}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <Empty className="min-h-40 p-4 md:p-6">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  <DownloadCloud />
-                </EmptyMedia>
-                <EmptyTitle>暂无下载源</EmptyTitle>
-                <EmptyDescription>当前没有可显示状态的下载源。</EmptyDescription>
-              </EmptyHeader>
-            </Empty>
-          )}
-        </CardContent>
-      </Card>
+                ))}
+              </div>
+            ) : (
+              <Empty className="min-h-40 p-4 md:p-6">
+                <EmptyHeader>
+                  <EmptyMedia variant="icon">
+                    <DownloadCloud />
+                  </EmptyMedia>
+                  <EmptyTitle>暂无下载源</EmptyTitle>
+                  <EmptyDescription>当前没有可显示状态的下载源。</EmptyDescription>
+                </EmptyHeader>
+              </Empty>
+            )}
+          </CardContent>
+        </Card>
+      )}
     </Page>
   );
 }

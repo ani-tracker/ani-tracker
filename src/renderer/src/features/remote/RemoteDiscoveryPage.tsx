@@ -1,16 +1,23 @@
 import { CalendarDays, ImageOff, Search, Star } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { CachedImage } from "@/components/cached-image";
+import { FilterToolbar, Page, PageHeader, PageHeading } from "@/components/page-layout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue
+} from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { CachedImage } from "@/components/cached-image";
 import { appApi } from "@/lib/api";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { Anime, MyAnime, Season } from "@shared/domain";
@@ -79,11 +86,13 @@ export function RemoteDiscoveryPage() {
   }, [season, year]);
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-normal">新番发现</h1>
-        <p className="mt-1 text-sm text-muted-foreground">浏览桌面端已同步的新番目录。</p>
-      </header>
+    <Page>
+      <PageHeader>
+        <PageHeading
+          description="浏览桌面端已同步的新番目录；远程端仅提供筛选和阅读。"
+          title="新番发现"
+        />
+      </PageHeader>
 
       {error && (
         <Alert variant="destructive">
@@ -92,20 +101,18 @@ export function RemoteDiscoveryPage() {
         </Alert>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>季度筛选</CardTitle>
-          <CardDescription>{year} 年 · {visibleItems.length} 部</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <FieldGroup className="gap-3 lg:grid lg:grid-cols-[128px_minmax(0,1fr)_minmax(0,1fr)_auto] lg:items-end">
+      <FilterToolbar>
+        <div className="flex min-w-0 flex-1 flex-col gap-3">
+          <FieldGroup className="gap-3 lg:grid lg:grid-cols-[8rem_minmax(15rem,1fr)_minmax(14rem,1fr)_auto] lg:items-end">
             <Field>
               <FieldLabel className="sr-only" htmlFor="remote-discovery-year">选择年份</FieldLabel>
               <Select value={String(year)} onValueChange={(value) => setYear(Number(value))}>
                 <SelectTrigger id="remote-discovery-year"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectGroup>
-                    {yearOptions.map((option) => <SelectItem key={option} value={String(option)}>{option} 年</SelectItem>)}
+                    {yearOptions.map((option) => (
+                      <SelectItem key={option} value={String(option)}>{option} 年</SelectItem>
+                    ))}
                   </SelectGroup>
                 </SelectContent>
               </Select>
@@ -114,6 +121,7 @@ export function RemoteDiscoveryPage() {
             <Field>
               <FieldLabel className="sr-only">选择季度</FieldLabel>
               <Tabs
+                aria-label="选择季度"
                 value={season}
                 onValueChange={(value) => {
                   setSeason(value as Season);
@@ -150,54 +158,73 @@ export function RemoteDiscoveryPage() {
             </Button>
           </FieldGroup>
 
-          <Tabs
-            className="mt-3"
-            value={selectedMonth === null ? "all" : String(selectedMonth)}
-            onValueChange={(value) => setSelectedMonth(value === "all" ? null : Number(value))}
-          >
-            <TabsList className="grid h-auto w-full grid-cols-4 lg:w-fit">
-              <TabsTrigger value="all">全部</TabsTrigger>
-              {activeSeason.months.map((month) => <TabsTrigger key={month} value={String(month)}>{month} 月</TabsTrigger>)}
-            </TabsList>
-          </Tabs>
-        </CardContent>
-      </Card>
+          <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <Tabs
+              className="min-w-0"
+              value={selectedMonth === null ? "all" : String(selectedMonth)}
+              onValueChange={(value) => setSelectedMonth(value === "all" ? null : Number(value))}
+            >
+              <TabsList className="grid h-auto w-full grid-cols-4 sm:w-fit" aria-label="筛选首播月份">
+                <TabsTrigger value="all">全部</TabsTrigger>
+                {activeSeason.months.map((month) => (
+                  <TabsTrigger key={month} value={String(month)}>{month} 月</TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+            <span className="text-xs text-muted-foreground">{year} 年 · 显示 {visibleItems.length} 部</span>
+          </div>
+        </div>
+      </FilterToolbar>
 
       {loading ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3" aria-busy="true" aria-label="正在加载新番目录">
-          {Array.from({ length: 6 }, (_, index) => <Skeleton className="h-72 w-full" key={index} />)}
-        </div>
+        <DiscoverySkeleton />
       ) : visibleItems.length > 0 ? (
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
           {visibleItems.map((anime) => {
             const titleDisplay = resolveAnimeTitleDisplay(anime);
             const followed = followedIds.has(anime.id);
             return (
-              <Card key={anime.id} className="flex min-w-0 flex-col overflow-hidden">
-                {anime.coverUrl ? (
-                  <CachedImage alt={titleDisplay.title} className="aspect-[16/7] w-full bg-muted object-cover" loading="lazy" sourceUrl={anime.coverUrl} />
-                ) : (
-                  <div className="flex aspect-[16/7] w-full items-center justify-center bg-muted text-muted-foreground"><ImageOff /></div>
-                )}
-                <CardHeader>
-                  <div className="flex min-w-0 items-start justify-between gap-3">
-                    <div className="min-w-0">
-                      <CardTitle className="truncate" title={titleDisplay.title}>{titleDisplay.title}</CardTitle>
-                      <CardDescription className="mt-1 truncate" title={titleDisplay.subtitle}>{titleDisplay.subtitle ?? "无别名"}</CardDescription>
+              <article className="min-w-0" key={anime.id}>
+                <div className="aspect-[2/3] overflow-hidden rounded-md bg-muted">
+                  {anime.coverUrl ? (
+                    <CachedImage
+                      alt={titleDisplay.title}
+                      className="size-full object-cover"
+                      loading="lazy"
+                      sourceUrl={anime.coverUrl}
+                    />
+                  ) : (
+                    <div className="flex size-full items-center justify-center text-muted-foreground">
+                      <ImageOff />
                     </div>
-                    <Badge tone={followed ? "green" : "blue"}>{followed ? "已追番" : `${anime.premiereMonth} 月`}</Badge>
+                  )}
+                </div>
+
+                <div className="mt-3 min-w-0">
+                  <div className="flex min-w-0 items-start justify-between gap-2">
+                    <h2 className="min-w-0 flex-1 truncate text-sm font-semibold" title={titleDisplay.title}>
+                      {titleDisplay.title}
+                    </h2>
+                    {followed && <Badge className="shrink-0" tone="green">已追番</Badge>}
                   </div>
-                </CardHeader>
-                <CardContent className="flex flex-1 flex-col gap-3">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <CalendarDays />
-                    <span>{formatPremiere(anime)}</span>
-                    <Star />
-                    <span>{anime.rating ? anime.rating.score.toFixed(1) : "暂无评分"}</span>
+                  <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle ?? "无别名"}>
+                    {titleDisplay.subtitle ?? "无别名"}
+                  </p>
+                  <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <span className="inline-flex items-center gap-1">
+                      <CalendarDays className="size-3.5" />
+                      {formatPremiere(anime)}
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      <Star className="size-3.5" />
+                      {anime.rating ? anime.rating.score.toFixed(1) : "暂无评分"}
+                    </span>
                   </div>
-                  <p className="line-clamp-3 text-sm leading-6 text-muted-foreground">{anime.summary ?? "暂无简介"}</p>
-                </CardContent>
-              </Card>
+                  <p className="mt-2 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                    {anime.summary ?? "暂无简介"}
+                  </p>
+                </div>
+              </article>
             );
           })}
         </div>
@@ -210,6 +237,25 @@ export function RemoteDiscoveryPage() {
           </EmptyHeader>
         </Empty>
       )}
+    </Page>
+  );
+}
+
+/** 渲染新番图鉴加载中的稳定占位布局。 */
+function DiscoverySkeleton() {
+  return (
+    <div
+      aria-busy="true"
+      aria-label="正在加载新番目录"
+      className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5"
+    >
+      {Array.from({ length: 10 }, (_, index) => (
+        <div className="min-w-0" key={index}>
+          <Skeleton className="aspect-[2/3] w-full rounded-md" />
+          <Skeleton className="mt-3 h-4 w-4/5" />
+          <Skeleton className="mt-2 h-3 w-3/5" />
+        </div>
+      ))}
     </div>
   );
 }
@@ -251,7 +297,7 @@ function filterAnimeItems(items: Anime[], month: number | null, keyword: string)
     .sort((left, right) => `${left.premiereYear}-${left.premiereMonth}`.localeCompare(`${right.premiereYear}-${right.premiereMonth}`));
 }
 
-/** 格式化番剧首播日期用于卡片展示。 */
+/** 格式化番剧首播日期用于图鉴展示。 */
 function formatPremiere(anime: Anime): string {
-  return anime.premiereDate ?? `${anime.premiereYear} 年 ${anime.premiereMonth} 月`;
+  return anime.premiereDate ?? `${anime.premiereMonth} 月`;
 }

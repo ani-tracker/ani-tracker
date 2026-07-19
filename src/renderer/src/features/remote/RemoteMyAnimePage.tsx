@@ -1,15 +1,20 @@
-import { CalendarDays, Eye, Library, Play, X } from "lucide-react";
+import { CalendarDays, Eye, Library, Play } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { CachedImage } from "@/components/cached-image";
+import {
+  groupMyAnimeBySeason,
+  type MyAnimeSeasonGroup
+} from "@/features/my-anime/my-anime-list";
+import { FilterToolbar, Page, PageHeader, PageHeading } from "@/components/page-layout";
+import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Drawer } from "@/components/ui/drawer";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
-import { CachedImage } from "@/components/cached-image";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { appApi } from "@/lib/api";
 import { formatMonth, formatPercent } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
@@ -46,6 +51,23 @@ const downloadStatusText: Record<DownloadTask["status"], string> = {
   missing_files: "文件缺失"
 };
 
+type AnimeFilter = "all" | MyAnime["status"];
+
+interface RemoteDownloadSummary {
+  active: number;
+  completed: number;
+  linked: number;
+}
+
+const animeFilters: Array<{ label: string; value: AnimeFilter }> = [
+  { label: "全部", value: "all" },
+  { label: "在追", value: "watching" },
+  { label: "想看", value: "planned" },
+  { label: "已完成", value: "completed" },
+  { label: "暂停", value: "paused" },
+  { label: "已弃", value: "dropped" }
+];
+
 /** 渲染远程客户端的追番列表与只读剧集详情。 */
 export function RemoteMyAnimePage() {
   const [items, setItems] = useState<MyAnime[]>([]);
@@ -54,11 +76,21 @@ export function RemoteMyAnimePage() {
   const [selectedItem, setSelectedItem] = useState<MyAnime | null>(null);
   const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [episodePreferences, setEpisodePreferences] = useState<EpisodePreference[]>([]);
+  const [filter, setFilter] = useState<AnimeFilter>("all");
   const [loading, setLoading] = useState(true);
   const [detailsLoading, setDetailsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fansubNames = useMemo(() => new Map(fansubs.map((group) => [group.id, group.name])), [fansubs]);
+  const visibleItems = useMemo(
+    () => filter === "all" ? items : items.filter((item) => item.status === filter),
+    [filter, items]
+  );
+  const groups = useMemo(() => groupMyAnimeBySeason(visibleItems), [visibleItems]);
+  const downloadSummaries = useMemo(
+    () => new Map(items.map((item) => [item.anime.id, summarizeDownloads(downloadTasks, item.anime.id)])),
+    [downloadTasks, items]
+  );
 
   /** 在新标签页打开独立播放器，使播放生命周期与追番详情解耦。 */
   const openPlayback = (task: DownloadTask): void => {
@@ -136,24 +168,17 @@ export function RemoteMyAnimePage() {
   }, [selectedItem]);
 
   if (loading) {
-    return (
-      <div className="flex flex-col gap-5" aria-busy="true" aria-label="正在加载追番列表">
-        <Skeleton className="h-8 w-32" />
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          <Skeleton className="h-72 w-full" />
-          <Skeleton className="h-72 w-full" />
-          <Skeleton className="h-72 w-full" />
-        </div>
-      </div>
-    );
+    return <RemoteMyAnimeSkeleton />;
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-5">
-      <header>
-        <h1 className="text-2xl font-semibold tracking-normal">我的追番</h1>
-        <p className="mt-1 text-sm text-muted-foreground">查看追番状态、剧集进度和关联下载。</p>
-      </header>
+    <Page>
+      <PageHeader>
+        <PageHeading
+          description="按季度查看追番状态、剧集进度和关联下载；编辑能力仅保留在桌面端。"
+          title="我的追番"
+        />
+      </PageHeader>
 
       {error && (
         <Alert variant="destructive">
@@ -162,60 +187,42 @@ export function RemoteMyAnimePage() {
         </Alert>
       )}
 
-      {items.length > 0 ? (
-        <div className="grid min-w-0 grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-          {items.map((item) => {
-            const titleDisplay = resolveAnimeTitleDisplay(item.anime);
-            const summary = summarizeDownloads(downloadTasks, item.anime.id);
-            return (
-              <Card key={item.id} className="flex min-w-0 flex-col overflow-hidden">
-                {item.anime.coverUrl ? (
-                  <CachedImage
-                    alt={titleDisplay.title}
-                    className="aspect-video w-full bg-muted object-cover"
-                    loading="lazy"
-                    sourceUrl={item.anime.coverUrl}
-                  />
-                ) : (
-                  <div className="flex aspect-video w-full items-center justify-center bg-muted text-muted-foreground">
-                    <Library />
-                  </div>
-                )}
-                <CardHeader>
-                  <CardTitle className="truncate" title={titleDisplay.title}>{titleDisplay.title}</CardTitle>
-                  <CardDescription className="truncate" title={titleDisplay.subtitle}>
-                    {titleDisplay.subtitle ?? formatMonth(item.anime.premiereYear, item.anime.premiereMonth)}
-                  </CardDescription>
-                </CardHeader>
-                <CardContent className="flex flex-1 flex-wrap content-start gap-2">
-                  <Badge>{animeStatusText[item.status]}</Badge>
-                  <Badge>{summary.completed} 集完成</Badge>
-                  <Badge tone={summary.active > 0 ? "blue" : "neutral"}>{summary.active} 集下载中</Badge>
-                  {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
-                  {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
-                </CardContent>
-                <CardFooter>
-                  <Button className="w-full" variant="outline" onClick={() => setSelectedItem(item)}>
-                    <Eye data-icon="inline-start" />
-                    查看详情
-                  </Button>
-                </CardFooter>
-              </Card>
-            );
-          })}
+      <FilterToolbar>
+        <Tabs className="min-w-0 flex-1" value={filter} onValueChange={(value) => setFilter(value as AnimeFilter)}>
+          <TabsList className="grid h-auto w-full grid-cols-3 sm:w-fit sm:grid-cols-6" aria-label="筛选追番状态">
+            {animeFilters.map((item) => (
+              <TabsTrigger className="min-h-11 min-w-0 px-2 sm:min-h-9" key={item.value} value={item.value}>
+                {item.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </Tabs>
+        <span className="text-xs text-muted-foreground">显示 {visibleItems.length} / {items.length}</span>
+      </FilterToolbar>
+
+      {groups.length > 0 ? (
+        <div className="flex min-w-0 flex-col gap-7">
+          {groups.map((group) => (
+            <RemoteAnimeSeasonGroup
+              downloadSummaries={downloadSummaries}
+              group={group}
+              key={group.key}
+              onOpen={setSelectedItem}
+            />
+          ))}
         </div>
       ) : (
         <Empty className="min-h-72">
           <EmptyHeader>
             <EmptyMedia variant="icon"><CalendarDays /></EmptyMedia>
-            <EmptyTitle>暂无追番</EmptyTitle>
-            <EmptyDescription>桌面端当前还没有追番记录。</EmptyDescription>
+            <EmptyTitle>{items.length ? "没有匹配的追番" : "暂无追番"}</EmptyTitle>
+            <EmptyDescription>{items.length ? "请选择其他追番状态。" : "桌面端当前还没有追番记录。"}</EmptyDescription>
           </EmptyHeader>
         </Empty>
       )}
 
       {selectedItem && (
-        <RemoteAnimeDetailsDrawer
+        <RemoteAnimeDetailsSheet
           downloadTasks={downloadTasks}
           episodePreferences={episodePreferences}
           episodes={episodes}
@@ -226,12 +233,109 @@ export function RemoteMyAnimePage() {
           onPlay={openPlayback}
         />
       )}
-    </div>
+    </Page>
   );
 }
 
-/** 渲染单部追番的远程只读详情抽屉。 */
-function RemoteAnimeDetailsDrawer({
+/** 渲染单个季度下的远程追番紧凑列表。 */
+function RemoteAnimeSeasonGroup({
+  group,
+  downloadSummaries,
+  onOpen
+}: {
+  group: MyAnimeSeasonGroup;
+  downloadSummaries: Map<string, RemoteDownloadSummary>;
+  onOpen: (item: MyAnime) => void;
+}) {
+  return (
+    <section className="min-w-0">
+      <div className="mb-2 flex items-end justify-between gap-3">
+        <h2 className="text-sm font-semibold">{group.label}</h2>
+        <span className="text-xs text-muted-foreground">{group.items.length} 部</span>
+      </div>
+      <div className="min-w-0 overflow-hidden rounded-md border bg-card">
+        {group.items.map((item) => (
+          <RemoteAnimeRow
+            item={item}
+            key={item.id}
+            onOpen={() => onOpen(item)}
+            summary={downloadSummaries.get(item.anime.id) ?? { active: 0, completed: 0, linked: 0 }}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/** 渲染只读追番条目，避免暴露桌面端规则和资源操作。 */
+function RemoteAnimeRow({
+  item,
+  summary,
+  onOpen
+}: {
+  item: MyAnime;
+  summary: RemoteDownloadSummary;
+  onOpen: () => void;
+}) {
+  const titleDisplay = resolveAnimeTitleDisplay(item.anime);
+
+  return (
+    <article className="flex min-w-0 gap-3 border-b p-3 last:border-b-0 sm:gap-4">
+      <div className="aspect-[2/3] w-16 shrink-0 overflow-hidden rounded-md bg-muted sm:w-20">
+        {item.anime.coverUrl ? (
+          <CachedImage
+            alt={titleDisplay.title}
+            className="size-full object-cover"
+            loading="lazy"
+            sourceUrl={item.anime.coverUrl}
+          />
+        ) : (
+          <div className="flex size-full items-center justify-center text-muted-foreground">
+            <Library />
+          </div>
+        )}
+      </div>
+
+      <div className="grid min-w-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(10rem,0.55fr)_auto] lg:items-center">
+        <div className="min-w-0">
+          <div className="flex min-w-0 items-center gap-2">
+            <h3 className="truncate text-sm font-semibold" title={titleDisplay.title}>{titleDisplay.title}</h3>
+            <Badge className="shrink-0" tone="primary">{animeStatusText[item.status]}</Badge>
+          </div>
+          <p className="mt-1 truncate text-xs text-muted-foreground" title={titleDisplay.subtitle ?? "无原名"}>
+            {titleDisplay.subtitle ?? "无原名"}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-1.5">
+            <Badge>{formatMonth(item.anime.premiereYear, item.anime.premiereMonth)}</Badge>
+            {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
+            {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
+          </div>
+        </div>
+
+        <div className="min-w-0">
+          <div className="flex items-end justify-between gap-3 text-xs">
+            <span className="text-muted-foreground">关联剧集</span>
+            <span className="font-semibold tabular-nums text-primary">
+              {summary.completed} / {summary.linked}
+            </span>
+          </div>
+          <Progress className="mt-2 h-1.5" value={summary.linked ? summary.completed / summary.linked : 0} />
+          <div className="mt-2 text-xs text-muted-foreground">
+            已完成 {summary.completed} · 下载中 {summary.active}
+          </div>
+        </div>
+
+        <Button className="w-full lg:w-auto" onClick={onOpen} variant="outline">
+          <Eye data-icon="inline-start" />
+          查看剧集
+        </Button>
+      </div>
+    </article>
+  );
+}
+
+/** 渲染单部追番的远程只读详情工作台。 */
+function RemoteAnimeDetailsSheet({
   item,
   episodes,
   episodePreferences,
@@ -256,72 +360,90 @@ function RemoteAnimeDetailsDrawer({
     : "未设置默认字幕组";
 
   return (
-    <Drawer ariaLabel="追番详情" className="flex flex-col sm:max-w-2xl" onClose={onClose}>
-      <div className="flex items-start justify-between gap-3 border-b p-4">
-        <div className="min-w-0">
-          <h2 className="truncate text-lg font-semibold tracking-normal">{titleDisplay.title}</h2>
-          <p className="mt-1 truncate text-sm text-muted-foreground">{titleDisplay.subtitle ?? "剧集状态"}</p>
+    <WorkbenchSheet
+      description={titleDisplay.subtitle ?? "远程只读剧集状态"}
+      headerContent={(
+        <div className="flex flex-wrap gap-2">
+          <Badge tone="primary">{animeStatusText[item.status]}</Badge>
+          <Badge>{defaultFansubName}</Badge>
+          {item.preferredResolution && <Badge>{item.preferredResolution}</Badge>}
+          {item.preferredCodec && <Badge tone="blue">{item.preferredCodec}</Badge>}
         </div>
-        <Button className="size-11 p-0" variant="ghost" onClick={onClose} aria-label="关闭追番详情" title="关闭追番详情">
-          <X />
-        </Button>
-      </div>
-
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {loading ? (
-          <div className="flex flex-col gap-3" aria-busy="true" aria-label="正在加载追番详情">
-            <Skeleton className="h-24 w-full" />
-            <Skeleton className="h-24 w-full" />
-          </div>
-        ) : episodes.length > 0 ? (
-          <div className="flex flex-col">
-            {episodes.map((episode, index) => {
-              const preference = episodePreferences.find((entry) => entry.episodeId === episode.id);
-              const fansubName = preference?.fansubGroupId
-                ? (fansubNames.get(preference.fansubGroupId) ?? preference.fansubGroupId)
-                : defaultFansubName;
-              const task = findEpisodeDownload(downloadTasks, episode);
-              return (
-                <div key={episode.id}>
-                  <div className="flex items-start justify-between gap-3 py-4 first:pt-0 last:pb-0">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm font-medium">
-                        第 {episode.episodeNo} 集{episode.title ? ` · ${episode.title}` : ""}
-                      </div>
-                      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                        <span>字幕组：{fansubName}</span>
-                        {task && <span>{downloadStatusText[task.status]} · {formatPercent(task.progress)}</span>}
-                      </div>
-                      {task && <Progress className="mt-3" value={task.progress} />}
+      )}
+      onClose={onClose}
+      title={titleDisplay.title}
+    >
+      {loading ? (
+        <div className="flex flex-col gap-3" aria-busy="true" aria-label="正在加载追番详情">
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-24 w-full" />
+        </div>
+      ) : episodes.length > 0 ? (
+        <div className="flex min-w-0 flex-col">
+          {episodes.map((episode, index) => {
+            const preference = episodePreferences.find((entry) => entry.episodeId === episode.id);
+            const fansubName = preference?.fansubGroupId
+              ? (fansubNames.get(preference.fansubGroupId) ?? preference.fansubGroupId)
+              : defaultFansubName;
+            const task = findEpisodeDownload(downloadTasks, episode);
+            return (
+              <div key={episode.id}>
+                <article className="flex min-w-0 flex-col gap-3 py-4 first:pt-0 last:pb-0 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0 flex-1">
+                    <h3 className="break-words text-sm font-medium">
+                      第 {episode.episodeNo} 集{episode.title ? ` · ${episode.title}` : ""}
+                    </h3>
+                    <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                      <span>字幕组：{fansubName}</span>
+                      {task && <span>{downloadStatusText[task.status]} · {formatPercent(task.progress)}</span>}
                     </div>
-                    <div className="flex shrink-0 flex-col items-end gap-2">
-                      <Badge tone={episode.status === "watched" || episode.status === "downloaded" ? "green" : "neutral"}>
-                        {episodeStatusText[episode.status]}
-                      </Badge>
-                      {task && isRemotePlayable(task) && (
-                        <Button variant="outline" onClick={() => onPlay(task)}>
-                          <Play data-icon="inline-start" />
-                          播放
-                        </Button>
-                      )}
-                    </div>
+                    {task && <Progress className="mt-3" value={task.progress} />}
                   </div>
-                  {index < episodes.length - 1 && <Separator />}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <Empty className="min-h-56">
-            <EmptyHeader>
-              <EmptyMedia variant="icon"><CalendarDays /></EmptyMedia>
-              <EmptyTitle>暂无剧集记录</EmptyTitle>
-              <EmptyDescription>当前追番还没有剧集状态。</EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        )}
+                  <div className="flex shrink-0 items-center justify-between gap-2 sm:flex-col sm:items-end">
+                    <Badge tone={episode.status === "watched" || episode.status === "downloaded" ? "green" : "neutral"}>
+                      {episodeStatusText[episode.status]}
+                    </Badge>
+                    {task && isRemotePlayable(task) && (
+                      <Button variant="outline" onClick={() => onPlay(task)}>
+                        <Play data-icon="inline-start" />
+                        播放
+                      </Button>
+                    )}
+                  </div>
+                </article>
+                {index < episodes.length - 1 && <Separator />}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <Empty className="min-h-56">
+          <EmptyHeader>
+            <EmptyMedia variant="icon"><CalendarDays /></EmptyMedia>
+            <EmptyTitle>暂无剧集记录</EmptyTitle>
+            <EmptyDescription>当前追番还没有剧集状态。</EmptyDescription>
+          </EmptyHeader>
+        </Empty>
+      )}
+    </WorkbenchSheet>
+  );
+}
+
+/** 渲染远程追番页加载中的结构化占位状态。 */
+function RemoteMyAnimeSkeleton() {
+  return (
+    <Page aria-busy="true" aria-label="正在加载追番列表">
+      <div className="flex flex-col gap-2">
+        <Skeleton className="h-7 w-32" />
+        <Skeleton className="h-4 w-72 max-w-full" />
       </div>
-    </Drawer>
+      <Skeleton className="h-12 w-full" />
+      <div className="flex flex-col gap-3">
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-32 w-full" />
+        <Skeleton className="h-32 w-full" />
+      </div>
+    </Page>
   );
 }
 
@@ -330,12 +452,13 @@ function mergeFansubGroups(current: FansubGroup[], incoming: FansubGroup[]): Fan
   return Array.from(new Map([...current, ...incoming].map((group) => [group.id, group])).values());
 }
 
-/** 统计指定番剧关联下载的完成和活动集数。 */
-function summarizeDownloads(tasks: DownloadTask[], animeId: string): { completed: number; active: number } {
+/** 统计指定番剧关联下载的完成、活动和关联集数。 */
+function summarizeDownloads(tasks: DownloadTask[], animeId: string): RemoteDownloadSummary {
   const animeTasks = tasks.filter((task) => task.animeId === animeId);
   return {
     completed: countEpisodes(animeTasks.filter((task) => task.status === "completed" || task.status === "seeding")),
-    active: countEpisodes(animeTasks.filter((task) => !["completed", "seeding", "error", "missing_files"].includes(task.status)))
+    active: countEpisodes(animeTasks.filter((task) => !["completed", "seeding", "error", "missing_files"].includes(task.status))),
+    linked: countEpisodes(animeTasks)
   };
 }
 
