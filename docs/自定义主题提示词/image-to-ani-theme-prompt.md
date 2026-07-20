@@ -8,7 +8,7 @@
 
 下方“完整提示词”是可独立复制版本。项目外用户只需提供提示词和一张参考图片，不需要访问本仓库或其他说明文件。
 
-仓库内另有可选参考示例：[image-palette-example.ani-theme.json](./image-palette-example.ani-theme.json)。示例与设置页使用同一套格式、令牌白名单和 WCAG 对比度校验。
+仓库内另有可选参考示例：[image-palette-example.ani-theme.json](image-palette-example.ani-theme.json)。示例与设置页使用同一套格式、令牌白名单和 WCAG 对比度校验。
 
 ## 使用方法
 
