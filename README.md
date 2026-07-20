@@ -69,7 +69,7 @@ src/preload                    Electron preload bridge
 src/renderer/src               桌面与远程 React UI
 src/shared                     共享领域模型和契约
 resources/qbittorrent          内置 qBittorrent-nox 资源
-resources/ffmpeg               FFmpeg 构建资源说明
+resources/ffmpeg               三平台 FFmpeg 预构建资源
 docs                           设计、进度、启动和专项计划
 ```
 
@@ -127,9 +127,9 @@ pnpm.cmd run test:parsers
 pnpm.cmd build
 ```
 
-完整构建会更新 `out/qbittorrent` 和当前平台的 `out/ffmpeg`。FFmpeg 首次构建会下载并校验目标平台二进制，后续复用 `.cache/ffmpeg`；交叉构建可向 `prepare:ffmpeg` 传入 `--platform` 和 `--arch`。若 qBittorrent-nox 正在从输出目录运行，应先正常退出 Ani Tracker，否则 Windows 可能返回 `EBUSY` 文件占用错误。
+完整构建会更新 `out/qbittorrent`，并从仓库内的 `resources/ffmpeg` 校验、复制当前平台 FFmpeg 到 `out/ffmpeg`，构建过程不访问网络。交叉构建可向 `prepare:ffmpeg` 传入 `--platform` 和 `--arch`。若 qBittorrent-nox 正在从输出目录运行，应先正常退出 Ani Tracker，否则 Windows 可能返回 `EBUSY` 文件占用错误。
 
-FFmpeg 构建下载会自动读取 `HTTPS_PROXY`、`https_proxy`、`HTTP_PROXY` 和 `http_proxy`。GitHub Release 不可直连时，也可以通过 `FFMPEG_BINARIES_URL` 指定兼容镜像。
+FFmpeg 版本升级属于显式资源维护：执行 `pnpm run download:ffmpeg` 可更新三平台预构建文件，执行 `pnpm run verify:ffmpeg` 可离线校验全部资源。维护下载命令支持标准 HTTP(S) 代理环境变量及 `FFMPEG_BINARIES_URL` 镜像地址。
 
 ## 下载源网络与同步
 

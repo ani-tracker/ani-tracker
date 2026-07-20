@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { EventEmitter } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
@@ -57,7 +57,7 @@ test("RemoteMediaSessionService 为浏览器兼容文件创建直传会话", asy
     default: true
   }]);
   assert.equal(session.streamUrl, `/api/media/sessions/${session.id}/file`);
-  assert.equal(asset.filePath, filePath);
+  assert.equal(asset.filePath, await realpath(filePath));
   assert.equal(asset.contentType, "video/mp4");
   assert.equal(subtitleAsset.contentType, "text/x-ssa; charset=utf-8");
   await assert.rejects(
@@ -87,9 +87,12 @@ test("RemoteMediaSessionService 为本地播放器创建独立票据会话", asy
   assert.notEqual(externalSession.id, browserSession.id);
   assert.equal(
     (await service.getExternalAsset(externalSession.id, route[1], "file")).filePath,
-    filePath
+    await realpath(filePath)
   );
-  assert.equal((await service.getAsset(browserSession.id, "device-1", "file")).filePath, filePath);
+  assert.equal(
+    (await service.getAsset(browserSession.id, "device-1", "file")).filePath,
+    await realpath(filePath)
+  );
   await assert.rejects(
     service.getExternalAsset(externalSession.id, "A".repeat(43), "file"),
     (error) => isMediaError(error, "MEDIA_SESSION_NOT_FOUND", 404)
@@ -190,7 +193,7 @@ test("RemoteMediaSessionService 按文件索引选择完成视频并拒绝不可
 
   assert.equal(session.fileIndex, 1);
   assert.equal(session.fileName, "episode-02.mkv");
-  assert.equal(asset.filePath, join(directory, "episode-02.mkv"));
+  assert.equal(asset.filePath, await realpath(join(directory, "episode-02.mkv")));
   await assert.rejects(
     service.createSession(task.id, "device-1", "direct", 2),
     (error) => isMediaError(error, "MEDIA_FILE_UNAVAILABLE", 409)

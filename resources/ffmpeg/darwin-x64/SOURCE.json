@@ -1,0 +1,10 @@
+{
+  "project": "ffmpeg-static",
+  "repository": "https://github.com/eugeneware/ffmpeg-static",
+  "release": "b6.1.1",
+  "target": "darwin-x64",
+  "archive": "ffmpeg-darwin-x64.gz",
+  "archiveSha256": "929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb4242106",
+  "binarySize": 78862176,
+  "binarySha256": "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894"
+}

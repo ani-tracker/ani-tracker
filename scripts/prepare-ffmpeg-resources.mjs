@@ -1,169 +1,82 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { createReadStream, createWriteStream } from "node:fs";
-import { access, chmod, copyFile, mkdir, rename, rm, writeFile } from "node:fs/promises";
-import { get as httpsGet } from "node:https";
-import { dirname, join, resolve } from "node:path";
+import { createReadStream } from "node:fs";
+import { chmod, cp, readFile, rm, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import process from "node:process";
-import { pipeline } from "node:stream/promises";
-import { createGunzip } from "node:zlib";
-import { HttpsProxyAgent } from "https-proxy-agent";
+import {
+  FFMPEG_ASSETS,
+  FFMPEG_RELEASE,
+  findFfmpegAsset
+} from "./ffmpeg-resource-manifest.mjs";
 
-const release = "b6.1.1";
-const defaultBaseUrl = "https://github.com/eugeneware/ffmpeg-static/releases/download";
-const defaultCacheRoot = resolve(".cache", "ffmpeg", release);
+const defaultSourceRoot = resolve("resources", "ffmpeg");
 const defaultTargetRoot = resolve("out", "ffmpeg");
-const assets = {
-  "darwin-arm64": {
-    archiveSha256: "8923876afa8db5585022d7860ec7e589af192f441c56793971276d450ed3bbfa",
-    licenseSha256: "cb48bf09a11f5fb576cddb0431c8f5ed0a60157a9ec942adffc13907cbe083f2",
-    readmeSha256: "05ba4b92c96605434b1aaae3eedf5a2c280c9607bf78ffca9a5b536d9af2dc6"
-  },
-  "darwin-x64": {
-    archiveSha256: "929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb4242106",
-    licenseSha256: "2e1d16c72fd74e12063776371da757322f8b77589386532f4fd8634bde7de1af",
-    readmeSha256: "e88a0325f8e5b75210355e37341824f074d3cd82def2125be54c914b62848a36"
-  },
-  "win32-x64": {
-    archiveSha256: "8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d77",
-    licenseSha256: "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
-    readmeSha256: "a636a7183c58006351acbaf35303c0ed85c6e1320fd4e80de453ba6157de6311"
-  }
-};
-
 const options = parseArgs(process.argv.slice(2));
-const proxyUrl = options.proxyUrl || resolveProxyUrl(process.env);
-const downloadAgent = proxyUrl ? new HttpsProxyAgent(proxyUrl) : undefined;
-if (proxyUrl) {
-  console.log(`[ffmpeg] using proxy: ${formatProxyUrl(proxyUrl)}`);
-}
-const targetKey = `${options.platform}-${options.arch}`;
-const asset = assets[targetKey];
-if (!asset) {
-  console.error(`[ffmpeg] unsupported build target: ${targetKey}`);
-  console.error(`[ffmpeg] supported targets: ${Object.keys(assets).join(", ")}`);
+const selectedAsset = findFfmpegAsset(options.platform, options.arch);
+
+if (!selectedAsset && !options.verifyAll) {
+  console.error(`[ffmpeg] unsupported build target: ${options.platform}-${options.arch}`);
+  console.error(`[ffmpeg] supported targets: ${Object.keys(FFMPEG_ASSETS).join(", ")}`);
   process.exit(1);
 }
 
-const baseUrl = `${options.baseUrl.replace(/\/$/, "")}/${release}`;
-const archiveName = `ffmpeg-${targetKey}.gz`;
-const readmeName = `${targetKey}.README`;
-const licenseName = `${targetKey}.LICENSE`;
-const cacheFiles = {
-  archive: join(options.cacheRoot, archiveName),
-  readme: join(options.cacheRoot, readmeName),
-  license: join(options.cacheRoot, licenseName)
-};
+const assetsToVerify = options.verifyAll
+  ? Object.entries(FFMPEG_ASSETS).map(([targetKey, asset]) => ({ targetKey, ...asset }))
+  : [selectedAsset];
 
-await mkdir(options.cacheRoot, { recursive: true });
-await ensureCachedAsset(`${baseUrl}/${archiveName}`, cacheFiles.archive, asset.archiveSha256, options);
-await ensureCachedAsset(`${baseUrl}/${readmeName}`, cacheFiles.readme, asset.readmeSha256, options);
-await ensureCachedAsset(`${baseUrl}/${licenseName}`, cacheFiles.license, asset.licenseSha256, options);
-
-const outputDirectory = join(options.targetRoot, targetKey);
-const outputBinary = join(outputDirectory, options.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
-await Promise.all(
-  Object.keys(assets)
-    .filter((supportedTarget) => supportedTarget !== targetKey)
-    .map((supportedTarget) => rm(join(options.targetRoot, supportedTarget), { recursive: true, force: true }))
-);
-await rm(outputDirectory, { recursive: true, force: true });
-await mkdir(outputDirectory, { recursive: true });
-await pipeline(createReadStream(cacheFiles.archive), createGunzip(), createWriteStream(outputBinary));
-if (options.platform !== "win32") {
-  await chmod(outputBinary, 0o755);
-}
-await Promise.all([
-  copyFile(cacheFiles.readme, join(outputDirectory, "README")),
-  copyFile(cacheFiles.license, join(outputDirectory, "LICENSE")),
-  writeFile(join(outputDirectory, "SOURCE.json"), `${JSON.stringify({
-    project: "ffmpeg-static",
-    repository: "https://github.com/eugeneware/ffmpeg-static",
-    release,
-    target: targetKey,
-    archive: archiveName,
-    archiveSha256: asset.archiveSha256
-  }, null, 2)}\n`, "utf8")
-]);
-
-console.log(`[ffmpeg] prepared ${targetKey}: ${outputBinary}`);
-
-/** 确保缓存文件存在且摘要正确，网络异常时自动重试。 */
-async function ensureCachedAsset(url, destination, expectedSha256, currentOptions) {
-  if (await hasExpectedHash(destination, expectedSha256)) {
-    console.log(`[ffmpeg] cache hit: ${destination}`);
-    return;
-  }
-  if (currentOptions.offline) {
-    throw new Error(`[ffmpeg] offline cache missing or invalid: ${destination}`);
-  }
-
-  await mkdir(dirname(destination), { recursive: true });
-  let lastError;
-  for (let attempt = 1; attempt <= currentOptions.retries; attempt += 1) {
-    const temporaryPath = `${destination}.part-${process.pid}`;
-    try {
-      await downloadFile(url, temporaryPath, currentOptions.timeoutMs);
-      const actualSha256 = await sha256(temporaryPath);
-      if (actualSha256 !== expectedSha256) {
-        throw new Error(`SHA-256 mismatch: expected ${expectedSha256}, received ${actualSha256}`);
-      }
-      await rm(destination, { force: true });
-      await rename(temporaryPath, destination);
-      console.log(`[ffmpeg] downloaded: ${url}`);
-      return;
-    } catch (error) {
-      lastError = error;
-      await rm(temporaryPath, { force: true });
-      console.warn(`[ffmpeg] download attempt ${attempt}/${currentOptions.retries} failed: ${errorMessage(error)}`);
-    }
-  }
-
-  throw new Error(`[ffmpeg] failed to download ${url}: ${errorMessage(lastError)}`);
+for (const asset of assetsToVerify) {
+  await verifyBundledAsset(options.sourceRoot, asset);
+  console.log(`[ffmpeg] verified ${asset.targetKey}`);
 }
 
-/** 使用可配置代理和空闲超时下载单个构建资源。 */
-async function downloadFile(url, destination, timeoutMs, redirectsRemaining = 5) {
-  await new Promise((resolveDownload, rejectDownload) => {
-    const request = httpsGet(url, {
-      agent: downloadAgent,
-      headers: { "User-Agent": "ani-tracker-build" }
-    }, async (response) => {
-      try {
-        const location = response.headers.location;
-        if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
-          response.resume();
-          if (redirectsRemaining <= 0) {
-            throw new Error("Too many redirects");
-          }
-          await downloadFile(new URL(location, url).href, destination, timeoutMs, redirectsRemaining - 1);
-          resolveDownload();
-          return;
-        }
-        if (response.statusCode !== 200) {
-          response.resume();
-          throw new Error(`HTTP ${response.statusCode ?? "unknown"}`);
-        }
-        await pipeline(response, createWriteStream(destination));
-        resolveDownload();
-      } catch (error) {
-        rejectDownload(error);
-      }
-    });
-    request.setTimeout(timeoutMs, () => {
-      request.destroy(new Error(`Request timed out after ${timeoutMs}ms`));
-    });
-    request.once("error", rejectDownload);
+if (!options.verifyOnly && selectedAsset) {
+  await Promise.all(
+    Object.keys(FFMPEG_ASSETS)
+      .filter((targetKey) => targetKey !== selectedAsset.targetKey)
+      .map((targetKey) => rm(join(options.targetRoot, targetKey), { recursive: true, force: true }))
+  );
+  const outputDirectory = join(options.targetRoot, selectedAsset.targetKey);
+  await rm(outputDirectory, { recursive: true, force: true });
+  await cp(join(options.sourceRoot, selectedAsset.targetKey), outputDirectory, {
+    recursive: true,
+    dereference: false
   });
+  if (selectedAsset.platform !== "win32") {
+    await chmod(join(outputDirectory, selectedAsset.binaryName), 0o755);
+  }
+  console.log(`[ffmpeg] copied ${selectedAsset.targetKey}: ${outputDirectory}`);
 }
 
-/** 校验缓存文件的 SHA-256 摘要。 */
-async function hasExpectedHash(path, expectedSha256) {
-  try {
-    await access(path);
-    return await sha256(path) === expectedSha256;
-  } catch {
-    return false;
+/** 校验预构建二进制、许可证、说明和来源元数据。 */
+async function verifyBundledAsset(sourceRoot, asset) {
+  const sourceDirectory = join(sourceRoot, asset.targetKey);
+  await verifyFile(join(sourceDirectory, asset.binaryName), asset.binarySize, asset.binarySha256);
+  await verifyFile(join(sourceDirectory, "README"), undefined, asset.readmeSha256);
+  await verifyFile(join(sourceDirectory, "LICENSE"), undefined, asset.licenseSha256);
+
+  const sourceMetadata = JSON.parse(await readFile(join(sourceDirectory, "SOURCE.json"), "utf8"));
+  if (
+    sourceMetadata.release !== FFMPEG_RELEASE
+    || sourceMetadata.target !== asset.targetKey
+    || sourceMetadata.binarySha256 !== asset.binarySha256
+  ) {
+    throw new Error(`[ffmpeg] invalid source metadata: ${sourceDirectory}`);
+  }
+}
+
+/** 校验资源文件类型、大小和 SHA-256。 */
+async function verifyFile(path, expectedSize, expectedSha256) {
+  const fileStat = await stat(path);
+  if (!fileStat.isFile()) {
+    throw new Error(`[ffmpeg] expected file: ${path}`);
+  }
+  if (expectedSize !== undefined && fileStat.size !== expectedSize) {
+    throw new Error(`[ffmpeg] size mismatch: ${path}`);
+  }
+  const actualSha256 = await sha256(path);
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(`[ffmpeg] SHA-256 mismatch: ${path}`);
   }
 }
 
@@ -176,24 +89,39 @@ async function sha256(path) {
   return hash.digest("hex");
 }
 
-/** 解析目标平台、缓存和网络参数。 */
+/** 解析资源源目录、输出目录和验证目标。 */
 function parseArgs(args) {
   const parsed = {
+    sourceRoot: defaultSourceRoot,
+    targetRoot: defaultTargetRoot,
     platform: process.env.npm_config_platform || process.platform,
     arch: process.env.npm_config_arch || process.arch,
-    targetRoot: defaultTargetRoot,
-    cacheRoot: defaultCacheRoot,
-    baseUrl: process.env.FFMPEG_BINARIES_URL || defaultBaseUrl,
-    timeoutMs: 120_000,
-    retries: 3,
-    offline: false,
-    proxyUrl: undefined
+    verifyAll: false,
+    verifyOnly: false
   };
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
-    if (arg === "--offline") {
-      parsed.offline = true;
+    if (arg === "--") {
+      continue;
+    }
+    if (arg === "--verify-all") {
+      parsed.verifyAll = true;
+      parsed.verifyOnly = true;
+      continue;
+    }
+    if (arg === "--verify-only") {
+      parsed.verifyOnly = true;
+      continue;
+    }
+    if (arg === "--source") {
+      parsed.sourceRoot = resolve(readValue(args, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg === "--target") {
+      parsed.targetRoot = resolve(readValue(args, index, arg));
+      index += 1;
       continue;
     }
     if (arg === "--platform") {
@@ -203,31 +131,6 @@ function parseArgs(args) {
     }
     if (arg === "--arch") {
       parsed.arch = readValue(args, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg === "--target") {
-      parsed.targetRoot = resolve(readValue(args, index, arg));
-      index += 1;
-      continue;
-    }
-    if (arg === "--cache") {
-      parsed.cacheRoot = resolve(readValue(args, index, arg));
-      index += 1;
-      continue;
-    }
-    if (arg === "--proxy") {
-      parsed.proxyUrl = readValue(args, index, arg);
-      index += 1;
-      continue;
-    }
-    if (arg === "--timeout-ms") {
-      parsed.timeoutMs = positiveInteger(readValue(args, index, arg), arg);
-      index += 1;
-      continue;
-    }
-    if (arg === "--retries") {
-      parsed.retries = positiveInteger(readValue(args, index, arg), arg);
       index += 1;
       continue;
     }
@@ -243,32 +146,4 @@ function readValue(args, index, arg) {
     throw new Error(`${arg} requires a value`);
   }
   return value;
-}
-
-/** 读取正整数参数。 */
-function positiveInteger(value, arg) {
-  const parsed = Number(value);
-  if (!Number.isInteger(parsed) || parsed <= 0) {
-    throw new Error(`${arg} requires a positive integer`);
-  }
-  return parsed;
-}
-
-/** 按 HTTPS、HTTP 优先级读取标准代理环境变量。 */
-function resolveProxyUrl(environment) {
-  return environment.HTTPS_PROXY
-    || environment.https_proxy
-    || environment.HTTP_PROXY
-    || environment.http_proxy;
-}
-
-/** 隐藏代理凭据后输出代理节点。 */
-function formatProxyUrl(value) {
-  const parsed = new URL(value);
-  return `${parsed.protocol}//${parsed.hostname}${parsed.port ? `:${parsed.port}` : ""}`;
-}
-
-/** 返回适合构建日志的错误说明。 */
-function errorMessage(error) {
-  return error instanceof Error ? error.message : String(error);
 }

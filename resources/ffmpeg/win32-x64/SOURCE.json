@@ -1,0 +1,10 @@
+{
+  "project": "ffmpeg-static",
+  "repository": "https://github.com/eugeneware/ffmpeg-static",
+  "release": "b6.1.1",
+  "target": "win32-x64",
+  "archive": "ffmpeg-win32-x64.gz",
+  "archiveSha256": "8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d77",
+  "binarySize": 82797568,
+  "binarySha256": "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00"
+}

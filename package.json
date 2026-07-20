@@ -15,6 +15,8 @@
     "prepare:qbittorrent": "node scripts/prepare-qbittorrent-resources.mjs",
     "verify:qbittorrent": "node scripts/prepare-qbittorrent-resources.mjs --required",
     "prepare:ffmpeg": "node scripts/prepare-ffmpeg-resources.mjs",
+    "verify:ffmpeg": "node scripts/prepare-ffmpeg-resources.mjs --verify-all",
+    "download:ffmpeg": "node scripts/download-ffmpeg-resources.mjs --all",
     "typecheck": "tsc -p tsconfig.typecheck.node.json --pretty false && tsc -p tsconfig.typecheck.web.json --pretty false",
     "test:parsers": "node scripts/run-node-tests.mjs",
     "test:theme": "node scripts/verify-theme-contrast.mjs"

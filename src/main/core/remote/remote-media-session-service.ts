@@ -114,7 +114,7 @@ export class RemoteMediaSessionService {
   private readonly temporaryDirectory: string;
   private readonly platform: NodeJS.Platform;
   private readonly logger: RemoteMediaSessionLogger;
-  private readonly bundledFfmpegPath?: string;
+  private readonly bundledFfmpegPath?: string | null;
   private readonly bundledFfprobePath?: string;
   private readonly durationProbe: NonNullable<RemoteMediaSessionServiceOptions["durationProbe"]>;
   private readonly subtitlePreparer: NonNullable<RemoteMediaSessionServiceOptions["subtitlePreparer"]>;
@@ -139,7 +139,7 @@ export class RemoteMediaSessionService {
     this.logger = options.logger ?? defaultLogger;
     this.bundledFfmpegPath = options.bundledFfmpegPath === undefined
       ? bundledFfmpegPath
-      : options.bundledFfmpegPath ?? undefined;
+      : options.bundledFfmpegPath;
     this.bundledFfprobePath = options.bundledFfprobePath === undefined
       ? bundledFfprobeInstallerPath
       : options.bundledFfprobePath ?? undefined;

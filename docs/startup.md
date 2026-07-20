@@ -16,7 +16,7 @@ Windows PowerShell 可使用：
 pnpm.cmd install
 ```
 
-当前项目依赖 Electron 和 esbuild 的安装脚本。pnpm 11 会默认拦截依赖构建脚本，因此仓库通过 `pnpm-workspace.yaml` 显式允许：
+当前项目依赖 Electron、esbuild、better-sqlite3 和 ffprobe 安装脚本。pnpm 11 会默认拦截依赖构建脚本，因此仓库通过 `pnpm-workspace.yaml` 显式允许对应依赖。FFmpeg 二进制已纳入 `resources/ffmpeg`，安装依赖时不下载 FFmpeg。
 
 ```yaml
 allowBuilds:
@@ -89,8 +89,9 @@ pnpm build
 - `out/preload/index.mjs`
 - `out/renderer/index.html`
 - `out/renderer/assets/*`
+- `out/ffmpeg/<platform>-<arch>/*`
 
-`package.json` 的 `main` 指向 `./out/main/index.js`，因此生产/预览模式会从构建后的主进程入口启动。
+构建会离线校验仓库内 FFmpeg 资源并只复制当前目标平台。`package.json` 的 `main` 指向 `./out/main/index.js`，因此生产/预览模式会从构建后的主进程入口启动。
 
 ## 预览启动
 
