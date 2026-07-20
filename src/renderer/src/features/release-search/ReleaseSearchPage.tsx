@@ -243,7 +243,7 @@ export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}
         </Alert>
       )}
 
-      <section className="relative min-w-0 rounded-md border bg-card p-4">
+      <section className="relative min-w-0">
         <FieldGroup className="gap-3">
           <Field className="min-w-0">
             <FieldLabel className="sr-only" htmlFor="release-keyword">资源搜索关键词</FieldLabel>
