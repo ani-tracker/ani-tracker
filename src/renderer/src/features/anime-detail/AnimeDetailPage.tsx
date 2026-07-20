@@ -71,6 +71,30 @@ interface AnimeDetailPageProps {
   onOpenReleaseSearch: (anime: Anime) => void;
 }
 
+interface DetailSectionPosition {
+  id: string;
+  top: number;
+}
+
+/** 根据双栏详情区的视觉位置确定当前分区，并在同高分区中保留当前选择。 */
+function resolveActiveSectionId(
+  positions: DetailSectionPosition[],
+  activationLine: number,
+  currentSectionId: string,
+  atScrollEnd: boolean
+): string | undefined {
+  if (positions.length === 0) return undefined;
+
+  const reachedPositions = positions.filter((position) => position.top <= activationLine + 1);
+  const targetTop = atScrollEnd
+    ? Math.max(...positions.map((position) => position.top))
+    : reachedPositions.length > 0
+      ? Math.max(...reachedPositions.map((position) => position.top))
+      : Math.min(...positions.map((position) => position.top));
+  const nearestPositions = positions.filter((position) => Math.abs(position.top - targetTop) <= 1);
+  return nearestPositions.find((position) => position.id === currentSectionId)?.id ?? nearestPositions[0]?.id;
+}
+
 /** 渲染未追番与已追番共用的番剧详情长页。 */
 export function AnimeDetailPage({
   animeId,
@@ -92,6 +116,7 @@ export function AnimeDetailPage({
   const [online, setOnline] = useState(() => navigator.onLine);
   const [activeSectionId, setActiveSectionId] = useState("detail-overview");
   const summaryRef = useRef<HTMLParagraphElement>(null);
+  const programmaticSectionIdRef = useRef<string | null>(null);
   const desktopClient = isElectronClient();
 
   useEffect(() => {
@@ -170,24 +195,51 @@ export function AnimeDetailPage({
       if (animationFrame !== undefined) return;
       animationFrame = window.requestAnimationFrame(() => {
         animationFrame = undefined;
-        const activationLine = detailScrollRoot.getBoundingClientRect().top + (window.innerWidth < 768 ? 128 : 80);
-        let currentSection = sections[0];
-        for (const section of sections) {
-          if (section.getBoundingClientRect().top <= activationLine) {
-            currentSection = section;
-          } else {
-            break;
-          }
+        const programmaticSectionId = programmaticSectionIdRef.current;
+        if (programmaticSectionId) {
+          setActiveSectionId((current) => current === programmaticSectionId ? current : programmaticSectionId);
+          return;
         }
-        setActiveSectionId((current) => current === currentSection.id ? current : currentSection.id);
+
+        const activationLine = detailScrollRoot.getBoundingClientRect().top + (window.innerWidth < 768 ? 128 : 80);
+        const positions = sections.map((section) => ({ id: section.id, top: section.getBoundingClientRect().top }));
+        const maxScrollTop = detailScrollRoot.scrollHeight - detailScrollRoot.clientHeight;
+        const atScrollEnd = maxScrollTop > 1 && maxScrollTop - detailScrollRoot.scrollTop <= 1;
+        setActiveSectionId((current) => {
+          const nextSectionId = resolveActiveSectionId(positions, activationLine, current, atScrollEnd);
+          return nextSectionId && current !== nextSectionId ? nextSectionId : current;
+        });
       });
+    }
+
+    /** 用户主动滚动时解除标签点击产生的高亮锁定。 */
+    function releaseProgrammaticSection() {
+      programmaticSectionIdRef.current = null;
+    }
+
+    /** 键盘滚动页面时解除锁定，标签自身的键盘选择继续保持高亮。 */
+    function releaseProgrammaticSectionOnKeyDown(event: KeyboardEvent) {
+      const scrollKeys = ["ArrowDown", "ArrowUp", "End", "Home", "PageDown", "PageUp", " "];
+      const target = event.target;
+      if (!scrollKeys.includes(event.key) || (target instanceof Element && target.closest('[aria-label="番剧详情分区"]'))) {
+        return;
+      }
+      releaseProgrammaticSection();
     }
 
     updateActiveSection();
     detailScrollRoot.addEventListener("scroll", updateActiveSection, { passive: true });
+    detailScrollRoot.addEventListener("pointerdown", releaseProgrammaticSection, { passive: true });
+    detailScrollRoot.addEventListener("touchstart", releaseProgrammaticSection, { passive: true });
+    detailScrollRoot.addEventListener("wheel", releaseProgrammaticSection, { passive: true });
+    window.addEventListener("keydown", releaseProgrammaticSectionOnKeyDown);
     window.addEventListener("resize", updateActiveSection);
     return () => {
       detailScrollRoot.removeEventListener("scroll", updateActiveSection);
+      detailScrollRoot.removeEventListener("pointerdown", releaseProgrammaticSection);
+      detailScrollRoot.removeEventListener("touchstart", releaseProgrammaticSection);
+      detailScrollRoot.removeEventListener("wheel", releaseProgrammaticSection);
+      window.removeEventListener("keydown", releaseProgrammaticSectionOnKeyDown);
       window.removeEventListener("resize", updateActiveSection);
       if (animationFrame !== undefined) window.cancelAnimationFrame(animationFrame);
     };
@@ -274,6 +326,7 @@ export function AnimeDetailPage({
   function scrollToSection(sectionId: string) {
     const section = document.getElementById(sectionId);
     if (!section) return;
+    programmaticSectionIdRef.current = sectionId;
     setActiveSectionId(sectionId);
     section.scrollIntoView({ behavior: "smooth", block: "start" });
     console.info("[anime-detail] section selected", { animeId, sectionId });
