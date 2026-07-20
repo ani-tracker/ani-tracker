@@ -231,6 +231,7 @@
   - 文件名。
   - ffprobe。
 - 已实现 ffprobe 媒体探测，失败时回退标题/文件名解析。
+- FFmpeg 改为按构建目标准备：支持 macOS x64/arm64 与 Windows x64，下载缓存带 SHA-256 校验，普通 `pnpm install` 不再下载平台二进制。
 - 已实现下载任务媒体扫描和 MediaFile upsert。
 - 已实现完成下载后的后台媒体自动扫描：
   - 下载状态刷新后触发。

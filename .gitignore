@@ -1,4 +1,5 @@
 node_modules
+/.pnpm-store/
 dist
 out
 .remote-pwa
@@ -35,6 +36,7 @@ bin-release/
 # information for Eclipse / Flash Builder.
 /.build/
 /.tmp-qbt*/
+/.cache/ffmpeg/
 /.codex/
 docs/img_*.png
 other.md

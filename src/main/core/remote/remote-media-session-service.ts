@@ -3,7 +3,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, realpath, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   RemotePlaybackMode,
   RemotePlaybackRequestMode,
@@ -11,11 +11,14 @@ import type {
 } from "@shared/contracts";
 import type { AppSettings, DownloadTask, MediaFile } from "@shared/domain";
 import * as ffprobeInstallerModule from "@ffprobe-installer/ffprobe";
-import * as ffmpegStaticModule from "ffmpeg-static";
 import {
   probeMediaDuration,
   type FfprobeMediaProbeOptions
 } from "../media/ffprobe-media-probe-service";
+import {
+  resolveBundledFfmpegBinary,
+  resolveFfmpegCommand
+} from "../media/ffmpeg-binary-resolver";
 import type { AppRepository } from "../repositories/app-repository";
 import { logger as defaultLogger } from "../logger";
 import {
@@ -28,7 +31,7 @@ const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1_000;
 const DEFAULT_TRANSCODER_START_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_SESSIONS = 2;
 const bundledFfprobeInstallerPath = resolveFfprobeInstallerPath(ffprobeInstallerModule);
-const bundledFfmpegStaticPath = resolveFfmpegStaticPath(ffmpegStaticModule);
+const bundledFfmpegPath = resolveBundledFfmpegBinary();
 
 export interface RemoteMediaAsset {
   filePath: string;
@@ -135,7 +138,7 @@ export class RemoteMediaSessionService {
     this.platform = options.platform ?? process.platform;
     this.logger = options.logger ?? defaultLogger;
     this.bundledFfmpegPath = options.bundledFfmpegPath === undefined
-      ? bundledFfmpegStaticPath
+      ? bundledFfmpegPath
       : options.bundledFfmpegPath ?? undefined;
     this.bundledFfprobePath = options.bundledFfprobePath === undefined
       ? bundledFfprobeInstallerPath
@@ -486,11 +489,11 @@ export class RemoteMediaSessionService {
     try {
       const result = await this.subtitlePreparer(session.sourcePath, session.temporaryDirectory, {
         ffprobePaths: [configuredFfprobePath, this.bundledFfprobePath ?? ""],
-        ffmpegPath: resolveFfmpegPath(
-          configuredFfprobePath,
-          this.platform,
-          this.bundledFfmpegPath
-        ),
+        ffmpegPath: resolveFfmpegCommand({
+          ffprobePath: configuredFfprobePath,
+          platform: this.platform,
+          bundledFfmpegPath: this.bundledFfmpegPath
+        }),
         timeoutMs: settings.media.ffprobeTimeoutSeconds * 1_000
       });
       session.subtitles = result.subtitles.map((subtitle) => ({
@@ -523,7 +526,11 @@ export class RemoteMediaSessionService {
     session.temporaryDirectory = outputDirectory;
     const playlistPath = join(outputDirectory, "index.m3u8");
     const segmentPattern = join(outputDirectory, "segment-%06d.ts");
-    const command = resolveFfmpegPath(settings.media.ffprobePath, this.platform, this.bundledFfmpegPath);
+    const command = resolveFfmpegCommand({
+      ffprobePath: settings.media.ffprobePath,
+      platform: this.platform,
+      bundledFfmpegPath: this.bundledFfmpegPath
+    });
     const args = [
       "-nostdin",
       "-hide_banner",
@@ -665,25 +672,6 @@ function directContentType(extension: string): string {
   return extension === ".mpg" || extension === ".mpeg" ? "video/mpeg" : "application/octet-stream";
 }
 
-/** 从 ffprobe 配置推导同目录 FFmpeg，命令名配置则沿用 PATH。 */
-function resolveFfmpegPath(
-  ffprobePath: string,
-  platform: NodeJS.Platform,
-  bundledFfmpegPath?: string
-): string {
-  const normalized = ffprobePath.trim();
-  if (normalized.includes("/") || normalized.includes("\\")) {
-    const configuredPath = join(dirname(normalized), platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
-    if (existsSync(configuredPath)) {
-      return configuredPath;
-    }
-  }
-  if (bundledFfmpegPath && existsSync(bundledFfmpegPath)) {
-    return bundledFfmpegPath;
-  }
-  return platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
-}
-
 /** 判断真实路径位于指定目录内部。 */
 function isPathInside(rootDirectory: string, candidatePath: string): boolean {
   const relativePath = relative(rootDirectory, candidatePath);
@@ -742,15 +730,6 @@ function resolveFfprobeInstallerPath(moduleValue: unknown): string | undefined {
     default?: { path?: unknown };
   };
   const value = candidate.path ?? candidate.default?.path;
-  return typeof value === "string" ? value : undefined;
-}
-
-/** 兼容 ffmpeg-static 在 CommonJS 与 ESM 中的导出形态。 */
-function resolveFfmpegStaticPath(moduleValue: unknown): string | undefined {
-  if (typeof moduleValue === "string") {
-    return moduleValue;
-  }
-  const value = (moduleValue as { default?: unknown }).default;
   return typeof value === "string" ? value : undefined;
 }
 

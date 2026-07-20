@@ -6,15 +6,15 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import { test } from "node:test";
 import * as ffprobeInstallerModule from "@ffprobe-installer/ffprobe";
-import * as ffmpegStaticModule from "ffmpeg-static";
+import { resolveBundledFfmpegBinary } from "../../media/ffmpeg-binary-resolver";
 import { prepareRemoteSubtitles } from "../remote-subtitle-service";
 
 const execFileAsync = promisify(execFile);
 const ffprobePath = resolveFfprobePath(ffprobeInstallerModule);
-const ffmpegPath = resolveFfmpegPath(ffmpegStaticModule);
+const ffmpegPath = resolveBundledFfmpegBinary() ?? (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
 
 test("prepareRemoteSubtitles 提取 ASS 并将 SRT 转换为 WebVTT", async (context) => {
-  if (!ffmpegPath || !ffprobePath) {
+  if (!ffprobePath || !(await isCommandAvailable(ffmpegPath))) {
     context.skip("当前平台没有内置 FFmpeg 或 FFprobe");
     return;
   }
@@ -98,11 +98,12 @@ function resolveFfprobePath(moduleValue: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-/** 兼容测试构建中的 FFmpeg 模块导出。 */
-function resolveFfmpegPath(moduleValue: unknown): string | undefined {
-  if (typeof moduleValue === "string") {
-    return moduleValue;
+/** 检查测试环境是否存在可执行命令。 */
+async function isCommandAvailable(command: string): Promise<boolean> {
+  try {
+    await execFileAsync(command, ["-version"], { timeout: 10_000, windowsHide: true });
+    return true;
+  } catch {
+    return false;
   }
-  const value = (moduleValue as { default?: unknown }).default;
-  return typeof value === "string" ? value : undefined;
 }

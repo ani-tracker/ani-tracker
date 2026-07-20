@@ -69,6 +69,7 @@ src/preload                    Electron preload bridge
 src/renderer/src               桌面与远程 React UI
 src/shared                     共享领域模型和契约
 resources/qbittorrent          内置 qBittorrent-nox 资源
+resources/ffmpeg               FFmpeg 构建资源说明
 docs                           设计、进度、启动和专项计划
 ```
 
@@ -87,7 +88,7 @@ pnpm.cmd install
 | `pnpm.cmd dev` | Vite HMR | `.remote-pwa/renderer` | 推荐开发方式，启动前自动生成远程静态页面 |
 | `pnpm.cmd dev:desktop` | Vite HMR | 不保证可用 | 仅调试桌面端，启动更快 |
 | `pnpm.cmd preview` | 生产构建 | `out/renderer` | 自动重新构建后启动 Electron |
-| `pnpm.cmd build` | 生成产物 | `out/renderer` | 同时准备内置 qBittorrent 资源，不启动应用 |
+| `pnpm.cmd build` | 生成产物 | `out/renderer` | 同时准备目标平台 qBittorrent 与 FFmpeg 资源，不启动应用 |
 
 ### 日常开发
 
@@ -126,7 +127,9 @@ pnpm.cmd run test:parsers
 pnpm.cmd build
 ```
 
-完整构建会更新 `out/qbittorrent`。若 qBittorrent-nox 正在从该目录运行，应先正常退出 Ani Tracker，否则 Windows 可能返回 `EBUSY` 文件占用错误。
+完整构建会更新 `out/qbittorrent` 和当前平台的 `out/ffmpeg`。FFmpeg 首次构建会下载并校验目标平台二进制，后续复用 `.cache/ffmpeg`；交叉构建可向 `prepare:ffmpeg` 传入 `--platform` 和 `--arch`。若 qBittorrent-nox 正在从输出目录运行，应先正常退出 Ani Tracker，否则 Windows 可能返回 `EBUSY` 文件占用错误。
+
+FFmpeg 构建下载会自动读取 `HTTPS_PROXY`、`https_proxy`、`HTTP_PROXY` 和 `http_proxy`。GitHub Release 不可直连时，也可以通过 `FFMPEG_BINARIES_URL` 指定兼容镜像。
 
 ## 下载源网络与同步
 
