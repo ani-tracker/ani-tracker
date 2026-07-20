@@ -46,6 +46,7 @@ import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTi
 import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CachedImage } from "@/components/cached-image";
 import { Page } from "@/components/page-layout";
 import { appApi, isElectronClient } from "@/lib/api";
@@ -461,26 +462,20 @@ export function AnimeDetailPage({
       </section>
 
       {sectionLinks.length > 1 && (
-        <nav aria-label="番剧详情分区" className="sticky top-16 z-20 -mx-4 overflow-x-auto border-y bg-background/95 px-4 backdrop-blur md:top-0 md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
-          <div className="flex min-w-max">
-            {sectionLinks.map((item) => {
-              const active = activeSectionId === item.id;
-              return (
-                <Button
-                  aria-current={active ? "location" : undefined}
-                  className={cn(
-                    "h-11 rounded-none border-b-2 border-transparent px-4 text-sm text-muted-foreground",
-                    active && "border-primary text-foreground"
-                  )}
+        <nav className="sticky top-0 z-20 hidden w-fit max-w-full overflow-x-auto bg-background/95 backdrop-blur md:block">
+          <Tabs onValueChange={scrollToSection} value={activeSectionId}>
+            <TabsList aria-label="番剧详情分区" className="min-w-max gap-8" variant="line">
+              {sectionLinks.map((item) => (
+                <TabsTrigger
+                  aria-current={activeSectionId === item.id ? "location" : undefined}
                   key={item.id}
-                  onClick={() => scrollToSection(item.id)}
-                  variant="ghost"
+                  value={item.id}
                 >
                   {item.label}
-                </Button>
-              );
-            })}
-          </div>
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
         </nav>
       )}
 
