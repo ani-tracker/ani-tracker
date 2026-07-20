@@ -12,7 +12,7 @@ import {
   Trash2,
   Upload
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -65,6 +65,7 @@ export function DownloadsPage() {
   const [addingDownload, setAddingDownload] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
+  const downloadUrlInputRef = useRef<HTMLInputElement>(null);
 
   const activeTasks = useMemo(() => tasks.filter((task) => !isHistoryTask(task)), [tasks]);
   const historyTasks = useMemo(() => tasks.filter(isHistoryTask), [tasks]);
@@ -202,12 +203,21 @@ export function DownloadsPage() {
     });
   }
 
+  /** 定位到添加下载输入框，提供顶部快捷入口。 */
+  function focusDownloadInput() {
+    downloadUrlInputRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    window.setTimeout(() => downloadUrlInputRef.current?.focus({ preventScroll: true }), 250);
+  }
+
   if (loading) return <DownloadsPageSkeleton />;
 
   return (
     <Page>
-      <PageHeader>
-        <PageHeading description="管理磁力与种子任务，观察实时进度与文件选择。" title="下载队列" />
+      <PageHeader className="border-b pb-4 sm:items-center">
+        <PageHeading
+          description="管理磁力与种子任务，观察实时进度与文件选择。"
+          title={<span className="text-primary">下载队列</span>}
+        />
         <PageActions>
           <div className="min-w-24 text-left sm:text-right">
             <div className="text-xs text-muted-foreground">最后刷新</div>
@@ -216,6 +226,15 @@ export function DownloadsPage() {
           <Button variant="outline" onClick={() => void refresh()} disabled={refreshing}>
             <RotateCcw data-icon="inline-start" className={cn(refreshing && "animate-spin")} />
             {refreshing ? "刷新中" : "刷新状态"}
+          </Button>
+          <Button
+            aria-label="定位到添加下载"
+            className="size-11 p-0 md:size-9"
+            onClick={focusDownloadInput}
+            title="添加下载"
+            variant="ghost"
+          >
+            <DownloadIcon />
           </Button>
         </PageActions>
       </PageHeader>
@@ -233,6 +252,7 @@ export function DownloadsPage() {
             <Field className="min-w-0 flex-1" data-invalid={Boolean(downloadUrlError)}>
               <FieldLabel className="sr-only" htmlFor="download-url">magnet 或 torrent 地址</FieldLabel>
               <Input
+                ref={downloadUrlInputRef}
                 id="download-url"
                 aria-invalid={Boolean(downloadUrlError)}
                 disabled={addingDownload}
@@ -257,7 +277,7 @@ export function DownloadsPage() {
       </section>
 
       <Tabs value={view} onValueChange={(value) => setView(value as DownloadView)}>
-        <TabsList className="grid h-auto w-full grid-cols-2 sm:w-fit" aria-label="下载任务视图">
+        <TabsList className="grid w-full grid-cols-2 sm:flex sm:w-fit" variant="line" aria-label="下载任务视图">
           <TabsTrigger value="active">
             正在下载
             <Badge className="ml-1 h-5 border-0 px-1.5">{activeTasks.length}</Badge>

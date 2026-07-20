@@ -230,8 +230,9 @@ export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}
 
   return (
     <Page aria-busy={loading}>
-      <PageHeader>
+      <PageHeader className="border-b pb-4">
         <PageHeading
+          breadcrumb="资源搜索"
           description="搜索已启用来源，自动解析字幕、编码、位深和清晰度。"
           title="资源搜索"
         />
@@ -363,7 +364,7 @@ export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}
                   setPage(1);
                 }}
               >
-                <SelectTrigger id="release-sort">
+                <SelectTrigger id="release-sort" variant="ghost">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -407,7 +408,7 @@ export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}
           )}
 
           {visibleReleases.length > 0 ? (
-            <div className="min-w-0 divide-y overflow-hidden rounded-md border bg-card">
+            <div className="min-w-0 divide-y bg-card">
               {visibleReleases.map((release) => {
                 const added = addedReleaseIds.has(release.id);
                 return (
@@ -504,7 +505,7 @@ export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}
 /** 渲染搜索进行中的稳定列表骨架。 */
 function ReleaseSearchSkeleton() {
   return (
-    <div className="divide-y overflow-hidden rounded-md border" aria-label="正在搜索资源">
+    <div className="divide-y bg-card" aria-label="正在搜索资源">
       {Array.from({ length: 4 }, (_, index) => (
         <div className="flex flex-col gap-3 p-4" key={index}>
           <Skeleton className="h-5 w-4/5" />

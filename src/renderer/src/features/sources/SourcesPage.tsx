@@ -298,7 +298,7 @@ export function SourcesPage() {
     return (
       <Page>
         <PageHeader>
-          <PageHeading description="RSS、Torznab 和站点适配器的桌面配置工作台。" title="下载源" />
+          <PageHeading breadcrumb="下载源" description="RSS、Torznab 和站点适配器的桌面配置工作台。" title="下载源" />
         </PageHeader>
         <Alert variant="destructive">
           <AlertTitle>下载源加载失败</AlertTitle>
@@ -313,8 +313,9 @@ export function SourcesPage() {
 
   return (
     <Page>
-      <PageHeader>
+      <PageHeader className="border-b pb-4 sm:items-center">
         <PageHeading
+          breadcrumb="下载源"
           description="管理元数据代理以及 RSS、Torznab 和站点适配器。"
           title="下载源"
         />

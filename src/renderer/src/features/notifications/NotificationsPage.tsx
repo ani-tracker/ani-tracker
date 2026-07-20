@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Bell, CheckCheck, Trash2 } from "lucide-react";
+import { AlertTriangle, Bell, CheckCheck, RefreshCw, Trash2 } from "lucide-react";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -55,6 +55,8 @@ const severityBorderClass: Record<NotificationRecord["severity"], string> = {
 export function NotificationsPage() {
   const [items, setItems] = useState<NotificationRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [filter, setFilter] = useState<NotificationFilter>("all");
@@ -62,24 +64,28 @@ export function NotificationsPage() {
 
   const unreadCount = useMemo(() => items.filter((item) => !item.readAt).length, [items]);
   const successCount = useMemo(() => items.filter((item) => item.severity === "success").length, [items]);
+  const warningCount = useMemo(() => items.filter((item) => item.severity === "warning").length, [items]);
   const errorCount = useMemo(() => items.filter((item) => item.severity === "error").length, [items]);
   const visibleItems = useMemo(() => filterNotifications(items, filter), [filter, items]);
   const groups = useMemo(() => groupNotificationsByDate(visibleItems), [visibleItems]);
 
   useEffect(() => {
-    void loadNotifications();
+    void loadNotifications(true);
   }, []);
 
   /** 加载全部提醒记录。 */
-  async function loadNotifications() {
-    setLoading(true);
+  async function loadNotifications(initial = false) {
+    if (initial) setLoading(true);
+    else setRefreshing(true);
     try {
       setItems(await appApi.listNotifications());
+      setUpdatedAt(new Date().toLocaleTimeString());
       setMessage(null);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "加载提醒失败");
     } finally {
-      setLoading(false);
+      if (initial) setLoading(false);
+      else setRefreshing(false);
     }
   }
 
@@ -110,31 +116,46 @@ export function NotificationsPage() {
 
   return (
     <Page>
-      <PageHeader>
-        <PageHeading description="自动扫描、下载和系统事件按时间保留，可集中筛选与处理。" title="提醒中心" />
-        <PageActions className={cn("grid", electronClient ? "grid-cols-2" : "grid-cols-1")}>
-          <Button
-            className="min-h-11 min-w-0 px-2 sm:min-h-9 sm:px-3"
-            variant="outline"
-            onClick={() => void markAllRead()}
-            disabled={!unreadCount}
-          >
-            <CheckCheck data-icon="inline-start" />
-            全部已读
-          </Button>
-          {electronClient && (
+      <section className="flex min-w-0 flex-col gap-4 border-b pb-4">
+        <PageHeader className="sm:items-center">
+          <PageHeading
+            breadcrumb="提醒中心"
+            description="历史记录与自动化、下载和系统事件"
+            title="提醒中心"
+          />
+          <PageActions>
+            <div className="min-w-24 text-left sm:text-right">
+              <div className="text-xs text-muted-foreground">最后刷新</div>
+              <div className="text-sm font-semibold tabular-nums">{updatedAt ?? "尚未刷新"}</div>
+            </div>
             <Button
-              className="min-h-11 min-w-0 px-2 sm:min-h-9 sm:px-3"
               variant="outline"
-              onClick={() => setClearDialogOpen(true)}
-              disabled={!items.length}
+              onClick={() => void loadNotifications()}
+              disabled={refreshing}
             >
-              <Trash2 data-icon="inline-start" />
-              清空
+              <RefreshCw data-icon="inline-start" className={cn(refreshing && "animate-spin")} />
+              {refreshing ? "刷新中" : "刷新状态"}
             </Button>
-          )}
-        </PageActions>
-      </PageHeader>
+            <Button onClick={() => void markAllRead()} disabled={!unreadCount}>
+              <CheckCheck data-icon="inline-start" />
+              全部已读
+            </Button>
+            {electronClient && (
+              <Button variant="outline" onClick={() => setClearDialogOpen(true)} disabled={!items.length}>
+                <Trash2 data-icon="inline-start" />
+                清空
+              </Button>
+            )}
+          </PageActions>
+        </PageHeader>
+
+        <MetricStrip className="gap-3 border-0 bg-transparent sm:grid-cols-4">
+          <MetricItem className="border" label="未读" value={unreadCount} />
+          <MetricItem className="border" label="成功" value={successCount} />
+          <MetricItem className="border" label="警告" value={warningCount} />
+          <MetricItem className="border" label="错误" value={errorCount} />
+        </MetricStrip>
+      </section>
 
       {message && (
         <Alert variant="destructive">
@@ -144,16 +165,9 @@ export function NotificationsPage() {
         </Alert>
       )}
 
-      <MetricStrip className="sm:grid-cols-4">
-        <MetricItem label="全部提醒" value={items.length} />
-        <MetricItem label="未读提醒" value={unreadCount} />
-        <MetricItem label="成功事件" value={successCount} />
-        <MetricItem label="错误事件" value={errorCount} />
-      </MetricStrip>
-
-      <FilterToolbar>
+      <FilterToolbar className="border-y-0 bg-transparent py-0">
         <Tabs className="min-w-0 flex-1" value={filter} onValueChange={(value) => setFilter(value as NotificationFilter)}>
-          <TabsList className="grid h-auto w-full grid-cols-5 sm:w-fit" aria-label="筛选提醒">
+          <TabsList className="grid w-full grid-cols-5 sm:flex sm:w-fit" variant="line" aria-label="筛选提醒">
             {notificationFilters.map((item) => (
               <TabsTrigger className="min-w-0 px-2" key={item.value} value={item.value}>{item.label}</TabsTrigger>
             ))}
@@ -171,7 +185,7 @@ export function NotificationsPage() {
                 {group.items.map((item) => (
                   <article
                     className={cn(
-                      "flex min-w-0 flex-col gap-3 rounded-md border border-l-2 bg-card p-3 sm:flex-row sm:items-start sm:justify-between sm:p-4",
+                      "flex min-w-0 flex-col gap-3 border-l-4 bg-card p-3 sm:flex-row sm:items-start sm:justify-between sm:p-4",
                       severityBorderClass[item.severity],
                       item.readAt && "opacity-70"
                     )}

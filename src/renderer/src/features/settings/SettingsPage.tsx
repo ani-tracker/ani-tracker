@@ -43,9 +43,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { appApi } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { useAsyncData } from "@/lib/use-async-data";
 import { useTheme } from "@/components/theme-provider";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
+import { StickyActionBar } from "@/components/page-layout";
 import { AppearanceSettingsSection } from "./AppearanceSettingsSection";
 import type {
   AutomationSchedulerStatus,
@@ -437,12 +439,17 @@ export function SettingsPage() {
   const hasUnsavedChanges = persistedSettings ? !areSettingsEqual(draft, persistedSettings) : false;
 
   return (
-    <div className="flex min-w-0 flex-col gap-6">
+    <div className={cn("flex min-w-0 flex-col gap-6", hasUnsavedChanges && "pb-20")}>
       <header className="sticky top-[calc(4rem+var(--safe-area-top))] z-20 -mx-4 flex flex-wrap items-center justify-between gap-3 border-b bg-background px-4 py-3 md:top-0 md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold">设置</h1>
-            {hasUnsavedChanges && <Badge tone="amber">有未保存修改</Badge>}
+            {hasUnsavedChanges && (
+              <Badge className="gap-1.5 rounded-full" tone="primary-soft">
+                <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
+                有未保存修改
+              </Badge>
+            )}
           </div>
           <p className="mt-1 text-sm text-muted-foreground">目录、下载引擎、播放器和自动化规则集中管理。</p>
         </div>
@@ -454,13 +461,6 @@ export function SettingsPage() {
           >
             <RotateCcw data-icon="inline-start" />
             {resetState === "resetting" ? "恢复中" : resetState === "reset" ? "已恢复" : "恢复默认"}
-          </Button>
-          <Button
-            onClick={saveSettings}
-            disabled={!hasUnsavedChanges || saveState === "saving" || resetState === "resetting"}
-          >
-            <Save data-icon="inline-start" />
-            {saveState === "saving" ? "保存中" : saveState === "saved" ? "已保存" : "保存"}
           </Button>
         </div>
       </header>
@@ -485,7 +485,7 @@ export function SettingsPage() {
             id="storage"
             title="存储与目录"
           >
-            <div className="grid gap-5 xl:grid-cols-2">
+            <div className="flex flex-col gap-5">
         <SettingsSection title="下载目录" description="支持全局默认目录，后续单部番可以覆盖。">
           <div className="flex flex-col gap-4">
             <ToggleSetting
@@ -1384,6 +1384,16 @@ export function SettingsPage() {
         </div>
       </div>
 
+      {hasUnsavedChanges && (
+        <StickyActionBar className="justify-center bg-background/95">
+          <span className="text-sm text-muted-foreground">更改尚未保存</span>
+          <Button onClick={saveSettings} disabled={saveState === "saving" || resetState === "resetting"}>
+            <Save data-icon="inline-start" />
+            {saveState === "saving" ? "保存中" : "保存设置"}
+          </Button>
+        </StickyActionBar>
+      )}
+
       <ConfirmActionDialog
         confirmLabel="恢复默认"
         description="当前未保存的设置将被平台默认配置覆盖，主题与运行参数也会立即更新。"
@@ -1420,7 +1430,7 @@ function SettingsCategoryNavigation({
 
   return (
     <aside className="min-w-0">
-      <nav aria-label="设置分区" className="sticky top-24 hidden max-h-[calc(100dvh-7rem)] flex-col gap-1 overflow-y-auto rounded-md border bg-card p-2 xl:flex">
+      <nav aria-label="设置分区" className="sticky top-24 hidden max-h-[calc(100dvh-7rem)] flex-col gap-1 overflow-y-auto border-r pr-4 xl:flex">
         {settingsCategories.map((category) => {
           const Icon = category.icon;
           return (
@@ -1521,12 +1531,12 @@ function SettingsSection({
   children: ReactNode;
 }) {
   return (
-    <Card>
-      <CardHeader>
+    <Card className="overflow-hidden shadow-none">
+      <CardHeader className="border-b bg-muted/50">
         <CardTitle><h3>{title}</h3></CardTitle>
         {description && <CardDescription>{description}</CardDescription>}
       </CardHeader>
-      <CardContent>{children}</CardContent>
+      <CardContent className="pt-4 sm:pt-5">{children}</CardContent>
     </Card>
   );
 }

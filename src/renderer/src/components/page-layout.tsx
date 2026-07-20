@@ -1,4 +1,11 @@
 import type { HTMLAttributes, ReactNode } from "react";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator
+} from "@/components/ui/breadcrumb";
 import { cn } from "@/lib/cn";
 
 /** 提供所有业务页一致的纵向节奏与最小宽度约束。 */
@@ -21,19 +28,39 @@ export function PageHeading({
   title,
   description,
   eyebrow,
+  breadcrumb,
   className
 }: {
   title: ReactNode;
   description?: ReactNode;
   eyebrow?: ReactNode;
+  breadcrumb?: ReactNode;
   className?: string;
 }) {
   return (
     <div className={cn("min-w-0", className)}>
+      {breadcrumb && <PageBreadcrumb current={breadcrumb} />}
       {eyebrow && <div className="mb-1 text-xs font-semibold text-primary">{eyebrow}</div>}
       <h1 className="text-2xl font-bold leading-8 tracking-normal">{title}</h1>
       {description && <p className="mt-1 max-w-3xl text-sm leading-5 text-muted-foreground">{description}</p>}
     </div>
+  );
+}
+
+/** 按 Stitch 顶部路径规范展示产品根节点与当前页面。 */
+export function PageBreadcrumb({ current }: { current: ReactNode }) {
+  return (
+    <Breadcrumb className="mb-1.5 hidden sm:block">
+      <BreadcrumbList className="gap-1.5 text-xs">
+        <BreadcrumbItem>
+          <span>Ani-tracker</span>
+        </BreadcrumbItem>
+        <BreadcrumbSeparator />
+        <BreadcrumbItem>
+          <BreadcrumbPage className="font-semibold text-primary">{current}</BreadcrumbPage>
+        </BreadcrumbItem>
+      </BreadcrumbList>
+    </Breadcrumb>
   );
 }
 
@@ -125,7 +152,7 @@ export function StickyActionBar({ className, ...props }: HTMLAttributes<HTMLElem
   return (
     <footer
       className={cn(
-        "sticky bottom-0 -mx-4 flex min-w-0 flex-wrap items-center justify-end gap-2 border-t bg-background px-4 py-3 pb-[max(0.75rem,var(--safe-area-bottom))] md:-mx-5 md:px-5 xl:-mx-6 xl:px-6",
+        "fixed bottom-0 left-0 right-0 z-40 flex min-w-0 flex-wrap items-center justify-end gap-2 border-t bg-background px-4 py-3 pb-[max(0.75rem,var(--safe-area-bottom))] md:left-[4.5rem] md:px-5 xl:left-[14rem] xl:px-6",
         className
       )}
       {...props}
