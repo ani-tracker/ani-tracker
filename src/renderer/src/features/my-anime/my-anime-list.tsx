@@ -121,10 +121,10 @@ export function MyAnimeRow({
   useEffect(() => () => cancelMenuClose(), []);
 
   return (
-    <article className="group relative flex min-w-0 gap-3 overflow-hidden rounded-md border bg-card p-3 transition-colors hover:bg-accent/30 sm:gap-4">
+    <article className="group relative flex min-w-0 gap-3 overflow-hidden border-b bg-transparent py-3 transition-colors last:border-b-0 hover:bg-accent/30 sm:gap-4 sm:px-2">
       <button
         aria-label={`查看${titleDisplay.title}详情`}
-        className="relative aspect-[2/3] w-16 shrink-0 overflow-hidden rounded-md bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-20"
+        className="relative aspect-[2/3] w-16 shrink-0 overflow-hidden rounded-md bg-muted outline-none focus-visible:ring-2 focus-visible:ring-ring sm:w-[4.5rem]"
         onClick={onOpenDetail}
         type="button"
       >
@@ -142,7 +142,7 @@ export function MyAnimeRow({
         )}
       </button>
 
-      <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-[minmax(0,1.4fr)_minmax(10rem,0.8fr)_auto] md:items-center">
+      <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-[minmax(0,1.35fr)_minmax(11rem,0.75fr)_auto] md:items-center">
         <div className="min-w-0 self-start md:self-center">
           <div className="flex min-w-0 items-center gap-2">
             <button

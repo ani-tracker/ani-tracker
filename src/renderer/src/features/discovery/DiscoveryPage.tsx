@@ -17,7 +17,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import {
   Select,
   SelectContent,
@@ -246,6 +246,14 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
     setTarget((current) => ({ ...current, season }));
   }
 
+  /** 清空目录筛选并恢复默认首播排序。 */
+  function resetFilters() {
+    setSelectedMonth(null);
+    setKeyword("");
+    setAppliedKeyword("");
+    setSortKey("premiereAsc");
+  }
+
   const collectingLabel = collecting ? `采集中 ${collectProgress}/3` : "采集当前季度";
   const resultLabel = loading
     ? "正在加载"
@@ -276,7 +284,7 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
       )}
 
       <FilterToolbar className="items-stretch sm:flex-col sm:items-stretch">
-          <div className="flex min-w-0 flex-col gap-3 md:grid md:grid-cols-[128px_minmax(0,1fr)_auto_140px] md:items-end">
+          <div className="grid min-w-0 gap-3 md:grid-cols-[112px_minmax(18rem,1fr)] md:items-end min-[1440px]:grid-cols-[112px_minmax(16rem,1fr)_minmax(14rem,auto)_150px_auto]">
             <Field className="min-w-0">
               <FieldLabel className="sr-only" htmlFor="discovery-year">选择年份</FieldLabel>
               <Select
@@ -303,40 +311,18 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
                 {seasonOptions.map((season) => (
                   <TabsTrigger className="min-w-0 px-2" key={season.value} value={season.value}>
                     <span>{season.shortLabel}</span>
-                    <span className="hidden lg:inline">{season.months[0]}-{season.months[2]}月</span>
                   </TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
 
-            <ToggleGroup
-              aria-label="选择新番视图"
-              className="grid grid-cols-2"
-              type="single"
-              value={viewMode}
-              onValueChange={(value) => value && setViewMode(value as DiscoveryView)}
-            >
-              <ToggleGroupItem value="catalog">
-                <LayoutGrid />
-                图鉴
-              </ToggleGroupItem>
-              <ToggleGroupItem value="schedule">
-                <CalendarRange />
-                时间表
-              </ToggleGroupItem>
-            </ToggleGroup>
-
-            <div className="text-sm font-medium tabular-nums md:text-right">{resultLabel}</div>
-          </div>
-
-          <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,auto)_160px_minmax(0,1fr)_auto] lg:items-end">
-            <Field className="min-w-0">
+            <Field className="min-w-0 md:col-span-2 min-[1440px]:col-span-1">
               <FieldLabel className="sr-only">选择月份</FieldLabel>
               <Tabs
                 value={selectedMonth === null ? "all" : String(selectedMonth)}
                 onValueChange={(value) => setSelectedMonth(value === "all" ? null : Number(value))}
               >
-                <TabsList className="grid h-auto w-full grid-cols-4 lg:w-auto" aria-label="选择月份">
+                <TabsList className="grid h-auto w-full grid-cols-4" aria-label="选择月份">
                   <TabsTrigger value="all">全部</TabsTrigger>
                   {activeSeason.months.map((month) => (
                     <TabsTrigger key={month} value={String(month)}>{month} 月</TabsTrigger>
@@ -361,33 +347,66 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
               </Select>
             </Field>
 
+            <ToggleGroup
+              aria-label="选择新番视图"
+              className="grid grid-cols-2"
+              type="single"
+              value={viewMode}
+              onValueChange={(value) => value && setViewMode(value as DiscoveryView)}
+            >
+              <ToggleGroupItem value="catalog">
+                <LayoutGrid />
+                图鉴
+              </ToggleGroupItem>
+              <ToggleGroupItem value="schedule">
+                <CalendarRange />
+                时间表
+              </ToggleGroupItem>
+            </ToggleGroup>
+          </div>
+
+          <form
+            className="min-w-0"
+            onSubmit={(event) => {
+              event.preventDefault();
+              searchCatalog();
+            }}
+          >
             <Field className="min-w-0">
               <FieldLabel className="sr-only" htmlFor="discovery-keyword">搜索番剧</FieldLabel>
-              <Input
-                id="discovery-keyword"
-                placeholder="搜索中文名、日文名、罗马音或英文名"
-                value={keyword}
-                onChange={(event) => {
-                  const value = event.target.value;
-                  setKeyword(value);
-                  if (!value) {
-                    setAppliedKeyword("");
-                  }
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") {
-                    searchCatalog();
-                  }
-                }}
-              />
+              <InputGroup>
+                <InputGroupAddon className="pl-3 pr-0 text-muted-foreground">
+                  <Search aria-hidden="true" />
+                </InputGroupAddon>
+                <InputGroupInput
+                  id="discovery-keyword"
+                  placeholder="搜索中文名、日文名、罗马音或英文名"
+                  value={keyword}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setKeyword(value);
+                    if (!value) setAppliedKeyword("");
+                  }}
+                />
+                <InputGroupAddon>
+                  <InputGroupButton aria-label="搜索新番" disabled={loading} title="搜索" type="submit">
+                    <Search />
+                  </InputGroupButton>
+                </InputGroupAddon>
+              </InputGroup>
             </Field>
-
-            <Button className="w-full lg:w-auto" variant="outline" onClick={searchCatalog} disabled={loading}>
-              <Search data-icon="inline-start" />
-              搜索
-            </Button>
-          </div>
+          </form>
       </FilterToolbar>
+
+      <div className="flex min-w-0 items-center justify-between gap-3 border-b pb-3">
+        <div className="text-sm font-semibold tabular-nums text-primary">{resultLabel}</div>
+        {(selectedMonth !== null || appliedKeyword || sortKey !== "premiereAsc") && (
+          <Button className="h-auto min-h-0 p-0 text-xs" onClick={resetFilters} variant="ghost">
+            <RotateCcw data-icon="inline-start" />
+            重置所有筛选
+          </Button>
+        )}
+      </div>
 
       {loading ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5" aria-label="正在加载季度新番目录">

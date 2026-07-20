@@ -1,5 +1,6 @@
-import { Fragment } from "react";
-import { AlertTriangle, CheckCircle2, Clock, DownloadCloud, FolderOpen, Play } from "lucide-react";
+import { Fragment, useState } from "react";
+import { AlertTriangle, CheckCircle2, Clock, DownloadCloud, FolderOpen, Play, RefreshCw } from "lucide-react";
+import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,7 +10,7 @@ import { Progress } from "@/components/ui/progress";
 import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
-import { MetricItem, MetricStrip, Page, PageHeader, PageHeading } from "@/components/page-layout";
+import { MetricItem, MetricStrip, Page, PageActions, PageHeader, PageHeading } from "@/components/page-layout";
 import { appApi, isElectronClient } from "@/lib/api";
 import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
 import { useAsyncData } from "@/lib/use-async-data";
@@ -32,14 +33,39 @@ async function loadHomeData() {
 
 /** 渲染首页追番、下载与提醒概览。 */
 export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } = {}) {
-  const { data: homeData, loading, error } = useAsyncData(loadHomeData, []);
+  const [revision, setRevision] = useState(0);
+  const [scanning, setScanning] = useState(false);
+  const { data: homeData, loading, error } = useAsyncData(loadHomeData, [revision]);
   const electronClient = isElectronClient();
 
-  if (loading) {
+  /** 手动执行一次自动扫描，并用最新结果刷新首页摘要。 */
+  async function scanUpdates() {
+    if (!electronClient || scanning) return;
+    setScanning(true);
+    console.info("[home] manual scan started");
+    try {
+      const result = await appApi.runAutomationOnce();
+      toast.success(`扫描完成：检查 ${result.checkedEpisodes} 集，新增 ${result.downloaded.length} 个下载`);
+      console.info("[home] manual scan completed", {
+        checkedEpisodes: result.checkedEpisodes,
+        downloaded: result.downloaded.length,
+        errors: result.errors.length
+      });
+      setRevision((current) => current + 1);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "扫描更新失败";
+      toast.error(message);
+      console.error("[home] manual scan failed", { message });
+    } finally {
+      setScanning(false);
+    }
+  }
+
+  if (loading && !homeData) {
     return <HomePageSkeleton />;
   }
 
-  if (error || !homeData) {
+  if (!homeData) {
     return (
       <Alert variant="destructive">
         <AlertTriangle />
@@ -52,6 +78,10 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
   const data = homeData.dashboard;
   const activeDownloadPreview = data.activeDownloads.slice(0, dashboardPreviewLimit);
   const recentCompletedPreview = data.recentCompleted.slice(0, dashboardPreviewLimit);
+  const todayPreview = (data.todayEpisodes.length > 0 ? data.todayEpisodes : data.dailyReminder.items)
+    .slice(0, dashboardPreviewLimit);
+  const todayCount = data.dailyReminder.total || data.todayEpisodes.length;
+  const pendingPreview = data.pendingActions.slice(0, dashboardPreviewLimit);
 
   return (
     <Page>
@@ -60,11 +90,19 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
           description={`${formatReminderDate(data.dailyReminder.date)}，更新、下载与异常集中处理。`}
           title="今日追番"
         />
+        {electronClient && (
+          <PageActions>
+            <Button disabled={scanning} onClick={() => void scanUpdates()}>
+              <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
+              {scanning ? "扫描中" : "扫描更新"}
+            </Button>
+          </PageActions>
+        )}
       </PageHeader>
 
       <MetricStrip className="sm:grid-cols-4">
         <MetricItem label="在追" value={countMyAnimeStatus(homeData.myAnime, "watching")} />
-        <MetricItem label="今日更新" value={data.dailyReminder.total} />
+        <MetricItem label="今日更新" value={todayCount} />
         <MetricItem label="下载中" value={data.activeDownloads.length} />
         <MetricItem
           label="未读提醒"
@@ -72,26 +110,29 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
         />
       </MetricStrip>
 
-      <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.8fr)]">
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>今日提醒</CardTitle>
-            <CardDescription>{formatReminderDate(data.dailyReminder.date)}</CardDescription>
-          </CardHeader>
-          <CardContent className="flex flex-col gap-4">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
-              <ReminderStat label="今日" value={data.dailyReminder.total} />
-              <ReminderStat label="未播" value={data.dailyReminder.upcoming} />
-              <ReminderStat label="待处理" value={data.dailyReminder.aired} />
-              <ReminderStat label="下载中" value={data.dailyReminder.downloading} />
-              <ReminderStat label="已完成" value={data.dailyReminder.downloaded} />
-            </div>
+      {error && (
+        <Alert variant="destructive">
+          <AlertTriangle />
+          <AlertTitle>首页摘要刷新失败</AlertTitle>
+          <AlertDescription>当前仍展示上一次成功数据：{error.message}</AlertDescription>
+        </Alert>
+      )}
 
-            {data.dailyReminder.items.length > 0 ? (
+      <div className="grid min-w-0 items-start gap-5 xl:grid-cols-[minmax(0,1.5fr)_minmax(18rem,0.8fr)]">
+        <Card className="min-w-0 shadow-none">
+          <CardHeader className="flex-row items-start justify-between gap-3 border-b">
+            <div className="min-w-0">
+              <CardTitle>今日更新</CardTitle>
+              <CardDescription className="mt-1">{formatReminderDate(data.dailyReminder.date)}</CardDescription>
+            </div>
+            <Badge tone="primary">{todayCount} 集</Badge>
+          </CardHeader>
+          <CardContent className="p-0 sm:p-0">
+            {todayPreview.length > 0 ? (
               <div className="flex min-w-0 flex-col">
-                {data.dailyReminder.items.map((item, index) => (
+                {todayPreview.map((item, index) => (
                   <Fragment key={item.id}>
-                    <div className="flex min-w-0 flex-col items-start gap-2 py-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="flex min-w-0 flex-col items-start gap-2 px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5">
                       <div className="min-w-0">
                         <div className="font-medium">{item.animeTitle}</div>
                         <div className="mt-1 text-sm text-muted-foreground">
@@ -102,7 +143,7 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
                         {formatEpisodeStatus(item.status)}
                       </Badge>
                     </div>
-                    {index < data.dailyReminder.items.length - 1 && <Separator />}
+                    {index < todayPreview.length - 1 && <Separator />}
                   </Fragment>
                 ))}
               </div>
@@ -120,25 +161,28 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
           </CardContent>
         </Card>
 
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>需要处理</CardTitle>
+        <Card className="min-w-0 shadow-none">
+          <CardHeader className="flex-row items-start justify-between gap-3 border-b">
+            <CardTitle>需关注</CardTitle>
+            <Badge tone={data.pendingActions.length > 0 ? "amber" : "green"}>{data.pendingActions.length}</Badge>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3">
+          <CardContent className="flex flex-col gap-0 p-0 sm:p-0">
             {data.pendingActions.length > 0 ? (
-              data.pendingActions.map((item) => (
-                <Alert key={item.id}>
-                  <AlertTriangle />
-                  <AlertTitle>{item.title}</AlertTitle>
-                  <AlertDescription>
-                    <div className="flex flex-col gap-2">
-                      <p>{item.description}</p>
-                      <Badge className="w-fit" tone={item.severity === "warning" ? "amber" : "blue"}>
-                        {item.severity === "warning" ? "需要关注" : "信息"}
+              pendingPreview.map((item, index) => (
+                <Fragment key={item.id}>
+                  <div className="border-l-2 border-primary px-4 py-3 sm:px-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold">{item.title}</div>
+                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.description}</p>
+                      </div>
+                      <Badge className="shrink-0" tone={item.severity === "warning" ? "amber" : "blue"}>
+                        {item.severity === "warning" ? "待处理" : "提示"}
                       </Badge>
                     </div>
-                  </AlertDescription>
-                </Alert>
+                  </div>
+                  {index < pendingPreview.length - 1 && <Separator />}
+                </Fragment>
               ))
             ) : (
               <Empty className="min-h-40 p-4 md:p-6">
@@ -156,7 +200,7 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
       </div>
 
       <div className="grid min-w-0 items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
-        <Card className="min-w-0">
+        <Card className="min-w-0 shadow-none">
           <CardHeader className="flex-row items-start justify-between gap-3">
             <div className="min-w-0">
               <CardTitle>下载中</CardTitle>
@@ -211,7 +255,7 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
           </CardContent>
         </Card>
 
-        <Card className="min-w-0">
+        <Card className="min-w-0 shadow-none">
           <CardHeader className="flex-row items-start justify-between gap-3">
             <div className="min-w-0">
               <CardTitle>最近完成</CardTitle>
@@ -281,7 +325,7 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
           </CardContent>
         </Card>
 
-        <Card className="min-w-0 md:col-span-2 xl:col-span-1">
+        <Card className="min-w-0 shadow-none md:col-span-2 xl:col-span-1">
           <CardHeader>
             <CardTitle>本周放送</CardTitle>
           </CardHeader>
@@ -317,11 +361,11 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
       </div>
 
       {electronClient && (
-        <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>下载源状态</CardTitle>
-          </CardHeader>
-          <CardContent>
+        <section className="min-w-0 border-y py-4" aria-labelledby="home-source-health-title">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-semibold" id="home-source-health-title">下载源状态</h2>
+            <span className="text-xs text-muted-foreground">{data.sourceHealth.length} 个来源</span>
+          </div>
             {data.sourceHealth.length > 0 ? (
               <div className="grid min-w-0 gap-x-5 gap-y-2 md:grid-cols-2 xl:grid-cols-3">
                 {data.sourceHealth.map((source) => (
@@ -351,8 +395,7 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
                 </EmptyHeader>
               </Empty>
             )}
-          </CardContent>
-        </Card>
+        </section>
       )}
     </Page>
   );
@@ -389,16 +432,6 @@ function HomePageSkeleton() {
   );
 }
 
-/** 渲染今日提醒中的单项数量统计。 */
-function ReminderStat({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="flex min-w-0 flex-col gap-1 py-1">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="text-lg font-semibold tabular-nums">{value}</div>
-    </div>
-  );
-}
-
 /** 统计指定追番状态的数量。 */
 function countMyAnimeStatus(items: MyAnime[], status: AnimeStatus): number {
   return items.filter((item) => item.status === status).length;
@@ -413,6 +446,11 @@ function formatReminderDate(value: string): string {
 function formatAirTime(value?: string): string {
   if (!value) {
     return "未知时间";
+  }
+
+  const timeOnly = value.match(/^(\d{1,2}):(\d{2})/);
+  if (timeOnly) {
+    return `${timeOnly[1].padStart(2, "0")}:${timeOnly[2]}`;
   }
 
   const date = new Date(value);

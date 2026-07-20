@@ -16,7 +16,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
-import { FilterToolbar, Page, PageActions, PageHeader, PageHeading } from "@/components/page-layout";
+import { FilterToolbar, Page, PageActions, PageBreadcrumb, PageHeader } from "@/components/page-layout";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { appApi } from "@/lib/api";
@@ -29,7 +29,7 @@ import {
   type AnimeDownloadDetailFilter,
   type AnimeDownloadDetailState
 } from "@/features/my-anime/download-task-sheet";
-import { groupMyAnimeBySeason, MyAnimeRow } from "@/features/my-anime/my-anime-list";
+import { MyAnimeRow } from "@/features/my-anime/my-anime-list";
 import {
   countReleaseFamilyEpisodes,
   getReleaseVersionLabel,
@@ -216,7 +216,6 @@ export function MyAnimePage({
     () => items.filter((item) => statusFilter === "all" || item.status === statusFilter),
     [items, statusFilter]
   );
-  const groupedItems = useMemo(() => groupMyAnimeBySeason(visibleItems), [visibleItems]);
   const draftPersisted = Boolean(draft && items.some((item) => item.id === draft.id));
   const activeFansubAnimeId = draft && draftPersisted ? draft.anime.id : downloadTarget?.anime.id;
 
@@ -901,9 +900,10 @@ export function MyAnimePage({
   return (
     <>
       {!actionOnly && (
-        <Page>
-          <PageHeader>
-            <PageHeading description="按季度管理追番进度、下载偏好、字幕组与单集规则。" title="我的追番" />
+        <Page className="gap-4">
+          <PageHeader className="border-b pb-3 sm:items-center">
+            <h1 className="sr-only">我的追番</h1>
+            <PageBreadcrumb current="我的追番" />
             <PageActions>
               <Button className="w-full sm:w-auto" onClick={openNewAnimeDrawer}>
                 <Plus data-icon="inline-start" />
@@ -920,51 +920,45 @@ export function MyAnimePage({
             </Alert>
           )}
 
-          <FilterToolbar>
+          <FilterToolbar className="border-0 bg-transparent py-0 sm:items-end">
             <Tabs
-              className="min-w-0 flex-1"
+              className="min-w-0 flex-1 overflow-x-auto"
               value={statusFilter}
               onValueChange={(value) => setStatusFilter(value as MyAnimeFilter)}
             >
-              <TabsList className="grid h-auto w-full grid-cols-3 sm:w-fit sm:grid-cols-6" aria-label="筛选追番状态">
+              <TabsList
+                aria-label="筛选追番状态"
+                className="min-w-max gap-5 sm:w-full sm:justify-start"
+                variant="line"
+              >
                 {myAnimeFilters.map((filter) => (
-                  <TabsTrigger className="min-w-0 px-2" key={filter.value} value={filter.value}>
+                  <TabsTrigger className="min-w-0" key={filter.value} value={filter.value}>
                     {filter.label}
-                    <span className="ml-1 text-xs tabular-nums">
+                    <Badge className="ml-1 h-5 min-w-5 justify-center px-1 text-[10px]" tone="neutral">
                       {filter.value === "all" ? items.length : items.filter((item) => item.status === filter.value).length}
-                    </span>
+                    </Badge>
                   </TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
-            <span className="text-xs text-muted-foreground">显示 {visibleItems.length} 部</span>
+            <span className="shrink-0 pb-3 text-xs text-muted-foreground">显示 {visibleItems.length} 部</span>
           </FilterToolbar>
 
-          {groupedItems.length > 0 ? (
-            <div className="flex min-w-0 flex-col gap-7">
-              {groupedItems.map((group) => (
-                <section className="min-w-0" key={group.key}>
-                  <div className="mb-2 flex items-center justify-between gap-3 border-b pb-2">
-                    <h2 className="text-sm font-semibold">{group.label}</h2>
-                    <span className="text-xs text-muted-foreground">{group.items.length} 部</span>
-                  </div>
-                  <div className="flex min-w-0 flex-col gap-2">
-                    {group.items.map((item) => (
-                      <MyAnimeRow
-                        key={item.id}
-                        item={item}
-                        defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
-                        downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
-                        onOpenActive={() => openDownloadDetail(item, "active")}
-                        onOpenCompleted={() => openDownloadDetail(item, "completed")}
-                        onOpenDetail={() => onOpenAnimeDetail?.(item.anime.id)}
-                        onOpenDownloads={() => void openAnimeDownloads(item)}
-                        onOpenRules={() => openRulesDrawer(item)}
-                        onRemove={() => setRemoveTarget(item)}
-                      />
-                    ))}
-                  </div>
-                </section>
+          {visibleItems.length > 0 ? (
+            <div className="flex min-w-0 flex-col border-y">
+              {visibleItems.map((item) => (
+                <MyAnimeRow
+                  key={item.id}
+                  item={item}
+                  defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
+                  downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
+                  onOpenActive={() => openDownloadDetail(item, "active")}
+                  onOpenCompleted={() => openDownloadDetail(item, "completed")}
+                  onOpenDetail={() => onOpenAnimeDetail?.(item.anime.id)}
+                  onOpenDownloads={() => void openAnimeDownloads(item)}
+                  onOpenRules={() => openRulesDrawer(item)}
+                  onRemove={() => setRemoveTarget(item)}
+                />
               ))}
             </div>
           ) : (
