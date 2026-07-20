@@ -9,8 +9,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   FilterToolbar,
-  MetricItem,
-  MetricStrip,
   Page,
   PageActions,
   PageHeader,
@@ -149,12 +147,12 @@ export function NotificationsPage() {
           </PageActions>
         </PageHeader>
 
-        <MetricStrip className="gap-3 border-0 bg-transparent sm:grid-cols-4">
-          <MetricItem className="border" label="未读" value={unreadCount} />
-          <MetricItem className="border" label="成功" value={successCount} />
-          <MetricItem className="border" label="警告" value={warningCount} />
-          <MetricItem className="border" label="错误" value={errorCount} />
-        </MetricStrip>
+        <div className="flex min-w-0 flex-wrap items-center gap-2" aria-label="提醒统计">
+          <NotificationMetric label="未读" tone="primary" value={unreadCount} />
+          <NotificationMetric label="成功" tone="green" value={successCount} />
+          <NotificationMetric label="警告" tone="amber" value={warningCount} />
+          <NotificationMetric label="错误" tone="red" value={errorCount} />
+        </div>
       </section>
 
       {message && (
@@ -251,16 +249,41 @@ function NotificationsPageSkeleton() {
         <Skeleton className="h-7 w-32" />
         <Skeleton className="h-4 w-72 max-w-full" />
       </div>
-      <MetricStrip className="sm:grid-cols-4">
+      <div className="flex flex-wrap gap-2">
         {["all", "unread", "success", "error"].map((stat) => (
-          <MetricItem key={stat} label={<Skeleton className="h-4 w-20" />} value={<Skeleton className="h-7 w-10" />} />
+          <Skeleton className="h-9 w-24" key={stat} />
         ))}
-      </MetricStrip>
+      </div>
       <div className="flex flex-col gap-3">
           <Skeleton className="h-24 w-full" />
           <Skeleton className="h-24 w-full" />
       </div>
     </Page>
+  );
+}
+
+/** 以紧凑计数项展示提醒状态，避免统计区形成额外卡片层级。 */
+function NotificationMetric({
+  label,
+  tone,
+  value
+}: {
+  label: string;
+  tone: "primary" | "green" | "amber" | "red";
+  value: number;
+}) {
+  return (
+    <div className="flex h-9 min-w-24 items-center justify-center gap-2 border bg-card px-3 text-sm">
+      <span className={cn(
+        "size-1.5 rounded-full",
+        tone === "primary" && "bg-primary",
+        tone === "green" && "bg-success",
+        tone === "amber" && "bg-warning",
+        tone === "red" && "bg-destructive"
+      )} />
+      <span className="text-muted-foreground">{label}</span>
+      <span className="font-semibold tabular-nums">{value}</span>
+    </div>
   );
 }
 

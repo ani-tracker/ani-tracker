@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/pagination";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Page, PageHeader, PageHeading } from "@/components/page-layout";
+import { Page, PageBreadcrumb, PageHeader } from "@/components/page-layout";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { formatBytes, formatDateTime } from "@/lib/format";
@@ -230,12 +230,9 @@ export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}
 
   return (
     <Page aria-busy={loading}>
-      <PageHeader className="border-b pb-4">
-        <PageHeading
-          breadcrumb="资源搜索"
-          description="搜索已启用来源，自动解析字幕、编码、位深和清晰度。"
-          title="资源搜索"
-        />
+      <PageHeader className="border-b pb-3 sm:items-center">
+        <h1 className="sr-only">资源搜索</h1>
+        <PageBreadcrumb current="资源搜索" />
       </PageHeader>
 
       {message && (
