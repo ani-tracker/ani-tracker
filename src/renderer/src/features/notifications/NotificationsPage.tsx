@@ -118,8 +118,8 @@ export function NotificationsPage() {
         <PageHeader className="sm:items-center">
           <PageHeading
             breadcrumb="提醒中心"
-            description="历史记录与自动化、下载和系统事件"
-            title="提醒中心"
+            description=""
+            title=""
           />
           <PageActions>
             <div className="min-w-24 text-left sm:text-right">
