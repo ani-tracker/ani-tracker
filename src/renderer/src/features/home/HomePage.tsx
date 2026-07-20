@@ -15,6 +15,8 @@ import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
 import { useAsyncData } from "@/lib/use-async-data";
 import type { AnimeStatus, MyAnime } from "@shared/domain";
 
+const dashboardPreviewLimit = 4;
+
 /** 加载首页看板和追番状态统计所需数据。 */
 async function loadHomeData() {
   const [dashboard, myAnime, notifications] = await Promise.all([
@@ -29,7 +31,7 @@ async function loadHomeData() {
 }
 
 /** 渲染首页追番、下载与提醒概览。 */
-export function HomePage() {
+export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } = {}) {
   const { data: homeData, loading, error } = useAsyncData(loadHomeData, []);
   const electronClient = isElectronClient();
 
@@ -48,6 +50,8 @@ export function HomePage() {
   }
 
   const data = homeData.dashboard;
+  const activeDownloadPreview = data.activeDownloads.slice(0, dashboardPreviewLimit);
+  const recentCompletedPreview = data.recentCompleted.slice(0, dashboardPreviewLimit);
 
   return (
     <Page>
@@ -153,13 +157,21 @@ export function HomePage() {
 
       <div className="grid min-w-0 items-start gap-5 md:grid-cols-2 xl:grid-cols-3">
         <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>下载中</CardTitle>
+          <CardHeader className="flex-row items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle>下载中</CardTitle>
+              <CardDescription className="mt-1">显示 {activeDownloadPreview.length} / {data.activeDownloads.length}</CardDescription>
+            </div>
+            {data.activeDownloads.length > 0 && onOpenDownloads && (
+              <Button className="h-auto min-h-0 shrink-0 p-0 text-xs" onClick={onOpenDownloads} variant="ghost">
+                查看全部
+              </Button>
+            )}
           </CardHeader>
           <CardContent>
             {data.activeDownloads.length > 0 ? (
               <div className="flex min-w-0 flex-col">
-                {data.activeDownloads.map((task, index) => (
+                {activeDownloadPreview.map((task, index) => (
                   <Fragment key={task.id}>
                     <div className="flex min-w-0 flex-col gap-2 py-3">
                       <div className="flex items-start justify-between gap-3">
@@ -181,7 +193,7 @@ export function HomePage() {
                       </div>
                       <Progress value={task.progress} />
                     </div>
-                    {index < data.activeDownloads.length - 1 && <Separator />}
+                    {index < activeDownloadPreview.length - 1 && <Separator />}
                   </Fragment>
                 ))}
               </div>
@@ -200,13 +212,21 @@ export function HomePage() {
         </Card>
 
         <Card className="min-w-0">
-          <CardHeader>
-            <CardTitle>最近完成</CardTitle>
+          <CardHeader className="flex-row items-start justify-between gap-3">
+            <div className="min-w-0">
+              <CardTitle>最近完成</CardTitle>
+              <CardDescription className="mt-1">显示 {recentCompletedPreview.length} / {data.recentCompleted.length}</CardDescription>
+            </div>
+            {data.recentCompleted.length > 0 && onOpenDownloads && (
+              <Button className="h-auto min-h-0 shrink-0 p-0 text-xs" onClick={onOpenDownloads} variant="ghost">
+                查看全部
+              </Button>
+            )}
           </CardHeader>
           <CardContent>
             {data.recentCompleted.length > 0 ? (
               <div className="flex min-w-0 flex-col">
-                {data.recentCompleted.map((file, index) => (
+                {recentCompletedPreview.map((file, index) => (
                   <Fragment key={file.id}>
                     <div className="flex min-w-0 flex-col gap-3 py-3 sm:flex-row sm:items-start sm:justify-between">
                       <div className="min-w-0">
@@ -243,7 +263,7 @@ export function HomePage() {
                         </Button>
                       </div>}
                     </div>
-                    {index < data.recentCompleted.length - 1 && <Separator />}
+                    {index < recentCompletedPreview.length - 1 && <Separator />}
                   </Fragment>
                 ))}
               </div>

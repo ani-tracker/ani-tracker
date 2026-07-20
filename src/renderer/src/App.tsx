@@ -62,6 +62,7 @@ interface ReleaseSearchIntent {
 
 interface RenderPageOptions {
   onOpenAnimeDetail: (animeId: string) => void;
+  onOpenDownloads: () => void;
   onOpenLibraryAction: (animeId: string, action: AnimeDetailLibraryAction) => void;
   onOpenReleaseSearch: (anime: Anime) => void;
   myAnimeIntent: MyAnimePageIntent | null;
@@ -73,7 +74,7 @@ interface RenderPageOptions {
 function renderPage(page: PageId, electronClient: boolean, options: RenderPageOptions) {
   switch (page) {
     case "home":
-      return <HomePage />;
+      return <HomePage onOpenDownloads={options.onOpenDownloads} />;
     case "myAnime":
       return electronClient ? (
         <MyAnimePage
@@ -103,6 +104,8 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
 export function App() {
   const [activePage, setActivePage] = useState<PageId>("home");
   const [detailView, setDetailView] = useState<AnimeDetailState | null>(null);
+  const [detailActionHostActive, setDetailActionHostActive] = useState(false);
+  const [detailRevision, setDetailRevision] = useState(0);
   const [myAnimeIntent, setMyAnimeIntent] = useState<MyAnimePageIntent | null>(null);
   const [releaseSearchIntent, setReleaseSearchIntent] = useState<ReleaseSearchIntent | null>(null);
   const [pairingState, setPairingState] = useState(getRemotePairingState);
@@ -134,6 +137,9 @@ export function App() {
     };
     const nextState = { aniView: "animeDetail", animeId };
     window.history.pushState(nextState, "");
+    setDetailActionHostActive(false);
+    setDetailRevision(0);
+    setMyAnimeIntent(null);
     setDetailView({ animeId, origin });
     window.requestAnimationFrame(() => contentRef.current?.scrollTo({ top: 0, behavior: "auto" }));
   }
@@ -141,6 +147,8 @@ export function App() {
   /** 从详情返回来源页，并恢复滚动位置和触发元素焦点。 */
   function restoreDetailView() {
     const origin = detailViewRef.current?.origin;
+    setDetailActionHostActive(false);
+    setMyAnimeIntent(null);
     setDetailView(null);
     if (!origin) return;
     window.requestAnimationFrame(() => {
@@ -157,6 +165,8 @@ export function App() {
   function leaveDetailToPage(pageId: PageId) {
     if (detailViewRef.current) {
       window.history.replaceState({ aniView: "page", pageId }, "");
+      setDetailActionHostActive(false);
+      setMyAnimeIntent(null);
       setDetailView(null);
     }
     setActivePage(pageId);
@@ -169,8 +179,9 @@ export function App() {
       leaveDetailToPage("myAnime");
       return;
     }
+    setDetailActionHostActive(true);
     setMyAnimeIntent({ animeId, action, key: Date.now() });
-    leaveDetailToPage("myAnime");
+    console.info("[anime-detail] library action opened in place", { animeId, action });
   }
 
   /** 将未追番资源搜索请求带入资源搜索页。 */
@@ -186,6 +197,8 @@ export function App() {
   function navigatePage(pageId: PageId) {
     if (detailViewRef.current) {
       window.history.replaceState({ aniView: "page", pageId }, "");
+      setDetailActionHostActive(false);
+      setMyAnimeIntent(null);
       setDetailView(null);
     }
     setActivePage(pageId);
@@ -300,19 +313,29 @@ export function App() {
       <div className={detailView ? "hidden" : undefined}>
         {renderPage(activePage, electronClient, {
           onOpenAnimeDetail: openAnimeDetail,
+          onOpenDownloads: () => navigatePage("downloads"),
           onOpenLibraryAction: openLibraryAction,
           onOpenReleaseSearch: openReleaseSearch,
-          myAnimeIntent,
+          myAnimeIntent: detailView ? null : myAnimeIntent,
           onMyAnimeIntentHandled: () => setMyAnimeIntent(null),
           releaseSearchIntent
         })}
       </div>
+      {detailView && electronClient && detailActionHostActive && (
+        <MyAnimePage
+          actionOnly
+          intent={myAnimeIntent}
+          onDataChanged={() => setDetailRevision((revision) => revision + 1)}
+          onIntentHandled={() => setMyAnimeIntent(null)}
+        />
+      )}
       {detailView && (
         <AnimeDetailPage
           animeId={detailView.animeId}
           onBack={() => window.history.back()}
           onOpenLibraryAction={openLibraryAction}
           onOpenReleaseSearch={openReleaseSearch}
+          refreshKey={detailRevision}
           sourceLabel={detailView.origin.label}
         />
       )}

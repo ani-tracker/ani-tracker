@@ -63,6 +63,7 @@ export type AnimeDetailLibraryAction = "rules" | "resources" | "tasks";
 
 interface AnimeDetailPageProps {
   animeId: string;
+  refreshKey?: number;
   sourceLabel: string;
   onBack: () => void;
   onOpenLibraryAction: (animeId: string, action: AnimeDetailLibraryAction) => void;
@@ -72,6 +73,7 @@ interface AnimeDetailPageProps {
 /** 渲染未追番与已追番共用的番剧详情长页。 */
 export function AnimeDetailPage({
   animeId,
+  refreshKey = 0,
   sourceLabel,
   onBack,
   onOpenLibraryAction,
@@ -87,12 +89,13 @@ export function AnimeDetailPage({
   const [summaryExpanded, setSummaryExpanded] = useState(false);
   const [summaryOverflow, setSummaryOverflow] = useState(false);
   const [online, setOnline] = useState(() => navigator.onLine);
+  const [activeSectionId, setActiveSectionId] = useState("detail-overview");
   const summaryRef = useRef<HTMLParagraphElement>(null);
   const desktopClient = isElectronClient();
 
   useEffect(() => {
     void loadDetail();
-  }, [animeId]);
+  }, [animeId, refreshKey]);
 
   useEffect(() => {
     const updateOnline = () => setOnline(navigator.onLine);
@@ -118,9 +121,76 @@ export function AnimeDetailPage({
   }, [result?.anime.summary, summaryExpanded]);
 
   const viewModel = useMemo(() => result ? buildAnimeDetailViewModel(result) : null, [result]);
+  const detail = result?.anime.detail;
+  const hasProduction = Boolean(detail?.genres?.length || detail?.studios?.length || detail?.staff?.length);
+  const hasBasicInfo = Boolean(
+    viewModel?.format || viewModel?.airingStatus || viewModel?.endDate || detail?.episodeCount
+      || detail?.durationMinutes || detail?.sourceMaterial || detail?.contentRating || detail?.demographic
+  );
+  const hasOverview = Boolean(result?.anime.summary || hasBasicInfo);
+  const sectionLinks = useMemo(() => [
+    hasOverview ? { id: "detail-overview", label: "简介" } : null,
+    (viewModel?.nextAiring || viewModel?.broadcast) ? { id: "detail-broadcast", label: "放送" } : null,
+    hasProduction ? { id: "detail-production", label: "制作" } : null,
+    result?.myAnime ? { id: "detail-tracker", label: "追番" } : null,
+    viewModel?.externalLinks.length ? { id: "detail-sources", label: "来源" } : null
+  ].filter((item): item is { id: string; label: string } => Boolean(item)), [
+    hasOverview,
+    hasProduction,
+    result?.myAnime,
+    viewModel?.broadcast,
+    viewModel?.externalLinks.length,
+    viewModel?.nextAiring
+  ]);
+  const sectionLinkIds = sectionLinks.map((item) => item.id).join("|");
   const defaultFansubName = result?.myAnime?.defaultFansubGroupId
     ? result.fansubGroups.find((group) => group.id === result.myAnime?.defaultFansubGroupId)?.name
     : undefined;
+
+  useEffect(() => {
+    if (sectionLinks.length === 0) return;
+    if (!sectionLinks.some((item) => item.id === activeSectionId)) {
+      setActiveSectionId(sectionLinks[0].id);
+    }
+  }, [activeSectionId, sectionLinkIds]);
+
+  useEffect(() => {
+    if (!sectionLinkIds) return;
+    const sections = sectionLinks
+      .map((item) => document.getElementById(item.id))
+      .filter((element): element is HTMLElement => Boolean(element));
+    const scrollRoot = sections[0]?.closest("main");
+    if (!(scrollRoot instanceof HTMLElement) || sections.length === 0) return;
+    const detailScrollRoot = scrollRoot;
+
+    let animationFrame: number | undefined;
+    /** 根据详情滚动位置同步当前分区，不写入浏览器历史。 */
+    function updateActiveSection() {
+      if (animationFrame !== undefined) return;
+      animationFrame = window.requestAnimationFrame(() => {
+        animationFrame = undefined;
+        const activationLine = detailScrollRoot.getBoundingClientRect().top + (window.innerWidth < 768 ? 128 : 80);
+        let currentSection = sections[0];
+        for (const section of sections) {
+          if (section.getBoundingClientRect().top <= activationLine) {
+            currentSection = section;
+          } else {
+            break;
+          }
+        }
+        setActiveSectionId((current) => current === currentSection.id ? current : currentSection.id);
+      });
+    }
+
+    updateActiveSection();
+    detailScrollRoot.addEventListener("scroll", updateActiveSection, { passive: true });
+    window.addEventListener("resize", updateActiveSection);
+    return () => {
+      detailScrollRoot.removeEventListener("scroll", updateActiveSection);
+      window.removeEventListener("resize", updateActiveSection);
+      if (animationFrame !== undefined) window.cancelAnimationFrame(animationFrame);
+    };
+  }, [sectionLinkIds]);
 
   /** 从本地聚合接口加载详情首屏。 */
   async function loadDetail() {
@@ -199,6 +269,15 @@ export function AnimeDetailPage({
     window.open(url, "_blank", "noopener,noreferrer");
   }
 
+  /** 将详情内容滚动到指定分区，并避免锚点污染返回历史。 */
+  function scrollToSection(sectionId: string) {
+    const section = document.getElementById(sectionId);
+    if (!section) return;
+    setActiveSectionId(sectionId);
+    section.scrollIntoView({ behavior: "smooth", block: "start" });
+    console.info("[anime-detail] section selected", { animeId, sectionId });
+  }
+
   if (loading) {
     return <AnimeDetailSkeleton />;
   }
@@ -230,21 +309,6 @@ export function AnimeDetailPage({
       </Page>
     );
   }
-
-  const detail = result.anime.detail;
-  const hasProduction = Boolean(detail?.studios?.length || detail?.staff?.length);
-  const hasBasicInfo = Boolean(
-    viewModel.format || viewModel.airingStatus || viewModel.endDate || detail?.episodeCount
-      || detail?.durationMinutes || detail?.sourceMaterial || detail?.contentRating || detail?.demographic
-  );
-  const sectionLinks = [
-    result.anime.summary ? { id: "detail-overview", label: "简介" } : null,
-    hasBasicInfo ? { id: "detail-info", label: "信息" } : null,
-    detail?.genres?.length ? { id: "detail-genres", label: "题材" } : null,
-    hasProduction ? { id: "detail-production", label: "制作" } : null,
-    result.myAnime ? { id: "detail-tracker", label: "追番" } : null,
-    viewModel.externalLinks.length ? { id: "detail-sources", label: "来源" } : null
-  ].filter((item): item is { id: string; label: string } => Boolean(item));
 
   return (
     <Page className="gap-5 pb-8">
@@ -306,7 +370,7 @@ export function AnimeDetailPage({
           </div>
         )}
 
-        <div className="grid min-w-0 grid-cols-[112px_minmax(0,1fr)] gap-4 md:grid-cols-[176px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[176px_minmax(0,1fr)_auto]">
+        <div className="grid min-w-0 grid-cols-[104px_minmax(0,1fr)] items-start gap-4 sm:grid-cols-[132px_minmax(0,1fr)] md:grid-cols-[200px_minmax(0,1fr)] md:gap-6 xl:grid-cols-[220px_minmax(0,1fr)_304px]">
           <div className="aspect-[2/3] w-full overflow-hidden rounded-md border bg-muted">
             {result.anime.coverUrl ? (
               <CachedImage alt={viewModel.title} className="size-full object-cover" sourceUrl={result.anime.coverUrl} />
@@ -315,7 +379,7 @@ export function AnimeDetailPage({
             )}
           </div>
 
-          <div className="min-w-0 self-center">
+          <div className="min-w-0 pt-1 md:pt-2">
             <div className="flex min-w-0 flex-wrap gap-2">
               {viewModel.followed && <Badge tone="green"><CheckCircle2 className="mr-1 size-3" />已追番</Badge>}
               {viewModel.airingStatus && <Badge tone="primary">{viewModel.airingStatus}</Badge>}
@@ -339,131 +403,163 @@ export function AnimeDetailPage({
               )}
               {detail?.ranking && <span>#{detail.ranking.rank} · {detail.ranking.source}</span>}
             </div>
-          </div>
-
-          <div className="col-span-2 flex min-w-0 flex-col gap-2 lg:col-span-1 lg:w-48 lg:self-end">
-            {!desktopClient ? (
-              result.myAnime ? (
-                <Button onClick={() => onOpenLibraryAction(animeId, "tasks")} variant="outline">
-                  <ListTodo data-icon="inline-start" />查看追番
-                </Button>
-              ) : null
-            ) : result.myAnime ? (
-              <>
-                <Button onClick={() => onOpenLibraryAction(animeId, "rules")}>
-                  <SlidersHorizontal data-icon="inline-start" />编辑规则
-                </Button>
-                <Button onClick={() => onOpenLibraryAction(animeId, "resources")} variant="outline">
-                  <Download data-icon="inline-start" />查看资源
-                </Button>
-              </>
-            ) : (
-              <>
-                <Button disabled={tracking} onClick={() => void addTracker()}>
-                  <Plus data-icon="inline-start" />{tracking ? "添加中" : "添加追番"}
-                </Button>
-                <Button onClick={() => onOpenReleaseSearch(result.anime)} variant="outline">
-                  <Search data-icon="inline-start" />搜索资源
-                </Button>
-              </>
+            {result.anime.summary && (
+              <p className="mt-5 hidden max-w-3xl whitespace-pre-line text-sm leading-6 text-muted-foreground md:line-clamp-5 md:block">
+                {result.anime.summary}
+              </p>
             )}
           </div>
+
+          <Card className="col-span-2 min-w-0 bg-primary/5 shadow-none xl:col-span-1 xl:self-start">
+            <CardContent className="flex flex-col gap-2 p-4 sm:p-4">
+              {!desktopClient ? (
+                result.myAnime ? (
+                  <Button onClick={() => onOpenLibraryAction(animeId, "tasks")} variant="outline">
+                    <ListTodo data-icon="inline-start" />查看追番
+                  </Button>
+                ) : null
+              ) : result.myAnime ? (
+                <>
+                  <Button onClick={() => onOpenLibraryAction(animeId, "rules")}>
+                    <SlidersHorizontal data-icon="inline-start" />编辑规则
+                  </Button>
+                  <Button onClick={() => onOpenLibraryAction(animeId, "resources")} variant="outline">
+                    <Download data-icon="inline-start" />查看资源
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button disabled={tracking} onClick={() => void addTracker()}>
+                    <Plus data-icon="inline-start" />{tracking ? "添加中" : "添加追番"}
+                  </Button>
+                  <Button onClick={() => onOpenReleaseSearch(result.anime)} variant="outline">
+                    <Search data-icon="inline-start" />搜索资源
+                  </Button>
+                </>
+              )}
+
+              {viewModel.externalLinks.length > 0 && (
+                <>
+                  <Separator className="my-2" />
+                  <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">外部来源</div>
+                  {viewModel.externalLinks.map((link) => (
+                    <Button
+                      className="min-w-0 justify-between px-2"
+                      key={link.key}
+                      onClick={() => void openExternal(link.url)}
+                      variant="ghost"
+                    >
+                      <span className="truncate">{link.label}</span>
+                      <ExternalLink data-icon="inline-end" />
+                    </Button>
+                  ))}
+                </>
+              )}
+            </CardContent>
+          </Card>
         </div>
       </section>
 
       {sectionLinks.length > 1 && (
-        <nav aria-label="番剧详情分区" className="sticky top-0 z-20 -mx-4 hidden border-y bg-background px-4 md:flex md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
-          {sectionLinks.map((item) => (
-            <a className="border-b-2 border-transparent px-3 py-3 text-sm font-medium text-muted-foreground hover:border-primary hover:text-foreground" href={`#${item.id}`} key={item.id}>
-              {item.label}
-            </a>
-          ))}
+        <nav aria-label="番剧详情分区" className="sticky top-16 z-20 -mx-4 overflow-x-auto border-y bg-background/95 px-4 backdrop-blur md:top-0 md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
+          <div className="flex min-w-max">
+            {sectionLinks.map((item) => {
+              const active = activeSectionId === item.id;
+              return (
+                <Button
+                  aria-current={active ? "location" : undefined}
+                  className={cn(
+                    "h-11 rounded-none border-b-2 border-transparent px-4 text-sm text-muted-foreground",
+                    active && "border-primary text-foreground"
+                  )}
+                  key={item.id}
+                  onClick={() => scrollToSection(item.id)}
+                  variant="ghost"
+                >
+                  {item.label}
+                </Button>
+              );
+            })}
+          </div>
         </nav>
       )}
 
       <div className="grid min-w-0 gap-8 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="flex min-w-0 flex-col gap-8">
-          {result.anime.summary && (
-            <DetailSection id="detail-overview" title="简介">
-              <p
-                className={cn(
-                  "whitespace-pre-line break-words text-sm leading-7 text-muted-foreground",
-                  !summaryExpanded && "line-clamp-6 md:line-clamp-none"
-                )}
-                ref={summaryRef}
-              >
-                {result.anime.summary}
-              </p>
-              {summaryOverflow && (
-                <Button className="mt-2 h-auto min-h-0 p-0 text-sm md:hidden" onClick={() => setSummaryExpanded(true)} variant="ghost">
-                  展开简介
-                </Button>
+        <div className="flex min-w-0 flex-col gap-10">
+          {hasOverview && (
+            <DetailSection icon={<Info />} id="detail-overview" title="简介">
+              {result.anime.summary && (
+                <>
+                  <p
+                    className={cn(
+                      "whitespace-pre-line break-words text-sm leading-7 text-muted-foreground",
+                      !summaryExpanded && "line-clamp-6 md:line-clamp-none"
+                    )}
+                    ref={summaryRef}
+                  >
+                    {result.anime.summary}
+                  </p>
+                  {summaryOverflow && (
+                    <Button className="mt-2 h-auto min-h-0 p-0 text-sm md:hidden" onClick={() => setSummaryExpanded(true)} variant="ghost">
+                      展开简介
+                    </Button>
+                  )}
+                  {summaryExpanded && (
+                    <Button className="mt-2 h-auto min-h-0 p-0 text-sm md:hidden" onClick={() => setSummaryExpanded(false)} variant="ghost">
+                      收起简介
+                    </Button>
+                  )}
+                </>
               )}
-              {summaryExpanded && (
-                <Button className="mt-2 h-auto min-h-0 p-0 text-sm md:hidden" onClick={() => setSummaryExpanded(false)} variant="ghost">
-                  收起简介
-                </Button>
+
+              {hasBasicInfo && (
+                <Card className={cn("shadow-none", result.anime.summary && "mt-5")}>
+                  <CardContent className="grid min-w-0 grid-cols-2 gap-x-5 gap-y-5 p-4 sm:grid-cols-3 sm:p-5">
+                    {viewModel.format && <OverviewFact label="形式" value={viewModel.format} />}
+                    {viewModel.airingStatus && <OverviewFact label="放送状态" value={viewModel.airingStatus} />}
+                    {detail?.episodeCount && <OverviewFact label="总集数" value={`${detail.episodeCount} 集`} />}
+                    {detail?.durationMinutes && <OverviewFact label="单集时长" value={`${detail.durationMinutes} 分钟`} />}
+                    <OverviewFact label="首播" value={viewModel.premiere} />
+                    {viewModel.endDate && <OverviewFact label="完结" value={viewModel.endDate} />}
+                    {detail?.sourceMaterial && <OverviewFact label="原作类型" value={formatMetadataValue(detail.sourceMaterial)} />}
+                    {detail?.contentRating && <OverviewFact label="内容分级" value={detail.contentRating} />}
+                    {detail?.demographic && <OverviewFact label="受众" value={detail.demographic} />}
+                  </CardContent>
+                </Card>
               )}
-            </DetailSection>
-          )}
-
-          {hasBasicInfo && (
-            <DetailSection id="detail-info" title="基本信息">
-              <div className="grid min-w-0 gap-x-8 gap-y-0 sm:grid-cols-2">
-                {viewModel.format && <DetailFact label="形式" value={viewModel.format} />}
-                {viewModel.airingStatus && <DetailFact label="放送状态" value={viewModel.airingStatus} />}
-                {detail?.episodeCount && <DetailFact label="总集数" value={`${detail.episodeCount} 集`} />}
-                {detail?.durationMinutes && <DetailFact label="单集时长" value={`${detail.durationMinutes} 分钟`} />}
-                <DetailFact label="首播" value={viewModel.premiere} />
-                {viewModel.endDate && <DetailFact label="完结" value={viewModel.endDate} />}
-                {detail?.sourceMaterial && <DetailFact label="原作类型" value={formatMetadataValue(detail.sourceMaterial)} />}
-                {detail?.contentRating && <DetailFact label="内容分级" value={detail.contentRating} />}
-                {detail?.demographic && <DetailFact label="受众" value={detail.demographic} />}
-              </div>
-            </DetailSection>
-          )}
-
-          {detail?.genres?.length && (
-            <DetailSection id="detail-genres" title="题材">
-              <div className="flex flex-wrap gap-2">
-                {detail.genres.map((genre) => <Badge key={genre}>{genre}</Badge>)}
-              </div>
             </DetailSection>
           )}
 
           {hasProduction && (
-            <DetailSection id="detail-production" title="制作信息">
-              {detail?.studios?.length && (
-                <div>
-                  <h3 className="text-sm font-medium">制作公司</h3>
-                  <div className="mt-2 flex flex-wrap gap-2">
-                    {detail.studios.map((studio) => <Badge tone="blue" key={studio}>{studio}</Badge>)}
-                  </div>
+            <DetailSection icon={<Users />} id="detail-production" title="制作信息">
+              {detail?.genres?.length && (
+                <div className="mb-4 flex flex-wrap gap-2">
+                  {detail.genres.map((genre) => <Badge key={genre}>{genre}</Badge>)}
                 </div>
               )}
-              {detail?.studios?.length && detail?.staff?.length && <Separator className="my-5" />}
-              {detail?.staff?.length && (
-                <div className="grid min-w-0 gap-x-6 gap-y-3 sm:grid-cols-2">
-                  {detail.staff.map((credit) => (
-                    <div className="min-w-0 border-b pb-3" key={`${credit.name}-${credit.role}`}>
-                      <div className="break-words text-sm font-medium">{credit.name}</div>
-                      <div className="mt-0.5 break-words text-xs text-muted-foreground">{credit.role}</div>
-                    </div>
-                  ))}
+              {detail?.studios?.length && (
+                <div className="mb-4 flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-muted-foreground">制作公司</span>
+                  {detail.studios.map((studio) => <Badge tone="blue" key={studio}>{studio}</Badge>)}
                 </div>
+              )}
+              {detail?.staff?.length && (
+                <Card className="overflow-hidden shadow-none">
+                  <CardContent className="divide-y p-0 sm:p-0">
+                    {detail.staff.map((credit) => (
+                      <div className="grid min-w-0 gap-1 bg-primary/5 px-4 py-3 sm:grid-cols-[minmax(10rem,0.9fr)_minmax(0,1.1fr)] sm:gap-6" key={`${credit.name}-${credit.role}`}>
+                        <div className="break-words text-xs font-semibold text-muted-foreground">{credit.role}</div>
+                        <div className="break-words text-sm font-medium">{credit.name}</div>
+                      </div>
+                    ))}
+                  </CardContent>
+                </Card>
               )}
             </DetailSection>
           )}
         </div>
 
-        <aside className="flex min-w-0 flex-col gap-6">
-          {(viewModel.nextAiring || viewModel.broadcast) && (
-            <DetailSection title="放送信息">
-              {viewModel.nextAiring && <DetailFact icon={<Clock3 />} label="下一次放送" value={viewModel.nextAiring} />}
-              {viewModel.broadcast && <DetailFact icon={<CalendarDays />} label="固定时段" value={viewModel.broadcast} />}
-            </DetailSection>
-          )}
-
+        <aside className="flex min-w-0 flex-col gap-7">
           {result.myAnime && (
             <TrackerCard
               defaultFansubName={defaultFansubName}
@@ -476,28 +572,46 @@ export function AnimeDetailPage({
             />
           )}
 
-          {viewModel.aliases.length > 0 && (
+          {(viewModel.nextAiring || viewModel.broadcast) && (
+            <DetailSection icon={<CalendarDays />} id="detail-broadcast" title="放送信息">
+              <Card className="bg-primary/5 shadow-none">
+                <CardContent className="p-4 sm:p-4">
+                  {viewModel.nextAiring && <DetailFact icon={<Clock3 />} label="下一次放送" value={viewModel.nextAiring} />}
+                  {viewModel.broadcast && <DetailFact icon={<CalendarDays />} label="固定时段" value={viewModel.broadcast} />}
+                </CardContent>
+              </Card>
+            </DetailSection>
+          )}
+
+          {result.anime.aliases.length > 0 && (
             <DetailSection title="别名">
-              <ul className="flex min-w-0 flex-col gap-2 text-sm text-muted-foreground">
-                {viewModel.aliases.map((alias) => <li className="break-words" key={alias}>{alias}</li>)}
-              </ul>
+              <div className="flex min-w-0 flex-col gap-3">
+                {result.anime.aliases.map((alias) => (
+                  <div className="min-w-0" key={alias.id}>
+                    <div className="text-xs text-muted-foreground">{formatAliasLanguage(alias.language)}</div>
+                    <div className="mt-0.5 break-words text-sm">{alias.alias}</div>
+                  </div>
+                ))}
+              </div>
             </DetailSection>
           )}
 
           {viewModel.externalLinks.length > 0 && (
-            <DetailSection id="detail-sources" title="外部来源">
-              <div className="flex min-w-0 flex-col gap-1">
-                {viewModel.externalLinks.map((link) => (
-                  <Button className="min-w-0 justify-between px-2" key={link.key} onClick={() => void openExternal(link.url)} variant="ghost">
-                    <span className="truncate">{link.label}</span><ExternalLink data-icon="inline-end" />
-                  </Button>
-                ))}
-              </div>
-              {viewModel.metadataSources.length > 0 && (
-                <p className="mt-3 text-xs leading-5 text-muted-foreground">
-                  元数据来源：{viewModel.metadataSources.join("、")}
-                </p>
-              )}
+            <DetailSection icon={<ExternalLink />} id="detail-sources" title="外部来源">
+              <Card className="shadow-none">
+                <CardContent className="flex min-w-0 flex-col gap-1 p-3 sm:p-3">
+                  {viewModel.externalLinks.map((link) => (
+                    <Button className="min-w-0 justify-between px-2" key={link.key} onClick={() => void openExternal(link.url)} variant="ghost">
+                      <span className="truncate">{link.label}</span><ExternalLink data-icon="inline-end" />
+                    </Button>
+                  ))}
+                  {viewModel.metadataSources.length > 0 && (
+                    <p className="border-t px-2 pt-3 text-xs leading-5 text-muted-foreground">
+                      元数据来源：{viewModel.metadataSources.join("、")}
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
             </DetailSection>
           )}
         </aside>
@@ -524,12 +638,35 @@ export function AnimeDetailPage({
 }
 
 /** 渲染详情页中的无卡片分区。 */
-function DetailSection({ id, title, children }: { id?: string; title: string; children: React.ReactNode }) {
+function DetailSection({
+  id,
+  title,
+  icon,
+  children
+}: {
+  id?: string;
+  title: string;
+  icon?: React.ReactNode;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="min-w-0 scroll-mt-14 border-t pt-4" id={id}>
-      <h2 className="mb-4 text-base font-semibold">{title}</h2>
+    <section className="min-w-0 scroll-mt-32 border-t pt-5 md:scroll-mt-16" id={id}>
+      <h2 className="mb-4 flex items-center gap-2 text-base font-semibold">
+        {icon && <span className="text-primary [&_svg]:size-5">{icon}</span>}
+        {title}
+      </h2>
       {children}
     </section>
+  );
+}
+
+/** 渲染简介信息面板中的紧凑字段。 */
+function OverviewFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0">
+      <div className="text-xs font-medium text-muted-foreground">{label}</div>
+      <div className="mt-1 break-words text-sm font-medium">{value}</div>
+    </div>
   );
 }
 
@@ -570,7 +707,7 @@ function TrackerCard({
     : `${viewModel.watchedCount} 集已看`;
 
   return (
-    <Card id="detail-tracker">
+    <Card className="scroll-mt-32 shadow-none md:scroll-mt-16" id="detail-tracker">
       <CardHeader>
         <CardTitle>追番概览</CardTitle>
         <CardDescription>{viewModel.trackerStatus} · {progressLabel}</CardDescription>
@@ -671,6 +808,18 @@ function createDefaultMyAnime(anime: Anime, timestamp: string): MyAnime {
 
 function formatMetadataValue(value: string): string {
   return value.replaceAll("_", " ").toLocaleLowerCase();
+}
+
+/** 将别名语言转换为详情页可读标签。 */
+function formatAliasLanguage(language: Anime["aliases"][number]["language"]): string {
+  const labels: Record<Anime["aliases"][number]["language"], string> = {
+    zh: "中文",
+    ja: "日文",
+    en: "英文",
+    romaji: "罗马字",
+    custom: "其他"
+  };
+  return labels[language];
 }
 
 /** 保持海报、标题、动作区和双列内容尺寸稳定的详情骨架。 */

@@ -1,5 +1,6 @@
 import { AlertTriangle, CalendarDays, Check, ChevronDown, ChevronRight, Download, Link2, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -127,13 +128,21 @@ export interface MyAnimePageIntent {
 }
 
 interface MyAnimePageProps {
+  actionOnly?: boolean;
   intent?: MyAnimePageIntent | null;
+  onDataChanged?: () => void;
   onIntentHandled?: () => void;
   onOpenAnimeDetail?: (animeId: string) => void;
 }
 
 /** 渲染追番列表并协调规则、资源下载和任务明细抽屉。 */
-export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAnimePageProps = {}) {
+export function MyAnimePage({
+  actionOnly = false,
+  intent,
+  onDataChanged,
+  onIntentHandled,
+  onOpenAnimeDetail
+}: MyAnimePageProps = {}) {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [removeTarget, setRemoveTarget] = useState<MyAnime | null>(null);
   const [statusFilter, setStatusFilter] = useState<MyAnimeFilter>("watching");
@@ -210,6 +219,16 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
   const groupedItems = useMemo(() => groupMyAnimeBySeason(visibleItems), [visibleItems]);
   const draftPersisted = Boolean(draft && items.some((item) => item.id === draft.id));
   const activeFansubAnimeId = draft && draftPersisted ? draft.anime.id : downloadTarget?.anime.id;
+
+  useEffect(() => {
+    if (!actionOnly || !message) return;
+    if (message.tone === "error") {
+      toast.error(message.text);
+    } else {
+      toast.success(message.text);
+    }
+    setMessage(null);
+  }, [actionOnly, message]);
 
   useEffect(() => {
     if (!intent || loading) return;
@@ -345,6 +364,7 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
       setDraft(null);
       setDraftBaseline(null);
       setMessage({ tone: "success", text: "追番规则已保存" });
+      onDataChanged?.();
     } catch (error) {
       setMessage({
         tone: "error",
@@ -875,86 +895,90 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
   }
 
   if (loading) {
-    return <MyAnimePageSkeleton />;
+    return actionOnly ? null : <MyAnimePageSkeleton />;
   }
 
   return (
-    <Page>
-      <PageHeader>
-        <PageHeading description="按季度管理追番进度、下载偏好、字幕组与单集规则。" title="我的追番" />
-        <PageActions>
-          <Button className="w-full sm:w-auto" onClick={openNewAnimeDrawer}>
-          <Plus data-icon="inline-start" />
-          添加追番
-          </Button>
-        </PageActions>
-      </PageHeader>
+    <>
+      {!actionOnly && (
+        <Page>
+          <PageHeader>
+            <PageHeading description="按季度管理追番进度、下载偏好、字幕组与单集规则。" title="我的追番" />
+            <PageActions>
+              <Button className="w-full sm:w-auto" onClick={openNewAnimeDrawer}>
+                <Plus data-icon="inline-start" />
+                添加追番
+              </Button>
+            </PageActions>
+          </PageHeader>
 
-      {message && (
-        <Alert variant={message.tone === "error" ? "destructive" : "default"}>
-          {message.tone === "error" && <AlertTriangle />}
-          <AlertTitle>{message.tone === "error" ? "操作失败" : "操作完成"}</AlertTitle>
-          <AlertDescription>{message.text}</AlertDescription>
-        </Alert>
-      )}
+          {message && (
+            <Alert variant={message.tone === "error" ? "destructive" : "default"}>
+              {message.tone === "error" && <AlertTriangle />}
+              <AlertTitle>{message.tone === "error" ? "操作失败" : "操作完成"}</AlertTitle>
+              <AlertDescription>{message.text}</AlertDescription>
+            </Alert>
+          )}
 
-      <FilterToolbar>
-        <Tabs
-          className="min-w-0 flex-1"
-          value={statusFilter}
-          onValueChange={(value) => setStatusFilter(value as MyAnimeFilter)}
-        >
-          <TabsList className="grid h-auto w-full grid-cols-3 sm:w-fit sm:grid-cols-6" aria-label="筛选追番状态">
-            {myAnimeFilters.map((filter) => (
-              <TabsTrigger className="min-w-0 px-2" key={filter.value} value={filter.value}>
-                {filter.label}
-                <span className="ml-1 text-xs tabular-nums">
-                  {filter.value === "all" ? items.length : items.filter((item) => item.status === filter.value).length}
-                </span>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
-        <span className="text-xs text-muted-foreground">显示 {visibleItems.length} 部</span>
-      </FilterToolbar>
-
-      {groupedItems.length > 0 ? (
-        <div className="flex min-w-0 flex-col gap-7">
-          {groupedItems.map((group) => (
-            <section className="min-w-0" key={group.key}>
-              <div className="mb-2 flex items-center justify-between gap-3 border-b pb-2">
-                <h2 className="text-sm font-semibold">{group.label}</h2>
-                <span className="text-xs text-muted-foreground">{group.items.length} 部</span>
-              </div>
-              <div className="flex min-w-0 flex-col gap-2">
-                {group.items.map((item) => (
-                  <MyAnimeRow
-                    key={item.id}
-                    item={item}
-                    defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
-                    downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
-                    onOpenActive={() => openDownloadDetail(item, "active")}
-                    onOpenCompleted={() => openDownloadDetail(item, "completed")}
-                    onOpenDetail={() => onOpenAnimeDetail?.(item.anime.id)}
-                    onOpenDownloads={() => void openAnimeDownloads(item)}
-                    onOpenRules={() => openRulesDrawer(item)}
-                    onRemove={() => setRemoveTarget(item)}
-                  />
+          <FilterToolbar>
+            <Tabs
+              className="min-w-0 flex-1"
+              value={statusFilter}
+              onValueChange={(value) => setStatusFilter(value as MyAnimeFilter)}
+            >
+              <TabsList className="grid h-auto w-full grid-cols-3 sm:w-fit sm:grid-cols-6" aria-label="筛选追番状态">
+                {myAnimeFilters.map((filter) => (
+                  <TabsTrigger className="min-w-0 px-2" key={filter.value} value={filter.value}>
+                    {filter.label}
+                    <span className="ml-1 text-xs tabular-nums">
+                      {filter.value === "all" ? items.length : items.filter((item) => item.status === filter.value).length}
+                    </span>
+                  </TabsTrigger>
                 ))}
-              </div>
-            </section>
-          ))}
-        </div>
-      ) : (
-        <Empty className="min-h-72">
-          <EmptyHeader>
-            <EmptyMedia variant="icon">
-              <CalendarDays />
-            </EmptyMedia>
-            <EmptyTitle>{items.length ? "没有匹配的追番" : "暂无追番"}</EmptyTitle>
-            <EmptyDescription>{items.length ? "请选择其他状态筛选。" : "当前还没有追番。"}</EmptyDescription>
-          </EmptyHeader>
-        </Empty>
+              </TabsList>
+            </Tabs>
+            <span className="text-xs text-muted-foreground">显示 {visibleItems.length} 部</span>
+          </FilterToolbar>
+
+          {groupedItems.length > 0 ? (
+            <div className="flex min-w-0 flex-col gap-7">
+              {groupedItems.map((group) => (
+                <section className="min-w-0" key={group.key}>
+                  <div className="mb-2 flex items-center justify-between gap-3 border-b pb-2">
+                    <h2 className="text-sm font-semibold">{group.label}</h2>
+                    <span className="text-xs text-muted-foreground">{group.items.length} 部</span>
+                  </div>
+                  <div className="flex min-w-0 flex-col gap-2">
+                    {group.items.map((item) => (
+                      <MyAnimeRow
+                        key={item.id}
+                        item={item}
+                        defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
+                        downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
+                        onOpenActive={() => openDownloadDetail(item, "active")}
+                        onOpenCompleted={() => openDownloadDetail(item, "completed")}
+                        onOpenDetail={() => onOpenAnimeDetail?.(item.anime.id)}
+                        onOpenDownloads={() => void openAnimeDownloads(item)}
+                        onOpenRules={() => openRulesDrawer(item)}
+                        onRemove={() => setRemoveTarget(item)}
+                      />
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          ) : (
+            <Empty className="min-h-72">
+              <EmptyHeader>
+                <EmptyMedia variant="icon">
+                  <CalendarDays />
+                </EmptyMedia>
+                <EmptyTitle>{items.length ? "没有匹配的追番" : "暂无追番"}</EmptyTitle>
+                <EmptyDescription>{items.length ? "请选择其他状态筛选。" : "当前还没有追番。"}</EmptyDescription>
+              </EmptyHeader>
+            </Empty>
+          )}
+        </Page>
       )}
 
       {draft && (
@@ -1064,7 +1088,7 @@ export function MyAnimePage({ intent, onIntentHandled, onOpenAnimeDetail }: MyAn
         title="放弃未保存的规则？"
       />
 
-    </Page>
+    </>
   );
 }
 
