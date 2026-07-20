@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { appApi } from "@/lib/api";
 import { RemoteVideoPlayer } from "./RemoteVideoPlayer";
 import {
@@ -72,7 +72,7 @@ export function RemotePlayerPage({ taskId }: RemotePlayerPageProps) {
   }, [taskId]);
 
   /** 切换播放项并更新地址，刷新后仍保持当前文件。 */
-  const handleSelectItem = (item: RemotePlaylistItem): void => {
+  const handleSelectItem = useCallback((item: RemotePlaylistItem): void => {
     setActiveItemId(item.id);
     const playerUrl = new URL(`/player/${encodeURIComponent(item.task.id)}`, window.location.origin);
     if (item.fileIndex !== undefined) {
@@ -84,7 +84,7 @@ export function RemotePlayerPage({ taskId }: RemotePlayerPageProps) {
       taskId: item.task.id,
       fileIndex: item.fileIndex
     });
-  };
+  }, []);
 
   return <RemoteVideoPlayer
     key={activeItem?.id ?? "loading"}

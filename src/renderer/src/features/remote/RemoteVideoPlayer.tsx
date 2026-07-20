@@ -64,6 +64,7 @@ export function RemoteVideoPlayer({
 }: RemoteVideoPlayerProps) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const artPlayerRef = useRef<Artplayer | null>(null);
+  const onSelectItemRef = useRef(onSelectItem);
   const toolbarTimerRef = useRef<number>();
   const automaticFallbackStartedRef = useRef(false);
   const [requestedMode, setRequestedMode] = useState<RemotePlaybackRequestMode>("direct");
@@ -85,6 +86,10 @@ export function RemoteVideoPlayer({
   const nextItem = activeIndex >= 0 && activeIndex < playlist.length - 1
     ? playlist[activeIndex + 1]
     : undefined;
+
+  useEffect(() => {
+    onSelectItemRef.current = onSelectItem;
+  }, [onSelectItem]);
 
   /** 清理并重新安排播放器顶栏的自动隐藏计时。 */
   const scheduleToolbarHide = useCallback((): void => {
@@ -274,7 +279,7 @@ export function RemoteVideoPlayer({
           taskId: nextItem.task.id,
           fileIndex: nextItem.fileIndex
         });
-        onSelectItem(nextItem);
+        onSelectItemRef.current(nextItem);
       }
     });
     player.on("subtitleLoad", (cues) => {
@@ -301,7 +306,7 @@ export function RemoteVideoPlayer({
       hls?.destroy();
       player.destroy(true);
     };
-  }, [activeItem, nextItem, onSelectItem, session, startAutomaticTranscode]);
+  }, [activeItem, nextItem, session, startAutomaticTranscode]);
 
   /** 手动切换播放模式，并允许下次直传失败时再次自动升级。 */
   const handleModeChange = (value: string): void => {
