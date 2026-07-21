@@ -1,81 +1,64 @@
-# 启动说明
+# Ani Tracker 启动说明
 
-本文记录 Ani Tracker 的启动方式和已验证结果。
+最近核对：2026-07-21
 
-## 环境准备
+## 环境要求
 
-推荐使用 pnpm 安装依赖：
+- Node.js 20 或 22。
+- pnpm；仓库当前按 pnpm 11 配置依赖构建许可。
+- 运行 Electron 桌面窗口的图形环境。
+
+安装依赖：
 
 ```bash
 pnpm install
 ```
 
-Windows PowerShell 可使用：
+Windows PowerShell：
 
 ```powershell
 pnpm.cmd install
 ```
 
-当前项目依赖 Electron、esbuild、better-sqlite3 和 ffprobe 安装脚本。pnpm 11 会默认拦截依赖构建脚本，因此仓库通过 `pnpm-workspace.yaml` 显式允许对应依赖。FFmpeg 二进制已纳入 `resources/ffmpeg`，安装依赖时不下载 FFmpeg。
+`pnpm-workspace.yaml` 已允许 Electron、esbuild、better-sqlite3 和 ffprobe 平台包执行安装脚本。根目录 `postinstall` 会按当前 Electron ABI 重建 better-sqlite3。
 
-```yaml
-allowBuilds:
-  electron: true
-  esbuild: true
-onlyBuiltDependencies:
-  - electron
-  - esbuild
-```
+## 开发模式
 
-如果本地依赖安装仍提示 build scripts 被忽略，可执行一次：
-
-```bash
-pnpm approve-builds electron esbuild
-```
-
-## 开发启动
-
-日常开发启动：
+完整开发启动：
 
 ```bash
 pnpm dev
 ```
 
-Windows PowerShell：
+该命令先执行 `prepare:remote-renderer`，将远程静态页面写入 `.remote-pwa/renderer`，再启动 Electron、主进程、preload 和桌面 Renderer 的 Vite 热更新服务。
 
-```powershell
-pnpm.cmd dev
+只调试桌面端：
+
+```bash
+pnpm dev:desktop
 ```
 
-`pnpm dev` 会先生成开发模式远程 PWA，再执行 `electron-vite dev`，启动流程如下：
+该模式跳过远程静态页面预构建，远程 PWA 不保证可用。远程界面修改后可单独刷新：
 
-1. 执行 `prepare:remote-renderer`，将远程静态页面构建到 `.remote-pwa/renderer`。
-2. 编译主进程入口 `src/main/index.ts` 到 `out/main/index.js`。
-3. 编译 preload 入口 `src/preload/index.ts` 到 `out/preload/index.mjs`。
-4. 启动 renderer 的 Vite dev server，默认地址为 `http://localhost:5173/`。
-5. 启动 Electron 应用；桌面窗口通过 `ELECTRON_RENDERER_URL` 加载 Vite dev server。
-6. 远程 HTTPS 网关从 `.remote-pwa/renderer` 提供 PWA，避免开发构建清理 `out/renderer`。
-7. preload 通过 `contextBridge` 暴露 `window.aniBridge`。
-
-只调试桌面端并希望跳过远程 PWA 预构建时可执行：
-
-```powershell
-pnpm.cmd dev:desktop
+```bash
+pnpm run prepare:remote-renderer
 ```
 
-远程界面发生变化后可单独刷新静态快照：
-
-```powershell
-pnpm.cmd run prepare:remote-renderer
-```
-
-## 类型检查和构建
-
-类型检查：
+## 检查与测试
 
 ```bash
 pnpm run typecheck
+pnpm run test:theme
+pnpm run test:parsers
 ```
+
+- `typecheck` 分别检查 Node 和 Web TypeScript 配置，不应在源码目录生成 JS、声明文件或 tsbuildinfo。
+- `test:theme` 校验内置主题令牌和对比度。
+- `test:parsers` 先编译 Node 测试到被忽略的 `out/test-node`，再使用 Electron 的 Node 运行模式执行测试。
+
+如果源码区出现 `electron.vite.config.js`、`electron.vite.config.d.ts` 或 `*.tsbuildinfo`，说明运行了会 emit 的 TypeScript 命令，应先确认来源，再清理对应生成物。
+
+## 构建与预览
 
 生产构建：
 
@@ -83,63 +66,95 @@ pnpm run typecheck
 pnpm build
 ```
 
-`pnpm build` 实际执行 `electron-vite build`，生成：
+实际步骤：
 
-- `out/main/index.js`
-- `out/preload/index.mjs`
-- `out/renderer/index.html`
-- `out/renderer/assets/*`
-- `out/ffmpeg/<platform>-<arch>/*`
+1. `electron-vite build` 生成 main、preload 和 renderer。
+2. `prepare:qbittorrent` 校验并复制当前目标平台的托管 qBittorrent 资源。
+3. `prepare:ffmpeg` 校验并复制当前目标平台的 FFmpeg 资源。
 
-构建会离线校验仓库内 FFmpeg 资源并只复制当前目标平台。`package.json` 的 `main` 指向 `./out/main/index.js`，因此生产/预览模式会从构建后的主进程入口启动。
+主要输出：
 
-## 预览启动
+```text
+out/main/index.js
+out/preload/index.mjs
+out/renderer/
+out/qbittorrent/<platform>-<arch>/
+out/ffmpeg/<platform>-<arch>/
+```
 
-预览构建产物：
+预览生产构建：
 
 ```bash
 pnpm preview
 ```
 
-`pnpm preview` 会先执行 Electron Vite 构建，再启动 Electron。此时主进程不再依赖 `ELECTRON_RENDERER_URL`，而是加载 `out/renderer/index.html`。
+预览模式从 `out/renderer` 提供桌面和远程页面。修改主进程代码后必须完整重启 Electron。
 
-## 非交互终端
+## 资源维护
 
-在 CI、Codex 或其他无 TTY 的非交互终端里，如果 pnpm 触发依赖状态检查，可加上 `CI=true`：
+离线校验仓库中的全部 FFmpeg 资源：
 
 ```bash
-CI=true pnpm install --frozen-lockfile
-CI=true pnpm run typecheck
-CI=true pnpm build
-CI=true pnpm dev
+pnpm run verify:ffmpeg
 ```
 
-开发启动需要监听本地端口 `5173`，Electron 启动还会打开桌面窗口；受限沙箱环境可能需要额外授权。
+显式更新三平台 FFmpeg 资源：
 
-## 本次验证
+```bash
+pnpm run download:ffmpeg
+```
 
-验证时间：2026-07-13 14:24 左右，macOS / pnpm 11.12.0。
+校验当前目标平台 qBittorrent 资源：
 
-已验证通过：
+```bash
+pnpm run verify:qbittorrent
+```
 
-- `CI=true pnpm install --frozen-lockfile`
-- `CI=true pnpm run typecheck`
-- `CI=true pnpm build`
-- `CI=true pnpm dev`
-- `CI=true pnpm preview`
+构建过程默认不下载 qBittorrent 或 FFmpeg。`download:ffmpeg` 是显式联网维护命令，不属于日常安装或构建。
 
-验证到的启动日志要点：
+## 远程 PWA
 
-- main 构建成功，输出 `out/main/index.js`。
-- preload 构建成功，输出 `out/preload/index.mjs`。
-- renderer dev server 启动在 `http://localhost:5173/`。
-- Electron 应用启动，自动化调度器和每日提醒服务进入运行流程。
-- `preview` 可完成构建并启动 Electron，说明构建产物加载路径可用。
+1. 使用 `pnpm dev` 或 `pnpm preview` 启动完整应用。
+2. 在“设置 -> 远程设备”中启用局域网 HTTPS。
+3. 使用设置页显示的私网地址安装并信任本地 CA。
+4. 在桌面端生成六位配对码，再由远程设备完成配对。
 
-验证过程中出现的 macOS/Electron 日志：
+开发模式远程页面来自 `.remote-pwa/renderer`，生产预览来自 `out/renderer`。出现 `PWA_NOT_BUILT` 时，重新执行 `pnpm run prepare:remote-renderer` 或完整预览构建。
 
-- `Tray icon is empty; tray integration skipped`
-- `Unable to set login item: Operation not permitted`
-- `EGL Driver message (Error) eglQueryDeviceAttribEXT: Bad attribute`
+## 常见问题
 
-这些日志没有阻断开发启动、类型检查、构建或预览启动。
+### better-sqlite3 加载失败
+
+重新执行安装脚本或 Electron rebuild，确保原生模块 ABI 与当前 Electron 一致：
+
+```bash
+pnpm install
+pnpm exec electron-rebuild -f -w better-sqlite3
+```
+
+### 开发模式白屏
+
+依次检查：
+
+- `out/preload/index.mjs` 是否存在。
+- `window.aniBridge` 是否暴露。
+- Renderer 控制台是否有组件或图标运行时错误。
+- 主进程日志中的页面地址与 `ELECTRON_RENDERER_URL` 是否一致。
+
+### 构建资源被占用
+
+运行中的托管 qBittorrent 可能占用 `out/qbittorrent`。确认没有进行中的下载后，从应用正常退出，再重新构建；不要通过强制终止破坏下载任务。
+
+### HTTPS 无法连接
+
+- 确认设置页已开启局域网 HTTPS，访问地址使用证书包含的私网 IP。
+- 确认远程端已安装并信任当前本地 CA。
+- 默认远程端口为 `18083`；托管 qBittorrent 默认端口为 `18080`，两者用途不同。
+
+### 站点返回 403 或 429
+
+检查全局代理、来源代理开关和来源熔断状态。保护期内不要高频强制刷新；AniBT 应使用单一稳定出口，应用不会轮换 IP 或模拟 Cloudflare Cookie。
+
+## 产物约束
+
+`out/`、`.remote-pwa/`、`out/test-node/`、`*.tsbuildinfo` 和临时 JS/声明文件均为生成物，不应提交到源码区。

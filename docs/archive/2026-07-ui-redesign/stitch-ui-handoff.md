@@ -1,5 +1,7 @@
 # Ani Tracker Stitch UI 全量改版交接文档
 
+> 历史归档：本文记录 2026-07-20 的分支和工作树快照，不代表当前仓库状态。
+
 交接日期：2026-07-20
 
 当前分支：`master-stich-ui`
@@ -8,7 +10,7 @@
 
 实施计划：[stitch-ui-redesign-plan.md](./stitch-ui-redesign-plan.md)
 
-人工验收：[stitch-ui-manual-acceptance-checklist.md](./stitch-ui-manual-acceptance-checklist.md)
+人工验收：原清单未纳入当前仓库快照。
 
 ## 1. 当前结论
 
@@ -36,7 +38,7 @@ cf0a0ea fix: 移除资源搜索多余工作区外框
 | UI 组件 | 优先复用 shadcn/ui；Toast 用 Sonner；重要结果进入提醒中心；破坏性操作用 AlertDialog |
 | 响应式 | 以 `1440x900`、`1024x768`、`768x1024`、`390x844` 为验收矩阵 |
 
-设计令牌和页面实现继续以 [DESIGN.md](./DESIGN.md) 为准。业务组件只消费语义令牌，不应添加页面专属固定颜色或手写暗黑覆盖。
+设计令牌和页面实现继续以 [DESIGN.md](../../DESIGN.md) 为准。业务组件只消费语义令牌，不应添加页面专属固定颜色或手写暗黑覆盖。
 
 ## 3. 已完成范围
 
@@ -63,7 +65,7 @@ cf0a0ea fix: 移除资源搜索多余工作区外框
 - 导入限制：最大 128KB、字段白名单、HSL 通道值、圆角 0-12px、拒绝 CSS/JavaScript/未知字段。
 - 设置页支持预览、导入、导出、复制、编辑、应用和删除自定义主题。
 
-图片取色提示词位于 [image-to-ani-theme-prompt.md](./image-to-ani-theme-prompt.md)，可导入示例位于 [image-palette-example.ani-theme.json](./image-palette-example.ani-theme.json)。后续不需要在应用中接入图片识别服务；将图片和提示词交给视觉模型，得到 JSON 后从设置页导入即可。
+图片取色提示词位于 [image-to-ani-theme-prompt.md](../../reference/theme-generation/image-to-ani-theme-prompt.md)，可导入示例位于 [image-palette-example.ani-theme.json](../../reference/theme-generation/image-palette-example.ani-theme.json)。后续不需要在应用中接入图片识别服务；将图片和提示词交给视觉模型，得到 JSON 后从设置页导入即可。
 
 ## 5. AniBT 网络策略
 
@@ -135,7 +137,7 @@ cf0a0ea fix: 移除资源搜索多余工作区外框
 6. 检查首页、发现、追番、搜索、下载、提醒、来源、设置切换后无双滚动、遮挡和内容跳位。
 7. 不主动高频访问 AniBT；仅在自然 403/429 时检查熔断提示与保护期内禁止重试。
 
-详细步骤与业务回归项见 [stitch-ui-manual-acceptance-checklist.md](./stitch-ui-manual-acceptance-checklist.md)。
+详细步骤与业务回归项原记录在人工验收清单中，该文件未纳入当前仓库快照。
 
 ## 9. 当前工作树保护
 
@@ -161,8 +163,8 @@ skills-lock.json
 
 1. 本文档。
 2. [stitch-ui-redesign-plan.md](./stitch-ui-redesign-plan.md)。
-3. [stitch-ui-manual-acceptance-checklist.md](./stitch-ui-manual-acceptance-checklist.md)。
-4. [DESIGN.md](./DESIGN.md)。
+3. 原人工验收清单（当前仓库未收录）。
+4. [DESIGN.md](../../DESIGN.md)。
 
 常用回归命令：
 

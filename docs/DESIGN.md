@@ -1,152 +1,113 @@
----
-name: Anime Editorial
-colors:
-  surface: '#fff8f7'
-  surface-dim: '#ecd5d2'
-  surface-bright: '#fff8f7'
-  surface-container-lowest: '#ffffff'
-  surface-container-low: '#fff0ee'
-  surface-container: '#ffe9e6'
-  surface-container-high: '#fbe3e0'
-  surface-container-highest: '#f5ddda'
-  on-surface: '#251817'
-  on-surface-variant: '#58413e'
-  inverse-surface: '#3b2d2b'
-  inverse-on-surface: '#ffedea'
-  outline: '#8c716d'
-  outline-variant: '#e0bfbb'
-  surface-tint: '#ad312b'
-  primary: '#a92f29'
-  on-primary: '#ffffff'
-  primary-container: '#cb473e'
-  on-primary-container: '#fffbff'
-  inverse-primary: '#ffb4ab'
-  secondary: '#5d5e61'
-  on-secondary: '#ffffff'
-  secondary-container: '#e2e2e5'
-  on-secondary-container: '#636467'
-  tertiary: '#00685b'
-  on-tertiary: '#ffffff'
-  tertiary-container: '#008374'
-  on-tertiary-container: '#f4fffb'
-  error: '#ba1a1a'
-  on-error: '#ffffff'
-  error-container: '#ffdad6'
-  on-error-container: '#93000a'
-  primary-fixed: '#ffdad6'
-  primary-fixed-dim: '#ffb4ab'
-  on-primary-fixed: '#410002'
-  on-primary-fixed-variant: '#8b1816'
-  secondary-fixed: '#e2e2e5'
-  secondary-fixed-dim: '#c6c6c9'
-  on-secondary-fixed: '#1a1c1e'
-  on-secondary-fixed-variant: '#454749'
-  tertiary-fixed: '#82f6e1'
-  tertiary-fixed-dim: '#64dac5'
-  on-tertiary-fixed: '#00201b'
-  on-tertiary-fixed-variant: '#005046'
-  background: '#fff8f7'
-  on-background: '#251817'
-  surface-variant: '#f5ddda'
-typography:
-  display:
-    fontFamily: Inter
-    fontSize: 48px
-    fontWeight: '800'
-    lineHeight: '1.1'
-    letterSpacing: 0
-  headline-lg:
-    fontFamily: Inter
-    fontSize: 30px
-    fontWeight: '700'
-    lineHeight: 36px
-    letterSpacing: 0
-  headline-lg-mobile:
-    fontFamily: Inter
-    fontSize: 24px
-    fontWeight: '700'
-    lineHeight: 32px
-  headline-md:
-    fontFamily: Inter
-    fontSize: 20px
-    fontWeight: '600'
-    lineHeight: 28px
-  body-lg:
-    fontFamily: Inter
-    fontSize: 16px
-    fontWeight: '400'
-    lineHeight: 24px
-  body-md:
-    fontFamily: Inter
-    fontSize: 14px
-    fontWeight: '400'
-    lineHeight: 20px
-  label-md:
-    fontFamily: Inter
-    fontSize: 12px
-    fontWeight: '600'
-    lineHeight: 16px
-    letterSpacing: 0
-  label-sm:
-    fontFamily: Inter
-    fontSize: 11px
-    fontWeight: '500'
-    lineHeight: 14px
-rounded:
-  sm: 0.125rem
-  DEFAULT: 0.375rem
-  md: 0.5rem
-  lg: 0.5rem
-  xl: 0.5rem
-  full: 9999px
-spacing:
-  page-margin: 24px
-  gutter: 16px
-  section-gap: 48px
-  stack-sm: 4px
-  stack-md: 8px
-  stack-lg: 16px
----
+# Ani Tracker 界面设计规范
 
-## Brand & Style
-The design system is built on an "Anime Editorial" narrative, blending the high-density information of a manga layout with the professional structure of a premium digital publication. The aesthetic is rooted in **Minimalism** and **Modern Corporate** styles, favoring functional density and structural integrity over decorative flair.
+最近核对：2026-07-21
 
-The UI should evoke a sense of curated authority. It treats anime data as high-end editorial content, using sharp lines, intentional whitespace, and a monochromatic foundation punctuated by vibrant, meaningful color. Small radii keep the interface precise while preserving enough softness for repeated desktop workflows.
+本文约束当前桌面端与远程端实现。主题令牌的机器可读事实以 `src/shared/theme.ts` 为准，页面结构以 `src/renderer/src/App.tsx` 和 `components/app-shell.tsx` 为准。
 
-## Colors
-The palette is inspired by the printing process. **Paper White** serves as the canvas, providing a warm, non-clinical background. **Ink Black** is used for all primary text and structural borders to ensure maximum legibility and a classic editorial feel.
+## 设计目标
 
-**Coral Red** is the primary action color, used sparingly for emphasis and high-priority interactions. The supporting semantic colors—**Cyan Blue**, **Amber Yellow**, and **Emerald Green**—are calibrated for visibility against the light background while maintaining a professional, slightly desaturated tone that doesn't distract from the artwork (posters and stills).
+Ani Tracker 使用紧凑、克制的 Anime Editorial 工具界面：内容和任务优先，海报用于识别番剧，颜色用于命令、状态与焦点。页面不得采用营销页、装饰性大标题或层层嵌套卡片。
 
-## Typography
-This design system utilizes **Inter** as the sole typeface to maintain a systematic, utilitarian aesthetic. The hierarchy is driven by weight and capitalization rather than excessive scale changes.
+## 信息层级
 
-- **Headlines:** Use Bold or ExtraBold weights with zero letter-spacing to keep dense headings stable across platforms.
-- **Labels:** Small caps or uppercase labels are used for metadata (e.g., Studio, Season, Status) to create a distinct visual texture compared to body copy.
-- **Body:** Standardized at 14px for high-density information tracking, ensuring that large lists and grids remain legible without excessive scrolling.
+- 页面标题、面包屑和主要命令直接位于内容区，不包进装饰卡片。
+- 统计摘要使用紧凑条带或网格，不用巨型数字占据首屏。
+- 列表优先支持扫描、比较和重复操作；详情按概览、播出、制作、来源和资源分区。
+- 单个重复对象可使用卡片；页面区块本身保持无框或仅用分隔线。
+- 固定格式元素使用稳定网格、宽高或纵横比，加载和状态变化不得引起明显跳动。
 
-## Layout & Spacing
-The layout follows a **Fixed-Fluid Hybrid** grid. Global page margins are set to 24px. The system relies on a 12-column grid for desktop views, transitioning to a single-column stack on mobile.
+## 应用壳
 
-Layout components should use 1px solid borders (`#101214` at 10% opacity) to define zones, much like manga panels. Spacing is tight and rhythmic, prioritizing information density. Use 8px increments for vertical stacking and 16px for horizontal gutters between content cards.
+桌面端包含 8 个一级入口：
 
-## Elevation & Depth
-This design system avoids traditional shadows to maintain its "ink on paper" aesthetic. Depth is expressed through:
+1. 首页
+2. 我的追番
+3. 新番发现
+4. 资源搜索
+5. 下载队列
+6. 提醒中心
+7. 下载源
+8. 设置
 
-- **1px Outlines:** The primary method for separating elements. All containers use a subtle border instead of a shadow.
-- **Tonal Layering:** Floating elements (like dropdowns or modals) use a slightly elevated white surface with a very crisp, small-radius shadow (2px blur) just to distinguish the overlap.
-- **Muted Overlays:** When a modal is active, the background is dimmed with a 40% Ink Black tint to maintain focus.
+宽屏使用完整侧栏，中等窗口使用图标侧栏，窄屏使用顶部入口和侧边 Sheet。导航固定，主内容独立滚动；二级番剧详情必须保留来源页、滚动位置和焦点恢复。
 
-## Shapes
-The shape language is disciplined and geometric.
-- **Buttons and Inputs:** Use a 6px radius to feel precise and technical.
-- **Media Containers:** Anime posters and thumbnails use an 8px radius to soften imagery without becoming decorative.
-- **Selection States:** Active tabs or selected list items use 0px or 6px according to their container hierarchy.
+远程端只展示首页、我的追番、新番发现、下载队列和提醒中心。不可用的桌面能力不应显示死入口。
 
-## Components
-- **Buttons:** High-contrast 6px blocks. Primary buttons use Coral Red with white text. Ghost buttons use a 1px Ink Black border.
-- **Anime Cards:** Standardized 2:3 poster ratio with 8px corners. Title and metadata sit directly below the image without a decorative outer card.
-- **Status Chips:** Small rectangular badges with 2px corners. Use semantic background colors at low opacity with readable text.
-- **Input Fields:** 1px border with a 6px radius. On focus, the border shifts to Ink Black with a 2px ring offset.
-- **Lists:** High-density rows with 1px bottom borders. Hover states use a subtle semantic muted fill.
-- **Navigation:** A sidebar or top bar using Ink Black text and minimal icons. The active state uses a Coral Red left stroke and restrained accent fill.
+## 设计令牌
+
+- 业务组件只消费 `background`、`foreground`、`primary`、`muted`、`border`、状态色和 `sidebar-*` 等语义令牌。
+- 默认主题为 Anime Editorial；另有珊瑚海岸和莓青两套内置主题。
+- `themeMode` 控制 `system`、`light`、`dark`，`themePackId` 独立控制主题包。
+- 每个主题必须完整提供浅色和深色各 38 个令牌，以及 0-12px 的受控圆角。
+- 不在业务页面写主题专属 HEX、任意 CSS 注入或手工 `dark:` 修补。
+- 珊瑚红用于主要命令，青绿/蓝用于信息与焦点，黄用于警告，绿用于成功，红用于破坏性操作；状态同时显示文字或图标。
+
+## 排版与形状
+
+- 正文以 14px 高信息密度为基线，紧凑辅助信息可使用 12px。
+- 页面标题保持清晰但克制，面板和侧栏标题不得使用 Hero 级字号。
+- 字间距为 0，不使用随视口宽度缩放的字体。
+- 控件默认小圆角；卡片和媒体容器不超过 8px，徽章可按组件规范使用更小圆角。
+- 海报保持稳定纵横比并展示真实内容，不添加统一暗色蒙层。
+
+## 组件规则
+
+优先使用 `src/renderer/src/components/ui` 中的 shadcn/ui 风格组件。
+
+| 场景 | 组件 |
+| --- | --- |
+| 明确命令 | `Button`，同一区域只保留一个主要实心操作 |
+| 图标操作 | lucide 图标按钮，提供 Tooltip 或可访问名称 |
+| 二元设置 | `Switch` 或 `Checkbox` |
+| 少量互斥模式 | `ToggleGroup` 或 `Tabs` |
+| 选项集合 | `Select`、`Popover`、`Command` |
+| 桌面侧面板 | `Sheet`，标题和操作区固定，正文滚动 |
+| 移动二级面板 | `Drawer` 或全屏视图，提供明确返回 |
+| 更多操作 | `DropdownMenu`，破坏性命令放在末尾 |
+| 删除与清空 | `AlertDialog`，明确对象和后果 |
+| 短暂反馈 | Sonner Toast |
+| 局部错误 | `Alert`，保留已有可用数据 |
+| 加载与空状态 | 与最终布局同尺寸的 `Skeleton`、可行动的 `Empty` |
+
+不要在卡片内再嵌套装饰卡片，也不要用圆角文字块替代已有的通用图标。
+
+## 响应式规则
+
+- 基准视口：`1440x900`、`1024x768`、`768x1024`、`390x844`。
+- 页面内容在所有基准视口不得横向溢出、遮挡或覆盖相邻区域。
+- 筛选工具栏允许换行；信息密集表格在窄屏转为优先字段列表或卡片。
+- 固定操作栏不得遮住最后一行内容，滚动容器必须预留对应空间。
+- 长标题优先换行，仍不够时再使用截断并提供完整值访问方式。
+- 移动触控目标不小于 44x44px；仅桌面悬停可增强效率，但不能成为唯一入口。
+
+## 操作反馈
+
+- 保存、刷新、添加、下载和删除都必须具备进行中、成功和失败状态。
+- 刷新保留旧数据；单个来源失败不清空其他来源结果。
+- 保存失败保留用户输入，存在未保存内容时关闭面板应确认。
+- 重要后台结果进入提醒中心，短期结果使用 Toast。
+- 破坏性操作明确区分“移除任务”和“删除文件”。
+
+## 可访问性
+
+- 正文对比度至少 4.5:1，焦点和关键控件边界至少 3:1。
+- 图标按钮具备可访问名称；非熟悉图标提供 Tooltip。
+- 键盘焦点可见，Dialog、Sheet、Popover 关闭后恢复合理焦点。
+- 颜色不是唯一状态表达，加载、空、错误、禁用、选中和焦点状态都必须可辨识。
+
+## 禁止项
+
+- 不使用营销 Hero、渐变背景、装饰光球或大面积单色铺陈。
+- 不使用页面专属硬编码颜色绕过主题系统。
+- 不把完整设置、路径或危险操作暴露给远程端。
+- 不用说明性文案讲解界面如何使用；控件本身应表达意图。
+- 不让运行时错误退化为纯白屏。
+
+## 验证
+
+```powershell
+pnpm.cmd run typecheck
+pnpm.cmd run test:theme
+```
+
+涉及布局或交互的改动还应在四个基准视口检查浅色、深色、跟随系统和至少一套自定义主题。
