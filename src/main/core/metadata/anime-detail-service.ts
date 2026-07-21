@@ -1,10 +1,7 @@
 import type { AnimeDetailResult } from "@shared/contracts";
 import type { Anime } from "@shared/domain";
 import { mergeAnimeMetadataBatches, type AnimeDetailMetadataProvider } from "./metadata-provider";
-import { AniListMetadataProvider } from "./anilist-metadata-provider";
-import { BangumiMetadataProvider } from "./bangumi-metadata-provider";
-import { MikanMetadataProvider } from "./mikan-metadata-provider";
-import { MetadataHttpClient } from "./metadata-http-client";
+import { createAnimeMetadataProviders } from "./metadata-provider-factory";
 import type { AppRepository } from "../repositories/app-repository";
 import { logger } from "../logger";
 
@@ -130,11 +127,6 @@ export class AnimeDetailService {
       return this.providers;
     }
     const settings = await this.repository.getSettings();
-    const httpClient = new MetadataHttpClient(settings.network.metadataProxy);
-    return [
-      new BangumiMetadataProvider(undefined, httpClient),
-      new AniListMetadataProvider(httpClient),
-      new MikanMetadataProvider(undefined, httpClient)
-    ];
+    return createAnimeMetadataProviders(settings, this.repository);
   }
 }

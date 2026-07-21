@@ -211,6 +211,16 @@ export interface ReleaseSourceSyncState {
   lastModified?: string;
 }
 
+/** 记录通用网络请求熔断状态，与具体业务同步状态解耦。 */
+export interface RequestCircuitState {
+  key: string;
+  group: string;
+  requestHost?: string;
+  lastRequestAt?: string;
+  failureCount: number;
+  backoffUntil?: string;
+}
+
 export interface ReleaseSourceMeta {
   sourceUrl?: string;
   rssUrl?: string;

@@ -1,4 +1,4 @@
-import type { ReleaseSourceConfig, ReleaseSourceSyncState } from "@shared/domain";
+import type { ReleaseSourceConfig, ReleaseSourceSyncState, RequestCircuitState } from "@shared/domain";
 import {
   getSourceMinimumRequestIntervalMs,
   MAX_SOURCE_REQUEST_INTERVAL_MS,
@@ -10,13 +10,17 @@ import {
   type MetadataFetchOptions
 } from "../metadata/metadata-http-client";
 import type { AppRepository } from "../repositories/app-repository";
+import {
+  buildHttpRequestKey,
+  defaultRequestCircuitBreaker,
+  RequestCircuitBreaker,
+  type RequestCircuitStateStore,
+  type RequestCircuitTarget,
+  supportsRequestCircuitStateStore
+} from "../network/request-circuit-breaker";
 import type { ReleaseHttpClient } from "./mikan-source";
 
-const FORBIDDEN_CIRCUIT_BACKOFF_MS = [10 * 60_000, 20 * 60_000, 30 * 60_000] as const;
-const RATE_LIMIT_BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 30 * 60_000] as const;
-const TRANSIENT_BACKOFF_MS = [30_000, 2 * 60_000, 30 * 60_000] as const;
-const CIRCUIT_FAILURE_COUNT = 3;
-const CIRCUIT_BACKOFF_MS = 30 * 60_000;
+const RELEASE_SOURCE_CIRCUIT_GROUP = "release-source";
 
 interface HostQueueState {
   tail: Promise<void>;
@@ -32,21 +36,23 @@ export interface SourceRequestSchedulerOptions {
   now?: () => number;
   random?: () => number;
   sleep?: (delayMs: number) => Promise<void>;
+  circuitBreaker?: RequestCircuitBreaker;
 }
 
 /** 按域名串行调度下载源请求，并持久化站点熔断状态。 */
 export class SourceRequestScheduler {
   private readonly hostQueues = new Map<string, HostQueueState>();
   private readonly inFlightRequests = new Map<string, Promise<Response>>();
-  private readonly sourceStates = new Map<string, ReleaseSourceSyncState>();
   private readonly now: () => number;
   private readonly random: () => number;
   private readonly sleep: (delayMs: number) => Promise<void>;
+  private readonly circuitBreaker: RequestCircuitBreaker;
 
   constructor(options: SourceRequestSchedulerOptions = {}) {
     this.now = options.now ?? Date.now;
     this.random = options.random ?? Math.random;
     this.sleep = options.sleep ?? wait;
+    this.circuitBreaker = options.circuitBreaker ?? new RequestCircuitBreaker({ now: this.now });
   }
 
   async schedule(
@@ -94,8 +100,9 @@ export class SourceRequestScheduler {
       .catch(() => undefined)
       .then(async () => {
         try {
-          const sourceState = await this.loadState(config.id, stateStore);
-          await this.assertNotBlocked(config, sourceState, host, stateStore);
+          const target = createReleaseSourceCircuitTarget(config);
+          const circuitStateStore = resolveCircuitStateStore(stateStore);
+          const sourceState = await this.circuitBreaker.getState(target, circuitStateStore);
           const intervalMs = normalizeRequestInterval(config, url);
           const persistedNextAt = parseTime(sourceState.lastRequestAt) + intervalMs;
           const waitUntil = Math.max(queue.nextAllowedAtMs, persistedNextAt);
@@ -103,133 +110,16 @@ export class SourceRequestScheduler {
 
           const jitterMs = Math.round(intervalMs * 0.2 * clampRandom(this.random()));
           queue.nextAllowedAtMs = this.now() + intervalMs + jitterMs;
-          const response = await operation();
-          await this.recordResponse(config, host, response, stateStore);
+          const response = await this.circuitBreaker.execute(target, url, operation, {
+            stateStore: circuitStateStore
+          });
           resolveResult(response);
         } catch (error) {
-          try {
-            await this.recordFailure(config, host, error, stateStore);
-          } catch (stateError) {
-            logger.warn("下载源请求失败状态保存失败", {
-              sourceId: config.id,
-              message: stateError instanceof Error ? stateError.message : String(stateError)
-            });
-          } finally {
-            rejectResult(error);
-          }
+          rejectResult(error);
         }
       });
 
     return result;
-  }
-
-  private async loadState(sourceId: string, stateStore?: SourceRequestStateStore): Promise<ReleaseSourceSyncState> {
-    if (stateStore) {
-      const persisted = (await stateStore.listSourceSyncStates()).find((state) => state.sourceId === sourceId);
-      if (persisted) {
-        this.sourceStates.set(sourceId, persisted);
-        return persisted;
-      }
-    }
-    return this.sourceStates.get(sourceId) ?? createEmptyState(sourceId);
-  }
-
-  private async assertNotBlocked(
-    config: ReleaseSourceConfig,
-    state: ReleaseSourceSyncState,
-    host: string,
-    stateStore?: SourceRequestStateStore
-  ): Promise<void> {
-    const states = [
-      ...this.sourceStates.values(),
-      ...(stateStore ? await stateStore.listSourceSyncStates() : [])
-    ];
-    const hostBlockedUntilMs = states
-      .filter((item) => item.requestHost === host)
-      .reduce((latest, item) => Math.max(latest, parseTime(item.backoffUntil)), 0);
-    const blockedUntilMs = Math.max(parseTime(state.backoffUntil), hostBlockedUntilMs);
-    if (blockedUntilMs <= this.now()) {
-      return;
-    }
-    const seconds = Math.max(1, Math.ceil((blockedUntilMs - this.now()) / 1000));
-    throw new Error(`${config.name} 正在熔断保护中，请 ${seconds} 秒后重试`);
-  }
-
-  private async recordResponse(
-    config: ReleaseSourceConfig,
-    host: string,
-    response: Response,
-    stateStore?: SourceRequestStateStore
-  ): Promise<void> {
-    const current = await this.loadState(config.id, stateStore);
-    const nowIso = new Date(this.now()).toISOString();
-    if (response.status === 403 || response.status === 429) {
-      const failureCount = current.requestFailureCount + 1;
-      const backoffMs = resolveAccessBackoffMs(response, failureCount, this.now());
-      await this.saveState({
-        ...current,
-        requestHost: host,
-        lastRequestAt: nowIso,
-        requestFailureCount: failureCount,
-        backoffUntil: new Date(this.now() + backoffMs).toISOString()
-      }, stateStore);
-      logger.warn("下载源访问熔断器已开启", {
-        sourceId: config.id,
-        status: response.status,
-        failureCount,
-        backoffMs
-      });
-      return;
-    }
-
-    if (response.status >= 500) {
-      const failureCount = current.requestFailureCount + 1;
-      const backoffMs = resolveTransientBackoffMs(failureCount);
-      await this.saveState({
-        ...current,
-        requestHost: host,
-        lastRequestAt: nowIso,
-        requestFailureCount: failureCount,
-        backoffUntil: new Date(this.now() + backoffMs).toISOString()
-      }, stateStore);
-      return;
-    }
-
-    await this.saveState({
-      ...current,
-      requestHost: host,
-      lastRequestAt: nowIso,
-      requestFailureCount: 0,
-      backoffUntil: undefined
-    }, stateStore);
-  }
-
-  private async recordFailure(
-    config: ReleaseSourceConfig,
-    host: string,
-    error: unknown,
-    stateStore?: SourceRequestStateStore
-  ): Promise<void> {
-    if (error instanceof Error && error.message.includes("正在熔断保护中")) {
-      return;
-    }
-    const current = await this.loadState(config.id, stateStore);
-    const failureCount = current.requestFailureCount + 1;
-    const backoffMs = resolveTransientBackoffMs(failureCount);
-    await this.saveState({
-      ...current,
-      requestHost: host,
-      lastRequestAt: new Date(this.now()).toISOString(),
-      requestFailureCount: failureCount,
-      backoffUntil: new Date(this.now() + backoffMs).toISOString()
-    }, stateStore);
-  }
-
-  private async saveState(state: ReleaseSourceSyncState, stateStore?: SourceRequestStateStore): Promise<void> {
-    this.sourceStates.set(state.sourceId, state);
-    if (stateStore) {
-      await stateStore.upsertSourceSyncState(state);
-    }
   }
 }
 
@@ -260,6 +150,19 @@ function createEmptyState(sourceId: string): ReleaseSourceSyncState {
   return { sourceId, requestFailureCount: 0 };
 }
 
+/** 读取下载源对应的通用熔断状态，并兼容尚未迁移的状态仓库。 */
+export async function getReleaseSourceCircuitState(
+  sourceId: string,
+  sourceName: string,
+  stateStore: SourceRequestStateStore | RequestCircuitStateStore,
+  circuitBreaker = defaultRequestCircuitBreaker
+): Promise<RequestCircuitState> {
+  return circuitBreaker.getState(
+    createReleaseSourceCircuitTarget({ id: sourceId, name: sourceName } as ReleaseSourceConfig),
+    resolveCircuitStateStore(stateStore)
+  );
+}
+
 /** 规范化来源间隔，并强制执行站点级访问频率下限。 */
 function normalizeRequestInterval(config: ReleaseSourceConfig, requestUrl: string): number {
   const siteMinimumMs = getSourceMinimumRequestIntervalMs(config, requestUrl);
@@ -272,44 +175,77 @@ function normalizeRequestInterval(config: ReleaseSourceConfig, requestUrl: strin
   );
 }
 
+/** 判断仓库是否支持旧下载源状态接口。 */
 function supportsSourceRequestStateStore(value: AppRepository | undefined): value is AppRepository {
   return Boolean(value)
     && typeof value!.listSourceSyncStates === "function"
     && typeof value!.upsertSourceSyncState === "function";
 }
 
-function resolveAccessBackoffMs(response: Response, failureCount: number, nowMs: number): number {
-  const retryAfterMs = parseRetryAfter(response.headers.get("retry-after"), nowMs);
-  const schedule = response.status === 403 ? FORBIDDEN_CIRCUIT_BACKOFF_MS : RATE_LIMIT_BACKOFF_MS;
-  const index = Math.min(schedule.length - 1, Math.max(0, failureCount - 1));
-  const configured = failureCount >= CIRCUIT_FAILURE_COUNT
-    ? Math.max(CIRCUIT_BACKOFF_MS, schedule[index])
-    : schedule[index];
-  return Math.max(configured, retryAfterMs);
-}
-
-function resolveTransientBackoffMs(failureCount: number): number {
-  if (failureCount >= CIRCUIT_FAILURE_COUNT) {
-    return CIRCUIT_BACKOFF_MS;
-  }
-  return TRANSIENT_BACKOFF_MS[Math.min(TRANSIENT_BACKOFF_MS.length - 1, Math.max(0, failureCount - 1))];
-}
-
-function parseRetryAfter(value: string | null, nowMs: number): number {
-  if (!value) {
-    return 0;
-  }
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) {
-    return Math.max(0, Math.round(seconds * 1000));
-  }
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? Math.max(0, timestamp - nowMs) : 0;
-}
-
+/** 为下载源请求生成包含来源标识的去重键。 */
 function buildRequestKey(sourceId: string, url: string, options: MetadataFetchOptions): string {
-  const headers = [...new Headers(options.headers).entries()].sort(([left], [right]) => left.localeCompare(right));
-  return JSON.stringify([sourceId, options.method ?? "GET", url, headers]);
+  return JSON.stringify([sourceId, buildHttpRequestKey(url, options)]);
+}
+
+/** 为下载源创建通用熔断目标标识。 */
+function createReleaseSourceCircuitTarget(config: Pick<ReleaseSourceConfig, "id" | "name">): RequestCircuitTarget {
+  return {
+    key: `${RELEASE_SOURCE_CIRCUIT_GROUP}:${config.id}`,
+    group: RELEASE_SOURCE_CIRCUIT_GROUP,
+    name: config.name,
+    shareByHost: true
+  };
+}
+
+const legacyStateStoreAdapters = new WeakMap<object, RequestCircuitStateStore>();
+
+/** 将旧下载源同步状态仓库适配到通用熔断状态接口。 */
+function resolveCircuitStateStore(
+  stateStore?: SourceRequestStateStore | RequestCircuitStateStore
+): RequestCircuitStateStore | undefined {
+  if (!stateStore) {
+    return undefined;
+  }
+  if (supportsRequestCircuitStateStore(stateStore)) {
+    return stateStore;
+  }
+
+  const key = stateStore as object;
+  const cached = legacyStateStoreAdapters.get(key);
+  if (cached) {
+    return cached;
+  }
+  const legacyStore = stateStore as SourceRequestStateStore;
+  const adapter: RequestCircuitStateStore = {
+    listRequestCircuitStates: async () => (await legacyStore.listSourceSyncStates()).map(mapLegacySourceState),
+    upsertRequestCircuitState: async (state) => {
+      const sourceId = state.key.replace(`${RELEASE_SOURCE_CIRCUIT_GROUP}:`, "");
+      const previous = (await legacyStore.listSourceSyncStates()).find((item) => item.sourceId === sourceId)
+        ?? createEmptyState(sourceId);
+      await legacyStore.upsertSourceSyncState({
+        ...previous,
+        requestHost: state.requestHost,
+        lastRequestAt: state.lastRequestAt,
+        requestFailureCount: state.failureCount,
+        backoffUntil: state.backoffUntil
+      });
+      return (await legacyStore.listSourceSyncStates()).map(mapLegacySourceState);
+    }
+  };
+  legacyStateStoreAdapters.set(key, adapter);
+  return adapter;
+}
+
+/** 将旧下载源请求状态映射为通用熔断状态。 */
+function mapLegacySourceState(state: ReleaseSourceSyncState): RequestCircuitState {
+  return {
+    key: `${RELEASE_SOURCE_CIRCUIT_GROUP}:${state.sourceId}`,
+    group: RELEASE_SOURCE_CIRCUIT_GROUP,
+    requestHost: state.requestHost,
+    lastRequestAt: state.lastRequestAt,
+    failureCount: state.requestFailureCount,
+    backoffUntil: state.backoffUntil
+  };
 }
 
 function safeHost(value: string): string {

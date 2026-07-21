@@ -1,10 +1,16 @@
 import type { SourceSyncRunResult } from "@shared/contracts";
-import type { AppSettings, NotificationRecord, ReleaseSourceConfig, ReleaseSourceSyncState } from "@shared/domain";
+import type {
+  AppSettings,
+  NotificationRecord,
+  ReleaseSourceConfig,
+  ReleaseSourceSyncState,
+  RequestCircuitState
+} from "@shared/domain";
 import { logger } from "../logger";
 import { MetadataHttpClient } from "../metadata/metadata-http-client";
 import type { AppRepository } from "../repositories/app-repository";
 import { createReleaseSource, isMikanSiteConfig } from "./release-source-service";
-import { createSourceHttpClient } from "./source-http-client";
+import { createSourceHttpClient, getReleaseSourceCircuitState } from "./source-http-client";
 import type { ReleaseHttpClient } from "./mikan-source";
 
 const SYNC_RELEASE_LIMIT = 200;
@@ -103,6 +109,7 @@ export class SourceSyncService {
     } catch (error) {
       const currentMessage = formatSourceSyncError(error);
       const latestState = await this.getState(source.id);
+      const circuitState = await getReleaseSourceCircuitState(source.id, source.name, this.repository);
       const message = preserveSourceSyncRootCause(currentMessage, latestState.lastSyncError);
       await this.repository.upsertSourceSyncState({
         ...latestState,
@@ -114,8 +121,8 @@ export class SourceSyncService {
         sourceId: source.id,
         message,
         circuitMessage: currentMessage === message ? undefined : currentMessage,
-        requestFailureCount: latestState.requestFailureCount,
-        backoffUntil: latestState.backoffUntil
+        requestFailureCount: circuitState.failureCount,
+        backoffUntil: circuitState.backoffUntil
       });
     }
   }
@@ -133,13 +140,14 @@ export class SourceSyncService {
     if (!result.errors.length) {
       return;
     }
-    const states = await this.repository.listSourceSyncStates();
     const sourceById = new Map(sources.map((source) => [source.id, source]));
-    const stateBySourceId = new Map(states.map((state) => [state.sourceId, state]));
-    const failedSources = result.errors.map((error) => ({
-      error,
-      source: sourceById.get(error.sourceId),
-      state: stateBySourceId.get(error.sourceId)
+    const failedSources = await Promise.all(result.errors.map(async (error) => {
+      const source = sourceById.get(error.sourceId);
+      return {
+        error,
+        source,
+        state: await getReleaseSourceCircuitState(error.sourceId, source?.name ?? error.sourceId, this.repository)
+      };
     }));
     const title = failedSources.length === 1
       ? `${failedSources[0].source?.name ?? failedSources[0].error.sourceId} 同步失败`
@@ -216,14 +224,14 @@ function preserveSourceSyncRootCause(currentMessage: string, previousMessage?: s
 function formatSourceSyncFailure(
   error: SourceSyncRunResult["errors"][number],
   source?: ReleaseSourceConfig,
-  state?: ReleaseSourceSyncState
+  state?: RequestCircuitState
 ): string {
   const parts = [
     `失败来源：${source?.name ?? error.sourceId}（${error.sourceId}）`,
     `原因：${trimTerminalPunctuation(error.message)}`
   ];
-  if (state && state.requestFailureCount > 0) {
-    parts.push(`连续失败 ${state.requestFailureCount} 次`);
+  if (state && state.failureCount > 0) {
+    parts.push(`连续失败 ${state.failureCount} 次`);
   }
   const retryAt = formatRetryAt(state?.backoffUntil);
   if (retryAt) {

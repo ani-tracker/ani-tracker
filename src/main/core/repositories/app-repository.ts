@@ -13,6 +13,7 @@ import type {
   MyAnime,
   NotificationRecord,
   Release,
+  RequestCircuitState,
   ReleaseSourceConfig,
   ReleaseSourceSyncState
 } from "@shared/domain";
@@ -78,6 +79,8 @@ export interface AppRepository {
   upsertSource(source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]>;
   listSourceSyncStates(): Promise<ReleaseSourceSyncState[]>;
   upsertSourceSyncState(state: ReleaseSourceSyncState): Promise<ReleaseSourceSyncState[]>;
+  listRequestCircuitStates(): Promise<RequestCircuitState[]>;
+  upsertRequestCircuitState(state: RequestCircuitState): Promise<RequestCircuitState[]>;
   listCachedReleases(sourceIds?: string[], limit?: number): Promise<Release[]>;
   upsertCachedReleases(releases: Release[]): Promise<number>;
   pruneCachedReleases(before: string): Promise<number>;

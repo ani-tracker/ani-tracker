@@ -9,11 +9,12 @@ import type {
   MediaFile,
   MyAnime,
   NotificationRecord,
+  RequestCircuitState,
   ReleaseSourceConfig,
   ReleaseSourceSyncState
 } from "../domain";
 
-export const APP_DATA_VERSION = 20;
+export const APP_DATA_VERSION = 21;
 
 export interface AppDataFile {
   version: number;
@@ -25,6 +26,7 @@ export interface AppDataFile {
   fansubGroups: FansubGroup[];
   sources: ReleaseSourceConfig[];
   sourceSyncStates?: ReleaseSourceSyncState[];
+  requestCircuitStates?: RequestCircuitState[];
   downloads: DownloadTask[];
   mediaFiles: MediaFile[];
   notifications: NotificationRecord[];

@@ -738,7 +738,7 @@ function getSourceStatus(
 }
 
 const defaultMetadataProxySettings: MetadataProxySettings = {
-  mode: "off",
+  mode: "system",
   timeoutMs: 15_000
 };
 

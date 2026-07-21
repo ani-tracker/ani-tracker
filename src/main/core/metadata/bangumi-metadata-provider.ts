@@ -14,7 +14,7 @@ import {
   type AnimeDetailMetadataProvider,
   type MonthlyAnimeMetadataProvider
 } from "./metadata-provider";
-import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
+import { defaultMetadataHttpClient, type MetadataHttpTransport } from "./metadata-http-client";
 import { logger } from "../logger";
 import { BANGUMI_USER_AGENT } from "../http/user-agents";
 
@@ -71,7 +71,7 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider, An
 
   constructor(
     private readonly baseUrl = BANGUMI_API_BASE_URL,
-    private readonly httpClient: MetadataHttpClient = defaultMetadataHttpClient
+    private readonly httpClient: MetadataHttpTransport = defaultMetadataHttpClient
   ) {}
 
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {

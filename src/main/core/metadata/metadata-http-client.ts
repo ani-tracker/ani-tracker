@@ -33,6 +33,11 @@ export interface MetadataFetchOptions extends RequestInit {
   timeoutMs?: number;
 }
 
+/** 元数据来源依赖的最小网络传输接口，便于组合代理、熔断和测试实现。 */
+export interface MetadataHttpTransport {
+  fetch(input: string | URL, options?: MetadataFetchOptions): Promise<Response>;
+}
+
 const directProxySettings: MetadataProxySettings = {
   mode: "off",
   timeoutMs: DEFAULT_METADATA_TIMEOUT_MS
@@ -48,7 +53,7 @@ const defaultMetadataHttpRuntime: MetadataHttpRuntime = {
   fallbackFetch: (input, options) => fetch(input, options)
 };
 
-export class MetadataHttpClient {
+export class MetadataHttpClient implements MetadataHttpTransport {
   constructor(
     private readonly proxySettings: MetadataProxySettings = directProxySettings,
     private readonly runtime: MetadataHttpRuntime = defaultMetadataHttpRuntime

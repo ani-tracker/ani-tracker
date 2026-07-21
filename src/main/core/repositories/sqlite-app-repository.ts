@@ -14,6 +14,7 @@ import type {
   MyAnime,
   NotificationRecord,
   Release,
+  RequestCircuitState,
   ReleaseSourceConfig,
   ReleaseSourceSyncState,
   TorrentFile
@@ -598,6 +599,17 @@ export class SqliteAppRepository implements AppRepository {
     return this.listSourceSyncStates();
   }
 
+  /** 读取所有业务作用域共享的网络熔断状态。 */
+  async listRequestCircuitStates(): Promise<RequestCircuitState[]> {
+    return this.all("SELECT * FROM request_circuit_state ORDER BY circuit_key").map(mapRequestCircuitState);
+  }
+
+  /** 保存通用网络熔断状态。 */
+  async upsertRequestCircuitState(state: RequestCircuitState): Promise<RequestCircuitState[]> {
+    this.upsertRequestCircuitStateRow(state);
+    return this.listRequestCircuitStates();
+  }
+
   /** 读取最近采集的资源，用于重启后搜索缓存和来源故障兜底。 */
   async listCachedReleases(sourceIds?: string[], limit = 2_000): Promise<Release[]> {
     const normalizedLimit = Math.max(1, Math.min(10_000, Math.round(limit)));
@@ -900,6 +912,37 @@ export class SqliteAppRepository implements AppRepository {
       this.ensureColumn("anime_catalog", "detail_json", "detail_json TEXT NOT NULL DEFAULT '{}'");
     }
 
+    if (currentSchemaVersion < 14) {
+      this.database.exec(`
+        INSERT OR IGNORE INTO request_circuit_state (
+          circuit_key, circuit_group, request_host, last_request_at, failure_count, backoff_until, updated_at
+        )
+        SELECT
+          'release-source:' || source_id,
+          'release-source',
+          request_host,
+          last_request_at,
+          request_failure_count,
+          backoff_until,
+          updated_at
+        FROM release_source_sync_state
+        WHERE request_host IS NOT NULL
+          OR last_request_at IS NOT NULL
+          OR request_failure_count > 0
+          OR backoff_until IS NOT NULL;
+
+        UPDATE release_source_sync_state
+        SET request_host = NULL,
+            last_request_at = NULL,
+            request_failure_count = 0,
+            backoff_until = NULL;
+      `);
+      logger.info("SQLite 通用网络熔断状态迁移完成", {
+        fromVersion: currentSchemaVersion,
+        toVersion: SQLITE_SCHEMA_VERSION
+      });
+    }
+
     if (currentSchemaVersion < 8) {
       this.database.exec(`
         UPDATE my_anime
@@ -943,7 +986,20 @@ export class SqliteAppRepository implements AppRepository {
     data.animeCatalog.forEach((anime) => this.upsertAnime(anime));
     data.fansubGroups.forEach((fansub) => this.upsertFansub(fansub));
     data.sources.forEach((source) => this.upsertSourceRow(source));
-    (data.sourceSyncStates ?? []).forEach((state) => this.upsertSourceSyncStateRow(state));
+    (data.sourceSyncStates ?? []).forEach((state) => {
+      this.upsertSourceSyncStateRow(state);
+      if (state.requestHost || state.lastRequestAt || state.requestFailureCount > 0 || state.backoffUntil) {
+        this.upsertRequestCircuitStateRow({
+          key: `release-source:${state.sourceId}`,
+          group: "release-source",
+          requestHost: state.requestHost,
+          lastRequestAt: state.lastRequestAt,
+          failureCount: state.requestFailureCount,
+          backoffUntil: state.backoffUntil
+        });
+      }
+    });
+    (data.requestCircuitStates ?? []).forEach((state) => this.upsertRequestCircuitStateRow(state));
     data.myAnime.forEach((item) => this.upsertMyAnimeRow(item));
     data.episodes.forEach((episode) => this.upsertEpisodeRow(episode));
     data.episodePreferences.forEach((preference) => this.upsertEpisodePreferenceRow(preference));
@@ -978,6 +1034,7 @@ export class SqliteAppRepository implements AppRepository {
       fansubGroups: this.all("SELECT * FROM fansub_group ORDER BY name").map(mapFansub),
       sources: this.all("SELECT * FROM release_source ORDER BY name").map(mapSource),
       sourceSyncStates: this.all("SELECT * FROM release_source_sync_state ORDER BY source_id").map(mapSourceSyncState),
+      requestCircuitStates: this.all("SELECT * FROM request_circuit_state ORDER BY circuit_key").map(mapRequestCircuitState),
       downloads,
       mediaFiles,
       notifications: sortNotifications(this.all("SELECT * FROM notification").map(mapNotification)),
@@ -1052,7 +1109,7 @@ export class SqliteAppRepository implements AppRepository {
   private clearAllData(): void {
     for (const table of [
       "notification", "media_file", "torrent_file", "download_task", "episode_preference", "episode",
-      "release_search_cache", "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_fansub_group", "anime_alias", "release", "anime_catalog", "fansub_group",
+      "request_circuit_state", "release_search_cache", "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_fansub_group", "anime_alias", "release", "anime_catalog", "fansub_group",
       "release_source", "app_settings", "app_state", "app_meta"
     ]) {
       this.database.exec(`DELETE FROM ${table}`);
@@ -1365,6 +1422,31 @@ export class SqliteAppRepository implements AppRepository {
         lastSyncError: state.lastSyncError ?? null,
         etag: state.etag ?? null,
         lastModified: state.lastModified ?? null,
+        updatedAt: nowIso()
+      }
+    );
+  }
+
+  private upsertRequestCircuitStateRow(state: RequestCircuitState): void {
+    this.run(
+      `INSERT INTO request_circuit_state (
+        circuit_key, circuit_group, request_host, last_request_at, failure_count, backoff_until, updated_at
+      ) VALUES (
+        @key, @group, @requestHost, @lastRequestAt, @failureCount, @backoffUntil, @updatedAt
+      ) ON CONFLICT(circuit_key) DO UPDATE SET
+        circuit_group = excluded.circuit_group,
+        request_host = excluded.request_host,
+        last_request_at = excluded.last_request_at,
+        failure_count = excluded.failure_count,
+        backoff_until = excluded.backoff_until,
+        updated_at = excluded.updated_at`,
+      {
+        key: state.key,
+        group: state.group,
+        requestHost: state.requestHost ?? null,
+        lastRequestAt: state.lastRequestAt ?? null,
+        failureCount: Math.max(0, Math.round(state.failureCount)),
+        backoffUntil: state.backoffUntil ?? null,
         updatedAt: nowIso()
       }
     );
@@ -2166,6 +2248,18 @@ function mapSourceSyncState(row: SqliteRow): ReleaseSourceSyncState {
     lastSyncError: optionalString(row.last_sync_error),
     etag: optionalString(row.etag),
     lastModified: optionalString(row.last_modified)
+  });
+}
+
+/** 将 SQLite 行映射为通用网络熔断状态。 */
+function mapRequestCircuitState(row: SqliteRow): RequestCircuitState {
+  return compact({
+    key: asString(row.circuit_key),
+    group: asString(row.circuit_group),
+    requestHost: optionalString(row.request_host),
+    lastRequestAt: optionalString(row.last_request_at),
+    failureCount: optionalNumber(row.failure_count) ?? 0,
+    backoffUntil: optionalString(row.backoff_until)
   });
 }
 

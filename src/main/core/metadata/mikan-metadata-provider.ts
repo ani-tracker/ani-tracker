@@ -7,7 +7,7 @@ import {
   type AnimeDetailMetadataProvider,
   type MonthlyAnimeMetadataProvider
 } from "./metadata-provider";
-import { defaultMetadataHttpClient, type MetadataHttpClient } from "./metadata-http-client";
+import { defaultMetadataHttpClient, type MetadataHttpTransport } from "./metadata-http-client";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 
 const DEFAULT_MIKAN_BASE_URL = "https://mikanani.me/";
@@ -41,7 +41,7 @@ export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider, Anim
 
   constructor(
     private readonly baseUrl = DEFAULT_MIKAN_BASE_URL,
-    private readonly httpClient: MetadataHttpClient = defaultMetadataHttpClient
+    private readonly httpClient: MetadataHttpTransport = defaultMetadataHttpClient
   ) {}
 
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {
@@ -272,7 +272,7 @@ function parseDurationMinutes(value: string | undefined): number | undefined {
   return total > 0 ? total : parsePositiveInteger(value);
 }
 
-async function fetchText(url: string, httpClient: MetadataHttpClient): Promise<string> {
+async function fetchText(url: string, httpClient: MetadataHttpTransport): Promise<string> {
   const response = await httpClient.fetch(url, {
     source: "mikan",
     timeoutMs: MIKAN_FETCH_TIMEOUT_MS,

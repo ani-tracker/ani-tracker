@@ -82,7 +82,7 @@ export abstract class DefaultSettingsProvider {
       },
       network: {
         metadataProxy: {
-          mode: "off",
+          mode: "system",
           timeoutMs: 15_000
         },
         remoteAccess: {

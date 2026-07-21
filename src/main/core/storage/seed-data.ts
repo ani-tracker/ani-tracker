@@ -15,6 +15,7 @@ export function createSeedData(settingsProvider: DefaultSettingsProvider = creat
     fansubGroups: [],
     sources: defaultSourceConfigs,
     sourceSyncStates: [],
+    requestCircuitStates: [],
     downloads: [],
     mediaFiles: [],
     notifications: [],

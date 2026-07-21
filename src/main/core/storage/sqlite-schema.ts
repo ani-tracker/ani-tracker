@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 13;
+export const SQLITE_SCHEMA_VERSION = 14;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -177,6 +177,19 @@ CREATE TABLE IF NOT EXISTS release_source_sync_state (
   last_modified TEXT,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS request_circuit_state (
+  circuit_key TEXT PRIMARY KEY,
+  circuit_group TEXT NOT NULL,
+  request_host TEXT,
+  last_request_at TEXT,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  backoff_until TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_request_circuit_group_host
+  ON request_circuit_state (circuit_group, request_host);
 
 CREATE TABLE IF NOT EXISTS release (
   id TEXT PRIMARY KEY,

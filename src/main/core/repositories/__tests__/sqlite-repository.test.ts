@@ -323,6 +323,14 @@ test("SQLite 重启后保留下载源网络策略、退避状态和增量资源"
     backoffUntil: "2026-07-18T01:05:00.000Z",
     lastSuccessfulSyncAt: "2026-07-18T00:30:00.000Z"
   });
+  await first.repository.upsertRequestCircuitState({
+    key: "release-source:anibt",
+    group: "release-source",
+    requestHost: "anibt.net",
+    lastRequestAt: "2026-07-18T01:00:00.000Z",
+    failureCount: 2,
+    backoffUntil: "2026-07-18T01:05:00.000Z"
+  });
   const added = await first.repository.upsertCachedReleases([enrichReleaseFromTitle({
     id: "anibt:persisted-release",
     title: "[测试组] 测试番 - 01 [1080p][HEVC][10bit]",
@@ -338,15 +346,53 @@ test("SQLite 重启后保留下载源网络策略、退避状态和增量资源"
   await second.initialize();
   const restoredSource = (await second.repository.listSources()).find((source) => source.id === "anibt");
   const restoredState = (await second.repository.listSourceSyncStates()).find((state) => state.sourceId === "anibt");
+  const restoredCircuit = (await second.repository.listRequestCircuitStates())
+    .find((state) => state.key === "release-source:anibt");
   const restoredReleases = await second.repository.listCachedReleases(["anibt"]);
   assert.equal(restoredSource?.useProxy, false);
   assert.equal(restoredSource?.requestIntervalMs, 2_750);
   assert.equal(restoredState?.requestFailureCount, 2);
   assert.equal(restoredState?.backoffUntil, "2026-07-18T01:05:00.000Z");
+  assert.equal(restoredCircuit?.failureCount, 2);
+  assert.equal(restoredCircuit?.backoffUntil, "2026-07-18T01:05:00.000Z");
   assert.equal(restoredReleases[0]?.id, "anibt:persisted-release");
   assert.equal(restoredReleases[0]?.normalizedVideoCodec, "H.265/HEVC");
   assert.equal(restoredReleases[0]?.bitDepth, 10);
   second.close();
+});
+
+test("SQLite schema 13 将旧下载源熔断字段迁移到通用状态表", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  await first.repository.upsertSourceSyncState({
+    sourceId: "anibt",
+    requestHost: "anibt.net",
+    lastRequestAt: "2026-07-18T01:00:00.000Z",
+    requestFailureCount: 2,
+    backoffUntil: "2026-07-18T01:05:00.000Z"
+  });
+  first.close();
+
+  const legacyDatabase = new DatabaseConstructor(fixture.databasePath);
+  try {
+    legacyDatabase.prepare("DELETE FROM request_circuit_state").run();
+    legacyDatabase.prepare("UPDATE app_meta SET value = '13' WHERE key = 'schema_version'").run();
+  } finally {
+    legacyDatabase.close();
+  }
+
+  const migrated = createRepositoryRuntime(fixture.options);
+  await migrated.initialize();
+  const circuit = (await migrated.repository.listRequestCircuitStates())
+    .find((state) => state.key === "release-source:anibt");
+  const legacy = (await migrated.repository.listSourceSyncStates()).find((state) => state.sourceId === "anibt");
+  assert.equal(circuit?.requestHost, "anibt.net");
+  assert.equal(circuit?.failureCount, 2);
+  assert.equal(circuit?.backoffUntil, "2026-07-18T01:05:00.000Z");
+  assert.equal(legacy?.requestFailureCount, 0);
+  assert.equal(legacy?.backoffUntil, undefined);
+  migrated.close();
 });
 
 test("SQLite 重启后恢复播放器选择和自定义路径", async () => {
