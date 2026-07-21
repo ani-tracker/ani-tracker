@@ -26,6 +26,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
+  appApi,
   closeRemotePlaybackSession,
   createRemoteExternalPlaybackSession,
   createRemotePlaybackSession
@@ -187,6 +188,7 @@ export function RemoteVideoPlayer({
     }
 
     let hls: Hls | undefined;
+    let progressReported = false;
     const streamUrl = new URL(session.streamUrl, window.location.origin).toString();
     const defaultSubtitle = session.subtitles.find((subtitle) => subtitle.default)
       ?? session.subtitles[0];
@@ -266,6 +268,33 @@ export function RemoteVideoPlayer({
     }
     artPlayerRef.current = player;
 
+    /** 达到阈值后按当前任务只上报一次观看进度。 */
+    const reportPlaybackProgress = (percent: number): void => {
+      if (progressReported || percent < 90) {
+        return;
+      }
+      progressReported = true;
+      const normalizedPercent = Math.max(0, Math.min(100, percent));
+      void appApi.reportPlaybackProgress({
+        taskId: activeItem.task.id,
+        fileIndex: activeItem.fileIndex,
+        percent: normalizedPercent
+      }).then((handled) => {
+        console.info("[remote] 播放进度已上报", {
+          taskId: activeItem.task.id,
+          fileIndex: activeItem.fileIndex,
+          percent: normalizedPercent,
+          handled
+        });
+      }).catch((caught) => {
+        console.warn("[remote] 播放进度上报失败", {
+          taskId: activeItem.task.id,
+          fileIndex: activeItem.fileIndex,
+          error: caught
+        });
+      });
+    };
+
     player.on("video:error", () => {
       handlePlaybackError(
         session.mode === "direct"
@@ -273,7 +302,15 @@ export function RemoteVideoPlayer({
           : "浏览器无法播放当前转码视频流，请重试"
       );
     });
+    player.on("video:timeupdate", () => {
+      const duration = player.duration;
+      if (progressReported || !Number.isFinite(duration) || duration <= 0) {
+        return;
+      }
+      reportPlaybackProgress(player.currentTime / duration * 100);
+    });
     player.on("video:ended", () => {
+      reportPlaybackProgress(100);
       if (nextItem) {
         console.info("[remote] 当前文件播放完成，切换下一项", {
           taskId: nextItem.task.id,

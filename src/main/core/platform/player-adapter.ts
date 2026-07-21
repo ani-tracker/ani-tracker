@@ -4,6 +4,7 @@ import type { PlayerProfile } from "@shared/domain";
 import { logger } from "../logger";
 import {
   MpvJsonIpcPlaybackMonitor,
+  WindowsGsmtcPlaybackMonitor,
   type PlaybackMonitor,
   type PlaybackProgressListener
 } from "./playback-monitor";
@@ -82,13 +83,17 @@ export class IinaPlayerAdapter extends BasePlayerAdapter {
 
 /** 适配 Windows PotPlayer 播放器配置。 */
 export class PotPlayerAdapter extends BasePlayerAdapter {
+  constructor(private readonly platform: NodeJS.Platform = process.platform) {
+    super();
+  }
+
   supports(profile: PlayerProfile): boolean {
     return profile.id.toLowerCase() === "potplayer" || executableName(profile).includes("potplayer");
   }
 
-  /** Windows 播放状态监控暂未实现，后续通过相同抽象扩展。 */
-  createPlaybackMonitor(): undefined {
-    return undefined;
+  /** 在 Windows 上使用 GSMTC 监听 PotPlayer 播放进度。 */
+  createPlaybackMonitor(_profile: PlayerProfile, filePath: string): PlaybackMonitor | undefined {
+    return this.platform === "win32" ? new WindowsGsmtcPlaybackMonitor(filePath) : undefined;
   }
 }
 
@@ -98,9 +103,9 @@ export class MpvPlayerAdapter extends BasePlayerAdapter {
     return profile.id.toLowerCase() === "mpv" || ["mpv", "mpv.exe"].includes(executableName(profile));
   }
 
-  /** 独立 mpv 监控将在后续跨平台阶段接入。 */
-  createPlaybackMonitor(): undefined {
-    return undefined;
+  /** 为独立 mpv 创建 JSON IPC 监控器。 */
+  createPlaybackMonitor(_profile: PlayerProfile, filePath: string): PlaybackMonitor {
+    return new MpvJsonIpcPlaybackMonitor(filePath, "--input-ipc-server");
   }
 }
 

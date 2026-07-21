@@ -1,7 +1,8 @@
 import type {
   AnimeDetailResult,
   AnimeWatchProgress,
-  SetAnimeWatchProgressInput,
+  ReportPlaybackProgressInput,
+  SetAnimeWatchProgressInput
 } from "@shared/contracts";
 import type {
   Anime,
@@ -37,6 +38,7 @@ export const REMOTE_RPC_METHOD_NAMES = [
   "listMyAnime",
   "listMyAnimeWatchProgress",
   "setAnimeWatchProgress",
+  "reportPlaybackProgress",
   "listAnimeCatalog",
   "getAnimeDetail",
   "searchAnimeCatalog",
@@ -74,6 +76,7 @@ export interface RemoteRpcHandlers {
   listMyAnime(): MaybePromise<MyAnime[]>;
   listMyAnimeWatchProgress(): MaybePromise<AnimeWatchProgress[]>;
   setAnimeWatchProgress(input: SetAnimeWatchProgressInput): MaybePromise<AnimeWatchProgress>;
+  reportPlaybackProgress(input: ReportPlaybackProgressInput): MaybePromise<boolean>;
   listAnimeCatalog(year?: number, month?: number): MaybePromise<Anime[]>;
   getAnimeDetail(animeId: string): MaybePromise<AnimeDetailResult>;
   searchAnimeCatalog(keyword: string): MaybePromise<Anime[]>;
@@ -180,6 +183,14 @@ export function createRemoteMethodRegistry(handlers: RemoteRpcHandlers): RemoteM
       watchProgressInput,
       sanitizeAnimeWatchProgress,
       handlers.setAnimeWatchProgress
+    ),
+    defineMethod(
+      "reportPlaybackProgress",
+      "library.write",
+      "write",
+      playbackProgressInput,
+      booleanResult,
+      handlers.reportPlaybackProgress
     ),
     defineMethod(
       "listAnimeCatalog",
@@ -304,6 +315,41 @@ function watchProgressInput(args: readonly unknown[]): [SetAnimeWatchProgressInp
     animeId: parseId(candidate.animeId, "番剧标识"),
     watchedEpisodeCount: candidate.watchedEpisodeCount as number
   }];
+}
+
+/** 校验远程播放器按任务上报的观看进度。 */
+function playbackProgressInput(args: readonly unknown[]): [ReportPlaybackProgressInput] {
+  assertArgumentCount(args, 1);
+  const input = args[0];
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new RemoteRpcValidationError("播放进度参数格式无效");
+  }
+  const candidate = input as Record<string, unknown>;
+  const allowedKeys = new Set(["taskId", "fileIndex", "percent"]);
+  if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) {
+    throw new RemoteRpcValidationError("播放进度参数包含未知字段");
+  }
+  if (typeof candidate.percent !== "number" || !Number.isFinite(candidate.percent) ||
+      candidate.percent < 0 || candidate.percent > 100) {
+    throw new RemoteRpcValidationError("播放进度必须是 0 到 100 之间的数值");
+  }
+  if (candidate.fileIndex !== undefined &&
+      (!Number.isSafeInteger(candidate.fileIndex) || (candidate.fileIndex as number) < 0)) {
+    throw new RemoteRpcValidationError("播放文件索引必须是非负整数");
+  }
+  return [{
+    taskId: parseId(candidate.taskId, "下载任务标识"),
+    ...(candidate.fileIndex === undefined ? {} : { fileIndex: candidate.fileIndex as number }),
+    percent: candidate.percent
+  }];
+}
+
+/** 仅允许远程方法返回布尔处理结果。 */
+function booleanResult(value: unknown): boolean {
+  if (typeof value !== "boolean") {
+    throw new RemoteRpcValidationError("远程处理结果格式无效");
+  }
+  return value;
 }
 
 function optionalYearMonth(args: readonly unknown[]): [number?, number?] {

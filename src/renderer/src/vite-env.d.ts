@@ -31,6 +31,7 @@ import type {
   MediaScanResult,
   PlayerDetectionResult,
   QbittorrentManagedStatus,
+  ReportPlaybackProgressInput,
   RemoteGatewayStatus,
   RemotePairingChallenge,
   ReleaseQuery,
@@ -66,6 +67,7 @@ declare global {
       removeMyAnime: (itemId: string) => Promise<MyAnime[]>;
       listMyAnimeWatchProgress: () => Promise<AnimeWatchProgress[]>;
       setAnimeWatchProgress: (input: SetAnimeWatchProgressInput) => Promise<AnimeWatchProgress>;
+      reportPlaybackProgress: (input: ReportPlaybackProgressInput) => Promise<boolean>;
       listAnimeCatalog: (year?: number, month?: number) => Promise<Anime[]>;
       searchAnimeCatalog: (keyword: string) => Promise<Anime[]>;
       collectAnimeMonth: (query: AnimeDiscoveryQuery) => Promise<AnimeDiscoveryResult>;

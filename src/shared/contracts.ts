@@ -235,6 +235,13 @@ export interface SetAnimeWatchProgressInput {
   watchedEpisodeCount: number;
 }
 
+/** 播放器按下载任务上报观看百分比的输入。 */
+export interface ReportPlaybackProgressInput {
+  taskId: string;
+  fileIndex?: number;
+  percent: number;
+}
+
 export interface AnimeDetailResult {
   anime: Anime;
   myAnime?: MyAnime;

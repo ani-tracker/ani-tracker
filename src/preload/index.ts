@@ -18,6 +18,7 @@ import type {
   AnimeDiscoveryQuery,
   ConfirmAnimeSourceBindingInput,
   PlayerDetectionResult,
+  ReportPlaybackProgressInput,
   RemoteGatewayStatus,
   RemotePairingChallenge,
   ReleaseQuery,
@@ -55,6 +56,8 @@ const api = {
   listMyAnimeWatchProgress: () => ipcRenderer.invoke("myAnime:listWatchProgress"),
   setAnimeWatchProgress: (input: SetAnimeWatchProgressInput) =>
     ipcRenderer.invoke("myAnime:setWatchProgress", input),
+  reportPlaybackProgress: (input: ReportPlaybackProgressInput): Promise<boolean> =>
+    ipcRenderer.invoke("playback:reportProgress", input),
   listAnimeCatalog: (year?: number, month?: number): Promise<Anime[]> =>
     ipcRenderer.invoke("animeCatalog:list", year, month),
   searchAnimeCatalog: (keyword: string): Promise<Anime[]> => ipcRenderer.invoke("animeCatalog:search", keyword),

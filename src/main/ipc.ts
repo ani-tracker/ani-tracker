@@ -20,6 +20,7 @@ import type {
   AnimeReleaseQuery,
   AnimeDiscoveryQuery,
   ConfirmAnimeSourceBindingInput,
+  ReportPlaybackProgressInput,
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
   SelectPlayerExecutableInput,
@@ -60,7 +61,7 @@ export const automationScheduler = new AutomationScheduler(repository, undefined
 export const sourceSyncScheduler = new SourceSyncScheduler(repository);
 export const downloadTaskControlService = new DownloadTaskControlService(repository, qbittorrentManagedService);
 export const animeDetailService = new AnimeDetailService(repository);
-const playbackStatusService = new PlaybackStatusService(repository);
+export const playbackStatusService = new PlaybackStatusService(repository);
 
 interface RegisterIpcHandlersOptions {
   onSettingsUpdated?: (settings: AppSettings) => void | Promise<void>;
@@ -117,6 +118,9 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   ipcMain.handle("myAnime:listWatchProgress", () => repository.listMyAnimeWatchProgress());
   ipcMain.handle("myAnime:setWatchProgress", (_event, input: SetAnimeWatchProgressInput) =>
     repository.setAnimeWatchProgress(input)
+  );
+  ipcMain.handle("playback:reportProgress", (_event, input: ReportPlaybackProgressInput) =>
+    playbackStatusService.handleTaskProgress(input)
   );
   ipcMain.handle("animeCatalog:list", (_event, year?: number, month?: number) =>
     new AnimeDiscoveryService(repository).listCatalog(year, month)
@@ -506,7 +510,9 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   ipcMain.handle("media:play", async (_event, filePath: string, profileId?: string) => {
     const settings = await repository.getSettings();
     await new PlayerLauncherService(settings, {
-      onPlaybackProgress: (progress) => playbackStatusService.handleProgress(progress)
+      onPlaybackProgress: async (progress) => {
+        await playbackStatusService.handleProgress(progress);
+      }
     }).play(filePath, profileId);
   });
   ipcMain.handle("media:reveal", async (_event, filePath: string) => {

@@ -174,6 +174,32 @@ test("远程观看进度写入需要 library.write 并校验整数范围", async
   );
 });
 
+test("远程播放器进度仅接受任务关联和有效百分比", async () => {
+  const dispatcher = createDispatcher(createHandlers());
+
+  await assert.rejects(
+    dispatcher.dispatch(
+      { method: "reportPlaybackProgress", args: [{ taskId: "task-1", fileIndex: 0, percent: 90 }] },
+      context("library.read")
+    ),
+    (error) => isRemoteError(error, "FORBIDDEN", 403)
+  );
+  await assert.rejects(
+    dispatcher.dispatch(
+      { method: "reportPlaybackProgress", args: [{ taskId: "task-1", percent: 90, animeId: "anime-2" }] },
+      context("library.write")
+    ),
+    (error) => isRemoteError(error, "INVALID_ARGUMENTS", 400)
+  );
+  assert.equal(
+    await dispatcher.dispatch(
+      { method: "reportPlaybackProgress", args: [{ taskId: "task-1", fileIndex: 0, percent: 90 }] },
+      context("library.write")
+    ),
+    true
+  );
+});
+
 test("下载、追番和首页返回值强制隐藏路径、哈希及订阅地址", async () => {
   const dispatcher = createDispatcher(createHandlers());
   const downloads = (await dispatcher.dispatch(
@@ -237,6 +263,7 @@ function createHandlers(overrides: Partial<RemoteRpcHandlers> = {}): RemoteRpcHa
     listMyAnime: () => [myAnime],
     listMyAnimeWatchProgress: () => [{ animeId: myAnime.anime.id, watchedEpisodeCount: 2, totalEpisodeCount: 12 }],
     setAnimeWatchProgress: (input) => ({ ...input, totalEpisodeCount: 12 }),
+    reportPlaybackProgress: () => true,
     listAnimeCatalog: () => [myAnime.anime],
     getAnimeDetail: () => ({
       anime: myAnime.anime,

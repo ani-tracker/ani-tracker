@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
-import { WatchProgressControl } from "@/features/my-anime/watch-progress-control";
+import { WatchProgressDisplay } from "@/features/my-anime/watch-progress-display";
 import { formatMonth } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { AnimeWatchProgress } from "@shared/contracts";
@@ -55,14 +55,12 @@ interface MyAnimeRowProps {
   downloadSummary: MyAnimeDownloadSummary;
   item: MyAnime;
   watchProgress: AnimeWatchProgress;
-  watchProgressUpdating?: boolean;
   onOpenActive: () => void;
   onOpenCompleted: () => void;
   onOpenDetail: () => void;
   onOpenDownloads: () => void;
   onOpenRules: () => void;
   onRemove: () => void;
-  onWatchProgressChange: (watchedEpisodeCount: number) => void | Promise<void>;
 }
 
 /** 按首播年份和季度归组追番，并优先展示较新的季度。 */
@@ -95,14 +93,12 @@ export function MyAnimeRow({
   downloadSummary,
   item,
   watchProgress,
-  watchProgressUpdating,
   onOpenActive,
   onOpenCompleted,
   onOpenDetail,
   onOpenDownloads,
   onOpenRules,
-  onRemove,
-  onWatchProgressChange
+  onRemove
 }: MyAnimeRowProps) {
   const titleDisplay = resolveAnimeTitleDisplay(item.anime);
   const ratingText = item.anime.rating ? item.anime.rating.score.toFixed(1) : "暂无";
@@ -183,12 +179,7 @@ export function MyAnimeRow({
         </div>
 
         <div className="min-w-0">
-          <WatchProgressControl
-            disabled={watchProgressUpdating}
-            maximumEpisodeCount={item.anime.detail?.episodeCount}
-            onChange={onWatchProgressChange}
-            progress={watchProgress}
-          />
+          <WatchProgressDisplay progress={watchProgress} />
           <div className="mt-3 flex items-end justify-between gap-3 text-xs">
             <span className="text-muted-foreground">下载进度</span>
             <span className="font-medium tabular-nums">

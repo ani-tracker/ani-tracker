@@ -727,6 +727,7 @@ function createHandlers(): RemoteRpcHandlers {
     listMyAnime: () => [],
     listMyAnimeWatchProgress: () => [],
     setAnimeWatchProgress: (input) => ({ ...input, totalEpisodeCount: input.watchedEpisodeCount }),
+    reportPlaybackProgress: () => true,
     listAnimeCatalog: () => [],
     getAnimeDetail: () => {
       throw new Error("测试未使用番剧详情");

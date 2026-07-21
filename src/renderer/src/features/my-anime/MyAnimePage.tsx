@@ -145,7 +145,6 @@ export function MyAnimePage({
 }: MyAnimePageProps = {}) {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [watchProgress, setWatchProgress] = useState<Record<string, AnimeWatchProgress>>({});
-  const [watchProgressUpdating, setWatchProgressUpdating] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<MyAnime | null>(null);
   const [statusFilter, setStatusFilter] = useState<MyAnimeFilter>("watching");
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
@@ -213,6 +212,33 @@ export function MyAnimePage({
 
     return () => {
       active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    /** 返回追番页时读取播放器刚写入的观看进度。 */
+    const refreshWatchProgress = (): void => {
+      if (document.visibilityState !== "visible") {
+        return;
+      }
+      void appApi.listMyAnimeWatchProgress()
+        .then((progressItems) => {
+          if (active) {
+            setWatchProgress(Object.fromEntries(progressItems.map((progress) => [progress.animeId, progress])));
+          }
+        })
+        .catch((error) => {
+          console.warn("[my-anime] 自动刷新观看进度失败", { error });
+        });
+    };
+
+    window.addEventListener("focus", refreshWatchProgress);
+    document.addEventListener("visibilitychange", refreshWatchProgress);
+    return () => {
+      active = false;
+      window.removeEventListener("focus", refreshWatchProgress);
+      document.removeEventListener("visibilitychange", refreshWatchProgress);
     };
   }, []);
 
@@ -453,34 +479,6 @@ export function MyAnimePage({
         tone: "error",
         text: error instanceof Error ? error.message : "更新单集状态失败"
       });
-    }
-  }
-
-  /** 原子保存列表中的连续观看进度，并在失败时恢复服务端状态。 */
-  async function updateWatchProgress(animeId: string, watchedEpisodeCount: number) {
-    const previous = watchProgress[animeId] ?? { animeId, watchedEpisodeCount: 0, totalEpisodeCount: 0 };
-    setWatchProgressUpdating(animeId);
-    setWatchProgress((current) => ({
-      ...current,
-      [animeId]: {
-        ...previous,
-        watchedEpisodeCount,
-        totalEpisodeCount: Math.max(previous.totalEpisodeCount, watchedEpisodeCount)
-      }
-    }));
-    try {
-      const saved = await appApi.setAnimeWatchProgress({ animeId, watchedEpisodeCount });
-      setWatchProgress((current) => ({ ...current, [animeId]: saved }));
-      console.info("[my-anime] 观看进度已更新", saved);
-      onDataChanged?.();
-    } catch (error) {
-      setWatchProgress((current) => ({ ...current, [animeId]: previous }));
-      setMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "更新观看进度失败"
-      });
-    } finally {
-      setWatchProgressUpdating((current) => current === animeId ? null : current);
     }
   }
 
@@ -991,7 +989,6 @@ export function MyAnimePage({
                     watchedEpisodeCount: 0,
                     totalEpisodeCount: item.anime.detail?.episodeCount ?? 0
                   }}
-                  watchProgressUpdating={watchProgressUpdating === item.anime.id}
                   defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
                   downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
                   onOpenActive={() => openDownloadDetail(item, "active")}
@@ -1000,9 +997,6 @@ export function MyAnimePage({
                   onOpenDownloads={() => void openAnimeDownloads(item)}
                   onOpenRules={() => openRulesDrawer(item)}
                   onRemove={() => setRemoveTarget(item)}
-                  onWatchProgressChange={(watchedEpisodeCount) =>
-                    updateWatchProgress(item.anime.id, watchedEpisodeCount)
-                  }
                 />
               ))}
             </div>

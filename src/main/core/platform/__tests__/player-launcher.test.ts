@@ -7,7 +7,7 @@ import {
   PlayerAdapterFactory,
   PotPlayerAdapter
 } from "../player-adapter";
-import { parseMpvProgressEvent } from "../playback-monitor";
+import { parseGsmtcProgressEvent, parseMpvProgressEvent } from "../playback-monitor";
 
 test("IinaPlayerAdapter adds no-stdin and creates an mpv IPC monitor", () => {
   const profile: PlayerProfile = {
@@ -62,7 +62,25 @@ test("PlayerAdapterFactory resolves PotPlayer and mpv subclasses", () => {
   assert.ok(factory.resolve(potPlayer) instanceof PotPlayerAdapter);
   assert.ok(factory.resolve(mpv) instanceof MpvPlayerAdapter);
   assert.equal(factory.resolve(potPlayer).createPlaybackMonitor(potPlayer, "C:\\anime.mkv"), undefined);
-  assert.equal(factory.resolve(mpv).createPlaybackMonitor(mpv, "/tmp/anime.mkv"), undefined);
+  const mpvMonitor = factory.resolve(mpv).createPlaybackMonitor(mpv, "/tmp/anime.mkv");
+  assert.ok(mpvMonitor);
+  assert.match(mpvMonitor.launchArguments[0], /^--input-ipc-server=/);
+
+  const potPlayerMonitor = new PotPlayerAdapter("win32").createPlaybackMonitor(potPlayer, "C:\\anime.mkv");
+  assert.ok(potPlayerMonitor);
+  assert.deepEqual(potPlayerMonitor.launchArguments, []);
+});
+
+test("parseGsmtcProgressEvent reads and clamps PowerShell output", () => {
+  assert.deepEqual(
+    parseGsmtcProgressEvent(JSON.stringify({ percent: 91.25 }), "C:\\anime.mkv"),
+    { filePath: "C:\\anime.mkv", percent: 91.25 }
+  );
+  assert.deepEqual(
+    parseGsmtcProgressEvent(JSON.stringify({ percent: -5 }), "C:\\anime.mkv"),
+    { filePath: "C:\\anime.mkv", percent: 0 }
+  );
+  assert.equal(parseGsmtcProgressEvent(JSON.stringify({ percent: "90" }), "C:\\anime.mkv"), undefined);
 });
 
 test("parseMpvProgressEvent reads and clamps percent-pos property changes", () => {

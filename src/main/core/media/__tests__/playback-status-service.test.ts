@@ -88,3 +88,51 @@ test("PlaybackStatusService falls back to download task association", async () =
 
   assert.equal(updatedStatus, "watched");
 });
+
+test("PlaybackStatusService resolves remote progress by task and file index", async () => {
+  const episode: Episode = {
+    id: "episode-3",
+    animeId: "anime-1",
+    episodeNo: 3,
+    status: "downloaded"
+  };
+  const task: DownloadTask = {
+    id: "task-3",
+    animeId: "anime-1",
+    episodeId: "episode-3",
+    episodeNo: 3,
+    engine: "qbittorrent",
+    name: "episode-3",
+    status: "completed",
+    progress: 1,
+    downloadSpeed: 0,
+    uploadSpeed: 0,
+    savePath: "/downloads/anime",
+    files: [{
+      id: "file-3",
+      index: 2,
+      name: "episode-3.mkv",
+      size: 1024,
+      progress: 1,
+      priority: 1,
+      selected: true
+    }],
+    createdAt: "2026-07-21T00:00:00.000Z"
+  };
+  const updates: Episode[] = [];
+  const service = new PlaybackStatusService({
+    listMediaFiles: async () => [],
+    listDownloads: async () => [task],
+    listEpisodes: async () => [episode],
+    upsertEpisode: async (updatedEpisode) => {
+      updates.push(updatedEpisode);
+      return [updatedEpisode];
+    }
+  });
+
+  assert.equal(await service.handleTaskProgress({ taskId: task.id, fileIndex: 2, percent: 89.9 }), false);
+  assert.equal(await service.handleTaskProgress({ taskId: task.id, fileIndex: 2, percent: 90 }), true);
+  assert.equal(await service.handleTaskProgress({ taskId: task.id, fileIndex: 2, percent: 99 }), false);
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].status, "watched");
+});
