@@ -180,24 +180,23 @@ export function MyAnimeRow({
 
         <div className="min-w-0">
           <WatchProgressDisplay progress={watchProgress} />
-          <div className="mt-3 flex items-end justify-between gap-3 text-xs">
-            <span className="text-muted-foreground">下载进度</span>
-            <span className="font-medium tabular-nums">
-              {downloadSummary.completed} / {downloadSummary.linked}
-            </span>
-          </div>
-          <Progress
-            className="mt-2 h-1.5"
-            value={downloadSummary.linked ? downloadSummary.completed / downloadSummary.linked : 0}
-          />
-          <div className="mt-2 flex gap-2 text-xs text-muted-foreground">
-            <Button className="h-auto min-h-0 p-0 text-xs" onClick={onOpenActive} variant="ghost">
-              下载中 {downloadSummary.active}
-            </Button>
-            <Button className="h-auto min-h-0 p-0 text-xs" onClick={onOpenCompleted} variant="ghost">
-              已完成 {downloadSummary.completed}
-            </Button>
-          </div>
+          <button
+            aria-label={`查看${titleDisplay.title}已完成下载任务，共 ${downloadSummary.completed} 个`}
+            className="mt-3 block w-full rounded-sm text-left outline-none transition-colors hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={onOpenCompleted}
+            type="button"
+          >
+            <div className="flex items-end justify-between gap-3 text-xs">
+              <span className="text-muted-foreground">下载进度</span>
+              <span className="font-medium tabular-nums">
+                {downloadSummary.completed} / {downloadSummary.linked}
+              </span>
+            </div>
+            <Progress
+              className="mt-2 h-1.5"
+              value={downloadSummary.linked ? downloadSummary.completed / downloadSummary.linked : 0}
+            />
+          </button>
         </div>
 
         <div className="flex min-w-0 items-center gap-2 md:justify-end">

@@ -4,6 +4,7 @@ import { toast } from "sonner";
 import {
   Copy,
   Download,
+  ExternalLink,
   FileSearch,
   FolderCog,
   FolderOpen,
@@ -24,7 +25,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Field, FieldLabel } from "@/components/ui/field";
+import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
   InputGroup,
@@ -41,7 +42,10 @@ import {
   SelectValue
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Slider } from "@/components/ui/slider";
+import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { useAsyncData } from "@/lib/use-async-data";
@@ -92,7 +96,7 @@ export function SettingsPage() {
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [schedulerStatus, setSchedulerStatus] = useState<AutomationSchedulerStatus | null>(null);
   const [qbManagedStatus, setQbManagedStatus] = useState<QbittorrentManagedStatus | null>(null);
-  const [qbManagedAction, setQbManagedAction] = useState<"idle" | "starting" | "stopping">("idle");
+  const [qbManagedAction, setQbManagedAction] = useState<"idle" | "starting" | "stopping" | "restarting">("idle");
   const [remoteStatus, setRemoteStatus] = useState<RemoteGatewayStatus | null>(null);
   const [remotePairing, setRemotePairing] = useState<RemotePairingChallenge | null>(null);
   const [remoteAction, setRemoteAction] = useState<"idle" | "loading" | "creating" | "revoking">("idle");
@@ -291,21 +295,58 @@ export function SettingsPage() {
     }
   }
 
+  /** 在内置 qBittorrent-nox 与外部 WebUI 之间切换。 */
+  function updateQbittorrentMode(mode: "managed" | "external") {
+    if (!draft) {
+      return;
+    }
+    const managed = mode === "managed";
+    setDraft({
+      ...draft,
+      download: {
+        ...draft.download,
+        defaultTorrentEngine: "qbittorrent",
+        embedded: {
+          ...draft.download.embedded,
+          enabled: false
+        },
+        qbittorrent: {
+          ...draft.download.qbittorrent,
+          autoConnect: managed,
+          managed: {
+            ...draft.download.qbittorrent.managed,
+            enabled: managed
+          }
+        }
+      }
+    });
+    setQbTest({ state: "idle" });
+  }
+
+  /** 保存当前配置并测试 qBittorrent WebUI 连接。 */
   async function testQbittorrent() {
     if (!draft) {
       return;
     }
 
     setQbTest({ state: "testing", message: "正在测试 qBittorrent 连接..." });
-    const saved = await appApi.updateSettings(draft);
-    setDraft(saved);
-    setPersistedSettings(saved);
-    commitAppearance(saved.appearance);
-    const result = await appApi.testQbittorrent();
-    setQbTest({
-      state: result.ok ? "success" : "error",
-      message: result.ok ? `${result.message}，当前任务 ${result.taskCount ?? 0} 个` : result.message
-    });
+    try {
+      const saved = await appApi.updateSettings(draft);
+      setDraft(saved);
+      setPersistedSettings(saved);
+      commitAppearance(saved.appearance);
+      const result = await appApi.testQbittorrent();
+      setQbTest({
+        state: result.ok ? "success" : "error",
+        message: result.ok ? `${result.message}，当前任务 ${result.taskCount ?? 0} 个` : result.message
+      });
+      await refreshQbittorrentManagedStatus();
+    } catch (error) {
+      setQbTest({
+        state: "error",
+        message: error instanceof Error ? error.message : "qBittorrent 连接测试失败"
+      });
+    }
   }
 
   async function startQbittorrentManaged() {
@@ -348,6 +389,50 @@ export function SettingsPage() {
       });
     } finally {
       setQbManagedAction("idle");
+    }
+  }
+
+  /** 保存设置后重启内置 qBittorrent-nox 进程。 */
+  async function restartQbittorrentManaged() {
+    if (!draft) {
+      return;
+    }
+
+    setQbManagedAction("restarting");
+    try {
+      const saved = await appApi.updateSettings(draft);
+      setDraft(saved);
+      setPersistedSettings(saved);
+      commitAppearance(saved.appearance);
+      if (qbManagedStatus?.running) {
+        await appApi.stopQbittorrentManaged();
+      }
+      const status = await appApi.startQbittorrentManaged();
+      setQbManagedStatus(status);
+      setQbTest({
+        state: status.lastError ? "error" : "success",
+        message: status.lastError ?? "内置 qBittorrent-nox 已重启"
+      });
+    } catch (error) {
+      setQbTest({
+        state: "error",
+        message: error instanceof Error ? error.message : "内置 qBittorrent-nox 重启失败"
+      });
+    } finally {
+      setQbManagedAction("idle");
+    }
+  }
+
+  /** 使用系统浏览器打开当前 qBittorrent WebUI。 */
+  async function openQbittorrentWebUi() {
+    const url = qbManagedStatus?.webUiUrl || draft?.download.qbittorrent.baseUrl;
+    if (!url) {
+      return;
+    }
+    try {
+      await appApi.openExternal(url);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "打开 qBittorrent WebUI 失败");
     }
   }
 
@@ -440,32 +525,37 @@ export function SettingsPage() {
 
   return (
     <div className={cn("flex min-w-0 flex-col gap-6", hasUnsavedChanges && "pb-20")}>
-      <header className="sticky top-[calc(4rem+var(--safe-area-top))] z-20 -mx-4 flex flex-wrap items-center justify-between gap-3 border-b bg-background px-4 py-3 md:top-0 md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold">设置</h1>
-            {hasUnsavedChanges && (
-              <Badge className="gap-1.5 rounded-full" tone="primary-soft">
-                <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
-                有未保存修改
-              </Badge>
-            )}
+      <div className="sticky top-[calc(4rem+var(--safe-area-top))] z-20 -mx-4 border-b bg-background px-4 md:top-0 md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
+        <header className="flex flex-wrap items-center justify-between gap-3 py-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h1 className="text-xl font-semibold">设置</h1>
+              {hasUnsavedChanges && (
+                <Badge className="gap-1.5 rounded-full" tone="primary-soft">
+                  <span aria-hidden="true" className="size-1.5 rounded-full bg-primary" />
+                  有未保存修改
+                </Badge>
+              )}
+            </div>
+            <p className="mt-1 text-sm text-muted-foreground">目录、下载引擎、播放器和自动化规则集中管理。</p>
           </div>
-          <p className="mt-1 text-sm text-muted-foreground">目录、下载引擎、播放器和自动化规则集中管理。</p>
+          <div className="flex shrink-0 items-center gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setResetDialogOpen(true)}
+              disabled={resetState === "resetting" || saveState === "saving"}
+            >
+              <RotateCcw data-icon="inline-start" />
+              {resetState === "resetting" ? "恢复中" : resetState === "reset" ? "已恢复" : "恢复默认"}
+            </Button>
+          </div>
+        </header>
+        <div className="pb-3 lg:hidden">
+          <SettingsCategorySelect activeCategory={activeCategory} onNavigate={navigateToCategory} />
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <Button
-            variant="outline"
-            onClick={() => setResetDialogOpen(true)}
-            disabled={resetState === "resetting" || saveState === "saving"}
-          >
-            <RotateCcw data-icon="inline-start" />
-            {resetState === "resetting" ? "恢复中" : resetState === "reset" ? "已恢复" : "恢复默认"}
-          </Button>
-        </div>
-      </header>
+      </div>
 
-      <div className="grid min-w-0 items-start gap-6 xl:grid-cols-[15rem_minmax(0,1fr)]">
+      <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
         <SettingsCategoryNavigation activeCategory={activeCategory} onNavigate={navigateToCategory} />
 
         <div className="flex min-w-0 flex-col gap-12">
@@ -938,189 +1028,155 @@ export function SettingsPage() {
             title="下载核心"
           >
 
-      <SettingsSection title="下载核心配置">
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col gap-4 rounded-md border p-4">
-            <div>
-              <div className="font-medium">
-                {draft.download.qbittorrent.managed.enabled ? "内置 qBittorrent-nox" : "外部 qBittorrent WebUI"}
+      <Card className="overflow-hidden shadow-none">
+        <CardHeader className="gap-3 border-b bg-muted/50 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-col gap-1.5">
+            <CardTitle><h3>引擎配置</h3></CardTitle>
+            <CardDescription>
+              {draft.download.qbittorrent.managed.enabled
+                ? "由应用托管 qBittorrent-nox，并自动使用本机 WebUI。"
+                : "连接已单独运行的 qBittorrent WebUI。"}
+            </CardDescription>
+          </div>
+          <ToggleGroup
+            aria-label="qBittorrent 运行方式"
+            className="grid w-full shrink-0 grid-cols-2 sm:w-auto"
+            onValueChange={(value) => value && updateQbittorrentMode(value as "managed" | "external")}
+            type="single"
+            value={draft.download.qbittorrent.managed.enabled ? "managed" : "external"}
+            variant="outline"
+          >
+            <ToggleGroupItem className="h-auto min-h-9 whitespace-normal px-3" value="managed">
+              内置 qBittorrent-nox
+            </ToggleGroupItem>
+            <ToggleGroupItem className="h-auto min-h-9 whitespace-normal px-3" value="external">
+              外部 qBittorrent WebUI
+            </ToggleGroupItem>
+          </ToggleGroup>
+        </CardHeader>
+        <CardContent className="pt-4 sm:pt-5">
+          <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <FieldGroup className="gap-4">
+              <TextSetting
+                label="WebUI 地址"
+                value={draft.download.qbittorrent.baseUrl}
+                onChange={(value) =>
+                  setDraft({
+                    ...draft,
+                    download: {
+                      ...draft.download,
+                      qbittorrent: { ...draft.download.qbittorrent, baseUrl: value }
+                    }
+                  })
+                }
+              />
+              <div className="grid gap-4 sm:grid-cols-2">
+                <TextSetting
+                  label="用户名"
+                  value={draft.download.qbittorrent.username}
+                  onChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      download: {
+                        ...draft.download,
+                        qbittorrent: { ...draft.download.qbittorrent, username: value }
+                      }
+                    })
+                  }
+                />
+                <TextSetting
+                  label="密码"
+                  type="password"
+                  value={draft.download.qbittorrent.password ?? ""}
+                  onChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      download: {
+                        ...draft.download,
+                        qbittorrent: { ...draft.download.qbittorrent, password: value }
+                      }
+                    })
+                  }
+                />
               </div>
-              <p className="mt-1 text-sm text-muted-foreground">
-                {draft.download.qbittorrent.managed.enabled
-                  ? "默认随应用启动无界面的 qBittorrent-nox，并自动选择 10000 以上的可用 WebUI 端口。"
-                  : "用于接入你已经单独运行的 qBittorrent WebUI，应用不会托管启动或关闭外部进程。"}
-              </p>
-            </div>
-            <TextSetting
-              label="WebUI 地址"
-              value={draft.download.qbittorrent.baseUrl}
-              onChange={(value) =>
-                setDraft({
-                  ...draft,
-                  download: {
-                    ...draft.download,
-                    qbittorrent: {
-                      ...draft.download.qbittorrent,
-                      baseUrl: value
-                    }
-                  }
-                })
-              }
-            />
-            <TextSetting
-              label="用户名"
-              value={draft.download.qbittorrent.username}
-              onChange={(value) =>
-                setDraft({
-                  ...draft,
-                  download: {
-                    ...draft.download,
-                    qbittorrent: {
-                      ...draft.download.qbittorrent,
-                      username: value
-                    }
-                  }
-                })
-              }
-            />
-            <TextSetting
-              label="密码"
-              type="password"
-              value={draft.download.qbittorrent.password ?? ""}
-              onChange={(value) =>
-                setDraft({
-                  ...draft,
-                  download: {
-                    ...draft.download,
-                    qbittorrent: {
-                      ...draft.download.qbittorrent,
-                      password: value
-                    }
-                  }
-                })
-              }
-            />
-            <div className="grid gap-3 sm:grid-cols-2">
-              <SelectSetting
-                label="运行模式"
-                value={draft.download.qbittorrent.managed.enabled ? "managed" : "external"}
-                options={[
-                  { label: "内置 qBittorrent-nox", value: "managed" },
-                  { label: "外部 WebUI", value: "external" }
-                ]}
-                onChange={(value) =>
-                  setDraft({
-                    ...draft,
-                    download: {
-                      ...draft.download,
-                      defaultTorrentEngine: "qbittorrent",
-                      embedded: {
-                        ...draft.download.embedded,
-                        enabled: false
-                      },
-                      qbittorrent: {
-                        ...draft.download.qbittorrent,
-                        autoConnect: value === "managed",
-                        managed: {
-                          ...draft.download.qbittorrent.managed,
-                          enabled: value === "managed"
-                        }
+              <Field orientation="horizontal">
+                <FieldLabel>运行模式</FieldLabel>
+                <span className="text-right text-sm text-muted-foreground">
+                  {draft.download.qbittorrent.managed.enabled ? "内置 qBittorrent-nox" : "外部 WebUI"}
+                </span>
+              </Field>
+              <Field data-disabled={!draft.download.qbittorrent.managed.enabled} orientation="horizontal">
+                <FieldLabel htmlFor="qbittorrent-auto-start">随应用启动</FieldLabel>
+                <Switch
+                  checked={draft.download.qbittorrent.managed.enabled && draft.download.qbittorrent.autoConnect}
+                  disabled={!draft.download.qbittorrent.managed.enabled}
+                  id="qbittorrent-auto-start"
+                  onCheckedChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      download: {
+                        ...draft.download,
+                        qbittorrent: { ...draft.download.qbittorrent, autoConnect: value }
                       }
-                    }
-                  })
-                }
-              />
-              <SelectSetting
-                label="随应用启动"
-                value={
-                  draft.download.qbittorrent.managed.enabled && draft.download.qbittorrent.autoConnect ? "on" : "off"
-                }
-                options={[
-                  { label: "开启", value: "on" },
-                  { label: "关闭", value: "off" }
-                ]}
-                disabled={!draft.download.qbittorrent.managed.enabled}
-                onChange={(value) =>
-                  setDraft({
-                    ...draft,
-                    download: {
-                      ...draft.download,
-                      qbittorrent: {
-                        ...draft.download.qbittorrent,
-                        autoConnect: value === "on"
-                      }
-                    }
-                  })
-                }
-              />
-            </div>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <NumberSetting
-                label="下载限速"
+                    })
+                  }
+                />
+              </Field>
+              <Button onClick={() => void testQbittorrent()} disabled={qbTest.state === "testing"}>
+                {qbTest.state === "testing" ? "测试并保存中" : "测试连接并保存"}
+              </Button>
+              {qbTest.message && (
+                <p className={cn(
+                  "text-sm",
+                  qbTest.state === "error" ? "text-destructive" : "text-muted-foreground"
+                )}>
+                  {qbTest.message}
+                </p>
+              )}
+            </FieldGroup>
+
+            <Separator className="hidden h-full lg:block" orientation="vertical" />
+            <Separator className="lg:hidden" />
+
+            <FieldGroup className="gap-4">
+              <div>
+                <h3 className="font-medium">流量与做种控制</h3>
+                <p className="mt-1 text-sm text-muted-foreground">限速为 0 时不限制传输速度。</p>
+              </div>
+              <SpeedLimitSetting
+                label="全局下载限制"
                 value={draft.download.qbittorrent.downloadLimitKiBps ?? 0}
-                suffix="KiB/s"
-                min={0}
                 onChange={(value) =>
                   setDraft({
                     ...draft,
                     download: {
                       ...draft.download,
-                      qbittorrent: {
-                        ...draft.download.qbittorrent,
-                        downloadLimitKiBps: value
-                      }
+                      qbittorrent: { ...draft.download.qbittorrent, downloadLimitKiBps: value }
                     }
                   })
                 }
               />
-              <NumberSetting
-                label="上传限速"
+              <SpeedLimitSetting
+                label="全局上传限制"
                 value={draft.download.qbittorrent.uploadLimitKiBps ?? 0}
-                suffix="KiB/s"
-                min={0}
                 onChange={(value) =>
                   setDraft({
                     ...draft,
                     download: {
                       ...draft.download,
-                      qbittorrent: {
-                        ...draft.download.qbittorrent,
-                        uploadLimitKiBps: value
-                      }
+                      qbittorrent: { ...draft.download.qbittorrent, uploadLimitKiBps: value }
                     }
                   })
                 }
               />
-            </div>
-            <p className="text-sm text-muted-foreground">限速值填 0 表示不限制。</p>
-            <div className="flex flex-col gap-3 border-t pt-4">
-              <ToggleSetting
-                label="启用做种"
-                description="默认关闭；关闭后下载完成即暂停。开启后可按分享率或时长停止，任务和文件始终保留。"
-                checked={draft.download.qbittorrent.seedingLimits.enabled}
-                onChange={(value) =>
-                  setDraft({
-                    ...draft,
-                    download: {
-                      ...draft.download,
-                      qbittorrent: {
-                        ...draft.download.qbittorrent,
-                        seedingLimits: {
-                          ...draft.download.qbittorrent.seedingLimits,
-                          enabled: value
-                        }
-                      }
-                    }
-                  })
-                }
-              />
-              <div className="grid gap-3 sm:grid-cols-2">
-                <ToggleSetting
-                  label="按分享率停止"
-                  description="上传量与下载量达到指定比例后停止做种。"
-                  checked={draft.download.qbittorrent.seedingLimits.ratioEnabled}
-                  disabled={!draft.download.qbittorrent.seedingLimits.enabled}
-                  onChange={(value) =>
+              <Field orientation="horizontal">
+                <FieldLabel className="cursor-pointer" htmlFor="qbittorrent-seeding-limits">
+                  启用做种限制
+                </FieldLabel>
+                <Switch
+                  checked={draft.download.qbittorrent.seedingLimits.enabled}
+                  id="qbittorrent-seeding-limits"
+                  onCheckedChange={(value) =>
                     setDraft({
                       ...draft,
                       download: {
@@ -1129,53 +1185,8 @@ export function SettingsPage() {
                           ...draft.download.qbittorrent,
                           seedingLimits: {
                             ...draft.download.qbittorrent.seedingLimits,
-                            ratioEnabled: value
-                          }
-                        }
-                      }
-                    })
-                  }
-                />
-                <NumberSetting
-                  label="目标分享率"
-                  value={draft.download.qbittorrent.seedingLimits.ratioLimit}
-                  suffix="倍"
-                  min={0.1}
-                  step={0.1}
-                  disabled={
-                    !draft.download.qbittorrent.seedingLimits.enabled ||
-                    !draft.download.qbittorrent.seedingLimits.ratioEnabled
-                  }
-                  onChange={(value) =>
-                    setDraft({
-                      ...draft,
-                      download: {
-                        ...draft.download,
-                        qbittorrent: {
-                          ...draft.download.qbittorrent,
-                          seedingLimits: {
-                            ...draft.download.qbittorrent.seedingLimits,
-                            ratioLimit: value
-                          }
-                        }
-                      }
-                    })
-                  }
-                />
-                <ToggleSetting
-                  label="按时长停止"
-                  description="从任务进入做种状态开始累计做种时间。"
-                  checked={draft.download.qbittorrent.seedingLimits.timeEnabled}
-                  disabled={!draft.download.qbittorrent.seedingLimits.enabled}
-                  onChange={(value) =>
-                    setDraft({
-                      ...draft,
-                      download: {
-                        ...draft.download,
-                        qbittorrent: {
-                          ...draft.download.qbittorrent,
-                          seedingLimits: {
-                            ...draft.download.qbittorrent.seedingLimits,
+                            enabled: value,
+                            ratioEnabled: value,
                             timeEnabled: value
                           }
                         }
@@ -1183,15 +1194,12 @@ export function SettingsPage() {
                     })
                   }
                 />
+              </Field>
+              <div className="grid gap-4 sm:grid-cols-2">
                 <NumberSetting
-                  label="目标做种时长"
-                  value={draft.download.qbittorrent.seedingLimits.timeLimitMinutes}
-                  suffix="分钟"
-                  min={1}
-                  disabled={
-                    !draft.download.qbittorrent.seedingLimits.enabled ||
-                    !draft.download.qbittorrent.seedingLimits.timeEnabled
-                  }
+                  disabled={!draft.download.qbittorrent.seedingLimits.enabled}
+                  label="分享率"
+                  min={0.1}
                   onChange={(value) =>
                     setDraft({
                       ...draft,
@@ -1201,76 +1209,94 @@ export function SettingsPage() {
                           ...draft.download.qbittorrent,
                           seedingLimits: {
                             ...draft.download.qbittorrent.seedingLimits,
+                            ratioEnabled: true,
+                            ratioLimit: value
+                          }
+                        }
+                      }
+                    })
+                  }
+                  step={0.1}
+                  suffix="倍"
+                  value={draft.download.qbittorrent.seedingLimits.ratioLimit}
+                />
+                <NumberSetting
+                  disabled={!draft.download.qbittorrent.seedingLimits.enabled}
+                  label="做种时间"
+                  min={1}
+                  onChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      download: {
+                        ...draft.download,
+                        qbittorrent: {
+                          ...draft.download.qbittorrent,
+                          seedingLimits: {
+                            ...draft.download.qbittorrent.seedingLimits,
+                            timeEnabled: true,
                             timeLimitMinutes: value
                           }
                         }
                       }
                     })
                   }
+                  suffix="分钟"
+                  value={draft.download.qbittorrent.seedingLimits.timeLimitMinutes}
                 />
               </div>
-            </div>
-            {draft.download.qbittorrent.managed.enabled ? (
-              <div className="rounded-md border p-3 text-sm">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="font-medium">内置进程状态</div>
-                    <div className="mt-1 break-all text-muted-foreground">
-                      {formatQbittorrentManagedSummary(qbManagedStatus)}
-                    </div>
-                    <div className="mt-1 break-all text-xs text-muted-foreground">
-                      二进制：{qbManagedStatus?.binaryPath ?? "未找到项目内置 qBittorrent-nox"}
-                    </div>
-                    {qbManagedStatus?.lastError && (
-                      <Alert className="mt-2" variant="destructive">
-                        <AlertTitle>内置进程异常</AlertTitle>
-                        <AlertDescription className="break-all">{qbManagedStatus.lastError}</AlertDescription>
-                      </Alert>
-                    )}
-                  </div>
-                  <Badge tone={qbManagedStatus?.running ? "green" : "neutral"}>
-                    {qbManagedStatus?.running ? "运行中" : "未运行"}
-                  </Badge>
-                </div>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  <Button
-                    variant="outline"
-                    onClick={() => void startQbittorrentManaged()}
-                    disabled={qbManagedAction !== "idle"}
-                  >
-                    {qbManagedAction === "starting" ? "启动中" : "启动内置"}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    onClick={() => void stopQbittorrentManaged()}
-                    disabled={!qbManagedStatus?.running || qbManagedAction !== "idle"}
-                  >
-                    {qbManagedAction === "stopping" ? "停止中" : "停止内置"}
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-            <div className="flex items-center gap-3">
-              <Button variant="outline" onClick={testQbittorrent} disabled={qbTest.state === "testing"}>
-                {qbTest.state === "testing" ? "测试中" : "测试连接"}
-              </Button>
-              {qbTest.message && (
-                <span
-                  className={
-                    qbTest.state === "error"
-                      ? "text-sm text-destructive"
-                      : qbTest.state === "success"
-                        ? "text-sm text-primary"
-                        : "text-sm text-muted-foreground"
-                  }
-                >
-                  {qbTest.message}
-                </span>
-              )}
-            </div>
+            </FieldGroup>
           </div>
-        </div>
-      </SettingsSection>
+
+          {draft.download.qbittorrent.managed.enabled && qbManagedStatus?.lastError && (
+            <Alert className="mt-5" variant="destructive">
+              <AlertTitle>内置进程异常</AlertTitle>
+              <AlertDescription className="break-all">{qbManagedStatus.lastError}</AlertDescription>
+            </Alert>
+          )}
+        </CardContent>
+        {draft.download.qbittorrent.managed.enabled && (
+          <CardFooter className="flex-col justify-between gap-3 border-t bg-muted/30 pt-4 sm:flex-row sm:pt-5">
+            <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
+              <Badge tone={qbManagedStatus?.running ? "green" : "neutral"}>
+                {qbManagedStatus?.running ? "运行中" : "未运行"}
+              </Badge>
+              <span>PID: {qbManagedStatus?.pid ?? "--"}</span>
+              <span>架构: {qbManagedStatus?.arch ?? "--"}</span>
+              <Button className="h-auto min-h-0 min-w-0 px-0 text-xs" onClick={() => void openQbittorrentWebUi()} variant="ghost">
+                <ExternalLink data-icon="inline-start" />
+                <span className="truncate underline underline-offset-4">
+                  {qbManagedStatus?.webUiUrl || draft.download.qbittorrent.baseUrl}
+                </span>
+              </Button>
+            </div>
+            <div className="flex w-full shrink-0 gap-2 sm:w-auto">
+              <Button
+                className="flex-1 sm:flex-none"
+                disabled={qbManagedAction !== "idle"}
+                onClick={() => void (qbManagedStatus?.running ? stopQbittorrentManaged() : startQbittorrentManaged())}
+                variant="outline"
+              >
+                <Power data-icon="inline-start" />
+                {qbManagedAction === "starting"
+                  ? "启动中"
+                  : qbManagedAction === "stopping"
+                    ? "停止中"
+                    : qbManagedStatus?.running
+                      ? "停止服务"
+                      : "启动服务"}
+              </Button>
+              <Button
+                className="flex-1 sm:flex-none"
+                disabled={qbManagedAction !== "idle"}
+                onClick={() => void restartQbittorrentManaged()}
+              >
+                <RefreshCw data-icon="inline-start" />
+                {qbManagedAction === "restarting" ? "重启中" : "重启服务"}
+              </Button>
+            </div>
+          </CardFooter>
+        )}
+      </Card>
 
           </SettingsCategory>
 
@@ -1281,7 +1307,7 @@ export function SettingsPage() {
           >
 
       <SettingsSection title="扫描与下载规则">
-        <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
+        <div className="grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-5">
           <SelectSetting
             label="定时扫描"
             value={draft.automation.scheduledCheckEnabled ? "on" : "off"}
@@ -1367,7 +1393,7 @@ export function SettingsPage() {
             }
           />
         </div>
-        <div className="mt-4 grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+        <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2 xl:grid-cols-4">
           <SettingRow label="调度状态" value={formatSchedulerState(schedulerStatus)} />
           <SettingRow label="下次扫描" value={formatDateTime(schedulerStatus?.nextRunAt)} />
           <SettingRow label="上次扫描" value={formatDateTime(schedulerStatus?.lastRunAt)} />
@@ -1418,7 +1444,7 @@ function areSettingsEqual(left: AppSettings, right: AppSettings): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
-/** 渲染桌面分区导航与小屏幕的等价选择器。 */
+/** 渲染随主内容滚动吸顶的桌面设置分区导航。 */
 function SettingsCategoryNavigation({
   activeCategory,
   onNavigate
@@ -1426,11 +1452,9 @@ function SettingsCategoryNavigation({
   activeCategory: SettingsCategoryId;
   onNavigate: (categoryId: SettingsCategoryId) => void;
 }) {
-  const selectId = useId();
-
   return (
-    <aside className="min-w-0">
-      <nav aria-label="设置分区" className="sticky top-24 hidden max-h-[calc(100dvh-7rem)] flex-col gap-1 overflow-y-auto border-r pr-4 xl:flex">
+    <aside className="sticky top-24 hidden max-h-[calc(100dvh-7rem)] min-w-0 self-start overflow-y-auto pr-4 lg:block">
+      <nav aria-label="设置分区" className="flex flex-col gap-1 border-r">
         {settingsCategories.map((category) => {
           const Icon = category.icon;
           return (
@@ -1448,23 +1472,36 @@ function SettingsCategoryNavigation({
           );
         })}
       </nav>
-
-      <Field className="xl:hidden">
-        <FieldLabel htmlFor={selectId}>设置分区</FieldLabel>
-        <Select value={activeCategory} onValueChange={(value) => onNavigate(value as SettingsCategoryId)}>
-          <SelectTrigger id={selectId}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectGroup>
-              {settingsCategories.map((category) => (
-                <SelectItem key={category.id} value={category.id}>{category.label}</SelectItem>
-              ))}
-            </SelectGroup>
-          </SelectContent>
-        </Select>
-      </Field>
     </aside>
+  );
+}
+
+/** 渲染固定在页面标题下方的小屏幕设置分区选择器。 */
+function SettingsCategorySelect({
+  activeCategory,
+  onNavigate
+}: {
+  activeCategory: SettingsCategoryId;
+  onNavigate: (categoryId: SettingsCategoryId) => void;
+}) {
+  const selectId = useId();
+
+  return (
+    <Field>
+      <FieldLabel className="sr-only" htmlFor={selectId}>设置分区</FieldLabel>
+      <Select value={activeCategory} onValueChange={(value) => onNavigate(value as SettingsCategoryId)}>
+        <SelectTrigger id={selectId}>
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectGroup>
+            {settingsCategories.map((category) => (
+              <SelectItem key={category.id} value={category.id}>{category.label}</SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
   );
 }
 
@@ -1481,7 +1518,7 @@ function SettingsCategory({
   children: ReactNode;
 }) {
   return (
-    <section className="scroll-mt-[calc(12rem+var(--safe-area-top))] md:scroll-mt-24" id={`settings-${id}`}>
+    <section className="scroll-mt-[calc(12rem+var(--safe-area-top))] lg:scroll-mt-24" id={`settings-${id}`}>
       <header className="border-b pb-3">
         <h2 className="text-xl font-semibold">{title}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
@@ -1509,15 +1546,6 @@ function formatSchedulerState(status: AutomationSchedulerStatus | null): string 
 
 function formatDateTime(value?: string): string {
   return value ? new Date(value).toLocaleString() : "--";
-}
-
-function formatQbittorrentManagedSummary(status: QbittorrentManagedStatus | null): string {
-  if (!status) {
-    return "状态读取中";
-  }
-
-  const state = status.running ? `运行中，PID ${status.pid ?? "--"}` : "未运行";
-  return `${state}，${status.platform}/${status.arch}，WebUI ${status.webUiUrl}`;
 }
 
 /** 统一设置页分区的标题、说明和内容布局。 */
@@ -1657,6 +1685,51 @@ function NumberSetting({
         />
         {suffix && <span className="text-sm text-muted-foreground">{suffix}</span>}
       </div>
+    </Field>
+  );
+}
+
+/** 渲染可精确输入的 qBittorrent 速率限制滑块。 */
+function SpeedLimitSetting({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  const inputId = useId();
+  const normalizedValue = Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+  const sliderMax = Math.max(10_240, Math.ceil(normalizedValue / 1_024) * 1_024);
+
+  /** 统一约束输入值，避免向设置草稿写入负数或非数字。 */
+  function updateValue(nextValue: number) {
+    onChange(Number.isFinite(nextValue) ? Math.max(0, Math.round(nextValue)) : 0);
+  }
+
+  return (
+    <Field>
+      <div className="flex items-center justify-between gap-3">
+        <FieldLabel htmlFor={inputId}>{label} (KiB/s)</FieldLabel>
+        <Input
+          className="h-8 w-28 shrink-0 text-right tabular-nums"
+          id={inputId}
+          min={0}
+          onChange={(event) => updateValue(Number(event.target.value))}
+          step={128}
+          type="number"
+          value={normalizedValue}
+        />
+      </div>
+      <Slider
+        aria-label={`${label}，单位 KiB/s`}
+        max={sliderMax}
+        min={0}
+        onValueChange={(nextValue) => updateValue(nextValue[0] ?? 0)}
+        step={128}
+        value={[normalizedValue]}
+      />
     </Field>
   );
 }
