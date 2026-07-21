@@ -415,8 +415,8 @@ export function SourcesPage() {
           </Button>
         </div>
         <div className="mt-4 rounded-md border bg-card p-4">
-          <FieldGroup className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_240px] sm:items-end">
-            <Field className="justify-between" orientation="horizontal">
+          <FieldGroup className="grid gap-4 lg:grid-cols-2 lg:items-center">
+            <Field className="min-h-11 min-w-0 justify-between md:min-h-9" orientation="horizontal">
               <FieldLabel htmlFor="source-sync-enabled">启用每日同步</FieldLabel>
               <Switch
                 id="source-sync-enabled"
@@ -424,10 +424,15 @@ export function SourcesPage() {
                 onCheckedChange={(enabled) => void updateSourceSyncSettings({ enabled })}
               />
             </Field>
-            <Field data-disabled={!getSourceSyncSettings(settings).enabled}>
+            <Field
+              className="min-w-0"
+              data-disabled={!getSourceSyncSettings(settings).enabled}
+              orientation="responsive"
+            >
               <FieldLabel htmlFor="source-sync-time">每日同步时间</FieldLabel>
-              <div className="flex min-w-0 gap-2">
+              <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2 sm:w-auto sm:grid-cols-[10rem_auto]">
                 <Input
+                  className="min-w-0"
                   id="source-sync-time"
                   type="time"
                   disabled={!getSourceSyncSettings(settings).enabled}
@@ -435,6 +440,7 @@ export function SourcesPage() {
                   onChange={(event) => setSyncTimeDraft(event.target.value)}
                 />
                 <Button
+                  className="shrink-0"
                   variant="outline"
                   disabled={!getSourceSyncSettings(settings).enabled}
                   onClick={() => void updateSourceSyncSettings({ dailyTime: syncTimeDraft })}
