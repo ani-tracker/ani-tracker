@@ -6,6 +6,7 @@ export const MAX_SOURCE_REQUEST_INTERVAL_MS = 60_000;
 export const ANIBT_MIN_REQUEST_INTERVAL_MS = 3_000;
 
 type SourceRequestTarget = Pick<ReleaseSourceConfig, "id" | "name" | "baseUrl" | "rssUrl">;
+type SourceProxyTarget = SourceRequestTarget & Pick<ReleaseSourceConfig, "useProxy">;
 
 /** 判断下载源或实际请求地址是否指向 AniBT。 */
 export function isAniBtRequestTarget(source: SourceRequestTarget, requestUrl?: string | URL): boolean {
@@ -15,6 +16,11 @@ export function isAniBtRequestTarget(source: SourceRequestTarget, requestUrl?: s
   }
 
   return [source.baseUrl, source.rssUrl, requestUrl?.toString()].some((value) => isAniBtUrl(value));
+}
+
+/** 判断下载源请求是否允许使用元数据代理；AniBT 始终固定直连。 */
+export function shouldUseSourceProxy(source: SourceProxyTarget, requestUrl?: string | URL): boolean {
+  return !isAniBtRequestTarget(source, requestUrl) && source.useProxy !== false;
 }
 
 /** 返回下载源允许配置的最小请求间隔。 */

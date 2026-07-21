@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import {
+  Activity,
+  Clock3,
   Copy,
   Download,
   ExternalLink,
@@ -19,6 +21,7 @@ import {
   RotateCcw,
   Save,
   Smartphone,
+  TimerReset,
   Unplug
 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -1306,106 +1309,126 @@ export function SettingsPage() {
             title="自动化"
           >
 
-      <SettingsSection title="扫描与下载规则">
-        <div className="grid items-stretch gap-3 sm:grid-cols-2 xl:grid-cols-5">
-          <SelectSetting
-            label="定时扫描"
-            value={draft.automation.scheduledCheckEnabled ? "on" : "off"}
-            options={[
-              { label: "开启", value: "on" },
-              { label: "关闭", value: "off" }
-            ]}
-            onChange={(value) =>
-              setDraft({
-                ...draft,
-                automation: {
-                  ...draft.automation,
-                  scheduledCheckEnabled: value === "on"
-                }
-              })
-            }
-          />
-          <NumberSetting
-            label="扫描间隔"
-            value={draft.automation.checkIntervalMinutes}
-            suffix="分钟"
-            min={5}
-            onChange={(value) =>
-              setDraft({
-                ...draft,
-                automation: {
-                  ...draft.automation,
-                  checkIntervalMinutes: value
-                }
-              })
-            }
-          />
-          <SelectSetting
-            label="新集提醒"
-            value={draft.automation.notifyOnNewEpisode ? "on" : "off"}
-            options={[
-              { label: "开启", value: "on" },
-              { label: "关闭", value: "off" }
-            ]}
-            onChange={(value) =>
-              setDraft({
-                ...draft,
-                automation: {
-                  ...draft.automation,
-                  notifyOnNewEpisode: value === "on"
-                }
-              })
-            }
-          />
-          <SelectSetting
-            label="全局自动下载"
-            value={draft.automation.autoDownloadEnabledGlobally ? "on" : "off"}
-            options={[
-              { label: "开启", value: "on" },
-              { label: "关闭", value: "off" }
-            ]}
-            onChange={(value) =>
-              setDraft({
-                ...draft,
-                automation: {
-                  ...draft.automation,
-                  autoDownloadEnabledGlobally: value === "on"
-                }
-              })
-            }
-          />
-          <SelectSetting
-            label="默认字幕组缺失"
-            value={draft.automation.fallbackWhenDefaultFansubMissing}
-            options={[
-              { label: "等待", value: "wait" },
-              { label: "候补字幕组", value: "candidate" },
-              { label: "只提醒", value: "notify_only" }
-            ]}
-            onChange={(value) =>
-              setDraft({
-                ...draft,
-                automation: {
-                  ...draft.automation,
-                  fallbackWhenDefaultFansubMissing: value as AppSettings["automation"]["fallbackWhenDefaultFansubMissing"]
-                }
-              })
-            }
-          />
-        </div>
-        <div className="mt-5 grid gap-4 text-sm sm:grid-cols-2 xl:grid-cols-4">
-          <SettingRow label="调度状态" value={formatSchedulerState(schedulerStatus)} />
-          <SettingRow label="下次扫描" value={formatDateTime(schedulerStatus?.nextRunAt)} />
-          <SettingRow label="上次扫描" value={formatDateTime(schedulerStatus?.lastRunAt)} />
-          <SettingRow label="手动冷却至" value={formatDateTime(schedulerStatus?.manualCooldownUntil)} />
-        </div>
-        {schedulerStatus?.lastResult && (
-          <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-            上次结果：下载 {schedulerStatus.lastResult.downloaded.length}，跳过{" "}
-            {schedulerStatus.lastResult.skipped.length}，错误 {schedulerStatus.lastResult.errors.length}
-          </div>
-        )}
-      </SettingsSection>
+      <Card className="overflow-hidden shadow-none">
+        <CardContent className="pt-4 sm:pt-5">
+          <h3 className="sr-only">扫描与下载规则</h3>
+          <FieldGroup className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-x-12 gap-y-5">
+            <FieldGroup className="gap-5">
+              <Field className="items-center justify-between" orientation="horizontal">
+                <FieldLabel className="cursor-pointer" htmlFor="automation-scheduled-check">定时扫描</FieldLabel>
+                <Switch
+                  checked={draft.automation.scheduledCheckEnabled}
+                  id="automation-scheduled-check"
+                  onCheckedChange={(checked) =>
+                    setDraft({
+                      ...draft,
+                      automation: {
+                        ...draft.automation,
+                        scheduledCheckEnabled: checked
+                      }
+                    })
+                  }
+                />
+              </Field>
+              <Field className="items-center justify-between" orientation="horizontal">
+                <FieldLabel htmlFor="automation-check-interval">扫描间隔</FieldLabel>
+                <div className="flex min-w-0 items-center gap-2">
+                  <Input
+                    className="w-24 text-right tabular-nums"
+                    id="automation-check-interval"
+                    min={5}
+                    onChange={(event) =>
+                      setDraft({
+                        ...draft,
+                        automation: {
+                          ...draft.automation,
+                          checkIntervalMinutes: Number(event.target.value)
+                        }
+                      })
+                    }
+                    type="number"
+                    value={draft.automation.checkIntervalMinutes}
+                  />
+                  <span className="shrink-0 text-sm text-muted-foreground">分钟</span>
+                </div>
+              </Field>
+              <Field className="items-center justify-between" orientation="horizontal">
+                <FieldLabel htmlFor="automation-fansub-fallback">默认字幕组缺失</FieldLabel>
+                <Select
+                  value={draft.automation.fallbackWhenDefaultFansubMissing}
+                  onValueChange={(value) =>
+                    setDraft({
+                      ...draft,
+                      automation: {
+                        ...draft.automation,
+                        fallbackWhenDefaultFansubMissing: value as AppSettings["automation"]["fallbackWhenDefaultFansubMissing"]
+                      }
+                    })
+                  }
+                >
+                  <SelectTrigger className="w-40" id="automation-fansub-fallback">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value="wait">等待</SelectItem>
+                      <SelectItem value="candidate">候补字幕组</SelectItem>
+                      <SelectItem value="notify_only">只提醒</SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+            </FieldGroup>
+            <FieldGroup className="gap-5">
+              <Field className="items-center justify-between" orientation="horizontal">
+                <FieldLabel className="cursor-pointer" htmlFor="automation-auto-download">全局自动下载</FieldLabel>
+                <Switch
+                  checked={draft.automation.autoDownloadEnabledGlobally}
+                  id="automation-auto-download"
+                  onCheckedChange={(checked) =>
+                    setDraft({
+                      ...draft,
+                      automation: {
+                        ...draft.automation,
+                        autoDownloadEnabledGlobally: checked
+                      }
+                    })
+                  }
+                />
+              </Field>
+              <Field className="items-center justify-between" orientation="horizontal">
+                <FieldLabel className="cursor-pointer" htmlFor="automation-new-episode-notification">新集提醒</FieldLabel>
+                <Switch
+                  checked={draft.automation.notifyOnNewEpisode}
+                  id="automation-new-episode-notification"
+                  onCheckedChange={(checked) =>
+                    setDraft({
+                      ...draft,
+                      automation: {
+                        ...draft.automation,
+                        notifyOnNewEpisode: checked
+                      }
+                    })
+                  }
+                />
+              </Field>
+            </FieldGroup>
+          </FieldGroup>
+        </CardContent>
+        <CardFooter className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,14rem),1fr))] items-start gap-x-6 gap-y-3 border-t bg-muted/50 pt-4 sm:pt-5">
+          <AutomationStatusItem icon={Activity} label="调度状态" value={formatSchedulerState(schedulerStatus)} />
+          <AutomationStatusItem icon={Clock3} label="下次扫描" value={formatDateTime(schedulerStatus?.nextRunAt)} />
+          <AutomationStatusItem icon={RefreshCw} label="上次扫描" value={formatDateTime(schedulerStatus?.lastRunAt)} />
+          <AutomationStatusItem icon={TimerReset} label="手动冷却至" value={formatDateTime(schedulerStatus?.manualCooldownUntil)} />
+          {schedulerStatus?.lastResult && (
+            <AutomationStatusItem
+              icon={Download}
+              label="上次结果"
+              value={`下载 ${schedulerStatus.lastResult.downloaded.length}，跳过 ${schedulerStatus.lastResult.skipped.length}，错误 ${schedulerStatus.lastResult.errors.length}`}
+            />
+          )}
+        </CardFooter>
+      </Card>
           </SettingsCategory>
         </div>
       </div>
@@ -1546,6 +1569,25 @@ function formatSchedulerState(status: AutomationSchedulerStatus | null): string 
 
 function formatDateTime(value?: string): string {
   return value ? new Date(value).toLocaleString() : "--";
+}
+
+/** 在自动化面板底部紧凑展示单项调度状态。 */
+function AutomationStatusItem({
+  icon: Icon,
+  label,
+  value
+}: {
+  icon: typeof Activity;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+      <Icon aria-hidden="true" className="size-4 shrink-0" />
+      <span className="shrink-0 font-medium text-foreground">{label}</span>
+      <span className="truncate" title={value}>{value}</span>
+    </div>
+  );
 }
 
 /** 统一设置页分区的标题、说明和内容布局。 */

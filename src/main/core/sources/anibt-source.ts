@@ -5,6 +5,7 @@ import { logger } from "../logger";
 import { DESKTOP_BROWSER_ACCEPT_LANGUAGE, DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import type { ReleaseHttpClient } from "./mikan-source";
+import { normalizeReleaseSourceFetchLimit } from "./source-query";
 import { parseXml, textValue, toArray } from "./xml";
 
 const DEFAULT_ANIBT_BASE_URL = "https://anibt.net/";
@@ -72,7 +73,7 @@ export class AniBtReleaseSource implements ReleaseSource {
 
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
     const keyword = query.keyword.trim();
-    const limit = query.limit ?? 50;
+    const limit = normalizeReleaseSourceFetchLimit(query.limit);
     const releases: Release[] = [];
 
     logger.info("AniBT source search started", {
@@ -97,7 +98,7 @@ export class AniBtReleaseSource implements ReleaseSource {
     }
 
     if (!keyword || releases.length < limit) {
-      const latest = await this.readLatestFeed(Math.max(limit, 50));
+      const latest = await this.readLatestFeed(limit);
       releases.push(...(keyword ? latest.filter((release) => matchesKeyword(release, keyword)) : latest));
     }
 
@@ -120,8 +121,8 @@ export class AniBtReleaseSource implements ReleaseSource {
   }
 
   /** 按 Bangumi ID 精确读取 AniBT 番剧 RSS。 */
-  async listReleasesByAnimeId(sourceAnimeId: string, limit = 100): Promise<Release[]> {
-    return this.readAnimeFeed(sourceAnimeId, limit);
+  async listReleasesByAnimeId(sourceAnimeId: string, limit = 50): Promise<Release[]> {
+    return this.readAnimeFeed(sourceAnimeId, normalizeReleaseSourceFetchLimit(limit));
   }
 
   /** 查询 AniBT 可供用户确认的番剧候选。 */

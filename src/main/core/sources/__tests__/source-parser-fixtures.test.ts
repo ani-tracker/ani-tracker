@@ -17,6 +17,7 @@ import {
   resolveAnimeReleaseCacheTtlMs
 } from "../release-source-service";
 import { RssReleaseSource } from "../rss-source";
+import { MAX_RELEASE_SOURCE_FETCH_LIMIT, normalizeReleaseSourceFetchLimit } from "../source-query";
 import { TorznabReleaseSource } from "../torznab-source";
 import { parseXml, textValue, toArray } from "../xml";
 
@@ -85,6 +86,13 @@ const torznabConfig: ReleaseSourceConfig = {
   apiKey: "test-api-key"
 };
 
+test("单个下载源请求数量最多为 50", () => {
+  assert.equal(normalizeReleaseSourceFetchLimit(), MAX_RELEASE_SOURCE_FETCH_LIMIT);
+  assert.equal(normalizeReleaseSourceFetchLimit(200), MAX_RELEASE_SOURCE_FETCH_LIMIT);
+  assert.equal(normalizeReleaseSourceFetchLimit(12.8), 12);
+  assert.equal(normalizeReleaseSourceFetchLimit(0), 1);
+});
+
 test("默认下载源包含 AniBT、ACGNX、Nyaa 和 ACG.RIP 且可创建站点适配器", () => {
   const anibt = defaultSourceConfigs.find((source) => source.id === "anibt");
   const acgnx = defaultSourceConfigs.find((source) => source.id === "acgnx");
@@ -96,6 +104,7 @@ test("默认下载源包含 AniBT、ACGNX、Nyaa 和 ACG.RIP 且可创建站点�
   assert.ok(nyaa);
   assert.ok(acgRip);
   assert.equal(anibt.enabled, true);
+  assert.equal(anibt.useProxy, false);
   assert.equal(acgnx.enabled, false);
   assert.equal(nyaa.enabled, false);
   assert.equal(acgRip.enabled, false);
@@ -301,7 +310,7 @@ test("AniBT source uses configured token headers", async (t) => {
     ...anibtConfig,
     apiKey: "test-token"
   });
-  const releases = await source.searchReleases({ keyword: "", limit: 1 });
+  const releases = await source.searchReleases({ keyword: "", limit: 200 });
 
   assert.equal(inputs[0], "https://anibt.net/rss/magnets.xml?limit=50");
   assert.equal(requestHeaders[0].Accept, "application/rss+xml,application/xml,text/xml");
@@ -320,13 +329,13 @@ test("createAniBtHeaders accepts copied Cookie credentials", () => {
   assert.equal(headers["X-API-Key"], undefined);
 });
 
-test("AniBT 按已绑定 Bangumi ID 精确读取番剧 RSS", async (t) => {
+test("AniBT 按已绑定 Bangumi ID 精确读取番剧 RSS 且限制为 50 条", async (t) => {
   t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
-    assert.equal(String(input), "https://anibt.net/rss/anime.xml?bgmId=528828&limit=30");
+    assert.equal(String(input), "https://anibt.net/rss/anime.xml?bgmId=528828&limit=50");
     return new Response("<rss><channel><item><title>凡人修仙传 - 160</title><guid>exact-1</guid></item></channel></rss>");
   });
 
-  const releases = await new AniBtReleaseSource(anibtConfig).listReleasesByAnimeId("528828", 30);
+  const releases = await new AniBtReleaseSource(anibtConfig).listReleasesByAnimeId("528828", 200);
   assert.equal(releases.length, 1);
   assert.match(releases[0].title, /凡人修仙传/);
 });
@@ -759,7 +768,7 @@ test("ReleaseSourceService 重启后优先复用持久化查询缓存", async ()
 test("TorznabReleaseSource 解析 torznab attr、enclosure 和查询参数", async (t) => {
   t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
     const url = new URL(String(input));
-    assert.equal(url.href, "https://indexer.example.test/api?t=search&q=%E6%B5%8B%E8%AF%95%E7%95%AA&apikey=test-api-key");
+    assert.equal(url.href, "https://indexer.example.test/api?t=search&q=%E6%B5%8B%E8%AF%95%E7%95%AA&limit=50&offset=0&apikey=test-api-key");
 
     return new Response(
       `
@@ -781,7 +790,7 @@ test("TorznabReleaseSource 解析 torznab attr、enclosure 和查询参数", asy
     );
   });
 
-  const releases = await new TorznabReleaseSource(torznabConfig).searchReleases({ keyword: "测试番", limit: 5 });
+  const releases = await new TorznabReleaseSource(torznabConfig).searchReleases({ keyword: "测试番", limit: 200 });
 
   assert.equal(releases.length, 1);
   assert.equal(releases[0].id, "torznab-test:torznab-guid-05");

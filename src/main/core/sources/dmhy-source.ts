@@ -4,6 +4,7 @@ import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import type { ReleaseHttpClient } from "./mikan-source";
+import { collectReleasePages } from "./source-pagination";
 
 const DEFAULT_DMHY_BASE_URL = "https://share.dmhy.org/";
 
@@ -14,25 +15,22 @@ export class DmhyReleaseSource implements ReleaseSource {
   ) {}
 
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
-    const url = new URL("/topics/list", this.config.baseUrl ?? DEFAULT_DMHY_BASE_URL);
     const keyword = query.keyword.trim();
-    if (keyword) {
-      url.searchParams.set("keyword", keyword);
-    }
+    return collectReleasePages(query.limit, async ({ page }) => {
+      const url = buildDmhyListUrl(this.config.baseUrl ?? DEFAULT_DMHY_BASE_URL, keyword, page);
+      const response = await this.httpClient.fetch(url, {
+        source: "dmhy-release",
+        headers: {
+          "User-Agent": DESKTOP_BROWSER_USER_AGENT
+        }
+      });
 
-    const response = await this.httpClient.fetch(url, {
-      source: "dmhy-release",
-      headers: {
-        "User-Agent": DESKTOP_BROWSER_USER_AGENT
+      if (!response.ok) {
+        throw new Error(`DMHY source failed: ${response.status} ${response.statusText}`);
       }
+
+      return { items: parseDmhyList(await response.text(), this.config) };
     });
-
-    if (!response.ok) {
-      throw new Error(`DMHY source failed: ${response.status} ${response.statusText}`);
-    }
-
-    const html = await response.text();
-    return parseDmhyList(html, this.config).slice(0, query.limit ?? 50);
   }
 
   async listLatestByFansub(groupId: string): Promise<Release[]> {
@@ -42,6 +40,16 @@ export class DmhyReleaseSource implements ReleaseSource {
   async listLatestByAnime(animeId: string): Promise<Release[]> {
     return this.searchReleases({ keyword: animeId });
   }
+}
+
+/** 生成动漫花园列表页地址，第二页起使用站点路径分页。 */
+export function buildDmhyListUrl(baseUrl: string, keyword: string, page = 1): string {
+  const path = page > 1 ? `/topics/list/page/${page}` : "/topics/list";
+  const url = new URL(path, baseUrl);
+  if (keyword) {
+    url.searchParams.set("keyword", keyword);
+  }
+  return url.toString();
 }
 
 export function parseDmhyList(html: string, config: ReleaseSourceConfig): Release[] {

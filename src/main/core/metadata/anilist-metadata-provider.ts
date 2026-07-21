@@ -14,13 +14,24 @@ import {
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpTransport } from "./metadata-http-client";
 import { logger } from "../logger";
+import {
+  ANILIST_PAGE_LIMIT,
+  defaultAniListRequestScheduler,
+  type AniListRequestScheduler
+} from "./anilist-request-scheduler";
 
 const ANILIST_GRAPHQL_ENDPOINT = "https://graphql.anilist.co";
+const ANILIST_MAX_PAGE_COUNT = 20;
 
 interface AniListResponse {
   data?: {
     Page?: {
       media?: AniListMedia[];
+      pageInfo?: {
+        currentPage?: number;
+        hasNextPage?: boolean;
+        lastPage?: number;
+      };
     };
     Media?: AniListMedia;
   };
@@ -91,7 +102,10 @@ const anilistSeasonByLocalSeason: Record<Season, "WINTER" | "SPRING" | "SUMMER" 
 export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider, AnimeDetailMetadataProvider {
   readonly id = "anilist";
 
-  constructor(private readonly httpClient: MetadataHttpTransport = defaultMetadataHttpClient) {}
+  constructor(
+    private readonly httpClient: MetadataHttpTransport = defaultMetadataHttpClient,
+    private readonly requestScheduler: AniListRequestScheduler = defaultAniListRequestScheduler
+  ) {}
 
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {
     const seasonInfo = getSeasonInfo(month);
@@ -99,6 +113,11 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider, An
     const query = `
       query SeasonalAnime($season: MediaSeason!, $seasonYear: Int!, $page: Int!, $perPage: Int!) {
         Page(page: $page, perPage: $perPage) {
+          pageInfo {
+            currentPage
+            hasNextPage
+            lastPage
+          }
           media(type: ANIME, season: $season, seasonYear: $seasonYear, sort: POPULARITY_DESC) {
             id
             idMal
@@ -163,14 +182,50 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider, An
       }
     `;
 
-    const json = await this.request(query, {
-      season: anilistSeasonByLocalSeason[seasonInfo.season],
-      seasonYear: year,
-      page: 1,
-      perPage: 50
+    const mediaById = new Map<number, AniListMedia>();
+    let page = 1;
+    let pageCount = 0;
+    let hasNextPage = true;
+
+    while (hasNextPage && page <= ANILIST_MAX_PAGE_COUNT) {
+      const json = await this.request(query, {
+        season: anilistSeasonByLocalSeason[seasonInfo.season],
+        seasonYear: year,
+        page,
+        perPage: ANILIST_PAGE_LIMIT
+      });
+      const pageData = json.data?.Page;
+      const media = pageData?.media ?? [];
+      pageCount += 1;
+      for (const item of media) {
+        mediaById.set(item.id, item);
+      }
+
+      hasNextPage = pageData?.pageInfo?.hasNextPage === true && media.length > 0;
+      const currentPage = normalizePositiveInteger(pageData?.pageInfo?.currentPage) ?? page;
+      const nextPage = currentPage + 1;
+      if (!hasNextPage || nextPage <= page) {
+        break;
+      }
+      page = nextPage;
+    }
+
+    if (hasNextPage && page > ANILIST_MAX_PAGE_COUNT) {
+      logger.warn("AniList 季度分页达到保护上限", {
+        year,
+        month,
+        pageCount,
+        maxPageCount: ANILIST_MAX_PAGE_COUNT
+      });
+    }
+    logger.info("AniList 季度分页采集完成", {
+      year,
+      month,
+      pageCount,
+      count: mediaById.size
     });
 
-    return (json.data?.Page?.media ?? [])
+    return [...mediaById.values()]
       .filter((item) => item.startDate?.year === year && item.startDate?.month === month)
       .map((item) => mapAniListMedia(item, seasonInfo.season));
   }
@@ -221,15 +276,17 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider, An
 
   /** 执行 AniList GraphQL 请求并统一输出失败诊断。 */
   private async request(query: string, variables: Record<string, unknown>): Promise<AniListResponse> {
-    const response = await this.httpClient.fetch(ANILIST_GRAPHQL_ENDPOINT, {
-      source: this.id,
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Accept: "application/json"
-      },
-      body: JSON.stringify({ query, variables })
-    });
+    const response = await this.requestScheduler.schedule(() =>
+      this.httpClient.fetch(ANILIST_GRAPHQL_ENDPOINT, {
+        source: this.id,
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json"
+        },
+        body: JSON.stringify({ query, variables })
+      })
+    );
 
     if (!response.ok) {
       logger.info("AniList error detail", {

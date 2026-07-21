@@ -37,7 +37,7 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     name: "AniBT",
     kind: "site_adapter",
     enabled: true,
-    useProxy: true,
+    useProxy: false,
     requestIntervalMs: 3_000,
     baseUrl: "https://anibt.net/",
     tags: ["anime", "bt", "anibt", "rss"]

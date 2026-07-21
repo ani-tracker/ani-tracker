@@ -2,6 +2,7 @@ import type { SourceSyncRunResult } from "@shared/contracts";
 import type {
   AppSettings,
   NotificationRecord,
+  Release,
   ReleaseSourceConfig,
   ReleaseSourceSyncState,
   RequestCircuitState
@@ -9,11 +10,12 @@ import type {
 import { logger } from "../logger";
 import { MetadataHttpClient } from "../metadata/metadata-http-client";
 import type { AppRepository } from "../repositories/app-repository";
+import { AniBtReleaseSource } from "./anibt-source";
 import { createReleaseSource, isMikanSiteConfig } from "./release-source-service";
 import { createSourceHttpClient, getReleaseSourceCircuitState } from "./source-http-client";
 import type { ReleaseHttpClient } from "./mikan-source";
+import { MAX_RELEASE_SOURCE_FETCH_LIMIT } from "./source-query";
 
-const SYNC_RELEASE_LIMIT = 200;
 const CACHE_RETENTION_DAYS = 90;
 
 export interface SourceSyncRunOptions {
@@ -93,7 +95,30 @@ export class SourceSyncService {
         result.skippedSourceIds.push(source.id);
         return;
       }
-      const releases = await releaseSource.searchReleases({ keyword: "", limit: SYNC_RELEASE_LIMIT });
+      const sourceAnimeIds = releaseSource instanceof AniBtReleaseSource
+        ? await this.listTrackedAniBtAnimeIds(source.id)
+        : [];
+      let releases;
+      if (releaseSource instanceof AniBtReleaseSource && sourceAnimeIds.length > 0) {
+        logger.info("AniBT 增量同步使用追番 ID 过滤", {
+          sourceId: source.id,
+          animeCount: sourceAnimeIds.length,
+          limit: MAX_RELEASE_SOURCE_FETCH_LIMIT
+        });
+        const batches: Release[] = [];
+        for (const sourceAnimeId of sourceAnimeIds) {
+          batches.push(...await releaseSource.listReleasesByAnimeId(
+            sourceAnimeId,
+            MAX_RELEASE_SOURCE_FETCH_LIMIT
+          ));
+        }
+        releases = batches;
+      } else {
+        releases = await releaseSource.searchReleases({
+          keyword: "",
+          limit: MAX_RELEASE_SOURCE_FETCH_LIMIT
+        });
+      }
       const addedCount = await this.repository.upsertCachedReleases(releases);
       const latestState = await this.getState(source.id);
       await this.repository.upsertSourceSyncState({
@@ -130,6 +155,18 @@ export class SourceSyncService {
   private async getState(sourceId: string): Promise<ReleaseSourceSyncState> {
     return (await this.repository.listSourceSyncStates()).find((state) => state.sourceId === sourceId)
       ?? createEmptyState(sourceId);
+  }
+
+  /** 读取追番中已确认的 AniBT 映射，并以 Bangumi ID 作为后备。 */
+  private async listTrackedAniBtAnimeIds(sourceId: string): Promise<string[]> {
+    const trackedAnime = await this.repository.listMyAnime();
+    const sourceAnimeIds = await Promise.all(trackedAnime.map(async (item) => {
+      const bindings = await this.repository.listAnimeSourceBindings(item.anime.id);
+      const binding = bindings.find((candidate) => candidate.sourceId === sourceId && candidate.confirmed);
+      return binding?.sourceAnimeId.trim() || item.anime.externalIds.bangumi?.trim();
+    }));
+
+    return [...new Set(sourceAnimeIds.filter((value): value is string => Boolean(value)))];
   }
 
   /** 将失败来源、根因和熔断状态写入提醒中心。 */
