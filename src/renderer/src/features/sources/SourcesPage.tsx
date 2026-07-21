@@ -1,4 +1,5 @@
 import {
+  CheckCircle2,
   ChevronDown,
   ChevronRight,
   KeyRound,
@@ -10,6 +11,8 @@ import {
   Save,
   Settings2,
   Timer,
+  TriangleAlert,
+  type LucideIcon,
   X
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -22,6 +25,7 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/
 import { Field, FieldDescription, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -310,6 +314,8 @@ export function SourcesPage() {
 
   const enabledCount = sources.filter((source) => source.enabled).length;
   const credentialRequiredCount = sources.filter((source) => needsCredential(source, source.apiKey)).length;
+  const sourceSyncSettings = getSourceSyncSettings(settings);
+  const syncTimeChanged = syncTimeDraft !== sourceSyncSettings.dailyTime;
 
   return (
     <Page>
@@ -414,54 +420,63 @@ export function SourcesPage() {
             {syncing || syncStatus?.inFlight ? "同步中" : "立即同步"}
           </Button>
         </div>
-        <div className="mt-4 rounded-md border bg-card p-4">
-          <FieldGroup className="grid gap-4 lg:grid-cols-2 lg:items-center">
-            <Field className="min-h-11 min-w-0 justify-between md:min-h-9" orientation="horizontal">
-              <FieldLabel htmlFor="source-sync-enabled">启用每日同步</FieldLabel>
-              <Switch
-                id="source-sync-enabled"
-                checked={getSourceSyncSettings(settings).enabled}
-                onCheckedChange={(enabled) => void updateSourceSyncSettings({ enabled })}
-              />
-            </Field>
-            <Field
-              className="min-w-0"
-              data-disabled={!getSourceSyncSettings(settings).enabled}
-              orientation="responsive"
-            >
-              <FieldLabel htmlFor="source-sync-time">每日同步时间</FieldLabel>
-              <div className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] gap-2 sm:w-auto sm:grid-cols-[10rem_auto]">
-                <Input
-                  className="min-w-0"
-                  id="source-sync-time"
-                  type="time"
-                  disabled={!getSourceSyncSettings(settings).enabled}
-                  value={syncTimeDraft}
-                  onChange={(event) => setSyncTimeDraft(event.target.value)}
-                />
+        <div className="mt-4 overflow-hidden rounded-md border bg-card">
+          <div className="bg-muted/30 p-4">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
+              <FieldGroup className="gap-4 sm:flex-row sm:items-center lg:flex-1 lg:gap-6">
+                <Field className="w-auto flex-none justify-start gap-3" orientation="horizontal">
+                  <FieldLabel className="flex-none" htmlFor="source-sync-enabled">启用每日同步</FieldLabel>
+                  <Switch
+                    id="source-sync-enabled"
+                    checked={sourceSyncSettings.enabled}
+                    onCheckedChange={(enabled) => void updateSourceSyncSettings({ enabled })}
+                  />
+                </Field>
+                <Field
+                  className="min-w-0 sm:w-auto sm:flex-none"
+                  data-disabled={!sourceSyncSettings.enabled}
+                  orientation="responsive"
+                >
+                  <FieldLabel className="flex-none" htmlFor="source-sync-time">每日同步时间</FieldLabel>
+                  <Input
+                    className="min-w-0 sm:w-40"
+                    id="source-sync-time"
+                    type="time"
+                    disabled={!sourceSyncSettings.enabled}
+                    value={syncTimeDraft}
+                    onChange={(event) => setSyncTimeDraft(event.target.value)}
+                  />
+                </Field>
+              </FieldGroup>
+              {syncTimeChanged ? (
                 <Button
-                  className="shrink-0"
-                  variant="outline"
-                  disabled={!getSourceSyncSettings(settings).enabled}
+                  className="w-full shrink-0 lg:ml-auto lg:w-auto"
+                  disabled={!sourceSyncSettings.enabled}
                   onClick={() => void updateSourceSyncSettings({ dailyTime: syncTimeDraft })}
                 >
                   <Save data-icon="inline-start" />保存
                 </Button>
-              </div>
-            </Field>
-          </FieldGroup>
-          <div className="mt-4 grid min-w-0 grid-cols-1 gap-px overflow-hidden rounded-md border bg-border sm:grid-cols-3">
-            <ProxySummaryItem icon={<Timer />} label="计划时间" value={getSourceSyncSettings(settings).dailyTime} />
-            <ProxySummaryItem label="上次完成" value={formatOptionalDateTime(syncStatus?.lastRunAt)} />
-            <ProxySummaryItem label="下次同步" value={formatOptionalDateTime(syncStatus?.nextRunAt)} />
+              ) : null}
+            </div>
+          </div>
+          <Separator />
+          <div className="grid min-w-0 grid-cols-1 sm:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)_auto_minmax(0,1fr)]">
+            <SourceSyncSummaryItem icon={Timer} label="计划时间" value={sourceSyncSettings.dailyTime} />
+            <ResponsiveSummarySeparator />
+            <SourceSyncSummaryItem icon={CheckCircle2} label="上次完成" value={formatOptionalDateTime(syncStatus?.lastRunAt)} />
+            <ResponsiveSummarySeparator />
+            <SourceSyncSummaryItem icon={RefreshCw} label="下次同步" value={formatOptionalDateTime(syncStatus?.nextRunAt)} />
           </div>
           {(syncStatus?.lastError || syncStatus?.lastResult?.errors.length) ? (
-            <Alert className="mt-4" variant="destructive">
-              <AlertTitle>上次同步存在异常</AlertTitle>
-              <AlertDescription>
-                {syncStatus.lastError ?? `${syncStatus.lastResult?.errors.length ?? 0} 个来源同步失败，成功来源数据已保留。`}
-              </AlertDescription>
-            </Alert>
+            <div className="px-4 pb-4">
+              <Alert variant="destructive">
+                <TriangleAlert />
+                <AlertTitle>上次同步存在异常</AlertTitle>
+                <AlertDescription>
+                  {syncStatus.lastError ?? `${syncStatus.lastResult?.errors.length ?? 0} 个来源同步失败，成功来源数据已保留。`}
+                </AlertDescription>
+              </Alert>
+            </div>
           ) : null}
         </div>
       </section>
@@ -776,6 +791,29 @@ function ProxySummaryItem({ icon, label, value }: { icon?: ReactNode; label: str
       </div>
       <div className="mt-1 truncate text-sm font-medium" title={value}>{value}</div>
     </div>
+  );
+}
+
+/** 渲染每日同步的单项状态数据。 */
+function SourceSyncSummaryItem({ icon: Icon, label, value }: { icon: LucideIcon; label: string; value: string }) {
+  return (
+    <div className="min-w-0 p-4">
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Icon className="size-4 text-primary" />
+        {label}
+      </div>
+      <div className="mt-2 truncate text-base font-semibold" title={value}>{value}</div>
+    </div>
+  );
+}
+
+/** 在窄屏和桌面端分别渲染横向或纵向状态分隔线。 */
+function ResponsiveSummarySeparator() {
+  return (
+    <>
+      <Separator className="sm:hidden" />
+      <Separator className="hidden h-full sm:block" orientation="vertical" />
+    </>
   );
 }
 
