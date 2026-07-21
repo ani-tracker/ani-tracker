@@ -72,6 +72,15 @@ pnpm build
 2. `prepare:qbittorrent` 校验并复制当前目标平台的托管 qBittorrent 资源。
 3. `prepare:ffmpeg` 校验并复制当前目标平台的 FFmpeg 资源。
 
+交叉构建时可通过 npm 目标变量选择平台，CLI 参数优先级更高：
+
+```bash
+npm_config_platform=win32 npm_config_arch=x64 pnpm build
+pnpm run prepare:qbittorrent -- --platform win32 --arch x64
+```
+
+qBittorrent 仅在显式执行 `node scripts/prepare-qbittorrent-resources.mjs --all` 时准备全部已有平台资源。每次准备前会清空 `out/qbittorrent`，避免混入上一次构建的平台目录。
+
 主要输出：
 
 ```text

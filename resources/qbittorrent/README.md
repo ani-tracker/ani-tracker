@@ -31,7 +31,11 @@ Resource preparation:
 ```bash
 npm run prepare:qbittorrent
 npm run verify:qbittorrent
+node scripts/prepare-qbittorrent-resources.mjs --platform win32 --arch x64
+node scripts/prepare-qbittorrent-resources.mjs --all
 ```
 
-- `prepare:qbittorrent` copies all available bundled nox binaries into `out/qbittorrent` after `electron-vite build`; missing binaries only produce a warning for development builds.
+- `prepare:qbittorrent` copies only the current build target into `out/qbittorrent` after `electron-vite build`; CLI `--platform` and `--arch` override npm target variables and the host platform.
 - `verify:qbittorrent` requires the current platform and architecture nox binary to exist and exits with a non-zero code when it is missing.
+- `--all` is reserved for explicit resource maintenance and copies every available supported target.
+- The output root is cleared before preparation so resources from a previous platform build cannot leak into the next package.

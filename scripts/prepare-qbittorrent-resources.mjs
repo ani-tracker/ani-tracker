@@ -43,18 +43,28 @@ const supportedTargets = [
 ];
 
 const options = parseArgs(process.argv.slice(2));
-const requiredTargets = options.all
-  ? supportedTargets
-  : supportedTargets.filter((target) => target.platform === options.platform && target.arch === options.arch);
+const selectedTarget = supportedTargets.find(
+  (target) => target.platform === options.platform && target.arch === options.arch
+);
+
+if (!options.all && !selectedTarget) {
+  console.error(`[qbittorrent] unsupported build target: ${options.platform}-${options.arch}`);
+  console.error(`[qbittorrent] supported targets: ${supportedTargets.map((target) => target.dir).join(", ")}`);
+  process.exit(1);
+}
+
+const targetsToPrepare = options.all ? supportedTargets : [selectedTarget];
 
 const availableTargets = [];
 const missingTargets = [];
 
-for (const target of supportedTargets) {
+await rm(options.targetRoot, { recursive: true, force: true });
+
+for (const target of targetsToPrepare) {
   const binaryPath = await findBundledBinary(options.sourceRoot, target);
   if (binaryPath) {
     availableTargets.push({ ...target, binaryPath });
-  } else if (requiredTargets.some((required) => required.dir === target.dir)) {
+  } else {
     missingTargets.push(target);
   }
 }
@@ -68,12 +78,11 @@ if (options.required && missingTargets.length) {
 
 if (!availableTargets.length) {
   console.warn(
-    `[qbittorrent] no bundled qBittorrent-nox binaries found under ${options.sourceRoot}; managed nox startup will stay disabled until binaries are added.`
+    `[qbittorrent] no bundled qBittorrent-nox binaries found for ${targetsToPrepare.map((target) => target.dir).join(", ")} under ${options.sourceRoot}; managed nox startup will stay disabled until binaries are added.`
   );
   process.exit(0);
 }
 
-await rm(options.targetRoot, { recursive: true, force: true });
 await mkdir(options.targetRoot, { recursive: true });
 
 for (const target of availableTargets) {
@@ -86,6 +95,7 @@ for (const target of availableTargets) {
 
 console.log(`[qbittorrent] resource output: ${options.targetRoot}`);
 
+/** 查找目标平台中可托管启动的 qBittorrent-nox 文件。 */
 async function findBundledBinary(sourceRoot, target) {
   const targetDir = join(sourceRoot, target.dir);
   if (!(await exists(targetDir))) {
@@ -102,6 +112,7 @@ async function findBundledBinary(sourceRoot, target) {
   return undefined;
 }
 
+/** 判断路径是否为当前主机可使用的可执行文件。 */
 async function isFile(path) {
   try {
     const itemStat = await stat(path);
@@ -109,7 +120,7 @@ async function isFile(path) {
       return false;
     }
 
-    // Windows .exe files do not rely on POSIX executable bits.
+    // Windows 可执行文件不依赖 POSIX 执行权限位。
     if (process.platform === "win32" || path.toLowerCase().endsWith(".exe")) {
       return true;
     }
@@ -121,6 +132,7 @@ async function isFile(path) {
   }
 }
 
+/** 判断资源路径是否存在。 */
 async function exists(path) {
   try {
     await access(path, constants.F_OK);
@@ -130,18 +142,23 @@ async function exists(path) {
   }
 }
 
+/** 解析资源目录和目标平台参数。 */
 function parseArgs(args) {
   const parsed = {
     sourceRoot: defaultSourceRoot,
     targetRoot: defaultTargetRoot,
-    platform: process.platform,
-    arch: process.arch,
+    platform: process.env.npm_config_platform || process.platform,
+    arch: process.env.npm_config_arch || process.arch,
     required: false,
     all: false
   };
 
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
+
+    if (arg === "--") {
+      continue;
+    }
 
     if (arg === "--required") {
       parsed.required = true;
@@ -183,6 +200,7 @@ function parseArgs(args) {
   return parsed;
 }
 
+/** 读取命令行参数值。 */
 function readValue(args, index, arg) {
   const value = args[index + 1];
   if (!value) {
