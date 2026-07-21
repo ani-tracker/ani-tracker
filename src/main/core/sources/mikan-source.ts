@@ -6,6 +6,8 @@ import { logger } from "../logger";
 import { defaultMetadataHttpClient, type MetadataFetchOptions } from "../metadata/metadata-http-client";
 import { parseMikanSeasonHtml } from "../metadata/mikan-metadata-provider";
 import { RssReleaseSource } from "./rss-source";
+import { collectReleasePages } from "./source-pagination";
+import { normalizeReleaseSourceFetchLimit } from "./source-query";
 
 const DEFAULT_MIKAN_BASE_URL = "https://mikanani.me/";
 const MIKAN_FETCH_TIMEOUT_MS = 10_000;
@@ -32,11 +34,15 @@ export class MikanReleaseSource implements ReleaseSource {
       return [];
     }
 
-    const url = new URL("/Home/Search", this.config.baseUrl ?? DEFAULT_MIKAN_BASE_URL);
-    url.searchParams.set("searchstr", keyword);
-
-    const html = await fetchText(url.toString(), this.httpClient);
-    return parseMikanReleaseList(html, this.config).slice(0, query.limit ?? 50);
+    const baseUrl = this.config.baseUrl ?? DEFAULT_MIKAN_BASE_URL;
+    return collectReleasePages(query.limit, async ({ page }) => {
+      const url = buildMikanSearchUrl(baseUrl, keyword, page);
+      const html = await fetchText(url, this.httpClient);
+      return {
+        items: parseMikanReleaseList(html, this.config),
+        hasNextPage: hasMikanSearchPage(html, baseUrl, page + 1) || undefined
+      };
+    });
   }
 
   async listLatestByFansub(groupId: string): Promise<Release[]> {
@@ -48,7 +54,7 @@ export class MikanReleaseSource implements ReleaseSource {
   }
 
   /** 按 Mikan 番组 ID 精确读取该番剧 RSS。 */
-  async listReleasesByAnimeId(sourceAnimeId: string, limit = 100): Promise<Release[]> {
+  async listReleasesByAnimeId(sourceAnimeId: string, limit = 50): Promise<Release[]> {
     const rssUrl = new URL("/RSS/Bangumi", getMikanBaseUrl(this.config));
     rssUrl.searchParams.set("bangumiId", sourceAnimeId);
     const source = new RssReleaseSource(
@@ -59,7 +65,10 @@ export class MikanReleaseSource implements ReleaseSource {
       },
       this.httpClient
     );
-    const releases = await source.searchReleases({ keyword: "", limit });
+    const releases = await source.searchReleases({
+      keyword: "",
+      limit: normalizeReleaseSourceFetchLimit(limit)
+    });
     const subgroups = await this.readAnimeSubgroups(sourceAnimeId);
     return attachMikanSubgroupMeta(releases, sourceAnimeId, subgroups, this.config);
   }
@@ -96,6 +105,31 @@ export class MikanReleaseSource implements ReleaseSource {
       return [];
     }
   }
+}
+
+/** 生成 Mikan 资源搜索分页地址。 */
+export function buildMikanSearchUrl(baseUrl: string, keyword: string, page = 1): string {
+  const url = new URL("/Home/Search", baseUrl);
+  url.searchParams.set("searchstr", keyword);
+  if (page > 1) {
+    url.searchParams.set("page", String(page));
+  }
+  return url.toString();
+}
+
+/** 从 Mikan 搜索页链接确认是否存在指定后续页。 */
+function hasMikanSearchPage(html: string, baseUrl: string, expectedPage: number): boolean {
+  for (const match of html.matchAll(/href=["']([^"']+)["']/gi)) {
+    try {
+      const url = new URL(decodeHtml(match[1]), baseUrl);
+      if (Number(url.searchParams.get("page")) === expectedPage) {
+        return true;
+      }
+    } catch {
+      // 忽略站点页面中无法解析的非标准链接。
+    }
+  }
+  return false;
 }
 
 function getMikanBaseUrl(config: ReleaseSourceConfig): string {

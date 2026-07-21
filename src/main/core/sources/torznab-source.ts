@@ -4,12 +4,17 @@ import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import type { ReleaseHttpClient } from "./mikan-source";
+import { collectReleasePages } from "./source-pagination";
 import { parseXml, textValue, toArray } from "./xml";
 
 interface TorznabDocument {
   rss?: {
     channel?: {
       item?: TorznabItem | TorznabItem[];
+      "newznab:response"?: {
+        "@offset"?: string;
+        "@total"?: string;
+      };
     };
   };
 }
@@ -42,27 +47,37 @@ export class TorznabReleaseSource implements ReleaseSource {
       return [];
     }
 
-    const url = new URL("/api", this.config.baseUrl);
-    url.searchParams.set("t", "search");
-    url.searchParams.set("q", query.keyword);
-    if (this.config.apiKey) {
-      url.searchParams.set("apikey", this.config.apiKey);
-    }
-
-    const response = await this.httpClient.fetch(url, {
-      source: "torznab-release",
-      headers: {
-        "User-Agent": DESKTOP_BROWSER_USER_AGENT
+    return collectReleasePages(query.limit, async ({ offset, limit }) => {
+      const url = new URL("/api", this.config.baseUrl);
+      url.searchParams.set("t", "search");
+      url.searchParams.set("q", query.keyword);
+      url.searchParams.set("limit", String(limit));
+      url.searchParams.set("offset", String(offset));
+      if (this.config.apiKey) {
+        url.searchParams.set("apikey", this.config.apiKey);
       }
-    });
-    if (!response.ok) {
-      throw new Error(`Torznab source failed: ${response.status} ${response.statusText}`);
-    }
 
-    const parsed = parseXml<TorznabDocument>(await response.text());
-    return toArray(parsed.rss?.channel?.item)
-      .map((item, index) => enrichReleaseFromTitle(this.mapItem(item, index)))
-      .slice(0, query.limit ?? 50);
+      const response = await this.httpClient.fetch(url, {
+        source: "torznab-release",
+        headers: {
+          "User-Agent": DESKTOP_BROWSER_USER_AGENT
+        }
+      });
+      if (!response.ok) {
+        throw new Error(`Torznab source failed: ${response.status} ${response.statusText}`);
+      }
+
+      const parsed = parseXml<TorznabDocument>(await response.text());
+      const items = toArray(parsed.rss?.channel?.item)
+        .map((item, index) => enrichReleaseFromTitle(this.mapItem(item, offset + index)));
+      const pageMeta = parsed.rss?.channel?.["newznab:response"];
+      const total = parseOptionalNumber(pageMeta?.["@total"]);
+      const reportedOffset = parseOptionalNumber(pageMeta?.["@offset"]) ?? offset;
+      return {
+        items,
+        hasNextPage: total === undefined ? undefined : reportedOffset + items.length < total
+      };
+    });
   }
 
   async listLatestByFansub(groupId: string): Promise<Release[]> {

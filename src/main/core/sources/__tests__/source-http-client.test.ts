@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { ReleaseSourceConfig, ReleaseSourceSyncState } from "@shared/domain";
+import { shouldUseSourceProxy } from "@shared/source-network-policy";
 import {
   SourceRequestScheduler,
   type SourceRequestStateStore
@@ -15,6 +16,17 @@ const source: ReleaseSourceConfig = {
   requestIntervalMs: 1_000,
   rssUrl: "https://example.test/feed.xml"
 };
+
+test("AniBT 忽略旧配置中的代理开关并固定直连", () => {
+  assert.equal(shouldUseSourceProxy({
+    ...source,
+    id: "anibt",
+    name: "AniBT",
+    useProxy: true
+  }), false);
+  assert.equal(shouldUseSourceProxy(source, "https://anibt.net/rss/magnets.xml?limit=50"), false);
+  assert.equal(shouldUseSourceProxy(source), true);
+});
 
 test("SourceRequestScheduler 合并同一来源的并发相同请求", async () => {
   const scheduler = new SourceRequestScheduler({ random: () => 0 });

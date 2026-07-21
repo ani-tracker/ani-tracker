@@ -4,6 +4,7 @@ import { normalizeReleaseSearchText } from "../../../shared/anime-release-search
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_ACCEPT_LANGUAGE, DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { defaultMetadataHttpClient, type MetadataFetchOptions } from "../metadata/metadata-http-client";
+import { normalizeReleaseSourceFetchLimit } from "./source-query";
 import { parseXml, textValue, toArray } from "./xml";
 
 export interface RssHttpClient {
@@ -71,17 +72,17 @@ export class RssReleaseSource implements ReleaseSource {
         })
       : releases;
 
-    return filtered.slice(0, query.limit ?? 50);
+    return filtered.slice(0, normalizeReleaseSourceFetchLimit(query.limit));
   }
 
   /** 读取固定 RSS 中的最新字幕组资源。 */
-  async listLatestByFansub(): Promise<Release[]> {
-    return this.readFeed();
+  async listLatestByFansub(groupId: string): Promise<Release[]> {
+    return this.searchReleases({ keyword: groupId });
   }
 
   /** 读取固定 RSS 中的最新番剧资源。 */
-  async listLatestByAnime(): Promise<Release[]> {
-    return this.readFeed();
+  async listLatestByAnime(animeId: string): Promise<Release[]> {
+    return this.searchReleases({ keyword: animeId });
   }
 
   /** 使用当前来源配置读取 RSS。 */

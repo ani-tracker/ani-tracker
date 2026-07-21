@@ -5,6 +5,7 @@ import { logger } from "../logger";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
 import { defaultMetadataHttpClient } from "../metadata/metadata-http-client";
 import type { ReleaseHttpClient } from "./mikan-source";
+import { collectReleasePages } from "./source-pagination";
 
 const DEFAULT_ACGNX_BASE_URL = "https://share.acgnx.se/";
 const ACGNX_FETCH_TIMEOUT_MS = 10_000;
@@ -20,11 +21,12 @@ export class AcgnxReleaseSource implements ReleaseSource {
     logger.info("ACGNX source search started", {
       sourceId: this.config.id,
       keyword,
-      limit: query.limit ?? 50
+      limit: query.limit
     });
 
-    const releases = await this.searchWithCandidates(keyword);
-    const result = dedupeReleases(releases).slice(0, query.limit ?? 50);
+    const result = await collectReleasePages(query.limit, async ({ page, limit }) => ({
+      items: dedupeReleases(await this.searchWithCandidates(keyword, page, limit))
+    }));
 
     logger.info("ACGNX source search finished", {
       sourceId: this.config.id,
@@ -43,10 +45,10 @@ export class AcgnxReleaseSource implements ReleaseSource {
     return this.searchReleases({ keyword: animeId });
   }
 
-  private async searchWithCandidates(keyword: string): Promise<Release[]> {
+  private async searchWithCandidates(keyword: string, page: number, limit: number): Promise<Release[]> {
     let lastError: Error | undefined;
 
-    for (const url of buildSearchUrls(this.config.baseUrl ?? DEFAULT_ACGNX_BASE_URL, keyword)) {
+    for (const url of buildSearchUrls(this.config.baseUrl ?? DEFAULT_ACGNX_BASE_URL, keyword, page, limit)) {
       try {
         const response = await fetchWithTimeout(this.httpClient, url);
         if (!response.ok) {
@@ -107,19 +109,20 @@ function parseResponseText(text: string, config: ReleaseSourceConfig, contentTyp
   return parseAcgnxHtml(text, config);
 }
 
-function buildSearchUrls(baseUrl: string, keyword: string): string[] {
+function buildSearchUrls(baseUrl: string, keyword: string, page: number, limit: number): string[] {
   const base = new URL(baseUrl);
   if (base.pathname !== "/" && base.pathname !== "") {
-    return [withSearchKeyword(base, keyword).toString()];
+    return [withSearchQuery(base, keyword, page, limit).toString()];
   }
 
   return ["/api.php", "/api/search", "/search.php"].map((path) => {
     const url = new URL(path, base);
-    return withSearchKeyword(url, keyword).toString();
+    return withSearchQuery(url, keyword, page, limit).toString();
   });
 }
 
-function withSearchKeyword(url: URL, keyword: string): URL {
+/** 给 ACGNX API 或页面搜索地址补齐关键词和分页参数。 */
+function withSearchQuery(url: URL, keyword: string, page: number, limit: number): URL {
   const next = new URL(url.toString());
   if (!next.searchParams.has("keyword")) {
     next.searchParams.set("keyword", keyword);
@@ -127,6 +130,8 @@ function withSearchKeyword(url: URL, keyword: string): URL {
   if (next.pathname.includes("api") && !next.searchParams.has("q")) {
     next.searchParams.set("q", keyword);
   }
+  next.searchParams.set("page", String(page));
+  next.searchParams.set("limit", String(limit));
   return next;
 }
 

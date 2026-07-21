@@ -2,7 +2,8 @@ import type { ReleaseSourceConfig, ReleaseSourceSyncState, RequestCircuitState }
 import {
   getSourceMinimumRequestIntervalMs,
   MAX_SOURCE_REQUEST_INTERVAL_MS,
-  MIN_SOURCE_REQUEST_INTERVAL_MS
+  MIN_SOURCE_REQUEST_INTERVAL_MS,
+  shouldUseSourceProxy
 } from "@shared/source-network-policy";
 import { logger } from "../logger";
 import {
@@ -133,16 +134,18 @@ export function createSourceHttpClient(
   repository?: AppRepository,
   scheduler = defaultSourceRequestScheduler
 ): ReleaseHttpClient {
-  const transport = config.useProxy === false ? directHttpClient : proxyHttpClient;
   const stateStore = supportsSourceRequestStateStore(repository) ? repository : undefined;
   return {
-    fetch: (input, options = {}) => scheduler.schedule(
-      config,
-      input,
-      options,
-      () => transport.fetch(input, options),
-      stateStore
-    )
+    fetch: (input, options = {}) => {
+      const transport = shouldUseSourceProxy(config, input) ? proxyHttpClient : directHttpClient;
+      return scheduler.schedule(
+        config,
+        input,
+        options,
+        () => transport.fetch(input, options),
+        stateStore
+      );
+    }
   };
 }
 

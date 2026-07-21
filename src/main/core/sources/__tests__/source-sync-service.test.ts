@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
-import type { AppSettings, NotificationRecord, Release, ReleaseSourceConfig, ReleaseSourceSyncState } from "@shared/domain";
+import type { AppSettings, MyAnime, NotificationRecord, Release, ReleaseSourceConfig, ReleaseSourceSyncState } from "@shared/domain";
 import type { AppRepository } from "../../repositories/app-repository";
 import { isSameLocalDay, SourceSyncService } from "../source-sync-service";
 import { normalizeDailyTime, resolveNextRunAt } from "../source-sync-scheduler";
@@ -35,7 +35,56 @@ test("SourceSyncService 仅补跑当天未成功来源并保存条件请求游�
   assert.equal(fetchCount, 1);
 });
 
-test("SourceSyncService 通知显示失败来源、真实原因和熔断状态", async () => {
+test("SourceSyncService 使用追番 Bangumi ID 直连同步 AniBT 且单次限制为 50 条", async (t) => {
+  const now = new Date(2026, 6, 21, 9, 0, 0);
+  const repository = new SourceSyncRepository(now);
+  repository.sources.splice(0, repository.sources.length, {
+    id: "anibt",
+    name: "AniBT",
+    kind: "site_adapter",
+    enabled: true,
+    useProxy: true,
+    requestIntervalMs: 3_000,
+    baseUrl: "https://anibt.net/"
+  });
+  repository.states = [{ sourceId: "anibt", requestFailureCount: 0 }];
+  repository.trackedAnime = [{
+    id: "my-anime-1",
+    anime: {
+      id: "anime-1",
+      title: "测试追番",
+      aliases: [],
+      premiereYear: 2026,
+      premiereMonth: 7,
+      externalIds: { bangumi: "528828" }
+    },
+    status: "watching",
+    autoDownload: true,
+    addedAt: now.toISOString(),
+    updatedAt: now.toISOString()
+  }];
+  const requests: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    requests.push(String(input));
+    return new Response(createRssXml(), { status: 200 });
+  });
+  let proxyRequestCount = 0;
+  const service = new SourceSyncService(repository as unknown as AppRepository, () => ({
+    fetch: async () => {
+      proxyRequestCount += 1;
+      return new Response(createRssXml(), { status: 200 });
+    }
+  }));
+
+  const result = await service.run({ force: true, now });
+
+  assert.deepEqual(requests, ["https://anibt.net/rss/anime.xml?bgmId=528828&limit=50"]);
+  assert.equal(proxyRequestCount, 0);
+  assert.deepEqual(result.syncedSourceIds, ["anibt"]);
+  assert.equal(result.addedReleaseCount, 1);
+});
+
+test("SourceSyncService 通知显示失败来源、真实原因和熔断状态", async (t) => {
   const now = new Date();
   const repository = new SourceSyncRepository(now);
   repository.sources.splice(0, repository.sources.length, {
@@ -51,9 +100,10 @@ test("SourceSyncService 通知显示失败来源、真实原因和熔断状态",
     sourceId: "anibt-notification-test",
     requestFailureCount: 0
   }];
-  const service = new SourceSyncService(repository as unknown as AppRepository, () => ({
-    fetch: async () => new Response("forbidden", { status: 403, statusText: "Forbidden" })
-  }));
+  t.mock.method(globalThis, "fetch", async () =>
+    new Response("forbidden", { status: 403, statusText: "Forbidden" })
+  );
+  const service = new SourceSyncService(repository as unknown as AppRepository);
 
   const first = await service.run({ force: true, now });
   assert.equal(first.errors[0].message, "RSS source failed: 403 Forbidden");
@@ -101,6 +151,7 @@ class SourceSyncRepository {
     }
   ];
   states: ReleaseSourceSyncState[];
+  trackedAnime: MyAnime[] = [];
   releases: Release[] = [];
   notifications: NotificationRecord[] = [];
 
@@ -131,6 +182,14 @@ class SourceSyncRepository {
 
   async listSources(): Promise<ReleaseSourceConfig[]> {
     return this.sources;
+  }
+
+  async listMyAnime(): Promise<MyAnime[]> {
+    return this.trackedAnime;
+  }
+
+  async listAnimeSourceBindings(): Promise<[]> {
+    return [];
   }
 
   async listSourceSyncStates(): Promise<ReleaseSourceSyncState[]> {

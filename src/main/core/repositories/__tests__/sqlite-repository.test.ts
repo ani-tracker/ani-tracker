@@ -313,7 +313,7 @@ test("SQLite 重启后保留下载源网络策略、退避状态和增量资源"
   await first.initialize();
   const anibt = (await first.repository.listSources()).find((source) => source.id === "anibt");
   assert.ok(anibt);
-  assert.equal(anibt.useProxy, true);
+  assert.equal(anibt.useProxy, false);
   assert.equal(anibt.requestIntervalMs, 3_000);
   await first.repository.upsertSource({ ...anibt, useProxy: false, requestIntervalMs: 2_750 });
   await first.repository.upsertSourceSyncState({

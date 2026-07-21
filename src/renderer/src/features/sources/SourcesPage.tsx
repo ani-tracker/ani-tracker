@@ -46,6 +46,7 @@ import type { AppSettings, MetadataProxySettings, ReleaseSourceConfig, SourceKin
 import {
   DEFAULT_SOURCE_REQUEST_INTERVAL_MS,
   getSourceMinimumRequestIntervalMs,
+  isAniBtRequestTarget,
   MAX_SOURCE_REQUEST_INTERVAL_MS
 } from "@shared/source-network-policy";
 
@@ -150,6 +151,7 @@ export function SourcesPage() {
 
   /** 切换单个下载源是否使用全局代理。 */
   async function toggleSourceProxy(source: ReleaseSourceConfig) {
+    if (isAniBtRequestTarget(source)) return;
     await runSourceMutation(
       source,
       () => appApi.upsertSource({
@@ -507,6 +509,7 @@ export function SourcesPage() {
                   const expanded = expandedSourceIds.has(source.id);
                   const status = getSourceStatus(source, source.apiKey);
                   const sourceBusy = sourceMutationId === source.id;
+                  const proxyLocked = isAniBtRequestTarget(source);
                   return (
                     <SourceRows key={source.id}>
                       <TableRow data-state={expanded ? "selected" : undefined}>
@@ -525,10 +528,11 @@ export function SourcesPage() {
                         <TableCell><Badge tone={status.tone}>{status.label}</Badge></TableCell>
                         <TableCell>
                           <Switch
-                            aria-label={`${source.name} 使用全局代理`}
-                            checked={source.useProxy ?? false}
-                            disabled={Boolean(sourceMutationId)}
+                            aria-label={proxyLocked ? `${source.name} 固定直连` : `${source.name} 使用全局代理`}
+                            checked={!proxyLocked && (source.useProxy ?? false)}
+                            disabled={proxyLocked || Boolean(sourceMutationId)}
                             onCheckedChange={() => void toggleSourceProxy(source)}
+                            title={proxyLocked ? "AniBT 固定直连" : undefined}
                           />
                         </TableCell>
                         <TableCell>
@@ -555,11 +559,12 @@ export function SourcesPage() {
                       {expanded && (
                         <TableRow className="bg-muted/30 hover:bg-muted/30">
                           <TableCell className="px-4 py-4" colSpan={8}>
-                            <FieldGroup className="grid gap-4 md:grid-cols-[minmax(220px,1fr)_minmax(280px,2fr)] md:items-end">
-                              <Field>
+                            <FieldGroup className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,20rem),1fr))] items-start gap-4">
+                              <Field className="min-w-0">
                                 <FieldLabel htmlFor={`source-interval-${source.id}`}>最小采集间隔（毫秒）</FieldLabel>
-                                <div className="flex min-w-0 gap-2">
+                                <div className="flex min-w-0 flex-wrap gap-2">
                                   <Input
+                                    className="min-w-48 flex-1"
                                     id={`source-interval-${source.id}`}
                                     type="number"
                                     min={getSourceMinimumRequestIntervalMs(source)}
@@ -568,7 +573,7 @@ export function SourcesPage() {
                                     value={intervalDrafts[source.id] ?? String(normalizeSourceInterval(source.requestIntervalMs, source))}
                                     onChange={(event) => setIntervalDrafts({ ...intervalDrafts, [source.id]: event.target.value })}
                                   />
-                                  <Button variant="outline" disabled={Boolean(sourceMutationId)} onClick={() => void saveSourceInterval(source)}>
+                                  <Button className="shrink-0 whitespace-nowrap" variant="outline" disabled={Boolean(sourceMutationId)} onClick={() => void saveSourceInterval(source)}>
                                     <Save data-icon="inline-start" />保存
                                   </Button>
                                 </div>
@@ -579,19 +584,20 @@ export function SourcesPage() {
                                 </FieldDescription>
                               </Field>
                               {canUseCredential(source) ? (
-                                <Field>
+                                <Field className="min-w-0">
                                   <FieldLabel htmlFor={`source-credential-${source.id}`}>
                                     <KeyRound className="size-4" />访问凭据
                                   </FieldLabel>
-                                  <div className="flex min-w-0 gap-2">
+                                  <div className="flex min-w-0 flex-wrap gap-2">
                                     <Input
+                                      className="min-w-48 flex-1"
                                       id={`source-credential-${source.id}`}
                                       placeholder={source.kind === "site_adapter" ? "Token / Cookie" : "API Key"}
                                       type="password"
                                       value={credentials[source.id] ?? ""}
                                       onChange={(event) => setCredentials({ ...credentials, [source.id]: event.target.value })}
                                     />
-                                    <Button disabled={Boolean(sourceMutationId)} onClick={() => void saveCredential(source)}>
+                                    <Button className="shrink-0 whitespace-nowrap" disabled={Boolean(sourceMutationId)} onClick={() => void saveCredential(source)}>
                                       <Save data-icon="inline-start" />保存凭据
                                     </Button>
                                   </div>
