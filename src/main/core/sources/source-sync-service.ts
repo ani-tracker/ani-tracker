@@ -55,7 +55,7 @@ export class SourceSyncService {
     const retentionDate = new Date(now.getTime() - CACHE_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
     const pruned = await this.repository.pruneCachedReleases(retentionDate);
     result.finishedAt = new Date().toISOString();
-    await this.addSummaryNotification(result);
+    await this.addSummaryNotification(result, sources);
     logger.info("每日下载源增量同步完成", {
       sourceCount: result.syncedSourceIds.length,
       skippedCount: result.skippedSourceIds.length,
@@ -76,8 +76,7 @@ export class SourceSyncService {
     const attemptAt = now.toISOString();
     await this.repository.upsertSourceSyncState({
       ...previousState,
-      lastSyncAttemptAt: attemptAt,
-      lastSyncError: undefined
+      lastSyncAttemptAt: attemptAt
     });
 
     try {
@@ -102,15 +101,22 @@ export class SourceSyncService {
       result.syncedSourceIds.push(source.id);
       result.addedReleaseCount += addedCount;
     } catch (error) {
-      const message = error instanceof Error ? error.message : "下载源同步失败";
+      const currentMessage = formatSourceSyncError(error);
       const latestState = await this.getState(source.id);
+      const message = preserveSourceSyncRootCause(currentMessage, latestState.lastSyncError);
       await this.repository.upsertSourceSyncState({
         ...latestState,
         lastSyncAttemptAt: attemptAt,
         lastSyncError: message
       });
       result.errors.push({ sourceId: source.id, message });
-      logger.warn("下载源增量同步失败", { sourceId: source.id, message });
+      logger.warn("下载源增量同步失败", {
+        sourceId: source.id,
+        message,
+        circuitMessage: currentMessage === message ? undefined : currentMessage,
+        requestFailureCount: latestState.requestFailureCount,
+        backoffUntil: latestState.backoffUntil
+      });
     }
   }
 
@@ -119,15 +125,32 @@ export class SourceSyncService {
       ?? createEmptyState(sourceId);
   }
 
-  private async addSummaryNotification(result: SourceSyncRunResult): Promise<void> {
+  /** 将失败来源、根因和熔断状态写入提醒中心。 */
+  private async addSummaryNotification(
+    result: SourceSyncRunResult,
+    sources: ReleaseSourceConfig[]
+  ): Promise<void> {
     if (!result.errors.length) {
       return;
     }
+    const states = await this.repository.listSourceSyncStates();
+    const sourceById = new Map(sources.map((source) => [source.id, source]));
+    const stateBySourceId = new Map(states.map((state) => [state.sourceId, state]));
+    const failedSources = result.errors.map((error) => ({
+      error,
+      source: sourceById.get(error.sourceId),
+      state: stateBySourceId.get(error.sourceId)
+    }));
+    const title = failedSources.length === 1
+      ? `${failedSources[0].source?.name ?? failedSources[0].error.sourceId} 同步失败`
+      : `${failedSources.length} 个下载源同步失败`;
     const record: NotificationRecord = {
       id: `source-sync-${result.finishedAt}`,
       kind: "system",
-      title: "部分下载源同步失败",
-      body: `${result.errors.length} 个来源未完成同步，已按熔断策略等待下次重试。`,
+      title,
+      body: failedSources
+        .map(({ error, source, state }) => formatSourceSyncFailure(error, source, state))
+        .join("\n"),
       severity: "warning",
       createdAt: result.finishedAt
     };
@@ -167,6 +190,69 @@ function canSynchronizeSource(source: ReleaseSourceConfig): boolean {
 
 function createEmptyState(sourceId: string): ReleaseSourceSyncState {
   return { sourceId, requestFailureCount: 0 };
+}
+
+/** 保留异常链中的底层网络原因，避免只显示 fetch failed。 */
+function formatSourceSyncError(error: unknown): string {
+  if (!(error instanceof Error)) {
+    return "下载源同步失败";
+  }
+  const cause = error.cause instanceof Error ? error.cause.message.trim() : "";
+  if (!cause || error.message.includes(cause)) {
+    return error.message;
+  }
+  return `${error.message}：${cause}`;
+}
+
+/** 熔断拦截请求时沿用上次真实失败原因。 */
+function preserveSourceSyncRootCause(currentMessage: string, previousMessage?: string): string {
+  if (!currentMessage.includes("正在熔断保护中") || !previousMessage) {
+    return currentMessage;
+  }
+  return previousMessage.includes("正在熔断保护中") ? currentMessage : previousMessage;
+}
+
+/** 组装单个失败来源的完整通知正文。 */
+function formatSourceSyncFailure(
+  error: SourceSyncRunResult["errors"][number],
+  source?: ReleaseSourceConfig,
+  state?: ReleaseSourceSyncState
+): string {
+  const parts = [
+    `失败来源：${source?.name ?? error.sourceId}（${error.sourceId}）`,
+    `原因：${trimTerminalPunctuation(error.message)}`
+  ];
+  if (state && state.requestFailureCount > 0) {
+    parts.push(`连续失败 ${state.requestFailureCount} 次`);
+  }
+  const retryAt = formatRetryAt(state?.backoffUntil);
+  if (retryAt) {
+    parts.push(`熔断至 ${retryAt}`);
+  }
+  parts.push("将在下次计划同步时自动重试");
+  return `${parts.join("。")}。`;
+}
+
+/** 将熔断截止时间格式化为本地日期时间。 */
+function formatRetryAt(value?: string): string | undefined {
+  if (!value) {
+    return undefined;
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return undefined;
+  }
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).format(date);
+}
+
+function trimTerminalPunctuation(value: string): string {
+  return value.trim().replace(/[。；;，,\s]+$/u, "");
 }
 
 /** 按本机日期判断来源当天是否已成功同步。 */

@@ -35,6 +35,40 @@ test("SourceSyncService 仅补跑当天未成功来源并保存条件请求游�
   assert.equal(fetchCount, 1);
 });
 
+test("SourceSyncService 通知显示失败来源、真实原因和熔断状态", async () => {
+  const now = new Date();
+  const repository = new SourceSyncRepository(now);
+  repository.sources.splice(0, repository.sources.length, {
+    id: "anibt-notification-test",
+    name: "AniBT",
+    kind: "rss",
+    enabled: true,
+    useProxy: true,
+    requestIntervalMs: 250,
+    rssUrl: "https://sync-failure.example.test/feed.xml"
+  });
+  repository.states = [{
+    sourceId: "anibt-notification-test",
+    requestFailureCount: 0
+  }];
+  const service = new SourceSyncService(repository as unknown as AppRepository, () => ({
+    fetch: async () => new Response("forbidden", { status: 403, statusText: "Forbidden" })
+  }));
+
+  const first = await service.run({ force: true, now });
+  assert.equal(first.errors[0].message, "RSS source failed: 403 Forbidden");
+  assert.equal(repository.notifications[0].title, "AniBT 同步失败");
+  assert.match(repository.notifications[0].body, /失败来源：AniBT（anibt-notification-test）/);
+  assert.match(repository.notifications[0].body, /原因：RSS source failed: 403 Forbidden/);
+  assert.match(repository.notifications[0].body, /连续失败 1 次/);
+  assert.match(repository.notifications[0].body, /熔断至/);
+
+  const second = await service.run({ force: true, now });
+  assert.equal(second.errors[0].message, "RSS source failed: 403 Forbidden");
+  assert.match(repository.notifications[1].body, /原因：RSS source failed: 403 Forbidden/);
+  assert.doesNotMatch(repository.notifications[1].body, /正在熔断保护中/);
+});
+
 test("每日同步时间按本地时间计算并在错过后顺延一天", () => {
   const now = new Date(2026, 6, 18, 10, 30, 0);
   const next = resolveNextRunAt(now, "09:00");
