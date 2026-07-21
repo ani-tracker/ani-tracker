@@ -12,6 +12,7 @@ import { GenericDefaultSettingsProvider } from "../../platform/default-settings-
 import { enrichReleaseFromTitle } from "../../releases/release-title-parser";
 import { createSeedData } from "../../storage/seed-data";
 import { SQLITE_SCHEMA_VERSION } from "../../storage/sqlite-schema";
+import { buildPendingActions } from "../app-repository";
 import { createRepositoryRuntime } from "../repository-runtime";
 
 const DatabaseConstructor = (
@@ -113,6 +114,74 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   second.close();
 });
 
+test("SQLite 原子维护连续观看进度并按下载状态恢复取消已看的单集", async () => {
+  const fixture = await createFixture();
+  const runtime = createRepositoryRuntime(fixture.options);
+  await runtime.initialize();
+  const item = createTestMyAnime();
+  item.anime.detail = { episodeCount: 12 };
+  await runtime.repository.upsertMyAnime(item);
+  await runtime.repository.upsertDownloadTask(createDownloadTask(item.anime.id, "watch-progress-episode-3", 3));
+
+  const updated = await runtime.repository.setAnimeWatchProgress({
+    animeId: item.anime.id,
+    watchedEpisodeCount: 3
+  });
+  assert.deepEqual(updated, {
+    animeId: item.anime.id,
+    watchedEpisodeCount: 3,
+    totalEpisodeCount: 12
+  });
+  assert.deepEqual(
+    (await runtime.repository.listEpisodes(item.anime.id)).slice(0, 3).map((episode) => episode.status),
+    ["watched", "watched", "watched"]
+  );
+
+  const reduced = await runtime.repository.setAnimeWatchProgress({
+    animeId: item.anime.id,
+    watchedEpisodeCount: 1
+  });
+  const episodes = await runtime.repository.listEpisodes(item.anime.id);
+  assert.equal(reduced.watchedEpisodeCount, 1);
+  assert.equal(episodes.find((episode) => episode.episodeNo === 2)?.status, "aired");
+  assert.equal(episodes.find((episode) => episode.episodeNo === 3)?.status, "downloaded");
+  assert.deepEqual(await runtime.repository.listMyAnimeWatchProgress(), [reduced]);
+  runtime.close();
+});
+
+test("首页待关注项使用真实番剧名和集数并携带详情定位", async () => {
+  const fixture = await createFixture();
+  const item = {
+    ...createTestMyAnime(),
+    defaultFansubGroupId: "fansub-test"
+  };
+  const episode = {
+    id: "episode-anime-sqlite-test-3",
+    animeId: item.anime.id,
+    episodeNo: 3,
+    airTime: "2000-01-01T00:00:00.000Z",
+    status: "aired" as const
+  };
+  fixture.data.myAnime = [item];
+  fixture.data.episodes = [episode];
+
+  assert.deepEqual(buildPendingActions(fixture.data), [{
+    id: `pending-default-fansub-${episode.id}`,
+    title: "《测试番》第 3 集",
+    description: "《测试番》第 3 集已开播，但默认字幕组还没有发布资源。",
+    severity: "warning",
+    animeId: item.anime.id,
+    episodeId: episode.id,
+    episodeNo: 3
+  }]);
+
+  fixture.data.downloads = [{
+    ...createDownloadTask(item.anime.id, "pending-action-download", 3),
+    fansubGroupId: item.defaultFansubGroupId
+  }];
+  assert.deepEqual(buildPendingActions(fixture.data), []);
+});
+
 test("SQLite v13 保存并恢复番剧详情元数据", async () => {
   const fixture = await createFixture();
   const first = createRepositoryRuntime(fixture.options);
@@ -181,7 +250,7 @@ test("SQLite 保存图片取色主题后可在重启时恢复", async () => {
   const first = createRepositoryRuntime(fixture.options);
   await first.initialize();
   const imported = validateThemePack(JSON.parse(
-    await readFile("docs/image-palette-example.ani-theme.json", "utf8")
+    await readFile("docs/自定义主题提示词/image-palette-example.ani-theme.json", "utf8")
   ));
   assert.ok(imported.pack);
 

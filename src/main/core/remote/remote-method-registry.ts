@@ -1,5 +1,7 @@
 import type {
   AnimeDetailResult,
+  AnimeWatchProgress,
+  SetAnimeWatchProgressInput,
 } from "@shared/contracts";
 import type {
   Anime,
@@ -13,6 +15,8 @@ import type {
 } from "@shared/domain";
 import {
   sanitizeAnimeDetailResult,
+  sanitizeAnimeWatchProgress,
+  sanitizeAnimeWatchProgressList,
   sanitizeAnimeList,
   sanitizeCount,
   sanitizeDashboard,
@@ -31,6 +35,8 @@ export const REMOTE_RPC_METHOD_NAMES = [
   "markNotificationRead",
   "markAllNotificationsRead",
   "listMyAnime",
+  "listMyAnimeWatchProgress",
+  "setAnimeWatchProgress",
   "listAnimeCatalog",
   "getAnimeDetail",
   "searchAnimeCatalog",
@@ -50,6 +56,7 @@ export type RemoteRpcScope =
   | "notifications.read"
   | "notifications.write"
   | "library.read"
+  | "library.write"
   | "catalog.read"
   | "downloads.read"
   | "downloads.control";
@@ -65,6 +72,8 @@ export interface RemoteRpcHandlers {
   markNotificationRead(notificationId: string): MaybePromise<NotificationRecord[]>;
   markAllNotificationsRead(): MaybePromise<NotificationRecord[]>;
   listMyAnime(): MaybePromise<MyAnime[]>;
+  listMyAnimeWatchProgress(): MaybePromise<AnimeWatchProgress[]>;
+  setAnimeWatchProgress(input: SetAnimeWatchProgressInput): MaybePromise<AnimeWatchProgress>;
   listAnimeCatalog(year?: number, month?: number): MaybePromise<Anime[]>;
   getAnimeDetail(animeId: string): MaybePromise<AnimeDetailResult>;
   searchAnimeCatalog(keyword: string): MaybePromise<Anime[]>;
@@ -156,6 +165,22 @@ export function createRemoteMethodRegistry(handlers: RemoteRpcHandlers): RemoteM
       handlers.markAllNotificationsRead
     ),
     defineMethod("listMyAnime", "library.read", "read", noArgs, sanitizeMyAnimeList, handlers.listMyAnime),
+    defineMethod(
+      "listMyAnimeWatchProgress",
+      "library.read",
+      "read",
+      noArgs,
+      sanitizeAnimeWatchProgressList,
+      handlers.listMyAnimeWatchProgress
+    ),
+    defineMethod(
+      "setAnimeWatchProgress",
+      "library.write",
+      "write",
+      watchProgressInput,
+      sanitizeAnimeWatchProgress,
+      handlers.setAnimeWatchProgress
+    ),
     defineMethod(
       "listAnimeCatalog",
       "catalog.read",
@@ -260,6 +285,25 @@ function singleKeyword(args: readonly unknown[]): [string] {
     throw new RemoteRpcValidationError("搜索关键词长度必须为 1-120 个字符");
   }
   return [keyword];
+}
+
+/** 校验远程观看进度写入参数。 */
+function watchProgressInput(args: readonly unknown[]): [SetAnimeWatchProgressInput] {
+  assertArgumentCount(args, 1);
+  const input = args[0];
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new RemoteRpcValidationError("观看进度参数格式无效");
+  }
+  const candidate = input as Record<string, unknown>;
+  if (!Number.isSafeInteger(candidate.watchedEpisodeCount) ||
+      (candidate.watchedEpisodeCount as number) < 0 ||
+      (candidate.watchedEpisodeCount as number) > 10_000) {
+    throw new RemoteRpcValidationError("观看进度必须是 0 到 10000 之间的整数");
+  }
+  return [{
+    animeId: parseId(candidate.animeId, "番剧标识"),
+    watchedEpisodeCount: candidate.watchedEpisodeCount as number
+  }];
 }
 
 function optionalYearMonth(args: readonly unknown[]): [number?, number?] {

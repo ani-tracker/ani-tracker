@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, safeStorage } from "electron";
+import { app, BrowserWindow, dialog, Menu, safeStorage } from "electron";
 import { join } from "node:path";
 import { DailyReminderService } from "./core/automation/daily-reminder-service";
 import { logger } from "./core/logger";
@@ -25,6 +25,12 @@ import { RemoteTlsCertificateStore } from "./core/remote/remote-tls-certificate-
 import { ImageCacheService } from "./core/cache/image-cache-service";
 import { registerImageCacheProtocol, registerImageCacheScheme } from "./core/cache/image-cache-protocol";
 import { MetadataHttpClient } from "./core/metadata/metadata-http-client";
+
+declare const __ANI_TRUSTED_ORIGINS__: string;
+
+const trustedOriginsFromEnvFile = typeof __ANI_TRUSTED_ORIGINS__ === "string"
+  ? __ANI_TRUSTED_ORIGINS__
+  : undefined;
 
 let mainWindow: BrowserWindow | null = null;
 let quitAfterManagedQbittorrentStops = false;
@@ -54,6 +60,8 @@ const remoteMethodRegistry = createRemoteMethodRegistry({
   markNotificationRead: (notificationId) => repository.markNotificationRead(notificationId),
   markAllNotificationsRead: () => repository.markAllNotificationsRead(),
   listMyAnime: () => repository.listMyAnime(),
+  listMyAnimeWatchProgress: () => repository.listMyAnimeWatchProgress(),
+  setAnimeWatchProgress: (input) => repository.setAnimeWatchProgress(input),
   listAnimeCatalog: (year, month) => new AnimeDiscoveryService(repository).listCatalog(year, month),
   getAnimeDetail: (animeId) => animeDetailService.getAnimeDetail(animeId),
   searchAnimeCatalog: (keyword) => new AnimeDiscoveryService(repository).searchCatalog(keyword),
@@ -83,6 +91,7 @@ const remoteGateway = new RemoteHttpGateway(remoteMethodRegistry, {
   }),
   imageCacheService,
   mediaSessionService: remoteMediaSessionService,
+  trustedOrigins: process.env.ANI_TRUSTED_ORIGINS ?? trustedOriginsFromEnvFile,
   tlsCertificateStore: new RemoteTlsCertificateStore(join(app.getPath("userData"), "remote-tls"), secretProtector)
 });
 
@@ -93,6 +102,8 @@ function createWindow(): void {
     minWidth: 720,
     minHeight: 560,
     title: "Ani Tracker",
+    autoHideMenuBar: process.platform === "win32",
+    frame: process.platform !== "win32",
     backgroundColor: appearanceService.getWindowBackgroundColor(),
     webPreferences: {
       preload: join(__dirname, "../preload/index.mjs"),
@@ -102,7 +113,20 @@ function createWindow(): void {
     }
   });
   mainWindow = window;
+  if (process.platform === "win32") {
+    window.setMenuBarVisibility(false);
+    window.removeMenu();
+  }
   desktopIntegration.bindWindow(window);
+
+  /** 向自绘标题栏同步系统最大化状态。 */
+  const publishWindowState = () => {
+    if (!window.isDestroyed()) {
+      window.webContents.send("window:stateChanged", { maximized: window.isMaximized() });
+    }
+  };
+  window.on("maximize", publishWindowState);
+  window.on("unmaximize", publishWindowState);
 
   if (!app.isPackaged) {
     window.webContents.on("did-fail-load", (_event, errorCode, errorDescription, validatedUrl) => {
@@ -146,6 +170,7 @@ function showMainWindow(): void {
 app.whenReady().then(async () => {
   if (process.platform === "win32") {
     app.setAppUserModelId("AniTracker");
+    Menu.setApplicationMenu(null);
   }
 
   await repositoryRuntime.initialize();
@@ -153,6 +178,7 @@ app.whenReady().then(async () => {
   registerIpcHandlers({
     remoteGateway,
     imageCacheService,
+    getMainWindow: () => mainWindow,
     onSettingsUpdated: async (settings) => {
       imageCacheService.setCacheDirectory(join(settings.storage.cacheDir, "images"));
       appearanceService.applySettings(settings.appearance);

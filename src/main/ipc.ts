@@ -1,4 +1,4 @@
-import { dialog, ipcMain, shell } from "electron";
+import { dialog, ipcMain, shell, type BrowserWindow } from "electron";
 import type {
   AppSettings,
   Episode,
@@ -22,7 +22,8 @@ import type {
   ConfirmAnimeSourceBindingInput,
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
-  SelectPlayerExecutableInput
+  SelectPlayerExecutableInput,
+  SetAnimeWatchProgressInput
 } from "@shared/contracts";
 import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
 import { PlayerLauncherService } from "./core/platform/player-launcher";
@@ -65,9 +66,31 @@ interface RegisterIpcHandlersOptions {
   onSettingsUpdated?: (settings: AppSettings) => void | Promise<void>;
   remoteGateway?: RemoteHttpGateway;
   imageCacheService?: ImageCacheService;
+  getMainWindow?: () => BrowserWindow | null;
 }
 
 export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): void {
+  ipcMain.handle("window:getState", () => getWindowState(options.getMainWindow?.()));
+  ipcMain.handle("window:minimize", () => {
+    options.getMainWindow?.()?.minimize();
+  });
+  ipcMain.handle("window:toggleMaximize", () => {
+    const window = options.getMainWindow?.();
+    if (!window) {
+      return { maximized: false };
+    }
+    if (window.isMaximized()) {
+      window.unmaximize();
+    } else {
+      window.maximize();
+    }
+    logger.info("Main window maximize state changed", { maximized: window.isMaximized() });
+    return getWindowState(window);
+  });
+  ipcMain.handle("window:close", () => {
+    logger.info("Main window close requested from custom title bar");
+    options.getMainWindow?.()?.close();
+  });
   if (options.imageCacheService) {
     ipcMain.handle("images:resolveUrl", (_event, sourceUrl: string) => ({
       url: options.imageCacheService!.createElectronUrl(sourceUrl)
@@ -91,6 +114,10 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     return items;
   });
   ipcMain.handle("myAnime:remove", (_event, itemId: string) => repository.removeMyAnime(itemId));
+  ipcMain.handle("myAnime:listWatchProgress", () => repository.listMyAnimeWatchProgress());
+  ipcMain.handle("myAnime:setWatchProgress", (_event, input: SetAnimeWatchProgressInput) =>
+    repository.setAnimeWatchProgress(input)
+  );
   ipcMain.handle("animeCatalog:list", (_event, year?: number, month?: number) =>
     new AnimeDiscoveryService(repository).listCatalog(year, month)
   );
@@ -494,6 +521,11 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   }
 }
 
+/** 返回自绘标题栏可读取的最小窗口状态。 */
+function getWindowState(window: BrowserWindow | null | undefined) {
+  return { maximized: Boolean(window && !window.isDestroyed() && window.isMaximized()) };
+}
+
 function getManualDownloadName(url: string): string {
   if (url.startsWith("magnet:")) {
     try {
@@ -743,7 +775,7 @@ async function updateEpisodeDownloadLink(input: {
     repository.listEpisodePreferences(input.animeId)
   ]);
   const episode = episodes.find((item) => item.id === input.episodeId);
-  if (episode) {
+  if (episode && episode.status !== "watched") {
     await repository.upsertEpisode({
       ...episode,
       status: "downloading"

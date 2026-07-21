@@ -74,7 +74,12 @@ interface RenderPageOptions {
 function renderPage(page: PageId, electronClient: boolean, options: RenderPageOptions) {
   switch (page) {
     case "home":
-      return <HomePage onOpenDownloads={options.onOpenDownloads} />;
+      return (
+        <HomePage
+          onOpenAnimeDetail={options.onOpenAnimeDetail}
+          onOpenDownloads={options.onOpenDownloads}
+        />
+      );
     case "myAnime":
       return electronClient ? (
         <MyAnimePage
@@ -119,6 +124,7 @@ export function App() {
   const detailViewRef = useRef<AnimeDetailState | null>(null);
   detailViewRef.current = detailView;
   const electronClient = isElectronClient();
+  const customTitleBar = electronClient && window.aniBridge?.platform === "win32";
   const remotePlayerTaskId = electronClient
     ? undefined
     : resolveRemotePlayerTaskId(window.location.pathname);
@@ -309,6 +315,7 @@ export function App() {
       secondaryView={detailView ? { title: "番剧详情", onBack: () => window.history.back() } : undefined}
       status={shellStatus}
       unreadCount={unreadCount}
+      customTitleBar={customTitleBar}
     >
       <div className={detailView ? "hidden" : undefined}>
         {renderPage(activePage, electronClient, {

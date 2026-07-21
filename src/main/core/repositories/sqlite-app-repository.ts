@@ -18,7 +18,11 @@ import type {
   ReleaseSourceSyncState,
   TorrentFile
 } from "@shared/domain";
-import type { ReleaseSearchResult } from "@shared/contracts";
+import type {
+  AnimeWatchProgress,
+  ReleaseSearchResult,
+  SetAnimeWatchProgressInput
+} from "@shared/contracts";
 import { mergeAnimeDetailMetadata, normalizeAnimeDetailMetadata } from "@shared/anime-detail";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
@@ -38,6 +42,7 @@ import { SQLITE_SCHEMA, SQLITE_SCHEMA_VERSION } from "../storage/sqlite-schema";
 import type { AppRepository, ReleaseSearchCacheEntry } from "./app-repository";
 import {
   buildDailyReminderSummary,
+  buildPendingActions,
   findExistingDownloadTask,
   isEngineTaskCovered,
   isSameAnime,
@@ -125,6 +130,7 @@ export class SqliteAppRepository implements AppRepository {
       ...data.dashboard,
       dailyReminder,
       todayEpisodes: dailyReminder.items.map(toEpisodeSummary),
+      pendingActions: buildPendingActions(data),
       activeDownloads: data.downloads,
       recentCompleted: sortMediaFiles(data.mediaFiles).slice(0, 10),
       sourceHealth: data.dashboard.sourceHealth.map((source) => ({
@@ -324,6 +330,55 @@ export class SqliteAppRepository implements AppRepository {
   async upsertEpisode(episode: Episode): Promise<Episode[]> {
     this.upsertEpisodeRow(episode);
     return this.listEpisodes(episode.animeId);
+  }
+
+  /** 汇总全部追番的连续观看进度，优先采用元数据中的总集数。 */
+  async listMyAnimeWatchProgress(): Promise<AnimeWatchProgress[]> {
+    const items = await this.listMyAnime();
+    return Promise.all(items.map(async (item) => this.getAnimeWatchProgress(item, await this.listEpisodes(item.anime.id))));
+  }
+
+  /** 在单个事务内补齐单集并批量调整已看状态。 */
+  async setAnimeWatchProgress(input: SetAnimeWatchProgressInput): Promise<AnimeWatchProgress> {
+    const watchedEpisodeCount = normalizeWatchProgress(input.watchedEpisodeCount);
+    const item = (await this.listMyAnime()).find((entry) => entry.anime.id === input.animeId);
+    if (!item) {
+      throw new Error("追番不存在");
+    }
+
+    const episodes = await this.listEpisodes(input.animeId);
+    const episodeByNumber = new Map(
+      episodes
+        .filter((episode) => Number.isSafeInteger(episode.episodeNo) && episode.episodeNo > 0)
+        .map((episode) => [episode.episodeNo, episode])
+    );
+    this.transaction(() => {
+      for (let episodeNo = 1; episodeNo <= watchedEpisodeCount; episodeNo += 1) {
+        const episode = episodeByNumber.get(episodeNo) ?? {
+          id: createDownloadEpisodeId(input.animeId, episodeNo),
+          animeId: input.animeId,
+          episodeNo,
+          status: "aired" as const
+        };
+        this.upsertEpisodeRow({ ...episode, status: "watched" });
+      }
+
+      for (const episode of episodes) {
+        if (episode.episodeNo > watchedEpisodeCount && episode.status === "watched") {
+          this.upsertEpisodeRow({
+            ...episode,
+            status: this.resolveEpisodeStatusAfterUnwatch(episode)
+          });
+        }
+      }
+      this.run("UPDATE my_anime SET updated_at = @updatedAt WHERE anime_id = @animeId", {
+        animeId: input.animeId,
+        updatedAt: nowIso()
+      });
+    });
+    const progress = this.getAnimeWatchProgress(item, await this.listEpisodes(input.animeId));
+    logger.info("Anime watch progress updated", { ...progress });
+    return progress;
   }
 
   async listEpisodePreferences(animeId: string): Promise<EpisodePreference[]> {
@@ -1598,6 +1653,49 @@ export class SqliteAppRepository implements AppRepository {
     return { ...task, episodeId };
   }
 
+  /** 根据单集状态和番剧元数据生成稳定的观看进度摘要。 */
+  private getAnimeWatchProgress(item: MyAnime, episodes: Episode[]): AnimeWatchProgress {
+    const knownEpisodeCount = episodes.reduce(
+      (maximum, episode) => Number.isSafeInteger(episode.episodeNo) && episode.episodeNo > 0
+        ? Math.max(maximum, episode.episodeNo)
+        : maximum,
+      0
+    );
+    const watchedEpisodeCount = episodes.reduce(
+      (maximum, episode) => episode.status === "watched" && Number.isSafeInteger(episode.episodeNo) && episode.episodeNo > 0
+        ? Math.max(maximum, episode.episodeNo)
+        : maximum,
+      0
+    );
+    const metadataEpisodeCount = Number.isSafeInteger(item.anime.detail?.episodeCount) && item.anime.detail!.episodeCount! > 0
+      ? item.anime.detail!.episodeCount!
+      : 0;
+    return {
+      animeId: item.anime.id,
+      watchedEpisodeCount,
+      totalEpisodeCount: Math.max(metadataEpisodeCount, knownEpisodeCount, watchedEpisodeCount)
+    };
+  }
+
+  /** 取消已看时根据关联下载和放送时间恢复单集生命周期状态。 */
+  private resolveEpisodeStatusAfterUnwatch(episode: Episode): Episode["status"] {
+    const statuses = this.all(
+      `SELECT status FROM download_task
+       WHERE anime_id = @animeId AND (episode_id = @episodeId OR episode_no = @episodeNo)`,
+      { animeId: episode.animeId, episodeId: episode.id, episodeNo: episode.episodeNo }
+    ).map((row) => asString(row.status) as DownloadStatus);
+    if (statuses.some((status) => status === "completed" || status === "seeding")) {
+      return "downloaded";
+    }
+    if (statuses.some((status) => ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(status))) {
+      return "downloading";
+    }
+    if (episode.airTime && new Date(episode.airTime).getTime() > Date.now()) {
+      return "upcoming";
+    }
+    return "aired";
+  }
+
   private async syncEpisodesFromCurrentDownloads(): Promise<void> {
     const snapshot = this.readSnapshot();
     syncEpisodeStatusesFromDownloads(snapshot);
@@ -1783,6 +1881,14 @@ export class SqliteAppRepository implements AppRepository {
     this.ensureColumn("download_task", "subtitle_languages_json", "subtitle_languages_json TEXT NOT NULL DEFAULT '[]'");
     this.ensureColumn("download_task", "subtitle", "subtitle TEXT");
   }
+}
+
+/** 校验观看进度输入，避免异常请求批量生成大量单集。 */
+function normalizeWatchProgress(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 0 || value > 10_000) {
+    throw new Error("观看进度必须是 0 到 10000 之间的整数");
+  }
+  return value;
 }
 
 /** 写库前按别名文本去重，并基于最终番剧标识重建唯一别名标识。 */

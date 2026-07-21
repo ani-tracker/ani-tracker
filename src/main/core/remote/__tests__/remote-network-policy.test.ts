@@ -4,9 +4,12 @@ import {
   isPrivateIpv4Address,
   isTrustedHost,
   isTrustedOrigin,
+  isTrustedRemoteHost,
+  isTrustedRemoteOrigin,
   listPrivateIpv4Addresses,
   normalizePrivateIpv4Addresses,
-  parseTrustedHost
+  parseTrustedHost,
+  parseTrustedRemoteOrigins
 } from "../remote-network-policy";
 
 test("私网地址策略只接受 RFC1918 IPv4", () => {
@@ -56,6 +59,26 @@ test("Origin 白名单拒绝用户信息、路径和跨协议来源", () => {
   assert.equal(isTrustedOrigin("https://user@192.168.1.20:18083", "https", 18083, allowed), false);
   assert.equal(isTrustedOrigin("https://192.168.1.20:18083/path", "https", 18083, allowed), false);
   assert.equal(isTrustedOrigin("http://192.168.1.20:18083", "https", 18083, allowed), false);
+});
+
+test("公网 Origin 白名单只接受规范完整来源并精确校验 Host", () => {
+  const origins = parseTrustedRemoteOrigins(
+    "https://ani.momoc.top, HTTPS://ANI.MOMOC.TOP/,http://preview.example.test:8080,https://bad.test/path"
+  );
+  assert.deepEqual(origins.map((item) => item.origin), [
+    "https://ani.momoc.top",
+    "http://preview.example.test:8080"
+  ]);
+  assert.equal(isTrustedRemoteHost("ani.momoc.top", origins), true);
+  assert.equal(isTrustedRemoteHost("ani.momoc.top:443", origins), true);
+  assert.equal(isTrustedRemoteHost("ani.momoc.top.attacker.test", origins), false);
+  assert.equal(isTrustedRemoteHost("preview.example.test:8080", origins), true);
+  assert.equal(isTrustedRemoteHost("preview.example.test", origins), false);
+  assert.equal(isTrustedRemoteOrigin("https://ani.momoc.top", origins), true);
+  assert.equal(isTrustedRemoteOrigin("https://ani.momoc.top", origins, "ani.momoc.top"), true);
+  assert.equal(isTrustedRemoteOrigin("http://preview.example.test:8080", origins, "ani.momoc.top"), false);
+  assert.equal(isTrustedRemoteOrigin("https://ani.momoc.top/", origins), false);
+  assert.equal(isTrustedRemoteOrigin("http://ani.momoc.top", origins), false);
 });
 
 function createAddress(address: string) {

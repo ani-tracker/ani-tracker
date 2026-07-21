@@ -16,7 +16,11 @@ import type {
   ReleaseSourceConfig,
   ReleaseSourceSyncState
 } from "@shared/domain";
-import type { ReleaseSearchResult } from "@shared/contracts";
+import type {
+  AnimeWatchProgress,
+  ReleaseSearchResult,
+  SetAnimeWatchProgressInput
+} from "@shared/contracts";
 import { normalizeAppearanceSettings } from "@shared/theme";
 import type { AppDataFile } from "@shared/persistence/app-data";
 
@@ -52,6 +56,8 @@ export interface AppRepository {
   listDownloads(): Promise<DownloadTask[]>;
   listEpisodes(animeId: string): Promise<Episode[]>;
   upsertEpisode(episode: Episode): Promise<Episode[]>;
+  listMyAnimeWatchProgress(): Promise<AnimeWatchProgress[]>;
+  setAnimeWatchProgress(input: SetAnimeWatchProgressInput): Promise<AnimeWatchProgress>;
   listEpisodePreferences(animeId: string): Promise<EpisodePreference[]>;
   upsertEpisodePreference(preference: EpisodePreference): Promise<EpisodePreference[]>;
   removeEpisodePreference(episodeId: string): Promise<EpisodePreference[]>;
@@ -305,6 +311,42 @@ export function buildDailyReminderSummary(data: AppDataFile): DashboardData["dai
     downloaded: items.filter((item) => item.status === "downloaded" || item.status === "watched").length,
     items
   };
+}
+
+/** 从真实追番与已开播单集派生需要人工关注的默认字幕组等待项。 */
+export function buildPendingActions(data: AppDataFile): DashboardData["pendingActions"] {
+  const followedByAnimeId = new Map(data.myAnime.map((item) => [item.anime.id, item]));
+  const now = Date.now();
+
+  return data.episodes
+    .filter((episode) => {
+      const followed = followedByAnimeId.get(episode.animeId);
+      if (!followed?.defaultFansubGroupId || episode.status !== "aired") {
+        return false;
+      }
+      if (episode.airTime && new Date(episode.airTime).getTime() > now) {
+        return false;
+      }
+      return !data.downloads.some((task) =>
+        task.animeId === episode.animeId &&
+        (task.episodeId === episode.id || task.episodeNo === episode.episodeNo) &&
+        task.fansubGroupId === followed.defaultFansubGroupId
+      );
+    })
+    .sort((left, right) => (right.airTime ?? "").localeCompare(left.airTime ?? "") || right.episodeNo - left.episodeNo)
+    .slice(0, 8)
+    .map((episode) => {
+      const followed = followedByAnimeId.get(episode.animeId)!;
+      return {
+        id: `pending-default-fansub-${episode.id}`,
+        title: `《${followed.anime.title}》第 ${episode.episodeNo} 集`,
+        description: `《${followed.anime.title}》第 ${episode.episodeNo} 集已开播，但默认字幕组还没有发布资源。`,
+        severity: "warning" as const,
+        animeId: episode.animeId,
+        episodeId: episode.id,
+        episodeNo: episode.episodeNo
+      };
+    });
 }
 
 function resolveReminderStatus(episode: Episode, download?: DownloadTask): DailyReminderItem["status"] {

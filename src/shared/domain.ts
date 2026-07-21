@@ -475,6 +475,9 @@ export interface PendingAction {
   title: string;
   description: string;
   severity: "info" | "warning" | "error";
+  animeId?: string;
+  episodeId?: string;
+  episodeNo?: number;
 }
 
 export interface WeeklyScheduleDay {

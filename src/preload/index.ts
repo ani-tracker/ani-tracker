@@ -13,6 +13,7 @@ import type {
   AddDownloadUrlInput,
   AddReleaseDownloadInput,
   AnimeDetailResult,
+  AppWindowState,
   AnimeReleaseQuery,
   AnimeDiscoveryQuery,
   ConfirmAnimeSourceBindingInput,
@@ -22,12 +23,23 @@ import type {
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
   SelectPlayerExecutableInput,
+  SetAnimeWatchProgressInput,
   SourceSyncRunResult,
   SourceSyncSchedulerStatus
 } from "@shared/contracts";
 import type { ImageCacheResolveResult } from "@shared/contracts";
 
 const api = {
+  platform: process.platform,
+  getWindowState: (): Promise<AppWindowState> => ipcRenderer.invoke("window:getState"),
+  minimizeWindow: (): Promise<void> => ipcRenderer.invoke("window:minimize"),
+  toggleMaximizeWindow: (): Promise<AppWindowState> => ipcRenderer.invoke("window:toggleMaximize"),
+  closeWindow: (): Promise<void> => ipcRenderer.invoke("window:close"),
+  onWindowStateChanged: (listener: (state: AppWindowState) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, state: AppWindowState) => listener(state);
+    ipcRenderer.on("window:stateChanged", handler);
+    return () => ipcRenderer.off("window:stateChanged", handler);
+  },
   resolveCachedImageUrl: (sourceUrl: string): Promise<ImageCacheResolveResult> =>
     ipcRenderer.invoke("images:resolveUrl", sourceUrl),
   getDashboard: () => ipcRenderer.invoke("dashboard:get"),
@@ -40,6 +52,9 @@ const api = {
   listMyAnime: () => ipcRenderer.invoke("myAnime:list"),
   upsertMyAnime: (item: MyAnime) => ipcRenderer.invoke("myAnime:upsert", item),
   removeMyAnime: (itemId: string) => ipcRenderer.invoke("myAnime:remove", itemId),
+  listMyAnimeWatchProgress: () => ipcRenderer.invoke("myAnime:listWatchProgress"),
+  setAnimeWatchProgress: (input: SetAnimeWatchProgressInput) =>
+    ipcRenderer.invoke("myAnime:setWatchProgress", input),
   listAnimeCatalog: (year?: number, month?: number): Promise<Anime[]> =>
     ipcRenderer.invoke("animeCatalog:list", year, month),
   searchAnimeCatalog: (keyword: string): Promise<Anime[]> => ipcRenderer.invoke("animeCatalog:search", keyword),

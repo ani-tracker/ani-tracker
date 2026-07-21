@@ -18,6 +18,8 @@ import type {
   AddDownloadUrlInput,
   AddReleaseDownloadInput,
   AnimeDetailResult,
+  AnimeWatchProgress,
+  AppWindowState,
   AnimeReleaseQuery,
   AnimeSourceBindingState,
   AnimeDiscoveryQuery,
@@ -36,6 +38,7 @@ import type {
   RssSubscriptionReleaseQuery,
   RssSubscriptionReleaseResult,
   SelectPlayerExecutableInput,
+  SetAnimeWatchProgressInput,
   SourceSyncRunResult,
   SourceSyncSchedulerStatus,
   TorrentConnectionTestResult
@@ -45,6 +48,12 @@ import type { ImageCacheResolveResult } from "@shared/contracts";
 declare global {
   interface Window {
     aniBridge?: {
+      platform: string;
+      getWindowState: () => Promise<AppWindowState>;
+      minimizeWindow: () => Promise<void>;
+      toggleMaximizeWindow: () => Promise<AppWindowState>;
+      closeWindow: () => Promise<void>;
+      onWindowStateChanged: (listener: (state: AppWindowState) => void) => () => void;
       resolveCachedImageUrl: (sourceUrl: string) => Promise<ImageCacheResolveResult>;
       getDashboard: () => Promise<DashboardData>;
       listNotifications: () => Promise<NotificationRecord[]>;
@@ -55,6 +64,8 @@ declare global {
       listMyAnime: () => Promise<MyAnime[]>;
       upsertMyAnime: (item: MyAnime) => Promise<MyAnime[]>;
       removeMyAnime: (itemId: string) => Promise<MyAnime[]>;
+      listMyAnimeWatchProgress: () => Promise<AnimeWatchProgress[]>;
+      setAnimeWatchProgress: (input: SetAnimeWatchProgressInput) => Promise<AnimeWatchProgress>;
       listAnimeCatalog: (year?: number, month?: number) => Promise<Anime[]>;
       searchAnimeCatalog: (keyword: string) => Promise<Anime[]>;
       collectAnimeMonth: (query: AnimeDiscoveryQuery) => Promise<AnimeDiscoveryResult>;

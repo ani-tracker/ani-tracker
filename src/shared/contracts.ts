@@ -18,6 +18,11 @@ export interface ImageCacheResolveResult {
   url: string;
 }
 
+/** 自绘标题栏需要的最小窗口状态。 */
+export interface AppWindowState {
+  maximized: boolean;
+}
+
 export interface AnimeSearchQuery {
   keyword: string;
   includeAliases?: boolean;
@@ -215,6 +220,19 @@ export interface EpisodeReleaseCandidate {
   availabilityScore: number;
   reasons: string[];
   warnings: string[];
+}
+
+/** 单部追番的连续观看进度。 */
+export interface AnimeWatchProgress {
+  animeId: string;
+  watchedEpisodeCount: number;
+  totalEpisodeCount: number;
+}
+
+/** 原子更新单部追番观看进度的输入。 */
+export interface SetAnimeWatchProgressInput {
+  animeId: string;
+  watchedEpisodeCount: number;
 }
 
 export interface AnimeDetailResult {

@@ -197,6 +197,21 @@ export class RemoteDeviceAuth {
     return Array.from(this.devices.values(), toPublicDevice);
   }
 
+  /** 为已配对设备补充服务端批准的权限，用于兼容新增的固定能力。 */
+  grantScopes(deviceId: string, scopes: string[]): RemoteDeviceInfo | undefined {
+    const record = this.devices.get(deviceId);
+    if (!record) {
+      return undefined;
+    }
+    const nextScopes = normalizeScopes([...record.scopes, ...scopes]);
+    if (nextScopes.length !== record.scopes.length) {
+      record.scopes = nextScopes;
+      this.schedulePersistence();
+      this.logger.info("Remote device scopes extended", { deviceId, scopes: nextScopes });
+    }
+    return toPublicDevice(record);
+  }
+
   /** 吊销指定设备，令其已有令牌立即失效。 */
   revoke(deviceId: string): boolean {
     const revoked = this.devices.delete(deviceId);

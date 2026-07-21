@@ -24,6 +24,7 @@ import {
 } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { WindowTitleBar } from "@/components/window-title-bar";
 
 export interface AppNavigationItem {
   id: string;
@@ -49,6 +50,7 @@ interface AppShellProps {
     onBack: () => void;
   };
   contentRef?: MutableRefObject<HTMLElement | null>;
+  customTitleBar?: boolean;
 }
 
 /** 跟踪桌面宽视口，驱动 224px 完整栏和 72px 收缩栏切换。 */
@@ -74,7 +76,8 @@ export function AppShell({
   status,
   unreadCount,
   secondaryView,
-  contentRef
+  contentRef,
+  customTitleBar = false
 }: AppShellProps) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const expandedDesktopSidebar = useExpandedDesktopSidebar();
@@ -103,9 +106,20 @@ export function AppShell({
 
   return (
     <TooltipProvider delayDuration={300}>
+      {customTitleBar && <WindowTitleBar />}
       <SidebarProvider
         open={expandedDesktopSidebar}
-        style={{ "--sidebar-width": "14rem", "--sidebar-width-icon": "4.5rem" } as CSSProperties}
+        style={{
+          "--sidebar-width": "14rem",
+          "--sidebar-width-icon": "4.5rem",
+          ...(customTitleBar
+            ? {
+                top: "2.25rem",
+                height: "calc(100dvh - 2.25rem)",
+                maxHeight: "calc(100dvh - 2.25rem)"
+              }
+            : {})
+        } as CSSProperties}
       >
         <Sidebar aria-label="主导航" className="hidden md:flex">
           <SidebarHeader className="h-20 justify-center border-b-0 px-4 py-4">
@@ -196,7 +210,7 @@ export function AppShell({
         <SidebarInset
           ref={setMainElement}
           aria-label={`${activeItem?.label ?? "当前"}页面内容`}
-          className="h-screen h-dvh min-h-0 overflow-y-auto outline-none"
+          className="h-full max-h-full min-h-0 overflow-y-auto outline-none"
           tabIndex={-1}
         >
           <header className="sticky top-0 z-30 flex min-h-16 items-center border-b bg-background px-[max(1rem,var(--safe-area-left))] pt-[var(--safe-area-top)] md:hidden">

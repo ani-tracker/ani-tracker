@@ -3,6 +3,13 @@ import { networkInterfaces, type NetworkInterfaceInfo } from "node:os";
 
 type NetworkInterfaceMap = NodeJS.Dict<NetworkInterfaceInfo[]>;
 
+export interface TrustedRemoteOrigin {
+  origin: string;
+  protocol: "http:" | "https:";
+  hostname: string;
+  port: string;
+}
+
 /** 返回可供局域网客户端访问的 RFC1918 IPv4 地址。 */
 export function listPrivateIpv4Addresses(interfaces: NetworkInterfaceMap = networkInterfaces()): string[] {
   const addresses = Object.values(interfaces)
@@ -71,4 +78,96 @@ export function isTrustedOrigin(
   } catch {
     return false;
   }
+}
+
+/** 解析逗号分隔的公网 Origin 白名单，忽略非法或带路径的配置项。 */
+export function parseTrustedRemoteOrigins(value: string | undefined): TrustedRemoteOrigin[] {
+  if (!value?.trim()) {
+    return [];
+  }
+
+  const origins = new Map<string, TrustedRemoteOrigin>();
+  for (const candidate of value.split(",").map((item) => item.trim()).filter(Boolean)) {
+    try {
+      const url = new URL(candidate);
+      if (
+        (url.protocol !== "http:" && url.protocol !== "https:") ||
+        url.username ||
+        url.password ||
+        url.pathname !== "/" ||
+        url.search ||
+        url.hash
+      ) {
+        continue;
+      }
+      const origin = url.origin.toLowerCase();
+      origins.set(origin, {
+        origin,
+        protocol: url.protocol as TrustedRemoteOrigin["protocol"],
+        hostname: url.hostname.toLowerCase(),
+        port: effectiveOriginPort(url)
+      });
+    } catch {
+      // 单个配置错误不应导致远程服务整体无法启动。
+    }
+  }
+  return [...origins.values()];
+}
+
+/** 判断反向代理透传的 Host 是否匹配某个显式公网 Origin。 */
+export function isTrustedRemoteHost(
+  value: string | undefined,
+  trustedOrigins: readonly TrustedRemoteOrigin[]
+): boolean {
+  return trustedOrigins.some((trusted) => matchesTrustedRemoteHost(value, trusted));
+}
+
+/** 判断浏览器 Origin 是否精确命中显式公网白名单。 */
+export function isTrustedRemoteOrigin(
+  value: string | undefined,
+  trustedOrigins: readonly TrustedRemoteOrigin[],
+  host?: string
+): boolean {
+  if (!value) {
+    return true;
+  }
+  try {
+    const origin = new URL(value);
+    return (
+      value.toLowerCase() === origin.origin.toLowerCase() &&
+      trustedOrigins.some((trusted) =>
+        trusted.origin === origin.origin.toLowerCase() &&
+        (host === undefined || matchesTrustedRemoteHost(host, trusted))
+      )
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** 判断 Host 是否与单个公网 Origin 的主机和有效端口严格一致。 */
+function matchesTrustedRemoteHost(value: string | undefined, trusted: TrustedRemoteOrigin): boolean {
+  if (!value || value.includes("@") || value.includes("/") || value.includes("?") || value.includes("#")) {
+    return false;
+  }
+  try {
+    const host = new URL(`${trusted.protocol}//${value}`);
+    return (
+      !host.username &&
+      !host.password &&
+      host.pathname === "/" &&
+      host.hostname.toLowerCase() === trusted.hostname &&
+      effectiveOriginPort(host) === trusted.port
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** 返回 Origin 的有效端口，统一处理 HTTP/HTTPS 默认端口。 */
+function effectiveOriginPort(url: URL): string {
+  if (url.port) {
+    return url.port;
+  }
+  return url.protocol === "https:" ? "443" : "80";
 }

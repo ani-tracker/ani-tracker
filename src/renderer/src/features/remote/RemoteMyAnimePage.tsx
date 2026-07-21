@@ -5,6 +5,7 @@ import {
   groupMyAnimeBySeason,
   type MyAnimeSeasonGroup
 } from "@/features/my-anime/my-anime-list";
+import { WatchProgressControl } from "@/features/my-anime/watch-progress-control";
 import { FilterToolbar, Page, PageHeader, PageHeading } from "@/components/page-layout";
 import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -18,6 +19,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { appApi } from "@/lib/api";
 import { formatMonth, formatPercent } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
+import type { AnimeWatchProgress } from "@shared/contracts";
 import type { DownloadTask, Episode, EpisodePreference, FansubGroup, MyAnime } from "@shared/domain";
 
 const animeStatusText: Record<MyAnime["status"], string> = {
@@ -72,9 +74,11 @@ interface RemoteMyAnimePageProps {
   onOpenAnimeDetail?: (animeId: string) => void;
 }
 
-/** 渲染远程客户端的追番列表与只读剧集详情。 */
+/** 渲染远程客户端的追番列表与剧集详情。 */
 export function RemoteMyAnimePage({ onOpenAnimeDetail }: RemoteMyAnimePageProps = {}) {
   const [items, setItems] = useState<MyAnime[]>([]);
+  const [watchProgress, setWatchProgress] = useState<Record<string, AnimeWatchProgress>>({});
+  const [watchProgressUpdating, setWatchProgressUpdating] = useState<string | null>(null);
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [selectedItem, setSelectedItem] = useState<MyAnime | null>(null);
@@ -105,12 +109,18 @@ export function RemoteMyAnimePage({ onOpenAnimeDetail }: RemoteMyAnimePageProps 
 
   useEffect(() => {
     let active = true;
-    Promise.all([appApi.listMyAnime(), appApi.listFansubs(), appApi.listDownloads()])
-      .then(([animeItems, groups, downloads]) => {
+    Promise.all([
+      appApi.listMyAnime(),
+      appApi.listFansubs(),
+      appApi.listDownloads(),
+      appApi.listMyAnimeWatchProgress()
+    ])
+      .then(([animeItems, groups, downloads, progressItems]) => {
         if (!active) return;
         setItems(animeItems);
         setFansubs(groups);
         setDownloadTasks(downloads);
+        setWatchProgress(Object.fromEntries(progressItems.map((progress) => [progress.animeId, progress])));
         setError(null);
         console.info("[remote] 追番列表读取完成", { itemCount: animeItems.length, downloadCount: downloads.length });
       })
@@ -128,6 +138,30 @@ export function RemoteMyAnimePage({ onOpenAnimeDetail }: RemoteMyAnimePageProps 
       active = false;
     };
   }, []);
+
+  /** 远程端原子保存观看进度，保持列表交互即时可见。 */
+  async function updateWatchProgress(animeId: string, watchedEpisodeCount: number) {
+    const previous = watchProgress[animeId] ?? { animeId, watchedEpisodeCount: 0, totalEpisodeCount: 0 };
+    setWatchProgressUpdating(animeId);
+    setWatchProgress((current) => ({
+      ...current,
+      [animeId]: {
+        ...previous,
+        watchedEpisodeCount,
+        totalEpisodeCount: Math.max(previous.totalEpisodeCount, watchedEpisodeCount)
+      }
+    }));
+    try {
+      const saved = await appApi.setAnimeWatchProgress({ animeId, watchedEpisodeCount });
+      setWatchProgress((current) => ({ ...current, [animeId]: saved }));
+      console.info("[remote] 观看进度已更新", saved);
+    } catch (caught) {
+      setWatchProgress((current) => ({ ...current, [animeId]: previous }));
+      setError(caught instanceof Error ? caught.message : "更新观看进度失败");
+    } finally {
+      setWatchProgressUpdating((current) => current === animeId ? null : current);
+    }
+  }
 
   useEffect(() => {
     let active = true;
@@ -179,7 +213,7 @@ export function RemoteMyAnimePage({ onOpenAnimeDetail }: RemoteMyAnimePageProps 
     <Page>
       <PageHeader>
         <PageHeading
-          description="按季度查看追番状态、剧集进度和关联下载；编辑能力仅保留在桌面端。"
+          description="按季度查看追番状态、维护观看进度并检查关联下载。"
           title="我的追番"
         />
       </PageHeader>
@@ -213,6 +247,9 @@ export function RemoteMyAnimePage({ onOpenAnimeDetail }: RemoteMyAnimePageProps 
               key={group.key}
               onOpen={setSelectedItem}
               onOpenAnimeDetail={onOpenAnimeDetail}
+              onWatchProgressChange={updateWatchProgress}
+              watchProgress={watchProgress}
+              watchProgressUpdating={watchProgressUpdating}
             />
           ))}
         </div>
@@ -247,12 +284,18 @@ function RemoteAnimeSeasonGroup({
   group,
   downloadSummaries,
   onOpen,
-  onOpenAnimeDetail
+  onOpenAnimeDetail,
+  onWatchProgressChange,
+  watchProgress,
+  watchProgressUpdating
 }: {
   group: MyAnimeSeasonGroup;
   downloadSummaries: Map<string, RemoteDownloadSummary>;
   onOpen: (item: MyAnime) => void;
   onOpenAnimeDetail?: (animeId: string) => void;
+  onWatchProgressChange: (animeId: string, watchedEpisodeCount: number) => void | Promise<void>;
+  watchProgress: Record<string, AnimeWatchProgress>;
+  watchProgressUpdating: string | null;
 }) {
   return (
     <section className="min-w-0">
@@ -267,7 +310,16 @@ function RemoteAnimeSeasonGroup({
             key={item.id}
             onOpen={() => onOpen(item)}
             onOpenAnimeDetail={() => onOpenAnimeDetail?.(item.anime.id)}
+            onWatchProgressChange={(watchedEpisodeCount) =>
+              onWatchProgressChange(item.anime.id, watchedEpisodeCount)
+            }
             summary={downloadSummaries.get(item.anime.id) ?? { active: 0, completed: 0, linked: 0 }}
+            watchProgress={watchProgress[item.anime.id] ?? {
+              animeId: item.anime.id,
+              watchedEpisodeCount: 0,
+              totalEpisodeCount: item.anime.detail?.episodeCount ?? 0
+            }}
+            watchProgressUpdating={watchProgressUpdating === item.anime.id}
           />
         ))}
       </div>
@@ -275,17 +327,23 @@ function RemoteAnimeSeasonGroup({
   );
 }
 
-/** 渲染只读追番条目，避免暴露桌面端规则和资源操作。 */
+/** 渲染远程追番条目，只开放观看进度和只读剧集入口。 */
 function RemoteAnimeRow({
   item,
   summary,
   onOpen,
-  onOpenAnimeDetail
+  onOpenAnimeDetail,
+  onWatchProgressChange,
+  watchProgress,
+  watchProgressUpdating
 }: {
   item: MyAnime;
   summary: RemoteDownloadSummary;
   onOpen: () => void;
   onOpenAnimeDetail: () => void;
+  onWatchProgressChange: (watchedEpisodeCount: number) => void | Promise<void>;
+  watchProgress: AnimeWatchProgress;
+  watchProgressUpdating: boolean;
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(item.anime);
 
@@ -311,7 +369,7 @@ function RemoteAnimeRow({
         )}
       </button>
 
-      <div className="grid min-w-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(10rem,0.55fr)_auto] lg:items-center">
+      <div className="grid min-w-0 flex-1 gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(13rem,0.65fr)_auto] lg:items-center">
         <div className="min-w-0">
           <div className="flex min-w-0 items-center gap-2">
             <button
@@ -335,11 +393,15 @@ function RemoteAnimeRow({
         </div>
 
         <div className="min-w-0">
-          <div className="flex items-end justify-between gap-3 text-xs">
-            <span className="text-muted-foreground">关联剧集</span>
-            <span className="font-semibold tabular-nums text-primary">
-              {summary.completed} / {summary.linked}
-            </span>
+          <WatchProgressControl
+            disabled={watchProgressUpdating}
+            maximumEpisodeCount={item.anime.detail?.episodeCount}
+            onChange={onWatchProgressChange}
+            progress={watchProgress}
+          />
+          <div className="mt-3 flex items-end justify-between gap-3 text-xs">
+            <span className="text-muted-foreground">下载进度</span>
+            <span className="font-medium tabular-nums">{summary.completed} / {summary.linked}</span>
           </div>
           <Progress className="mt-2 h-1.5" value={summary.linked ? summary.completed / summary.linked : 0} />
           <div className="mt-2 text-xs text-muted-foreground">

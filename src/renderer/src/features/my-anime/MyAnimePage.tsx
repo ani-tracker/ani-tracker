@@ -42,7 +42,7 @@ import {
 } from "@/features/my-anime/release-groups";
 import { buildAnimeReleaseSearchTerms, classifyAnimeRelease } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
-import type { AddReleaseDownloadInput, AnimeSourceBindingState, AnimeSourceCandidate, EpisodeReleasePreview, ReleaseSearchResult, RssSubscriptionReleaseResult } from "@shared/contracts";
+import type { AddReleaseDownloadInput, AnimeSourceBindingState, AnimeSourceCandidate, AnimeWatchProgress, EpisodeReleasePreview, ReleaseSearchResult, RssSubscriptionReleaseResult } from "@shared/contracts";
 import type {
   AnimeRssSubscription,
   AnimeStatus,
@@ -144,6 +144,8 @@ export function MyAnimePage({
   onOpenAnimeDetail
 }: MyAnimePageProps = {}) {
   const [items, setItems] = useState<MyAnime[]>([]);
+  const [watchProgress, setWatchProgress] = useState<Record<string, AnimeWatchProgress>>({});
+  const [watchProgressUpdating, setWatchProgressUpdating] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<MyAnime | null>(null);
   const [statusFilter, setStatusFilter] = useState<MyAnimeFilter>("watching");
   const [fansubs, setFansubs] = useState<FansubGroup[]>([]);
@@ -179,8 +181,13 @@ export function MyAnimePage({
   useEffect(() => {
     let active = true;
 
-    Promise.all([appApi.listMyAnime(), appApi.listFansubs(), appApi.listDownloads()])
-      .then(([animeItems, groups, downloads]) => {
+    Promise.all([
+      appApi.listMyAnime(),
+      appApi.listFansubs(),
+      appApi.listDownloads(),
+      appApi.listMyAnimeWatchProgress()
+    ])
+      .then(([animeItems, groups, downloads, progressItems]) => {
         if (!active) {
           return;
         }
@@ -188,6 +195,7 @@ export function MyAnimePage({
         setItems(animeItems);
         setFansubs(groups);
         setDownloadTasks(downloads);
+        setWatchProgress(Object.fromEntries(progressItems.map((progress) => [progress.animeId, progress])));
       })
       .catch((error) => {
         if (active) {
@@ -445,6 +453,34 @@ export function MyAnimePage({
         tone: "error",
         text: error instanceof Error ? error.message : "更新单集状态失败"
       });
+    }
+  }
+
+  /** 原子保存列表中的连续观看进度，并在失败时恢复服务端状态。 */
+  async function updateWatchProgress(animeId: string, watchedEpisodeCount: number) {
+    const previous = watchProgress[animeId] ?? { animeId, watchedEpisodeCount: 0, totalEpisodeCount: 0 };
+    setWatchProgressUpdating(animeId);
+    setWatchProgress((current) => ({
+      ...current,
+      [animeId]: {
+        ...previous,
+        watchedEpisodeCount,
+        totalEpisodeCount: Math.max(previous.totalEpisodeCount, watchedEpisodeCount)
+      }
+    }));
+    try {
+      const saved = await appApi.setAnimeWatchProgress({ animeId, watchedEpisodeCount });
+      setWatchProgress((current) => ({ ...current, [animeId]: saved }));
+      console.info("[my-anime] 观看进度已更新", saved);
+      onDataChanged?.();
+    } catch (error) {
+      setWatchProgress((current) => ({ ...current, [animeId]: previous }));
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "更新观看进度失败"
+      });
+    } finally {
+      setWatchProgressUpdating((current) => current === animeId ? null : current);
     }
   }
 
@@ -901,7 +937,7 @@ export function MyAnimePage({
     <>
       {!actionOnly && (
         <Page className="gap-4">
-          <PageHeader className="border-b pb-3 sm:items-center">
+          <PageHeader className="pb-3 sm:items-center">
             <h1 className="sr-only">我的追番</h1>
             <PageBreadcrumb current="我的追番" />
             <PageActions>
@@ -950,6 +986,12 @@ export function MyAnimePage({
                 <MyAnimeRow
                   key={item.id}
                   item={item}
+                  watchProgress={watchProgress[item.anime.id] ?? {
+                    animeId: item.anime.id,
+                    watchedEpisodeCount: 0,
+                    totalEpisodeCount: item.anime.detail?.episodeCount ?? 0
+                  }}
+                  watchProgressUpdating={watchProgressUpdating === item.anime.id}
                   defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
                   downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
                   onOpenActive={() => openDownloadDetail(item, "active")}
@@ -958,6 +1000,9 @@ export function MyAnimePage({
                   onOpenDownloads={() => void openAnimeDownloads(item)}
                   onOpenRules={() => openRulesDrawer(item)}
                   onRemove={() => setRemoveTarget(item)}
+                  onWatchProgressChange={(watchedEpisodeCount) =>
+                    updateWatchProgress(item.anime.id, watchedEpisodeCount)
+                  }
                 />
               ))}
             </div>

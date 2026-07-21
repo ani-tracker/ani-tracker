@@ -22,6 +22,8 @@ const REMOTE_METHODS = new Set([
   "markNotificationRead",
   "markAllNotificationsRead",
   "listMyAnime",
+  "listMyAnimeWatchProgress",
+  "setAnimeWatchProgress",
   "listAnimeCatalog",
   "getAnimeDetail",
   "searchAnimeCatalog",

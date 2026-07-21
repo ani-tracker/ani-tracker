@@ -23,8 +23,12 @@ import type { RemoteMethodRegistry, RemoteRpcEffect, RemoteRpcScope } from "./re
 import {
   isTrustedHost,
   isTrustedOrigin,
+  isTrustedRemoteHost,
+  isTrustedRemoteOrigin,
   listPrivateIpv4Addresses,
-  normalizePrivateIpv4Addresses
+  normalizePrivateIpv4Addresses,
+  parseTrustedRemoteOrigins,
+  type TrustedRemoteOrigin
 } from "./remote-network-policy";
 import type { RemoteTlsCertificateBundle, RemoteTlsCertificateStore } from "./remote-tls-certificate-store";
 import { ImageCacheError, type ImageCacheService } from "../cache/image-cache-service";
@@ -32,7 +36,7 @@ import { ImageCacheError, type ImageCacheService } from "../cache/image-cache-se
 const DEFAULT_HOST = "127.0.0.1";
 const DEFAULT_PORT = 18_083;
 const MAX_BODY_BYTES = 64 * 1024;
-const ALL_REMOTE_SCOPES: RemoteRpcScope[] = [
+const LEGACY_FULL_REMOTE_SCOPES: RemoteRpcScope[] = [
   "dashboard.read",
   "notifications.read",
   "notifications.write",
@@ -41,6 +45,7 @@ const ALL_REMOTE_SCOPES: RemoteRpcScope[] = [
   "downloads.read",
   "downloads.control"
 ];
+const ALL_REMOTE_SCOPES: RemoteRpcScope[] = [...LEGACY_FULL_REMOTE_SCOPES, "library.write"];
 
 export interface RemoteHttpGatewayOptions {
   host?: string;
@@ -52,6 +57,7 @@ export interface RemoteHttpGatewayOptions {
   privateAddressProvider?: () => string[];
   mediaSessionService?: RemoteMediaSessionService;
   imageCacheService?: ImageCacheService;
+  trustedOrigins?: string;
 }
 
 interface RateLimitEntry {
@@ -86,6 +92,7 @@ export class RemoteHttpGateway {
   private readonly privateAddressProvider: () => string[];
   private readonly mediaSessionService?: RemoteMediaSessionService;
   private readonly imageCacheService?: ImageCacheService;
+  private readonly trustedOrigins: TrustedRemoteOrigin[];
 
   /** 创建默认仅监听回环地址的远程网关。 */
   constructor(
@@ -105,7 +112,13 @@ export class RemoteHttpGateway {
     this.privateAddressProvider = options.privateAddressProvider ?? listPrivateIpv4Addresses;
     this.mediaSessionService = options.mediaSessionService;
     this.imageCacheService = options.imageCacheService;
+    this.trustedOrigins = parseTrustedRemoteOrigins(options.trustedOrigins);
     this.dispatcher = new RemoteRpcDispatcher(registry);
+    if (this.trustedOrigins.length > 0) {
+      logger.info("Remote trusted origins configured", {
+        origins: this.trustedOrigins.map((item) => item.origin)
+      });
+    }
   }
 
   /** 启动 HTTP 网关；重复启动直接返回当前状态。 */
@@ -166,6 +179,17 @@ export class RemoteHttpGateway {
       await this.stopping;
     }
     await this.auth.initialize();
+    let scopesUpgraded = false;
+    for (const device of this.auth.listDevices()) {
+      if (LEGACY_FULL_REMOTE_SCOPES.every((scope) => device.scopes.includes(scope)) && !device.scopes.includes("library.write")) {
+        this.auth.grantScopes(device.id, ["library.write"]);
+        scopesUpgraded = true;
+      }
+    }
+    if (scopesUpgraded) {
+      await this.auth.flush();
+      logger.info("Remote paired devices upgraded for watch progress control");
+    }
     if (this.server) {
       return this.getStatus();
     }
@@ -368,11 +392,16 @@ export class RemoteHttpGateway {
   /** 校验 Host 与同源 Origin，阻止 DNS rebinding 和跨站浏览器调用。 */
   private validateHostAndOrigin(request: IncomingMessage): void {
     const allowedHostnames = new Set(["127.0.0.1", "localhost", ...this.addresses]);
-    if (!isTrustedHost(request.headers.host, this.activePort, allowedHostnames)) {
+    const localHostTrusted = isTrustedHost(request.headers.host, this.activePort, allowedHostnames);
+    const remoteHostTrusted = isTrustedRemoteHost(request.headers.host, this.trustedOrigins);
+    if (!localHostTrusted && !remoteHostTrusted) {
       throw new HttpGatewayError(403, "HOST_FORBIDDEN", "请求 Host 不受信任");
     }
     const origin = request.headers.origin;
-    if (!isTrustedOrigin(origin, this.protocol, this.activePort, allowedHostnames)) {
+    const originTrusted = localHostTrusted
+      ? isTrustedOrigin(origin, this.protocol, this.activePort, allowedHostnames)
+      : isTrustedRemoteOrigin(origin, this.trustedOrigins, request.headers.host);
+    if (!originTrusted) {
       throw new HttpGatewayError(403, "ORIGIN_FORBIDDEN", "请求 Origin 不受信任");
     }
   }

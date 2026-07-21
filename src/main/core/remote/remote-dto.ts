@@ -9,7 +9,7 @@ import type {
   MyAnime,
   NotificationRecord
 } from "@shared/domain";
-import type { AnimeDetailResult } from "@shared/contracts";
+import type { AnimeDetailResult, AnimeWatchProgress } from "@shared/contracts";
 
 const HIDDEN_LOCAL_PATH = "本机路径已隐藏";
 const WINDOWS_PATH_PATTERN = /(?:[a-zA-Z]:\\|\\\\)[^\s，。；、]+/g;
@@ -99,6 +99,21 @@ export function sanitizeNotificationList(value: unknown): NotificationRecord[] {
 /** 将番剧目录转换为字段白名单 DTO。 */
 export function sanitizeAnimeList(value: unknown): Anime[] {
   return requireArray<Anime>(value, "番剧目录").map(sanitizeAnime);
+}
+
+/** 将观看进度列表转换为固定数值字段 DTO。 */
+export function sanitizeAnimeWatchProgressList(value: unknown): AnimeWatchProgress[] {
+  return requireArray<AnimeWatchProgress>(value, "观看进度列表").map(sanitizeAnimeWatchProgress);
+}
+
+/** 将单条观看进度转换为固定数值字段 DTO。 */
+export function sanitizeAnimeWatchProgress(value: unknown): AnimeWatchProgress {
+  const progress = requireRecord<AnimeWatchProgress>(value, "观看进度");
+  return {
+    animeId: progress.animeId,
+    watchedEpisodeCount: progress.watchedEpisodeCount,
+    totalEpisodeCount: progress.totalEpisodeCount
+  };
 }
 
 /** 将番剧详情转换为远程只读 DTO，并沿用目录字段白名单。 */

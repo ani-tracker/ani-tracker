@@ -11,8 +11,10 @@ import {
   DropdownMenuTrigger
 } from "@/components/ui/dropdown-menu";
 import { Progress } from "@/components/ui/progress";
+import { WatchProgressControl } from "@/features/my-anime/watch-progress-control";
 import { formatMonth } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
+import type { AnimeWatchProgress } from "@shared/contracts";
 import type { AnimeStatus, MyAnime } from "@shared/domain";
 import {
   formatSubtitleLanguages,
@@ -52,12 +54,15 @@ interface MyAnimeRowProps {
   defaultFansubName: string;
   downloadSummary: MyAnimeDownloadSummary;
   item: MyAnime;
+  watchProgress: AnimeWatchProgress;
+  watchProgressUpdating?: boolean;
   onOpenActive: () => void;
   onOpenCompleted: () => void;
   onOpenDetail: () => void;
   onOpenDownloads: () => void;
   onOpenRules: () => void;
   onRemove: () => void;
+  onWatchProgressChange: (watchedEpisodeCount: number) => void | Promise<void>;
 }
 
 /** 按首播年份和季度归组追番，并优先展示较新的季度。 */
@@ -89,12 +94,15 @@ export function MyAnimeRow({
   defaultFansubName,
   downloadSummary,
   item,
+  watchProgress,
+  watchProgressUpdating,
   onOpenActive,
   onOpenCompleted,
   onOpenDetail,
   onOpenDownloads,
   onOpenRules,
-  onRemove
+  onRemove,
+  onWatchProgressChange
 }: MyAnimeRowProps) {
   const titleDisplay = resolveAnimeTitleDisplay(item.anime);
   const ratingText = item.anime.rating ? item.anime.rating.score.toFixed(1) : "暂无";
@@ -142,7 +150,7 @@ export function MyAnimeRow({
         )}
       </button>
 
-      <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-[minmax(0,1.35fr)_minmax(11rem,0.75fr)_auto] md:items-center">
+      <div className="grid min-w-0 flex-1 gap-3 md:grid-cols-[minmax(0,1.35fr)_minmax(13rem,0.8fr)_auto] md:items-center">
         <div className="min-w-0 self-start md:self-center">
           <div className="flex min-w-0 items-center gap-2">
             <button
@@ -175,10 +183,16 @@ export function MyAnimeRow({
         </div>
 
         <div className="min-w-0">
-          <div className="flex items-end justify-between gap-3 text-xs">
-            <span className="text-muted-foreground">单集进度</span>
-            <span className="font-semibold tabular-nums text-primary">
-              {String(downloadSummary.completed).padStart(2, "0")} / {String(Math.max(downloadSummary.linked, downloadSummary.completed)).padStart(2, "0")}
+          <WatchProgressControl
+            disabled={watchProgressUpdating}
+            maximumEpisodeCount={item.anime.detail?.episodeCount}
+            onChange={onWatchProgressChange}
+            progress={watchProgress}
+          />
+          <div className="mt-3 flex items-end justify-between gap-3 text-xs">
+            <span className="text-muted-foreground">下载进度</span>
+            <span className="font-medium tabular-nums">
+              {downloadSummary.completed} / {downloadSummary.linked}
             </span>
           </div>
           <Progress

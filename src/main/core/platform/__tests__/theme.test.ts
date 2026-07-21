@@ -41,13 +41,13 @@ test("内置主题包均满足完整 schema", () => {
 });
 
 test("图片取色主题规范示例可直接导入", () => {
-  const example = JSON.parse(readFileSync("docs/image-palette-example.ani-theme.json", "utf8")) as unknown;
+  const example = JSON.parse(readFileSync("docs/自定义主题提示词/image-palette-example.ani-theme.json", "utf8")) as unknown;
   const result = validateThemePack(example);
   assert.equal(result.ok, true, result.errors.join("；"));
 });
 
 test("主题包导出 JSON 可无损重新导入", () => {
-  const example = JSON.parse(readFileSync("docs/image-palette-example.ani-theme.json", "utf8")) as unknown;
+  const example = JSON.parse(readFileSync("docs/自定义主题提示词/image-palette-example.ani-theme.json", "utf8")) as unknown;
   const imported = validateThemePack(example);
   assert.ok(imported.pack);
 

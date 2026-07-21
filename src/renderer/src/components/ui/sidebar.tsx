@@ -102,7 +102,7 @@ export const Sidebar = forwardRef<HTMLElement, HTMLAttributes<HTMLElement>>(func
     <aside
       ref={ref}
       className={cn(
-        "group/sidebar sticky top-0 flex h-screen h-dvh max-h-screen max-h-dvh w-[var(--sidebar-width)] shrink-0 flex-col self-start border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width]",
+        "group/sidebar sticky top-0 flex h-full max-h-full w-[var(--sidebar-width)] shrink-0 flex-col self-start border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width]",
         "data-[state=collapsed]:w-[var(--sidebar-width-icon)]",
         className
       )}

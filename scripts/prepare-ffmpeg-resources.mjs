@@ -52,8 +52,8 @@ if (!options.verifyOnly && selectedAsset) {
 async function verifyBundledAsset(sourceRoot, asset) {
   const sourceDirectory = join(sourceRoot, asset.targetKey);
   await verifyFile(join(sourceDirectory, asset.binaryName), asset.binarySize, asset.binarySha256);
-  await verifyFile(join(sourceDirectory, "README"), undefined, asset.readmeSha256);
-  await verifyFile(join(sourceDirectory, "LICENSE"), undefined, asset.licenseSha256);
+  await verifyTextFile(join(sourceDirectory, "README"), asset.readmeSha256);
+  await verifyTextFile(join(sourceDirectory, "LICENSE"), asset.licenseSha256);
 
   const sourceMetadata = JSON.parse(await readFile(join(sourceDirectory, "SOURCE.json"), "utf8"));
   if (
@@ -75,6 +75,20 @@ async function verifyFile(path, expectedSize, expectedSha256) {
     throw new Error(`[ffmpeg] size mismatch: ${path}`);
   }
   const actualSha256 = await sha256(path);
+  if (actualSha256 !== expectedSha256) {
+    throw new Error(`[ffmpeg] SHA-256 mismatch: ${path}`);
+  }
+}
+
+/** 规范文本换行后校验摘要，避免 Windows 自动 CRLF 转换造成误报。 */
+async function verifyTextFile(path, expectedSha256) {
+  const fileStat = await stat(path);
+  if (!fileStat.isFile()) {
+    throw new Error(`[ffmpeg] expected file: ${path}`);
+  }
+  const content = await readFile(path, "utf8");
+  const normalizedContent = content.replace(/\r\n/g, "\n");
+  const actualSha256 = createHash("sha256").update(normalizedContent, "utf8").digest("hex");
   if (actualSha256 !== expectedSha256) {
     throw new Error(`[ffmpeg] SHA-256 mismatch: ${path}`);
   }

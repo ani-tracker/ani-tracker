@@ -32,7 +32,13 @@ async function loadHomeData() {
 }
 
 /** 渲染首页追番、下载与提醒概览。 */
-export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } = {}) {
+export function HomePage({
+  onOpenAnimeDetail,
+  onOpenDownloads
+}: {
+  onOpenAnimeDetail?: (animeId: string) => void;
+  onOpenDownloads?: () => void;
+} = {}) {
   const [revision, setRevision] = useState(0);
   const [scanning, setScanning] = useState(false);
   const { data: homeData, loading, error } = useAsyncData(loadHomeData, [revision]);
@@ -170,7 +176,12 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
             {data.pendingActions.length > 0 ? (
               pendingPreview.map((item, index) => (
                 <Fragment key={item.id}>
-                  <div className="border-l-2 border-primary px-4 py-3 sm:px-5">
+                  <Button
+                    className="h-auto min-h-0 w-full justify-start rounded-none border-l-2 border-primary px-4 py-3 text-left sm:px-5"
+                    disabled={!item.animeId}
+                    onClick={() => item.animeId && onOpenAnimeDetail?.(item.animeId)}
+                    variant="ghost"
+                  >
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <div className="text-sm font-semibold">{item.title}</div>
@@ -180,7 +191,7 @@ export function HomePage({ onOpenDownloads }: { onOpenDownloads?: () => void } =
                         {item.severity === "warning" ? "待处理" : "提示"}
                       </Badge>
                     </div>
-                  </div>
+                  </Button>
                   {index < pendingPreview.length - 1 && <Separator />}
                 </Fragment>
               ))

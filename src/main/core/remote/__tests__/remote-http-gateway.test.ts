@@ -1,6 +1,7 @@
 import { strict as assert } from "node:assert";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request as httpsRequest } from "node:https";
+import { request as httpRequest } from "node:http";
 import { createServer as createNetServer, connect } from "node:net";
 import { test } from "node:test";
 import { tmpdir } from "node:os";
@@ -113,6 +114,35 @@ test("RPC 对 scope 不足和跨站 Origin 返回 403", async (context) => {
   });
   assert.equal(forbiddenOrigin.status, 403);
   assert.equal((await forbiddenOrigin.json() as { code: string }).code, "ORIGIN_FORBIDDEN");
+});
+
+test("显式公网 Origin 可通过反向代理 Host 校验，近似域名仍被拒绝", async (context) => {
+  const gateway = await startGateway({
+    trustedOrigins: "https://ani.momoc.top,https://preview.example.test"
+  });
+  context.after(() => gateway.stop());
+  const port = gateway.getStatus().port;
+
+  const accepted = await requestHttp(port, "/api/health", {
+    host: "ani.momoc.top",
+    origin: "https://ani.momoc.top"
+  });
+  assert.equal(accepted.statusCode, 200);
+  assert.deepEqual(JSON.parse(accepted.body), { ok: true });
+
+  const forbidden = await requestHttp(port, "/api/health", {
+    host: "ani.momoc.top.attacker.test",
+    origin: "https://ani.momoc.top"
+  });
+  assert.equal(forbidden.statusCode, 403);
+  assert.equal((JSON.parse(forbidden.body) as { code: string }).code, "HOST_FORBIDDEN");
+
+  const mismatchedOrigin = await requestHttp(port, "/api/health", {
+    host: "ani.momoc.top",
+    origin: "https://preview.example.test"
+  });
+  assert.equal(mismatchedOrigin.statusCode, 403);
+  assert.equal((JSON.parse(mismatchedOrigin.body) as { code: string }).code, "ORIGIN_FORBIDDEN");
 });
 
 test("远程图片读取复用桌面端磁盘缓存并支持 304", async (context) => {
@@ -565,6 +595,7 @@ interface GatewayFixtureOptions {
   start?: boolean;
   mediaSessionService?: RemoteMediaSessionService;
   imageCacheService?: ImageCacheService;
+  trustedOrigins?: string;
 }
 
 /** 在随机端口启动测试网关。 */
@@ -575,6 +606,7 @@ async function startGateway(options: GatewayFixtureOptions = {}): Promise<Remote
     rendererDirectory: options.rendererDirectory,
     mediaSessionService: options.mediaSessionService,
     imageCacheService: options.imageCacheService,
+    trustedOrigins: options.trustedOrigins,
     tlsCertificateStore: options.certificateStore,
     privateAddressProvider: () => options.privateAddresses ?? []
   });
@@ -617,6 +649,32 @@ function jsonHeaders(token?: string): Record<string, string> {
     "Content-Type": "application/json",
     ...(token ? { Authorization: `Bearer ${token}` } : {})
   };
+}
+
+/** 使用显式 Host/Origin 请求回环 HTTP 网关，模拟反向代理转发。 */
+function requestHttp(
+  port: number,
+  path: string,
+  headers: { host: string; origin?: string }
+): Promise<{ statusCode: number; body: string }> {
+  return new Promise((resolveRequest, rejectRequest) => {
+    const request = httpRequest({
+      hostname: "127.0.0.1",
+      port,
+      path,
+      method: "GET",
+      headers: { Host: headers.host, ...(headers.origin ? { Origin: headers.origin } : {}) }
+    }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+      response.on("end", () => resolveRequest({
+        statusCode: response.statusCode ?? 0,
+        body: Buffer.concat(chunks).toString("utf8")
+      }));
+    });
+    request.on("error", rejectRequest);
+    request.end();
+  });
 }
 
 /** 使用指定 CA 请求测试 HTTPS 网关并返回完整响应。 */
@@ -667,6 +725,8 @@ function createHandlers(): RemoteRpcHandlers {
     markNotificationRead: () => [],
     markAllNotificationsRead: () => [],
     listMyAnime: () => [],
+    listMyAnimeWatchProgress: () => [],
+    setAnimeWatchProgress: (input) => ({ ...input, totalEpisodeCount: input.watchedEpisodeCount }),
     listAnimeCatalog: () => [],
     getAnimeDetail: () => {
       throw new Error("测试未使用番剧详情");
