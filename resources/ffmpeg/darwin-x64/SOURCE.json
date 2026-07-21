@@ -6,5 +6,17 @@
   "archive": "ffmpeg-darwin-x64.gz",
   "archiveSha256": "929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb4242106",
   "binarySize": 78862176,
-  "binarySha256": "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894"
+  "binarySha256": "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894",
+  "ffprobe": {
+    "package": "@ffprobe-installer/darwin-x64",
+    "version": "5.1.0",
+    "buildVersion": "20230213-f8d6d0f",
+    "homepage": "https://evermeet.cx/ffmpeg/",
+    "license": "GPL-3.0-only",
+    "licenseFile": "FFPROBE-LICENSE.json",
+    "archive": "darwin-x64-5.1.0.tgz",
+    "archiveSha256": "efe50b1fc86deb59a0263013a3f2c08ad5771ad1258a436e117e44b75ec8bd47",
+    "binarySize": 78740780,
+    "binarySha256": "424ce5e9271085240e90bd27f9e3f0ce280d388ea4379a211f76b64fcc07ce33"
+  }
 }

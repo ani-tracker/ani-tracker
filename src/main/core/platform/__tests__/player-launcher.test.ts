@@ -61,7 +61,7 @@ test("PlayerAdapterFactory resolves PotPlayer and mpv subclasses", () => {
 
   assert.ok(factory.resolve(potPlayer) instanceof PotPlayerAdapter);
   assert.ok(factory.resolve(mpv) instanceof MpvPlayerAdapter);
-  assert.equal(factory.resolve(potPlayer).createPlaybackMonitor(potPlayer, "C:\\anime.mkv"), undefined);
+  assert.equal(new PotPlayerAdapter("darwin").createPlaybackMonitor(potPlayer, "C:\\anime.mkv"), undefined);
   const mpvMonitor = factory.resolve(mpv).createPlaybackMonitor(mpv, "/tmp/anime.mkv");
   assert.ok(mpvMonitor);
   assert.match(mpvMonitor.launchArguments[0], /^--input-ipc-server=/);

@@ -12,14 +12,50 @@ export interface FfmpegCommandResolverOptions extends FfmpegBinaryResolverOption
   bundledFfmpegPath?: string | null;
 }
 
+export interface FfprobeCommandResolverOptions extends FfmpegBinaryResolverOptions {
+  configuredPath: string;
+  bundledFfprobePath?: string | null;
+}
+
 /** 按应用资源、构建输出和源码资源顺序查找当前平台的内置 FFmpeg。 */
 export function resolveBundledFfmpegBinary(
   options: FfmpegBinaryResolverOptions = {}
 ): string | undefined {
+  return resolveBundledMediaBinary("ffmpeg", options);
+}
+
+/** 按应用资源、构建输出和源码资源顺序查找当前平台的内置 FFprobe。 */
+export function resolveBundledFfprobeBinary(
+  options: FfmpegBinaryResolverOptions = {}
+): string | undefined {
+  return resolveBundledMediaBinary("ffprobe", options);
+}
+
+/** 用户显式路径优先，默认命令则优先使用内置 FFprobe。 */
+export function resolveFfprobeCommands(options: FfprobeCommandResolverOptions): [string, ...string[]] {
+  const platform = options.platform ?? process.platform;
+  const configuredPath = options.configuredPath.trim() || "ffprobe";
+  const bundledPath = options.bundledFfprobePath === undefined
+    ? resolveBundledFfprobeBinary(options)
+    : options.bundledFfprobePath ?? undefined;
+  const availableBundledPath = bundledPath && existsSync(bundledPath) ? bundledPath : undefined;
+  const candidates = isDefaultFfprobeCommand(configuredPath, platform)
+    ? [availableBundledPath, configuredPath]
+    : [configuredPath, availableBundledPath];
+
+  const commands = uniqueCommands(candidates.filter((item): item is string => Boolean(item)));
+  return [commands[0] ?? "ffprobe", ...commands.slice(1)];
+}
+
+/** 查找指定媒体工具的内置平台二进制。 */
+function resolveBundledMediaBinary(
+  tool: "ffmpeg" | "ffprobe",
+  options: FfmpegBinaryResolverOptions
+): string | undefined {
   const platform = options.platform ?? process.platform;
   const arch = options.arch ?? process.arch;
   const roots = options.resourceRoots ?? getDefaultFfmpegResourceRoots();
-  const binaryName = platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const binaryName = platform === "win32" ? `${tool}.exe` : tool;
 
   for (const root of roots) {
     for (const platformDirectory of [`${platform}-${arch}`, platform]) {
@@ -73,4 +109,15 @@ function getDefaultFfmpegResourceRoots(): string[] {
 function unique(paths: string[]): string[] {
   const normalized = paths.map((path) => isAbsolute(path) ? path : resolve(path));
   return [...new Set(normalized)];
+}
+
+/** 判断配置值是否仍是默认系统命令。 */
+function isDefaultFfprobeCommand(command: string, platform: NodeJS.Platform): boolean {
+  const normalized = command.toLowerCase();
+  return normalized === "ffprobe" || (platform === "win32" && normalized === "ffprobe.exe");
+}
+
+/** 保留候选命令优先级并移除重复项。 */
+function uniqueCommands(commands: string[]): string[] {
+  return [...new Set(commands)];
 }

@@ -2,6 +2,7 @@ import type { DownloadTask } from "@shared/domain";
 import { logger } from "../logger";
 import type { AppRepository } from "../repositories/app-repository";
 import { DownloadMediaScanner } from "./download-media-scanner";
+import { resolveFfprobeCommands } from "./ffmpeg-binary-resolver";
 import { FfprobeMediaProbeService } from "./ffprobe-media-probe-service";
 
 export class CompletedDownloadMediaAutoScanner {
@@ -21,8 +22,12 @@ export class CompletedDownloadMediaAutoScanner {
         this.repository.listMediaFiles()
       ]);
       const scannedTaskIds = new Set(mediaFiles.map((file) => file.downloadTaskId).filter(Boolean) as string[]);
+      const [ffprobePath, ...fallbackFfprobePaths] = resolveFfprobeCommands({
+        configuredPath: settings.media.ffprobePath
+      });
       const probeService = new FfprobeMediaProbeService({
-        ffprobePath: settings.media.ffprobePath,
+        ffprobePath,
+        fallbackFfprobePaths,
         timeoutMs: settings.media.ffprobeTimeoutSeconds * 1000
       });
       const scanner = new DownloadMediaScanner(probeService, settings);

@@ -20,7 +20,7 @@ Windows PowerShell：
 pnpm.cmd install
 ```
 
-`pnpm-workspace.yaml` 已允许 Electron、esbuild、better-sqlite3 和 ffprobe 平台包执行安装脚本。根目录 `postinstall` 会按当前 Electron ABI 重建 better-sqlite3。
+`pnpm-workspace.yaml` 已允许 Electron、esbuild 和 better-sqlite3 执行安装脚本。FFprobe 已随仓库资源内置，安装依赖时不会再下载平台包；根目录 `postinstall` 会按当前 Electron ABI 重建 better-sqlite3。
 
 ## 开发模式
 
@@ -30,7 +30,7 @@ pnpm.cmd install
 pnpm dev
 ```
 
-该命令先执行 `prepare:remote-renderer`，将远程静态页面写入 `.remote-pwa/renderer`，再启动 Electron、主进程、preload 和桌面 Renderer 的 Vite 热更新服务。
+该命令先离线校验并复制当前平台的 FFmpeg/FFprobe，再执行 `prepare:remote-renderer`，将远程静态页面写入 `.remote-pwa/renderer`，最后启动 Electron、主进程、preload 和桌面 Renderer 的 Vite 热更新服务。
 
 只调试桌面端：
 
@@ -70,7 +70,7 @@ pnpm build
 
 1. `electron-vite build` 生成 main、preload 和 renderer。
 2. `prepare:qbittorrent` 校验并复制当前目标平台的托管 qBittorrent 资源。
-3. `prepare:ffmpeg` 校验并复制当前目标平台的 FFmpeg 资源。
+3. `prepare:ffmpeg` 校验并复制当前目标平台的 FFmpeg/FFprobe 资源。
 
 交叉构建时可通过 npm 目标变量选择平台，CLI 参数优先级更高：
 
@@ -101,13 +101,13 @@ pnpm preview
 
 ## 资源维护
 
-离线校验仓库中的全部 FFmpeg 资源：
+离线校验仓库中的全部 FFmpeg/FFprobe 资源：
 
 ```bash
 pnpm run verify:ffmpeg
 ```
 
-显式更新三平台 FFmpeg 资源：
+显式更新三平台 FFmpeg/FFprobe 资源：
 
 ```bash
 pnpm run download:ffmpeg
@@ -119,7 +119,7 @@ pnpm run download:ffmpeg
 pnpm run verify:qbittorrent
 ```
 
-构建过程默认不下载 qBittorrent 或 FFmpeg。`download:ffmpeg` 是显式联网维护命令，不属于日常安装或构建。
+构建过程默认不下载 qBittorrent、FFmpeg 或 FFprobe。`download:ffmpeg` 是显式联网维护命令，不属于日常安装或构建。
 
 ## 远程 PWA
 

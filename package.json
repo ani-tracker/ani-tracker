@@ -7,8 +7,8 @@
   "main": "./out/main/index.js",
   "scripts": {
     "postinstall": "electron-rebuild -f -w better-sqlite3",
-    "dev": "pnpm run prepare:remote-renderer && electron-vite dev",
-    "dev:desktop": "electron-vite dev",
+    "dev": "pnpm run prepare:ffmpeg && pnpm run prepare:remote-renderer && electron-vite dev",
+    "dev:desktop": "pnpm run prepare:ffmpeg && electron-vite dev",
     "build": "electron-vite build && npm run prepare:qbittorrent && npm run prepare:ffmpeg",
     "preview": "electron-vite preview",
     "prepare:remote-renderer": "electron-vite build --outDir .remote-pwa",
@@ -22,7 +22,6 @@
     "test:theme": "node scripts/verify-theme-contrast.mjs"
   },
   "dependencies": {
-    "@ffprobe-installer/ffprobe": "2.1.2",
     "@radix-ui/react-alert-dialog": "^1.1.19",
     "@radix-ui/react-checkbox": "^1.3.7",
     "@radix-ui/react-dialog": "^1.1.19",

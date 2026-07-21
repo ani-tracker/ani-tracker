@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { access, chmod, copyFile, mkdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, chmod, copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { get as httpsGet } from "node:https";
 import { dirname, join, resolve } from "node:path";
 import process from "node:process";
 import { pipeline } from "node:stream/promises";
-import { createGunzip } from "node:zlib";
+import { createGunzip, gunzipSync } from "node:zlib";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import {
   FFMPEG_ASSETS,
@@ -15,8 +15,10 @@ import {
 } from "./ffmpeg-resource-manifest.mjs";
 
 const defaultBaseUrl = "https://github.com/eugeneware/ffmpeg-static/releases/download";
+const defaultFfprobeRegistryUrl = "https://registry.npmjs.org";
 const defaultCacheRoot = resolve(".cache", "ffmpeg", FFMPEG_RELEASE);
 const defaultTargetRoot = resolve("resources", "ffmpeg");
+const defaultLicenseRoot = resolve("resources", "ffmpeg", "licenses");
 
 const options = parseArgs(process.argv.slice(2));
 const proxyUrl = options.proxyUrl || resolveProxyUrl(process.env);
@@ -41,37 +43,66 @@ for (const asset of assetsToDownload) {
   await updateBundledAsset(asset, options);
 }
 
-/** 下载、校验并更新指定平台的预构建资源。 */
+/** 下载、校验并更新指定平台的 FFmpeg 与 FFprobe 预构建资源。 */
 async function updateBundledAsset(asset, currentOptions) {
   const archiveName = `ffmpeg-${asset.targetKey}.gz`;
+  const ffprobeArchiveName = `${asset.targetKey}-${asset.ffprobe.packageVersion}.tgz`;
   const readmeName = `${asset.targetKey}.README`;
   const licenseName = `${asset.targetKey}.LICENSE`;
   const cacheFiles = {
     archive: join(currentOptions.cacheRoot, archiveName),
+    ffprobeArchive: join(currentOptions.cacheRoot, ffprobeArchiveName),
     readme: join(currentOptions.cacheRoot, readmeName),
     license: join(currentOptions.cacheRoot, licenseName)
   };
 
-  await ensureCachedAsset(`${baseUrl}/${archiveName}`, cacheFiles.archive, asset.archiveSha256, currentOptions);
-  await ensureCachedAsset(`${baseUrl}/${readmeName}`, cacheFiles.readme, asset.readmeSha256, currentOptions);
-  await ensureCachedAsset(`${baseUrl}/${licenseName}`, cacheFiles.license, asset.licenseSha256, currentOptions);
+  await Promise.all([
+    ensureCachedAsset(`${baseUrl}/${archiveName}`, cacheFiles.archive, asset.archiveSha256, currentOptions),
+    ensureCachedAsset(`${baseUrl}/${readmeName}`, cacheFiles.readme, asset.readmeSha256, currentOptions),
+    ensureCachedAsset(`${baseUrl}/${licenseName}`, cacheFiles.license, asset.licenseSha256, currentOptions),
+    ensureCachedAsset(
+      createNpmTarballUrl(currentOptions.ffprobeRegistryUrl, asset.ffprobe),
+      cacheFiles.ffprobeArchive,
+      asset.ffprobe.archiveSha256,
+      currentOptions
+    )
+  ]);
 
   const outputDirectory = join(currentOptions.targetRoot, asset.targetKey);
   const outputBinary = join(outputDirectory, asset.binaryName);
+  const outputFfprobeBinary = join(outputDirectory, asset.ffprobe.binaryName);
   await rm(outputDirectory, { recursive: true, force: true });
   await mkdir(outputDirectory, { recursive: true });
   await pipeline(createReadStream(cacheFiles.archive), createGunzip(), createWriteStream(outputBinary));
-  const outputStat = await stat(outputBinary);
-  const outputSha256 = await sha256(outputBinary);
-  if (outputStat.size !== asset.binarySize || outputSha256 !== asset.binarySha256) {
-    throw new Error(`[ffmpeg] extracted binary verification failed: ${asset.targetKey}`);
-  }
+  await extractNpmPackageBinary(
+    cacheFiles.ffprobeArchive,
+    `package/${asset.ffprobe.binaryName}`,
+    outputFfprobeBinary
+  );
+  await Promise.all([
+    verifyExtractedBinary(outputBinary, asset.binarySize, asset.binarySha256, asset.targetKey, "FFmpeg"),
+    verifyExtractedBinary(
+      outputFfprobeBinary,
+      asset.ffprobe.binarySize,
+      asset.ffprobe.binarySha256,
+      asset.targetKey,
+      "FFprobe"
+    )
+  ]);
   if (asset.platform !== "win32") {
-    await chmod(outputBinary, 0o755);
+    await Promise.all([
+      chmod(outputBinary, 0o755),
+      chmod(outputFfprobeBinary, 0o755)
+    ]);
+  }
+  const ffprobeLicensePath = join(currentOptions.licenseRoot, asset.ffprobe.licenseFile);
+  if (!(await hasExpectedHash(ffprobeLicensePath, asset.ffprobe.licenseSha256))) {
+    throw new Error(`[ffmpeg] FFprobe license missing or invalid: ${ffprobeLicensePath}`);
   }
   await Promise.all([
     copyFile(cacheFiles.readme, join(outputDirectory, "README")),
     copyFile(cacheFiles.license, join(outputDirectory, "LICENSE")),
+    copyFile(ffprobeLicensePath, join(outputDirectory, "FFPROBE-LICENSE.json")),
     writeFile(join(outputDirectory, "SOURCE.json"), `${JSON.stringify({
       project: "ffmpeg-static",
       repository: "https://github.com/eugeneware/ffmpeg-static",
@@ -80,11 +111,78 @@ async function updateBundledAsset(asset, currentOptions) {
       archive: archiveName,
       archiveSha256: asset.archiveSha256,
       binarySize: asset.binarySize,
-      binarySha256: asset.binarySha256
+      binarySha256: asset.binarySha256,
+      ffprobe: {
+        package: asset.ffprobe.packageName,
+        version: asset.ffprobe.packageVersion,
+        buildVersion: asset.ffprobe.buildVersion,
+        homepage: asset.ffprobe.homepage,
+        license: asset.ffprobe.license,
+        licenseFile: "FFPROBE-LICENSE.json",
+        archive: ffprobeArchiveName,
+        archiveSha256: asset.ffprobe.archiveSha256,
+        binarySize: asset.ffprobe.binarySize,
+        binarySha256: asset.ffprobe.binarySha256
+      }
     }, null, 2)}\n`, "utf8")
   ]);
 
-  console.log(`[ffmpeg] updated prebuilt ${asset.targetKey}: ${outputBinary}`);
+  console.log(`[ffmpeg] updated FFmpeg and FFprobe ${asset.targetKey}: ${outputDirectory}`);
+}
+
+/** 生成 scoped npm 平台包的固定版本归档地址。 */
+function createNpmTarballUrl(registryUrl, ffprobe) {
+  const packageBaseName = ffprobe.packageName.split("/").at(-1);
+  return `${registryUrl.replace(/\/$/, "")}/${ffprobe.packageName}/-/${packageBaseName}-${ffprobe.packageVersion}.tgz`;
+}
+
+/** 从 npm tgz 的 tar 数据中提取指定二进制。 */
+async function extractNpmPackageBinary(archivePath, entryName, destination) {
+  const tarBuffer = gunzipSync(await readFile(archivePath));
+  let offset = 0;
+
+  while (offset + 512 <= tarBuffer.length) {
+    const header = tarBuffer.subarray(offset, offset + 512);
+    if (header.every((value) => value === 0)) {
+      break;
+    }
+    const name = readTarText(header, 0, 100);
+    const prefix = readTarText(header, 345, 155);
+    const fullName = prefix ? `${prefix}/${name}` : name;
+    const sizeText = readTarText(header, 124, 12).trim();
+    const size = sizeText ? Number.parseInt(sizeText, 8) : 0;
+    if (!Number.isSafeInteger(size) || size < 0) {
+      throw new Error(`[ffmpeg] invalid tar entry size: ${fullName}`);
+    }
+    const dataStart = offset + 512;
+    const dataEnd = dataStart + size;
+    if (dataEnd > tarBuffer.length) {
+      throw new Error(`[ffmpeg] truncated tar entry: ${fullName}`);
+    }
+    if (fullName === entryName) {
+      await writeFile(destination, tarBuffer.subarray(dataStart, dataEnd));
+      return;
+    }
+    offset = dataStart + Math.ceil(size / 512) * 512;
+  }
+
+  throw new Error(`[ffmpeg] FFprobe entry missing from package: ${entryName}`);
+}
+
+/** 读取 tar 头中的空字符结尾文本字段。 */
+function readTarText(header, offset, length) {
+  const field = header.subarray(offset, offset + length);
+  const end = field.indexOf(0);
+  return field.subarray(0, end === -1 ? field.length : end).toString("utf8");
+}
+
+/** 校验解压后二进制大小与 SHA-256。 */
+async function verifyExtractedBinary(path, expectedSize, expectedSha256, targetKey, binaryLabel) {
+  const outputStat = await stat(path);
+  const outputSha256 = await sha256(path);
+  if (outputStat.size !== expectedSize || outputSha256 !== expectedSha256) {
+    throw new Error(`[ffmpeg] extracted ${binaryLabel} verification failed: ${targetKey}`);
+  }
 }
 
 /** 确保缓存文件存在且摘要正确，网络异常时自动重试。 */
@@ -183,6 +281,8 @@ function parseArgs(args) {
     targetRoot: defaultTargetRoot,
     cacheRoot: defaultCacheRoot,
     baseUrl: process.env.FFMPEG_BINARIES_URL || defaultBaseUrl,
+    ffprobeRegistryUrl: process.env.FFPROBE_PACKAGES_URL || defaultFfprobeRegistryUrl,
+    licenseRoot: defaultLicenseRoot,
     timeoutMs: 120_000,
     retries: 3,
     offline: false,
@@ -220,6 +320,16 @@ function parseArgs(args) {
     }
     if (arg === "--cache") {
       parsed.cacheRoot = resolve(readValue(args, index, arg));
+      index += 1;
+      continue;
+    }
+    if (arg === "--ffprobe-registry") {
+      parsed.ffprobeRegistryUrl = readValue(args, index, arg);
+      index += 1;
+      continue;
+    }
+    if (arg === "--license-root") {
+      parsed.licenseRoot = resolve(readValue(args, index, arg));
       index += 1;
       continue;
     }

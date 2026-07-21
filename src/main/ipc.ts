@@ -30,6 +30,7 @@ import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
 import { PlayerLauncherService } from "./core/platform/player-launcher";
 import { DownloadMediaScanner } from "./core/media/download-media-scanner";
 import { FfprobeMediaProbeService } from "./core/media/ffprobe-media-probe-service";
+import { resolveFfprobeCommands } from "./core/media/ffmpeg-binary-resolver";
 import { EpisodeReleasePreviewService } from "./core/automation/episode-release-preview-service";
 import { AutomationScheduler } from "./core/automation/automation-scheduler";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
@@ -473,8 +474,12 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     }
 
     const settings = await repository.getSettings();
+    const [ffprobePath, ...fallbackFfprobePaths] = resolveFfprobeCommands({
+      configuredPath: settings.media.ffprobePath
+    });
     const probeService = new FfprobeMediaProbeService({
-      ffprobePath: settings.media.ffprobePath,
+      ffprobePath,
+      fallbackFfprobePaths,
       timeoutMs: settings.media.ffprobeTimeoutSeconds * 1000
     });
     const result = await new DownloadMediaScanner(probeService, settings).scanTask(task);

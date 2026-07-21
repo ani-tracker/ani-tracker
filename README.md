@@ -127,9 +127,9 @@ pnpm.cmd run test:parsers
 pnpm.cmd build
 ```
 
-完整构建会更新 `out/qbittorrent`，并从仓库内的 `resources/ffmpeg` 校验、复制当前平台 FFmpeg 到 `out/ffmpeg`，构建过程不访问网络。交叉构建可向 `prepare:ffmpeg` 传入 `--platform` 和 `--arch`。若 qBittorrent-nox 正在从输出目录运行，应先正常退出 Ani Tracker，否则 Windows 可能返回 `EBUSY` 文件占用错误。
+完整构建会更新 `out/qbittorrent`，并从仓库内的 `resources/ffmpeg` 校验、复制当前平台 FFmpeg/FFprobe 到 `out/ffmpeg`，构建过程不访问网络。交叉构建可向 `prepare:ffmpeg` 传入 `--platform` 和 `--arch`。若 qBittorrent-nox 正在从输出目录运行，应先正常退出 Ani Tracker，否则 Windows 可能返回 `EBUSY` 文件占用错误。
 
-FFmpeg 版本升级属于显式资源维护：执行 `pnpm run download:ffmpeg` 可更新三平台预构建文件，执行 `pnpm run verify:ffmpeg` 可离线校验全部资源。维护下载命令支持标准 HTTP(S) 代理环境变量及 `FFMPEG_BINARIES_URL` 镜像地址。
+FFmpeg/FFprobe 版本升级属于显式资源维护：执行 `pnpm run download:ffmpeg` 可更新三平台预构建文件，执行 `pnpm run verify:ffmpeg` 可离线校验全部资源。维护下载命令支持标准 HTTP(S) 代理环境变量，以及 `FFMPEG_BINARIES_URL`、`FFPROBE_PACKAGES_URL` 镜像地址。
 
 ## 下载源网络与同步
 

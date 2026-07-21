@@ -10,13 +10,14 @@ import type {
   RemotePlaybackSession
 } from "@shared/contracts";
 import type { AppSettings, DownloadTask, MediaFile } from "@shared/domain";
-import * as ffprobeInstallerModule from "@ffprobe-installer/ffprobe";
 import {
   probeMediaDuration,
   type FfprobeMediaProbeOptions
 } from "../media/ffprobe-media-probe-service";
 import {
   resolveBundledFfmpegBinary,
+  resolveBundledFfprobeBinary,
+  resolveFfprobeCommands,
   resolveFfmpegCommand
 } from "../media/ffmpeg-binary-resolver";
 import type { AppRepository } from "../repositories/app-repository";
@@ -30,7 +31,7 @@ import {
 const DEFAULT_SESSION_TTL_MS = 30 * 60 * 1_000;
 const DEFAULT_TRANSCODER_START_TIMEOUT_MS = 20_000;
 const DEFAULT_MAX_SESSIONS = 2;
-const bundledFfprobeInstallerPath = resolveFfprobeInstallerPath(ffprobeInstallerModule);
+const bundledFfprobePath = resolveBundledFfprobeBinary();
 const bundledFfmpegPath = resolveBundledFfmpegBinary();
 
 export interface RemoteMediaAsset {
@@ -115,7 +116,7 @@ export class RemoteMediaSessionService {
   private readonly platform: NodeJS.Platform;
   private readonly logger: RemoteMediaSessionLogger;
   private readonly bundledFfmpegPath?: string | null;
-  private readonly bundledFfprobePath?: string;
+  private readonly bundledFfprobePath?: string | null;
   private readonly durationProbe: NonNullable<RemoteMediaSessionServiceOptions["durationProbe"]>;
   private readonly subtitlePreparer: NonNullable<RemoteMediaSessionServiceOptions["subtitlePreparer"]>;
   private readonly sessions = new Map<string, MediaSessionRecord>();
@@ -141,8 +142,8 @@ export class RemoteMediaSessionService {
       ? bundledFfmpegPath
       : options.bundledFfmpegPath;
     this.bundledFfprobePath = options.bundledFfprobePath === undefined
-      ? bundledFfprobeInstallerPath
-      : options.bundledFfprobePath ?? undefined;
+      ? bundledFfprobePath
+      : options.bundledFfprobePath;
     this.durationProbe = options.durationProbe ?? probeMediaDuration;
     this.subtitlePreparer = options.subtitlePreparer ?? prepareRemoteSubtitles;
   }
@@ -432,10 +433,15 @@ export class RemoteMediaSessionService {
 
   /** 在媒体扫描尚未提供时长时按需探测，失败不阻断播放。 */
   private async resolveDuration(filePath: string, settings: AppSettings): Promise<number | undefined> {
-    const configuredPath = settings.media.ffprobePath.trim() || "ffprobe";
+    const [ffprobePath, ...fallbackFfprobePaths] = resolveFfprobeCommands({
+      configuredPath: settings.media.ffprobePath,
+      platform: this.platform,
+      bundledFfprobePath: this.bundledFfprobePath
+    });
     try {
       const durationSeconds = await this.durationProbe(filePath, {
-        ffprobePath: configuredPath,
+        ffprobePath,
+        fallbackFfprobePaths,
         timeoutMs: settings.media.ffprobeTimeoutSeconds * 1_000
       });
       if (durationSeconds !== undefined) {
@@ -443,21 +449,6 @@ export class RemoteMediaSessionService {
       }
       return durationSeconds;
     } catch (error) {
-      if (this.bundledFfprobePath && this.bundledFfprobePath !== configuredPath) {
-        try {
-          const durationSeconds = await this.durationProbe(filePath, {
-            ffprobePath: this.bundledFfprobePath,
-            timeoutMs: settings.media.ffprobeTimeoutSeconds * 1_000
-          });
-          this.logger.info("Remote media duration probed with bundled FFprobe", { durationSeconds });
-          return durationSeconds;
-        } catch (fallbackError) {
-          this.logger.warn("Bundled remote media duration probe failed", {
-            errorType: fallbackError instanceof Error ? fallbackError.name : typeof fallbackError
-          });
-          return undefined;
-        }
-      }
       this.logger.warn("Remote media duration probe failed", {
         errorType: error instanceof Error ? error.name : typeof error
       });
@@ -485,12 +476,16 @@ export class RemoteMediaSessionService {
     if (!session.temporaryDirectory) {
       return;
     }
-    const configuredFfprobePath = settings.media.ffprobePath.trim() || "ffprobe";
+    const ffprobePaths = resolveFfprobeCommands({
+      configuredPath: settings.media.ffprobePath,
+      platform: this.platform,
+      bundledFfprobePath: this.bundledFfprobePath
+    });
     try {
       const result = await this.subtitlePreparer(session.sourcePath, session.temporaryDirectory, {
-        ffprobePaths: [configuredFfprobePath, this.bundledFfprobePath ?? ""],
+        ffprobePaths,
         ffmpegPath: resolveFfmpegCommand({
-          ffprobePath: configuredFfprobePath,
+          ffprobePath: ffprobePaths[0],
           platform: this.platform,
           bundledFfmpegPath: this.bundledFfmpegPath
         }),
@@ -721,16 +716,6 @@ function toPublicSession(session: MediaSessionRecord): RemotePlaybackSession {
 /** 将可选整数约束为正整数。 */
 function positiveInteger(value: number | undefined, fallback: number): number {
   return value !== undefined && Number.isInteger(value) && value > 0 ? value : fallback;
-}
-
-/** 兼容 FFprobe 安装包在 CommonJS 与 ESM 中的导出形态。 */
-function resolveFfprobeInstallerPath(moduleValue: unknown): string | undefined {
-  const candidate = moduleValue as {
-    path?: unknown;
-    default?: { path?: unknown };
-  };
-  const value = candidate.path ?? candidate.default?.path;
-  return typeof value === "string" ? value : undefined;
 }
 
 /** 非阻塞等待转码产物生成。 */

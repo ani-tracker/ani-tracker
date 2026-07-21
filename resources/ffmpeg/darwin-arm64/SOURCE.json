@@ -6,5 +6,17 @@
   "archive": "ffmpeg-darwin-arm64.gz",
   "archiveSha256": "8923876afa8db5585022d7860ec7e589af192f441c56793971276d450ed3bbfa",
   "binarySize": 45568216,
-  "binarySha256": "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584"
+  "binarySha256": "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584",
+  "ffprobe": {
+    "package": "@ffprobe-installer/darwin-arm64",
+    "version": "5.0.1",
+    "buildVersion": "4.4.1",
+    "homepage": "https://formulae.brew.sh/formula/ffmpeg",
+    "license": "LGPL-2.1-only",
+    "licenseFile": "FFPROBE-LICENSE.json",
+    "archive": "darwin-arm64-5.0.1.tgz",
+    "archiveSha256": "27069fc32879761968823c3ce5353d3c6573f5df7d83d40b60bc2d878e886d39",
+    "binarySize": 18187448,
+    "binarySha256": "c846d5db9d3b5bc33f987725e21f3ea14953931221c191575918e907ad6c18ff"
+  }
 }

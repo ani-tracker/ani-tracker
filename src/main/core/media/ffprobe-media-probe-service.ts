@@ -21,6 +21,7 @@ const execFileAsync = promisify(execFile);
 
 export interface FfprobeMediaProbeOptions {
   ffprobePath: string;
+  fallbackFfprobePaths?: string[];
   timeoutMs: number;
 }
 
@@ -110,15 +111,26 @@ export class FfprobeMediaProbeService implements MediaProbeService {
   }
 }
 
+/** 依次尝试主命令和内置回退命令，并返回首个有效 JSON 结果。 */
 async function runFfprobe(filePath: string, options: FfprobeMediaProbeOptions): Promise<FfprobeOutput> {
   const args = ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath];
-  const { stdout } = await execFileAsync(options.ffprobePath || "ffprobe", args, {
-    timeout: options.timeoutMs,
-    windowsHide: true,
-    maxBuffer: 10 * 1024 * 1024
-  });
+  const commands = unique([options.ffprobePath || "ffprobe", ...(options.fallbackFfprobePaths ?? [])]);
+  let lastError: unknown;
 
-  return JSON.parse(String(stdout)) as FfprobeOutput;
+  for (const command of commands) {
+    try {
+      const { stdout } = await execFileAsync(command, args, {
+        timeout: options.timeoutMs,
+        windowsHide: true,
+        maxBuffer: 10 * 1024 * 1024
+      });
+      return JSON.parse(String(stdout)) as FfprobeOutput;
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("FFprobe 不可用");
 }
 
 function mapFfprobeOutput(output: FfprobeOutput, filePath: string): PartialMediaInfo {

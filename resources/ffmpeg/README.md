@@ -1,13 +1,16 @@
-# FFmpeg 预构建资源
+# FFmpeg / FFprobe 预构建资源
 
-此目录保存 `ffmpeg-static b6.1.1` 的三平台预构建文件。`pnpm install` 和 `pnpm build` 均不下载 FFmpeg；构建仅校验并复制目标平台资源到 `out/ffmpeg`。
+此目录保存三平台 FFmpeg 与 FFprobe 预构建文件。`pnpm install` 和 `pnpm build` 均不下载媒体工具；构建仅校验并复制目标平台资源到 `out/ffmpeg`。
 
 目录结构：
 
 ```text
 darwin-arm64/ffmpeg
+darwin-arm64/ffprobe
 darwin-x64/ffmpeg
+darwin-x64/ffprobe
 win32-x64/ffmpeg.exe
+win32-x64/ffprobe.exe
 ```
 
 离线校验全部预构建资源：
@@ -29,9 +32,9 @@ pnpm run prepare:ffmpeg -- --platform darwin --arch arm64
 pnpm run prepare:ffmpeg -- --platform win32 --arch x64
 ```
 
-`prepare:ffmpeg` 会校验二进制大小、SHA-256、许可证、上游说明和来源元数据，任一文件缺失或损坏都会终止构建。
+`prepare:ffmpeg` 会校验两个二进制的大小与 SHA-256、许可证、上游说明和来源元数据，任一文件缺失或损坏都会终止构建。`FFPROBE-LICENSE.json` 保存对应平台包的 SPDX 许可证全文。
 
-升级 FFmpeg 时才执行联网维护命令；该命令下载并更新三个平台目录：
+升级 FFmpeg 或 FFprobe 时才执行联网维护命令；该命令下载并更新三个平台目录：
 
 ```bash
 pnpm run download:ffmpeg
@@ -43,7 +46,7 @@ pnpm run download:ffmpeg
 pnpm run download:ffmpeg -- --proxy http://127.0.0.1:7897
 ```
 
-也可使用 `FFMPEG_BINARIES_URL` 指向兼容镜像。下载缓存位于 `.cache/ffmpeg/b6.1.1`，产物写入前会校验归档和解压后二进制的 SHA-256。
+也可使用 `FFMPEG_BINARIES_URL` 和 `FFPROBE_PACKAGES_URL` 指向兼容镜像。下载缓存位于 `.cache/ffmpeg/b6.1.1`，产物写入前会校验归档和解压后二进制的 SHA-256。
 
 仅更新单个平台时直接调用维护脚本：
 

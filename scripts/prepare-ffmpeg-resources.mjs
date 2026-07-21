@@ -43,23 +43,37 @@ if (!options.verifyOnly && selectedAsset) {
     dereference: false
   });
   if (selectedAsset.platform !== "win32") {
-    await chmod(join(outputDirectory, selectedAsset.binaryName), 0o755);
+    await Promise.all([
+      chmod(join(outputDirectory, selectedAsset.binaryName), 0o755),
+      chmod(join(outputDirectory, selectedAsset.ffprobe.binaryName), 0o755)
+    ]);
   }
-  console.log(`[ffmpeg] copied ${selectedAsset.targetKey}: ${outputDirectory}`);
+  console.log(`[ffmpeg] copied FFmpeg and FFprobe ${selectedAsset.targetKey}: ${outputDirectory}`);
 }
 
-/** 校验预构建二进制、许可证、说明和来源元数据。 */
+/** 校验 FFmpeg、FFprobe、许可证、说明和来源元数据。 */
 async function verifyBundledAsset(sourceRoot, asset) {
   const sourceDirectory = join(sourceRoot, asset.targetKey);
   await verifyFile(join(sourceDirectory, asset.binaryName), asset.binarySize, asset.binarySha256);
+  await verifyFile(
+    join(sourceDirectory, asset.ffprobe.binaryName),
+    asset.ffprobe.binarySize,
+    asset.ffprobe.binarySha256
+  );
   await verifyTextFile(join(sourceDirectory, "README"), asset.readmeSha256);
   await verifyTextFile(join(sourceDirectory, "LICENSE"), asset.licenseSha256);
+  await verifyTextFile(join(sourceDirectory, "FFPROBE-LICENSE.json"), asset.ffprobe.licenseSha256);
 
   const sourceMetadata = JSON.parse(await readFile(join(sourceDirectory, "SOURCE.json"), "utf8"));
   if (
     sourceMetadata.release !== FFMPEG_RELEASE
     || sourceMetadata.target !== asset.targetKey
     || sourceMetadata.binarySha256 !== asset.binarySha256
+    || sourceMetadata.ffprobe?.package !== asset.ffprobe.packageName
+    || sourceMetadata.ffprobe?.version !== asset.ffprobe.packageVersion
+    || sourceMetadata.ffprobe?.binarySha256 !== asset.ffprobe.binarySha256
+    || sourceMetadata.ffprobe?.archiveSha256 !== asset.ffprobe.archiveSha256
+    || sourceMetadata.ffprobe?.license !== asset.ffprobe.license
   ) {
     throw new Error(`[ffmpeg] invalid source metadata: ${sourceDirectory}`);
   }

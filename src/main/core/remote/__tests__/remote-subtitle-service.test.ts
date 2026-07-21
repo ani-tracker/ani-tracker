@@ -5,12 +5,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { test } from "node:test";
-import * as ffprobeInstallerModule from "@ffprobe-installer/ffprobe";
-import { resolveBundledFfmpegBinary } from "../../media/ffmpeg-binary-resolver";
+import {
+  resolveBundledFfmpegBinary,
+  resolveBundledFfprobeBinary
+} from "../../media/ffmpeg-binary-resolver";
 import { prepareRemoteSubtitles } from "../remote-subtitle-service";
 
 const execFileAsync = promisify(execFile);
-const ffprobePath = resolveFfprobePath(ffprobeInstallerModule);
+const ffprobePath = resolveBundledFfprobeBinary();
 const ffmpegPath = resolveBundledFfmpegBinary() ?? (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg");
 
 test("prepareRemoteSubtitles 提取 ASS 并将 SRT 转换为 WebVTT", async (context) => {
@@ -89,13 +91,6 @@ function createAssSubtitle(): string {
     "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text",
     "Dialogue: 0,0:00:00.00,0:00:00.80,Default,,0,0,0,,你好"
   ].join("\n");
-}
-
-/** 兼容测试构建中的 FFprobe 模块导出。 */
-function resolveFfprobePath(moduleValue: unknown): string | undefined {
-  const candidate = moduleValue as { path?: unknown; default?: { path?: unknown } };
-  const value = candidate.path ?? candidate.default?.path;
-  return typeof value === "string" ? value : undefined;
 }
 
 /** 检查测试环境是否存在可执行命令。 */

@@ -6,5 +6,17 @@
   "archive": "ffmpeg-win32-x64.gz",
   "archiveSha256": "8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d77",
   "binarySize": 82797568,
-  "binarySha256": "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00"
+  "binarySha256": "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00",
+  "ffprobe": {
+    "package": "@ffprobe-installer/win32-x64",
+    "version": "5.1.0",
+    "buildVersion": "20230213-2296078",
+    "homepage": "https://www.gyan.dev/ffmpeg/builds/",
+    "license": "GPL-3.0-only",
+    "licenseFile": "FFPROBE-LICENSE.json",
+    "archive": "win32-x64-5.1.0.tgz",
+    "archiveSha256": "97992b5e3b651c7df625831fd369eecc5ec0e9532ac98921138b1c4fbc8de96e",
+    "binarySize": 80995328,
+    "binarySha256": "f28c4751e7367205267025aaf0fcfc921e34d9b7edaa46bd9c8abaf367fc9051"
+  }
 }
