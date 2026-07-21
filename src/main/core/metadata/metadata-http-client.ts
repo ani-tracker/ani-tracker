@@ -2,8 +2,31 @@ import type { Session } from "electron";
 import type { MetadataProxySettings } from "@shared/domain";
 import { logger } from "../logger";
 
-const METADATA_SESSION_PARTITION = "metadata-proxy";
+const DIRECT_METADATA_SESSION_PARTITION = "metadata-direct";
+const PROXY_METADATA_SESSION_PARTITION = "metadata-proxy";
 const DEFAULT_METADATA_TIMEOUT_MS = 15_000;
+
+type MetadataTransport = "electron-session" | "node-fetch";
+
+interface MetadataTransportExecutor {
+  name: MetadataTransport;
+  fetch(input: string, options: RequestInit): Promise<Response>;
+}
+
+interface MetadataSessionState {
+  session: Session;
+  proxyKey?: string;
+}
+
+export interface MetadataSessionProfile {
+  partition: string;
+  proxyConfig: Electron.ProxyConfig;
+}
+
+export interface MetadataHttpRuntime {
+  getSession(proxySettings: MetadataProxySettings): Promise<Session | null>;
+  fallbackFetch(input: string, options: RequestInit): Promise<Response>;
+}
 
 export interface MetadataFetchOptions extends RequestInit {
   source?: string;
@@ -15,13 +38,23 @@ const directProxySettings: MetadataProxySettings = {
   timeoutMs: DEFAULT_METADATA_TIMEOUT_MS
 };
 
-let metadataSession: Session | null | undefined;
-let metadataSessionProxyKey = "";
+const metadataSessionStates = new Map<string, MetadataSessionState>();
+const metadataSessionConfigurationQueues = new Map<string, Promise<void>>();
+let electronSessionUnavailable = false;
 let loggedElectronFallback = false;
 
-export class MetadataHttpClient {
-  constructor(private readonly proxySettings: MetadataProxySettings = directProxySettings) {}
+const defaultMetadataHttpRuntime: MetadataHttpRuntime = {
+  getSession: getMetadataSession,
+  fallbackFetch: (input, options) => fetch(input, options)
+};
 
+export class MetadataHttpClient {
+  constructor(
+    private readonly proxySettings: MetadataProxySettings = directProxySettings,
+    private readonly runtime: MetadataHttpRuntime = defaultMetadataHttpRuntime
+  ) {}
+
+  /** 使用配置的 Chromium Session 或 Node 回退传输执行网络请求。 */
   async fetch(input: string | URL, options: MetadataFetchOptions = {}): Promise<Response> {
     const url = input.toString();
     const timeoutMs = normalizeTimeoutMs(options.timeoutMs ?? this.proxySettings.timeoutMs);
@@ -29,9 +62,12 @@ export class MetadataHttpClient {
     const timeout = setTimeout(() => controller.abort(), timeoutMs);
     const startedAt = Date.now();
     const { source, timeoutMs: _timeoutMs, signal: _signal, ...requestOptions } = options;
+    let transport: MetadataTransport = "node-fetch";
 
     try {
-      const response = await this.fetchWithTransport(url, {
+      const executor = await this.resolveTransport();
+      transport = executor.name;
+      const response = await executor.fetch(url, {
         ...requestOptions,
         signal: controller.signal
       });
@@ -41,7 +77,10 @@ export class MetadataHttpClient {
         host: safeHost(url),
         status: response.status,
         elapsedMs: Date.now() - startedAt,
-        proxyMode: this.proxySettings.mode
+        proxyMode: this.proxySettings.mode,
+        transport,
+        server: response.headers.get("server") ?? undefined,
+        retryAfter: response.headers.get("retry-after") ?? undefined
       });
 
       return response;
@@ -51,6 +90,7 @@ export class MetadataHttpClient {
         host: safeHost(url),
         elapsedMs: Date.now() - startedAt,
         proxyMode: this.proxySettings.mode,
+        transport,
         error: error instanceof Error ? error.message : String(error)
       });
       throw error;
@@ -59,77 +99,123 @@ export class MetadataHttpClient {
     }
   }
 
-  private async fetchWithTransport(url: string, options: RequestInit): Promise<Response> {
-    const session = await getMetadataSession(this.proxySettings);
+  /** 优先使用 Electron Chromium 网络栈，不可用时回退 Node fetch。 */
+  private async resolveTransport(): Promise<MetadataTransportExecutor> {
+    const session = await this.runtime.getSession(this.proxySettings);
     if (session) {
-      return session.fetch(url, options);
+      return {
+        name: "electron-session",
+        fetch: (input, options) => session.fetch(input, options)
+      };
     }
 
-    return fetch(url, options);
+    return {
+      name: "node-fetch",
+      fetch: this.runtime.fallbackFetch
+    };
   }
 }
 
 export const defaultMetadataHttpClient = new MetadataHttpClient();
 
+/** 按代理模式选择隔离的 Electron Session 并应用网络配置。 */
 async function getMetadataSession(proxySettings: MetadataProxySettings): Promise<Session | null> {
-  if (proxySettings.mode === "off") {
+  const profile = resolveMetadataSessionProfile(proxySettings);
+  if (!profile) {
     return null;
   }
 
-  const proxyConfig = buildProxyConfig(proxySettings);
-  if (!proxyConfig) {
-    return null;
-  }
-
-  const session = await getElectronMetadataSession();
+  const sessionState = await getElectronMetadataSession(profile.partition);
+  const session = sessionState?.session;
   if (!session) {
     if (!loggedElectronFallback) {
       loggedElectronFallback = true;
-      logger.warn("Electron metadata session unavailable; metadata proxy is ignored outside Electron runtime", {
+      logger.warn("Electron 网络会话不可用，已回退 Node fetch", {
         proxyMode: proxySettings.mode
       });
     }
     return null;
   }
 
-  const proxyKey = JSON.stringify(proxyConfig);
-  if (metadataSessionProxyKey !== proxyKey) {
-    await session.setProxy(proxyConfig);
-    await session.closeAllConnections();
-    metadataSessionProxyKey = proxyKey;
-    logger.info("元数据代理配置已应用", {
-      proxyMode: proxySettings.mode,
-      proxyRules: proxySettings.mode === "manual" ? redactProxyRule(proxySettings.url) : undefined
-    });
-  }
+  await configureMetadataSession(sessionState, profile, proxySettings);
 
   return session;
 }
 
-async function getElectronMetadataSession(): Promise<Session | null> {
-  if (metadataSession !== undefined) {
-    return metadataSession;
+/** 获取并缓存指定分区的 Electron Session。 */
+async function getElectronMetadataSession(partition: string): Promise<MetadataSessionState | null> {
+  const cached = metadataSessionStates.get(partition);
+  if (cached) {
+    return cached;
+  }
+  if (electronSessionUnavailable) {
+    return null;
   }
 
   try {
     const electron = await import("electron");
     const electronSession = electron.session;
     if (!electronSession?.fromPartition) {
-      metadataSession = null;
-      return metadataSession;
+      electronSessionUnavailable = true;
+      return null;
     }
 
-    metadataSession = electronSession.fromPartition(METADATA_SESSION_PARTITION);
-    return metadataSession;
+    const state = { session: electronSession.fromPartition(partition) };
+    metadataSessionStates.set(partition, state);
+    return state;
   } catch {
-    metadataSession = null;
-    return metadataSession;
+    electronSessionUnavailable = true;
+    return null;
   }
 }
 
-function buildProxyConfig(proxySettings: MetadataProxySettings): Electron.ProxyConfig | null {
+/** 串行应用同一 Session 的代理设置，避免并发请求重复重置连接。 */
+async function configureMetadataSession(
+  state: MetadataSessionState,
+  profile: MetadataSessionProfile,
+  proxySettings: MetadataProxySettings
+): Promise<void> {
+  const proxyKey = JSON.stringify(profile.proxyConfig);
+  const previous = metadataSessionConfigurationQueues.get(profile.partition) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(async () => {
+    if (state.proxyKey === proxyKey) {
+      return;
+    }
+    await state.session.setProxy(profile.proxyConfig);
+    await state.session.closeAllConnections();
+    state.proxyKey = proxyKey;
+    logger.info("元数据网络会话配置已应用", {
+      partition: profile.partition,
+      proxyMode: proxySettings.mode,
+      proxyRules: proxySettings.mode === "manual" ? redactProxyRule(proxySettings.url) : undefined
+    });
+  });
+  metadataSessionConfigurationQueues.set(profile.partition, current);
+  try {
+    await current;
+  } finally {
+    if (metadataSessionConfigurationQueues.get(profile.partition) === current) {
+      metadataSessionConfigurationQueues.delete(profile.partition);
+    }
+  }
+}
+
+/** 将代理配置映射到互相隔离的 Electron Session。 */
+export function resolveMetadataSessionProfile(
+  proxySettings: MetadataProxySettings
+): MetadataSessionProfile | null {
+  if (proxySettings.mode === "off") {
+    return {
+      partition: DIRECT_METADATA_SESSION_PARTITION,
+      proxyConfig: { mode: "direct" }
+    };
+  }
+
   if (proxySettings.mode === "system") {
-    return { mode: "system" };
+    return {
+      partition: PROXY_METADATA_SESSION_PARTITION,
+      proxyConfig: { mode: "system" }
+    };
   }
 
   if (proxySettings.mode !== "manual") {
@@ -142,9 +228,12 @@ function buildProxyConfig(proxySettings: MetadataProxySettings): Electron.ProxyC
   }
 
   return {
-    mode: "fixed_servers",
-    proxyRules,
-    proxyBypassRules: "127.0.0.1,localhost,<local>"
+    partition: PROXY_METADATA_SESSION_PARTITION,
+    proxyConfig: {
+      mode: "fixed_servers",
+      proxyRules,
+      proxyBypassRules: "127.0.0.1,localhost,<local>"
+    }
   };
 }
 
