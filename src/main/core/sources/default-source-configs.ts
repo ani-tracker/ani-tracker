@@ -53,6 +53,26 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     tags: ["anime", "bt", "acgnx"]
   },
   {
+    id: "nyaa",
+    name: "Nyaa",
+    kind: "site_adapter",
+    enabled: false,
+    useProxy: true,
+    requestIntervalMs: 3_000,
+    baseUrl: "https://nyaa.si/",
+    tags: ["anime", "bt", "nyaa", "rss"]
+  },
+  {
+    id: "acg-rip",
+    name: "ACG.RIP",
+    kind: "site_adapter",
+    enabled: false,
+    useProxy: true,
+    requestIntervalMs: 3_000,
+    baseUrl: "https://acg.rip/",
+    tags: ["anime", "bt", "acg-rip", "rss"]
+  },
+  {
     id: "prowlarr",
     name: "Prowlarr Torznab",
     kind: "torznab",

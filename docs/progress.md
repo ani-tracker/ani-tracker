@@ -8,7 +8,7 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| 持久化 | SQLite-only；应用数据版本 20，Schema 版本 13 |
+| 持久化 | SQLite-only；应用数据版本 21，Schema 版本 14 |
 | 桌面页面 | 8 个一级页面及番剧详情二级页面 |
 | 远程页面 | 首页、我的追番、新番发现、下载队列、提醒中心 |
 | 下载内核 | qBittorrent 可用；内置 BT 占位 |
@@ -35,7 +35,7 @@
 
 ### 资源来源与匹配
 
-- RSS、Torznab、DMHY、Mikan、AniBT、ACGNX 资源适配。
+- RSS、Torznab、DMHY、Mikan、AniBT、ACGNX、Nyaa、ACG.RIP 资源适配。
 - 按来源代理与采集间隔，同域串行、请求合并、抖动和跨重启熔断。
 - 每日增量同步、启动补跑、RSS 条件请求、90 天资源缓存和完结作品查询缓存。
 - 字幕组、集数/季度、分辨率、编码、位深、字幕语言和 seeders 解析与评分。
@@ -70,7 +70,7 @@
 
 - `EmbeddedTorrentEngine` 不执行真实 BT 下载。
 - qBittorrent-nox 尚缺 macOS arm64、Linux x64 内置资源。
-- Nyaa、ACG.RIP 等更多站点适配器尚未实现。
+- 更多站点镜像和站点专有筛选项尚未实现。
 - 元数据字段冲突解释、来源可见性和更细的增量刷新仍可完善。
 - PotPlayer、独立 mpv 和自定义播放器没有观看进度回写。
 - madVR 或其他外部渲染器链路未实现。
@@ -101,6 +101,6 @@ git diff --check
 | --- | --- |
 | `pnpm run typecheck` | 通过 |
 | `pnpm run test:theme` | 通过；浅色、深色各 38 个令牌及对比度合格 |
-| `pnpm run test:parsers` | 230/230 通过 |
+| `pnpm run test:parsers` | 246/246 通过 |
 | Markdown 本地链接 | 全部可解析 |
 | `git diff --check` | 通过 |

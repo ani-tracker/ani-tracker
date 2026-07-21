@@ -8,9 +8,11 @@ import { logger } from "../logger";
 import type { AppRepository } from "../repositories/app-repository";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { AcgnxReleaseSource } from "./acgnx-source";
+import { AcgRipReleaseSource } from "./acgrip-source";
 import { AniBtReleaseSource } from "./anibt-source";
 import { DmhyReleaseSource } from "./dmhy-source";
 import { MikanReleaseSource, type ReleaseHttpClient } from "./mikan-source";
+import { NyaaReleaseSource } from "./nyaa-source";
 import { RssReleaseSource } from "./rss-source";
 import { TorznabReleaseSource } from "./torznab-source";
 import { createSourceHttpClient } from "./source-http-client";
@@ -395,6 +397,14 @@ export function createReleaseSource(
     return new AcgnxReleaseSource(config, sourceHttpClient);
   }
 
+  if (config.kind === "site_adapter" && isNyaaConfig(config)) {
+    return new NyaaReleaseSource(config, sourceHttpClient);
+  }
+
+  if (config.kind === "site_adapter" && isAcgRipConfig(config)) {
+    return new AcgRipReleaseSource(config, sourceHttpClient);
+  }
+
   return null;
 }
 
@@ -424,6 +434,18 @@ export function isAniBtConfig(config: ReleaseSourceConfig): boolean {
 function isAcgnxConfig(config: ReleaseSourceConfig): boolean {
   const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
   return text.includes("acgnx") || text.includes("share.acgnx");
+}
+
+/** 判断配置是否指向 Nyaa 主站或兼容镜像。 */
+function isNyaaConfig(config: ReleaseSourceConfig): boolean {
+  const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
+  return text.includes("nyaa") || text.includes("nyaa.si");
+}
+
+/** 判断配置是否指向 ACG.RIP 主站或兼容镜像。 */
+function isAcgRipConfig(config: ReleaseSourceConfig): boolean {
+  const text = [config.id, config.name, config.baseUrl].filter(Boolean).join(" ").toLowerCase();
+  return text.includes("acg-rip") || text.includes("acgrip") || text.includes("acg.rip");
 }
 
 function dedupeReleases<T extends { infoHash?: string; magnetUrl?: string; torrentUrl?: string; title: string }>(releases: T[]): T[] {

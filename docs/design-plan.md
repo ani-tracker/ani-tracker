@@ -60,7 +60,7 @@ Desktop Renderer              Remote HTTPS PWA
 | 边界 | 当前实现 |
 | --- | --- |
 | 元数据 | Bangumi、AniList、Mikan 月度采集；详情按来源合并并缓存 |
-| 资源来源 | RSS、Torznab、DMHY、Mikan、AniBT、ACGNX 适配器 |
+| 资源来源 | RSS、Torznab、DMHY、Mikan、AniBT、ACGNX、Nyaa、ACG.RIP 适配器 |
 | 网络保护 | 按来源代理、同域串行、最小间隔、请求合并、403/429 熔断 |
 | 来源同步 | 每日增量同步、启动补跑、条件请求、跨重启缓存 |
 | 资源匹配 | 标题/别名、集数、字幕组、分辨率、编码、位深、字幕和热度评分 |

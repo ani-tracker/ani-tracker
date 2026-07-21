@@ -3,11 +3,13 @@ import { test } from "node:test";
 import type { ReleaseSearchResult } from "@shared/contracts";
 import type { Anime, AnimeSourceBinding, ReleaseSourceConfig } from "@shared/domain";
 import type { AppRepository } from "../../repositories/app-repository";
+import { AcgRipReleaseSource } from "../acgrip-source";
 import { defaultSourceConfigs } from "../default-source-configs";
 import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
 import { AniBtReleaseSource, createAniBtHeaders, parseAniBtRss } from "../anibt-source";
 import { parseDmhyList } from "../dmhy-source";
 import { MikanReleaseSource, parseMikanReleaseList, parseMikanSubgroups, type ReleaseHttpClient } from "../mikan-source";
+import { NyaaReleaseSource } from "../nyaa-source";
 import {
   COMPLETED_ANIME_RELEASE_CACHE_TTL_MS,
   createReleaseSource,
@@ -50,6 +52,22 @@ const acgnxConfig: ReleaseSourceConfig = {
   baseUrl: "https://share.acgnx.se/"
 };
 
+const nyaaConfig: ReleaseSourceConfig = {
+  id: "nyaa",
+  name: "Nyaa",
+  kind: "site_adapter",
+  enabled: true,
+  baseUrl: "https://nyaa.si/"
+};
+
+const acgRipConfig: ReleaseSourceConfig = {
+  id: "acg-rip",
+  name: "ACG.RIP",
+  kind: "site_adapter",
+  enabled: true,
+  baseUrl: "https://acg.rip/"
+};
+
 const rssConfig: ReleaseSourceConfig = {
   id: "rss-test",
   name: "RSS 测试源",
@@ -67,16 +85,26 @@ const torznabConfig: ReleaseSourceConfig = {
   apiKey: "test-api-key"
 };
 
-test("默认下载源包含 AniBT 和 ACGNX 且可创建站点适配器", () => {
+test("默认下载源包含 AniBT、ACGNX、Nyaa 和 ACG.RIP 且可创建站点适配器", () => {
   const anibt = defaultSourceConfigs.find((source) => source.id === "anibt");
   const acgnx = defaultSourceConfigs.find((source) => source.id === "acgnx");
+  const nyaa = defaultSourceConfigs.find((source) => source.id === "nyaa");
+  const acgRip = defaultSourceConfigs.find((source) => source.id === "acg-rip");
 
   assert.ok(anibt);
   assert.ok(acgnx);
+  assert.ok(nyaa);
+  assert.ok(acgRip);
   assert.equal(anibt.enabled, true);
   assert.equal(acgnx.enabled, false);
+  assert.equal(nyaa.enabled, false);
+  assert.equal(acgRip.enabled, false);
+  assert.equal(nyaa.useProxy, true);
+  assert.equal(acgRip.useProxy, true);
   assert.equal(createReleaseSource(anibt)?.config.id, "anibt");
   assert.equal(createReleaseSource(acgnx)?.config.id, "acgnx");
+  assert.ok(createReleaseSource(nyaa) instanceof NyaaReleaseSource);
+  assert.ok(createReleaseSource(acgRip) instanceof AcgRipReleaseSource);
 });
 
 test("parseDmhyList 解析资源行中的标题、下载地址和媒体字段", () => {
@@ -473,6 +501,100 @@ test("parseAcgnxHtml 解析 ACGNX HTML 搜索行中的下载地址和做种数",
   assert.equal(releases[0].episodeNo, 4);
   assert.equal(releases[0].resolution, "720p");
   assert.equal(releases[0].normalizedVideoCodec, "H.264/AVC");
+});
+
+test("NyaaReleaseSource 使用 Anime RSS 并解析摘要、体积和做种数", async () => {
+  const requests: Array<{ url: string; source?: string }> = [];
+  const httpClient: ReleaseHttpClient = {
+    async fetch(input, options) {
+      requests.push({ url: String(input), source: options?.source });
+      return new Response(
+        `
+          <rss xmlns:nyaa="https://nyaa.si/xmlns/nyaa" version="2.0">
+            <channel>
+              <item>
+                <title>[北宇治字幕组] 葬送的芙莉莲 - 38 [1080p][HEVC][简繁日]</title>
+                <link>https://nyaa.si/download/2104237.torrent</link>
+                <guid isPermaLink="true">https://nyaa.si/view/2104237</guid>
+                <pubDate>Wed, 29 Apr 2026 15:23:29 -0000</pubDate>
+                <nyaa:seeders>16</nyaa:seeders>
+                <nyaa:infoHash>1188285F8B296E1E7E2F622955F214B71E93D2DC</nyaa:infoHash>
+                <nyaa:size>663.2 MiB</nyaa:size>
+              </item>
+            </channel>
+          </rss>
+        `,
+        { status: 200, statusText: "OK" }
+      );
+    }
+  };
+
+  const releases = await new NyaaReleaseSource(nyaaConfig, httpClient).searchReleases({
+    keyword: "葬送的芙莉莲",
+    limit: 10
+  });
+
+  assert.equal(
+    requests[0].url,
+    "https://nyaa.si/?page=rss&q=%E8%91%AC%E9%80%81%E7%9A%84%E8%8A%99%E8%8E%89%E8%8E%B2&c=1_0&f=0"
+  );
+  assert.equal(requests[0].source, "nyaa-release");
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0].id, "nyaa:https://nyaa.si/view/2104237");
+  assert.equal(releases[0].torrentUrl, "https://nyaa.si/download/2104237.torrent");
+  assert.equal(releases[0].infoHash, "1188285f8b296e1e7e2f622955f214b71e93d2dc");
+  assert.equal(
+    releases[0].magnetUrl,
+    `magnet:?xt=urn:btih:1188285f8b296e1e7e2f622955f214b71e93d2dc&dn=${encodeURIComponent(releases[0].title)}`
+  );
+  assert.equal(releases[0].size, Math.round(663.2 * 1024 ** 2));
+  assert.equal(releases[0].seeders, 16);
+  assert.equal(releases[0].sourceMeta?.sourceUrl, "https://nyaa.si/view/2104237");
+  assert.equal(releases[0].episodeNo, 38);
+});
+
+test("AcgRipReleaseSource 使用关键词 RSS 并解析 enclosure 和精确体积", async () => {
+  const requests: Array<{ url: string; source?: string }> = [];
+  const httpClient: ReleaseHttpClient = {
+    async fetch(input, options) {
+      requests.push({ url: String(input), source: options?.source });
+      return new Response(
+        `
+          <rss xmlns:torrent="http://xmlns.ezrss.it/0.1/" xmlns:media="http://search.yahoo.com/mrss/">
+            <channel>
+              <item>
+                <title>[绿茶字幕组] 葬送的芙莉莲 第二季 - 38 [1080p][简日]</title>
+                <pubDate>Wed, 13 May 2026 08:27:56 -0700</pubDate>
+                <link>https://acg.rip/t/354021</link>
+                <guid>https://acg.rip/t/354021</guid>
+                <enclosure url="https://acg.rip/t/354021.torrent" type="application/x-bittorrent" />
+                <torrent:contentLength>652384256</torrent:contentLength>
+                <media:content url="https://acg.rip/t/354021.torrent" fileSize="652384256" />
+              </item>
+            </channel>
+          </rss>
+        `,
+        { status: 200, statusText: "OK" }
+      );
+    }
+  };
+
+  const releases = await new AcgRipReleaseSource(acgRipConfig, httpClient).searchReleases({
+    keyword: "葬送的芙莉莲",
+    limit: 10
+  });
+
+  assert.equal(
+    requests[0].url,
+    "https://acg.rip/.xml?term=%E8%91%AC%E9%80%81%E7%9A%84%E8%8A%99%E8%8E%89%E8%8E%B2"
+  );
+  assert.equal(requests[0].source, "acgrip-release");
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0].id, "acg-rip:https://acg.rip/t/354021");
+  assert.equal(releases[0].torrentUrl, "https://acg.rip/t/354021.torrent");
+  assert.equal(releases[0].size, 652384256);
+  assert.equal(releases[0].sourceMeta?.sourceUrl, "https://acg.rip/t/354021");
+  assert.equal(releases[0].episodeNo, 38);
 });
 
 test("RssReleaseSource 解析 RSS item 的下载地址、体积和媒体字段", async (t) => {
