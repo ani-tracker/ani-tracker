@@ -47,6 +47,7 @@ import { AnimeSourceBindingService } from "./core/source-bindings/anime-source-b
 import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
 import { AnimeFollowPreparationService } from "./core/follows/anime-follow-preparation-service";
 import { enrichReleaseFromTitle } from "./core/releases/release-title-parser";
+import { sortReleasesByRules } from "./core/releases/release-matcher";
 import { PlaybackStatusService } from "./core/media/playback-status-service";
 import { DownloadTaskControlService } from "./core/downloads/download-task-control-service";
 import { PlayerDetectionService } from "./core/platform/player-detection-service";
@@ -403,10 +404,12 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     if (!followedAnime) {
       throw new Error("追番不存在");
     }
-    const [sources, fansubs, settings] = await Promise.all([
+    const [sources, fansubs, settings, episodes, episodePreferences] = await Promise.all([
       repository.listSources(),
       repository.listFansubs(query.animeId),
-      repository.getSettings()
+      repository.getSettings(),
+      repository.listEpisodes(query.animeId),
+      repository.listEpisodePreferences(query.animeId)
     ]);
     const httpClient = new MetadataHttpClient(settings.network.metadataProxy);
     const bindingState = await new AnimeSourceBindingService(repository, httpClient).getState(query.animeId, false);
@@ -419,8 +422,25 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       effectiveQuery,
       bindingState.bindings
     );
-    await repository.observeAnimeFansubs(query.animeId, result.releases);
-    return result;
+    const episodeFansubOverrides = createEpisodeFansubOverrideMap(episodes, episodePreferences);
+    const sortedReleases = sortReleasesByRules(
+      result.releases,
+      (release) => ({
+        anime: followedAnime,
+        episodeNo: release.episodeNo,
+        episodeFansubOverrideId: release.episodeNo === undefined
+          ? undefined
+          : episodeFansubOverrides.get(release.episodeNo)
+      }),
+      fansubs
+    );
+    await repository.observeAnimeFansubs(query.animeId, sortedReleases);
+    logger.info("下载资源已按追番规则排序", {
+      animeId: query.animeId,
+      releaseCount: sortedReleases.length,
+      topReleaseId: sortedReleases[0]?.id
+    });
+    return { ...result, releases: sortedReleases };
   });
   ipcMain.handle("releases:searchRssSubscription", (_event, query: RssSubscriptionReleaseQuery) =>
     searchRssSubscriptionReleases(query)
@@ -568,6 +588,22 @@ async function findMyAnime(animeId?: string): Promise<MyAnime | undefined> {
   }
 
   return (await repository.listMyAnime()).find((item) => item.anime.id === animeId);
+}
+
+/** 将单集字幕组覆盖转换为按集数查询的映射。 */
+function createEpisodeFansubOverrideMap(
+  episodes: Episode[],
+  preferences: EpisodePreference[]
+): Map<number, string> {
+  const episodeNumbers = new Map(episodes.map((episode) => [episode.id, episode.episodeNo]));
+  const overrides = new Map<number, string>();
+  for (const preference of preferences) {
+    const episodeNo = episodeNumbers.get(preference.episodeId);
+    if (episodeNo !== undefined && preference.fansubGroupId) {
+      overrides.set(episodeNo, preference.fansubGroupId);
+    }
+  }
+  return overrides;
 }
 
 /** 按单个追番 RSS 订阅读取资源，独立于全局下载源开关。 */

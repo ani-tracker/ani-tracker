@@ -16,6 +16,10 @@ export interface ReleaseEpisodeFamilyGroup {
   families: ReleaseVersionFamily[];
 }
 
+export interface ReleaseVersionGroupingOptions {
+  preserveInputOrder?: boolean;
+}
+
 /** 按 episode 将资源族归组。 */
 export function groupReleaseFamilyEpisodes(families: ReleaseVersionFamily[]): ReleaseEpisodeFamilyGroup[] {
   const groups = new Map<string, ReleaseEpisodeFamilyGroup>();
@@ -40,7 +44,8 @@ export function countReleaseFamilyEpisodes(families: ReleaseVersionFamily[]): nu
 export function groupReleaseVersions(
   releases: Release[],
   preferences: MyAnime,
-  selections: Record<string, string> = {}
+  selections: Record<string, string> = {},
+  options: ReleaseVersionGroupingOptions = {}
 ): ReleaseVersionFamily[] {
   const families = new Map<string, ReleaseVersionFamily>();
   for (const release of releases) {
@@ -50,16 +55,22 @@ export function groupReleaseVersions(
     families.set(key, family);
   }
 
-  return [...families.values()]
+  const groupedFamilies = [...families.values()]
     .map((family) => {
-      const ordered = sortReleaseVersions(family.releases, preferences);
+      const ordered = options.preserveInputOrder
+        ? [...family.releases]
+        : sortReleaseVersions(family.releases, preferences);
       const selectedRelease = family.releases.find((item) => releaseKey(item) === selections[family.key]) ?? ordered[0] ?? family.releases[0];
       return { ...family, releases: ordered, selectedRelease };
-    })
-    .sort((left, right) => {
-      const episodeDelta = releaseEpisodeOrder(right.selectedRelease) - releaseEpisodeOrder(left.selectedRelease);
-      return episodeDelta || right.selectedRelease.publishedAt.localeCompare(left.selectedRelease.publishedAt);
     });
+  if (options.preserveInputOrder) {
+    return groupedFamilies;
+  }
+
+  return groupedFamilies.sort((left, right) => {
+    const episodeDelta = releaseEpisodeOrder(right.selectedRelease) - releaseEpisodeOrder(left.selectedRelease);
+    return episodeDelta || right.selectedRelease.publishedAt.localeCompare(left.selectedRelease.publishedAt);
+  });
 }
 
 /** 生成资源版本下拉框中的完整技术信息文案。 */

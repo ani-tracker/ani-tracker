@@ -48,6 +48,36 @@ export function rankReleases(
     });
 }
 
+/** 按追番规则排列展示资源，保留低分资源且不改变自动下载判定。 */
+export function sortReleasesByRules(
+  releases: Release[],
+  resolveContext: (release: Release) => ReleaseMatchContext,
+  groups: FansubGroup[] = []
+): Release[] {
+  return releases
+    .map((release, index) => {
+      const enrichedRelease = enrichReleaseFromTitle(release, groups);
+      return {
+        index,
+        result: scoreRelease(enrichedRelease, resolveContext(enrichedRelease))
+      };
+    })
+    .sort((left, right) => {
+      if (left.result.preferenceScore !== right.result.preferenceScore) {
+        return right.result.preferenceScore - left.result.preferenceScore;
+      }
+      if (left.result.matchScore !== right.result.matchScore) {
+        return right.result.matchScore - left.result.matchScore;
+      }
+      if ((left.result.release.seeders ?? -1) !== (right.result.release.seeders ?? -1)) {
+        return (right.result.release.seeders ?? -1) - (left.result.release.seeders ?? -1);
+      }
+      const publishedAtDelta = right.result.release.publishedAt.localeCompare(left.result.release.publishedAt);
+      return publishedAtDelta || left.index - right.index;
+    })
+    .map(({ result }) => result.release);
+}
+
 export function scoreRelease(release: Release, context: ReleaseMatchContext): ReleaseMatchResult {
   const reasons: string[] = [];
   const warnings: string[] = [];

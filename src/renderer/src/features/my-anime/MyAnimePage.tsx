@@ -640,12 +640,10 @@ export function MyAnimePage({
         cacheTtlMs: releaseSearchCacheTtlMs,
         forceRefresh: options.forceRefresh
       });
-      const releases = sortReleases(
-        dedupeReleases(result.releases).map((release) => ({
-          ...release,
-          animeId: target.anime.id
-        }))
-      );
+      const releases = dedupeReleases(result.releases).map((release) => ({
+        ...release,
+        animeId: target.anime.id
+      }));
       const errors = dedupeReleaseErrors(result.errors);
       setAnimeReleases(releases);
       setAnimeReleaseErrors(errors);
@@ -1758,6 +1756,7 @@ function AnimeDownloadPanel({
   const [releaseVersionSelections, setReleaseVersionSelections] = useState<Record<string, string>>({});
   const rssReleases = rssGroups.flatMap((group) => group.releases);
   const tabReleases = activeTab === "rss" ? rssReleases : releases;
+  const releaseGroupingOptions = activeTab === "search" ? { preserveInputOrder: true } : undefined;
   const currentTabReleases = tabReleases.filter((release) => classifyAnimeRelease(release, target.anime) === "current");
   const otherTabReleases = tabReleases.filter((release) => classifyAnimeRelease(release, target.anime) === "other");
   const visibleReleases = filterReleasesByFansub(currentTabReleases, selectedFansubId);
@@ -1772,9 +1771,9 @@ function AnimeDownloadPanel({
   const sourceFailed = currentTabReleases.length === 0 && otherTabReleases.length === 0 && visibleErrors.length > 0;
   const linkedTasks = downloadTasks.filter((task) => task.animeId === target.anime.id);
   const releaseSignature = tabReleases.map(releaseKey).join("|");
-  const tabFamilies = groupReleaseVersions(currentTabReleases, target, releaseVersionSelections);
-  const visibleFamilies = groupReleaseVersions(visibleReleases, target, releaseVersionSelections);
-  const visibleOtherFamilies = groupReleaseVersions(visibleOtherReleases, target, releaseVersionSelections);
+  const tabFamilies = groupReleaseVersions(currentTabReleases, target, releaseVersionSelections, releaseGroupingOptions);
+  const visibleFamilies = groupReleaseVersions(visibleReleases, target, releaseVersionSelections, releaseGroupingOptions);
+  const visibleOtherFamilies = groupReleaseVersions(visibleOtherReleases, target, releaseVersionSelections, releaseGroupingOptions);
   const selectedReleases = visibleFamilies
     .filter((family) => selectedFamilyKeys.has(family.key))
     .map((family) => family.selectedRelease);
@@ -1872,7 +1871,7 @@ function AnimeDownloadPanel({
 
   /** 按集数渲染资源族，并保留批量选择能力。 */
   function renderEpisodeGroups(groupReleases: Release[], batchSelectable = true) {
-    const families = groupReleaseVersions(groupReleases, target, releaseVersionSelections);
+    const families = groupReleaseVersions(groupReleases, target, releaseVersionSelections, releaseGroupingOptions);
     return groupReleaseFamilyEpisodes(families).map((episodeGroup) => (
       <section key={episodeGroup.key}>
         <div className="flex items-center justify-between bg-muted/30 px-3 py-2 text-xs">
@@ -2046,7 +2045,7 @@ function AnimeDownloadPanel({
                     group.releases.filter((release) => classifyAnimeRelease(release, target.anime) === "current"),
                     selectedFansubId
                   );
-                  const groupFamilies = groupReleaseVersions(groupReleases, target, releaseVersionSelections);
+                  const groupFamilies = groupReleaseVersions(groupReleases, target, releaseVersionSelections, releaseGroupingOptions);
                   const selection = getGroupSelectionState(groupFamilies);
                   return (
                     <section key={group.subscription.id} className="shrink-0 overflow-hidden rounded-md border bg-background">
@@ -2093,7 +2092,7 @@ function AnimeDownloadPanel({
                   );
                 })
               : releaseGroups.map((group, groupIndex) => {
-                  const groupFamilies = groupReleaseVersions(group.releases, target, releaseVersionSelections);
+                  const groupFamilies = groupReleaseVersions(group.releases, target, releaseVersionSelections, releaseGroupingOptions);
                   const selection = getGroupSelectionState(groupFamilies);
                   const rssCandidate = buildMikanGroupRssSubscription(group, target);
                   const rssSubscribed = Boolean(rssCandidate && existingRssUrls.has(rssCandidate.url));
@@ -2995,7 +2994,7 @@ function groupReleasesByFansub(releases: Release[], fansubNames: Map<string, str
     groups.set(key, group);
   }
 
-  return [...groups.values()].sort((left, right) => left.name.localeCompare(right.name, "zh-CN"));
+  return [...groups.values()];
 }
 
 /** 从 Mikan 资源元信息生成字幕组级 RSS 订阅候选。 */

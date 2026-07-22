@@ -1,7 +1,7 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { MyAnime, Release } from "@shared/domain";
-import { evaluateAutomaticDownload, rankReleases } from "../release-matcher";
+import { evaluateAutomaticDownload, rankReleases, sortReleasesByRules } from "../release-matcher";
 
 test("rankReleases 连集范围命中低于单集精确命中", () => {
   const anime = createMyAnime();
@@ -58,6 +58,90 @@ test("evaluateAutomaticDownload 拒绝近似并列的资源版本", () => {
   const decision = evaluateAutomaticDownload(ranked);
   assert.equal(decision.accepted, false);
   assert.match(decision.reason, /领先不足/);
+});
+
+test("sortReleasesByRules 优先排列符合追番偏好的资源", () => {
+  const anime = createMyAnime();
+  anime.defaultFansubGroupId = "fansub-preferred";
+  anime.preferredResolution = "1080p";
+  anime.preferredCodec = "H.265/HEVC";
+  anime.preferredBitDepth = 10;
+  anime.preferredSubtitleLanguages = ["chs", "cht"];
+  anime.preferredSubtitle = undefined;
+  const fallback = {
+    ...createRelease("fallback", "[其他组] 测试番 - 02 [720p][AVC][8bit][简体]"),
+    fansubGroupId: "fansub-other",
+    seeders: 100
+  };
+  const preferred = {
+    ...createRelease("preferred", "[偏好组] 测试番 - 02 [1080p][HEVC][10bit][简繁]"),
+    fansubGroupId: "fansub-preferred",
+    seeders: 1
+  };
+
+  const sorted = sortReleasesByRules(
+    [fallback, preferred],
+    (release) => ({ anime, episodeNo: release.episodeNo })
+  );
+
+  assert.deepEqual(sorted.map((release) => release.id), ["preferred", "fallback"]);
+});
+
+test("sortReleasesByRules 使用单集字幕组覆盖并保留全部资源", () => {
+  const anime = createMyAnime();
+  anime.defaultFansubGroupId = "fansub-default";
+  anime.preferredSubtitleLanguages = [];
+  anime.preferredSubtitle = undefined;
+  const defaultFansub = {
+    ...createRelease("default", "[默认组] 测试番 - 02 [1080p]"),
+    fansubGroupId: "fansub-default"
+  };
+  const episodeOverride = {
+    ...createRelease("override", "[覆盖组] 测试番 - 02 [1080p]"),
+    fansubGroupId: "fansub-override"
+  };
+  const unrelated = createRelease("unrelated", "完全无关资源");
+
+  const sorted = sortReleasesByRules(
+    [defaultFansub, unrelated, episodeOverride],
+    (release) => ({
+      anime,
+      episodeNo: release.episodeNo,
+      episodeFansubOverrideId: release.episodeNo === 2 ? "fansub-override" : undefined
+    })
+  );
+
+  assert.equal(sorted.length, 3);
+  assert.equal(sorted[0].id, "override");
+  assert.equal(sorted.at(-1)?.id, "unrelated");
+});
+
+test("sortReleasesByRules 无偏好差异时按做种数和发布时间排序", () => {
+  const anime = createMyAnime();
+  anime.preferredSubtitleLanguages = [];
+  anime.preferredSubtitle = undefined;
+  const olderPopular = {
+    ...createRelease("popular", "[字幕组] 测试番 - 02 [1080p]"),
+    publishedAt: "2026-07-15T00:00:00.000Z",
+    seeders: 10
+  };
+  const newerQuiet = {
+    ...createRelease("quiet", "[字幕组] 测试番 - 02 [1080p]"),
+    publishedAt: "2026-07-17T00:00:00.000Z",
+    seeders: 1
+  };
+  const newestQuiet = {
+    ...createRelease("newest", "[字幕组] 测试番 - 02 [1080p]"),
+    publishedAt: "2026-07-18T00:00:00.000Z",
+    seeders: 1
+  };
+
+  const sorted = sortReleasesByRules(
+    [newerQuiet, olderPopular, newestQuiet],
+    (release) => ({ anime, episodeNo: release.episodeNo })
+  );
+
+  assert.deepEqual(sorted.map((release) => release.id), ["popular", "newest", "quiet"]);
 });
 
 /** 创建匹配器测试用追番。 */
