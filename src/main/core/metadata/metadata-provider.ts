@@ -7,6 +7,17 @@ export interface MonthlyAnimeMetadataProvider {
   getAnimeByMonth(year: number, month: number): Promise<Anime[]>;
 }
 
+export interface SeasonalAnimeMetadataProvider extends MonthlyAnimeMetadataProvider {
+  getAnimeBySeason(year: number, season: Season): Promise<Anime[]>;
+}
+
+/** 判断元数据来源是否支持一次采集整个季度。 */
+export function supportsSeasonalAnimeMetadataProvider(
+  provider: MonthlyAnimeMetadataProvider
+): provider is SeasonalAnimeMetadataProvider {
+  return typeof (provider as Partial<SeasonalAnimeMetadataProvider>).getAnimeBySeason === "function";
+}
+
 export interface AnimeDetailMetadataProvider {
   readonly id: string;
   getAnimeDetail(externalId: string, fallback: Anime): Promise<Anime>;

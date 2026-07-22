@@ -211,6 +211,25 @@ export class ReleaseSourceService {
     return result;
   }
 
+  /** 按当前字幕组和来源签名保存已有番剧结果，不重复访问下载源。 */
+  async primeAnimeSearchCache(
+    anime: Anime,
+    query: AnimeReleaseQuery,
+    bindings: AnimeSourceBinding[],
+    result: ReleaseSearchResult
+  ): Promise<void> {
+    const cacheKey = this.buildAnimeCacheKey(anime, query, bindings);
+    if (!cacheKey) {
+      return;
+    }
+    await this.saveReleaseSearchCache(cacheKey, query.cacheTtlMs, result);
+    logger.info("番剧资源搜索缓存预热完成", {
+      animeId: anime.id,
+      releaseCount: result.releases.length,
+      cacheTtlMs: normalizeCacheTtlMs(query.cacheTtlMs)
+    });
+  }
+
   /** 生成资源搜索缓存键，绑定查询条件、启用下载源和字幕组配置。 */
   private buildCacheKey(query: ReleaseQuery): string | null {
     if (!query.cacheTtlMs || query.cacheTtlMs <= 0) {

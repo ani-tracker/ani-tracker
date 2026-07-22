@@ -10,7 +10,7 @@ import { inferAnimeAliasLanguage } from "../../../shared/anime-title";
 import {
   getSeasonInfo,
   type AnimeDetailMetadataProvider,
-  type MonthlyAnimeMetadataProvider
+  type SeasonalAnimeMetadataProvider
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpTransport } from "./metadata-http-client";
 import { logger } from "../logger";
@@ -99,7 +99,7 @@ const anilistSeasonByLocalSeason: Record<Season, "WINTER" | "SPRING" | "SUMMER" 
   fall: "FALL"
 };
 
-export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider, AnimeDetailMetadataProvider {
+export class AniListMetadataProvider implements SeasonalAnimeMetadataProvider, AnimeDetailMetadataProvider {
   readonly id = "anilist";
 
   constructor(
@@ -109,6 +109,12 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider, An
 
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {
     const seasonInfo = getSeasonInfo(month);
+    return (await this.getAnimeBySeason(year, seasonInfo.season))
+      .filter((item) => item.premiereYear === year && item.premiereMonth === month);
+  }
+
+  /** 分页采集指定季度，供季度发现流程一次请求后本地拆月。 */
+  async getAnimeBySeason(year: number, season: Season): Promise<Anime[]> {
 
     const query = `
       query SeasonalAnime($season: MediaSeason!, $seasonYear: Int!, $page: Int!, $perPage: Int!) {
@@ -189,7 +195,7 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider, An
 
     while (hasNextPage && page <= ANILIST_MAX_PAGE_COUNT) {
       const json = await this.request(query, {
-        season: anilistSeasonByLocalSeason[seasonInfo.season],
+        season: anilistSeasonByLocalSeason[season],
         seasonYear: year,
         page,
         perPage: ANILIST_PAGE_LIMIT
@@ -213,21 +219,21 @@ export class AniListMetadataProvider implements MonthlyAnimeMetadataProvider, An
     if (hasNextPage && page > ANILIST_MAX_PAGE_COUNT) {
       logger.warn("AniList 季度分页达到保护上限", {
         year,
-        month,
+        season,
         pageCount,
         maxPageCount: ANILIST_MAX_PAGE_COUNT
       });
     }
     logger.info("AniList 季度分页采集完成", {
       year,
-      month,
+      season,
       pageCount,
       count: mediaById.size
     });
 
     return [...mediaById.values()]
-      .filter((item) => item.startDate?.year === year && item.startDate?.month === month)
-      .map((item) => mapAniListMedia(item, seasonInfo.season));
+      .filter((item) => item.startDate?.year === year)
+      .map((item) => mapAniListMedia(item, season));
   }
 
   /** 按 AniList external id 读取单部番剧的完整详情。 */

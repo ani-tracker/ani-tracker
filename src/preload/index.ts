@@ -16,6 +16,7 @@ import type {
   AppWindowState,
   AnimeReleaseQuery,
   AnimeDiscoveryQuery,
+  AnimeDiscoverySeasonQuery,
   ConfirmAnimeSourceBindingInput,
   PlayerDetectionResult,
   ReportPlaybackProgressInput,
@@ -62,6 +63,7 @@ const api = {
     ipcRenderer.invoke("animeCatalog:list", year, month),
   searchAnimeCatalog: (keyword: string): Promise<Anime[]> => ipcRenderer.invoke("animeCatalog:search", keyword),
   collectAnimeMonth: (query: AnimeDiscoveryQuery) => ipcRenderer.invoke("animeCatalog:collectMonth", query),
+  collectAnimeSeason: (query: AnimeDiscoverySeasonQuery) => ipcRenderer.invoke("animeCatalog:collectSeason", query),
   getAnimeDetail: (animeId: string): Promise<AnimeDetailResult> => ipcRenderer.invoke("animeDetail:get", animeId),
   refreshAnimeDetail: (animeId: string): Promise<AnimeDetailResult> =>
     ipcRenderer.invoke("animeDetail:refresh", animeId),

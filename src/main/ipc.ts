@@ -19,6 +19,7 @@ import type {
   AddReleaseDownloadInput,
   AnimeReleaseQuery,
   AnimeDiscoveryQuery,
+  AnimeDiscoverySeasonQuery,
   ConfirmAnimeSourceBindingInput,
   ReportPlaybackProgressInput,
   ReleaseQuery,
@@ -44,7 +45,7 @@ import { RssReleaseSource } from "./core/sources/rss-source";
 import { createSourceHttpClient } from "./core/sources/source-http-client";
 import { AnimeSourceBindingService } from "./core/source-bindings/anime-source-binding-service";
 import { buildAnimeReleaseSearchTerms, classifyAnimeRelease, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
-import { AnimeFansubDiscoveryService } from "./core/fansubs/anime-fansub-discovery-service";
+import { AnimeFollowPreparationService } from "./core/follows/anime-follow-preparation-service";
 import { enrichReleaseFromTitle } from "./core/releases/release-title-parser";
 import { PlaybackStatusService } from "./core/media/playback-status-service";
 import { DownloadTaskControlService } from "./core/downloads/download-task-control-service";
@@ -63,6 +64,7 @@ export const sourceSyncScheduler = new SourceSyncScheduler(repository);
 export const downloadTaskControlService = new DownloadTaskControlService(repository, qbittorrentManagedService);
 export const animeDetailService = new AnimeDetailService(repository);
 export const playbackStatusService = new PlaybackStatusService(repository);
+export const animeFollowPreparationService = new AnimeFollowPreparationService(repository);
 
 interface RegisterIpcHandlersOptions {
   onSettingsUpdated?: (settings: AppSettings) => void | Promise<void>;
@@ -111,7 +113,8 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     const existed = (await repository.listMyAnime()).some((entry) => entry.id === item.id);
     const items = await repository.upsertMyAnime(item);
     if (!existed) {
-      new AnimeFansubDiscoveryService(repository).discoverInBackground(item);
+      const savedItem = items.find((entry) => entry.id === item.id) ?? item;
+      void animeFollowPreparationService.prepareInBackground(savedItem);
     }
     return items;
   });
@@ -131,6 +134,9 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   );
   ipcMain.handle("animeCatalog:collectMonth", (_event, query: AnimeDiscoveryQuery) =>
     new AnimeDiscoveryService(repository).collectMonth(query)
+  );
+  ipcMain.handle("animeCatalog:collectSeason", (_event, query: AnimeDiscoverySeasonQuery) =>
+    new AnimeDiscoveryService(repository).collectSeason(query)
   );
   ipcMain.handle("animeDetail:get", (_event, animeId: string) => animeDetailService.getAnimeDetail(animeId));
   ipcMain.handle("animeDetail:refresh", (_event, animeId: string) => animeDetailService.refreshAnimeDetail(animeId));

@@ -3,9 +3,8 @@ import { inferAnimeAliasLanguage } from "../../../shared/anime-title";
 import {
   formatMonthStartDate,
   getSeasonInfo,
-  isDateInMonth,
   type AnimeDetailMetadataProvider,
-  type MonthlyAnimeMetadataProvider
+  type SeasonalAnimeMetadataProvider
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpTransport } from "./metadata-http-client";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
@@ -36,7 +35,7 @@ interface MikanDetail {
   durationMinutes?: number;
 }
 
-export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider, AnimeDetailMetadataProvider {
+export class MikanMetadataProvider implements SeasonalAnimeMetadataProvider, AnimeDetailMetadataProvider {
   readonly id = "mikan";
 
   constructor(
@@ -46,6 +45,14 @@ export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider, Anim
 
   async getAnimeByMonth(year: number, month: number): Promise<Anime[]> {
     const seasonInfo = getSeasonInfo(month);
+    return (await this.getAnimeBySeason(year, seasonInfo.season))
+      .filter((item) => item.premiereYear === year && item.premiereMonth === month);
+  }
+
+  /** 读取一次 Mikan 季度页及详情，避免季度内重复请求。 */
+  async getAnimeBySeason(year: number, season: Season): Promise<Anime[]> {
+    const startMonth = getSeasonStartMonth(season);
+    const seasonInfo = getSeasonInfo(startMonth);
     const html = await this.fetchSeasonHtml(year, seasonInfo.mikanSeason);
     const candidates = parseMikanSeasonHtml(html, this.baseUrl);
     const detailedCandidates = await mapWithConcurrency(
@@ -57,12 +64,10 @@ export class MikanMetadataProvider implements MonthlyAnimeMetadataProvider, Anim
       })
     );
 
-    return detailedCandidates
-      .filter(({ detail }) =>
-        // Mikan 只暴露季度列表；没有明确首播日期时只归入该季度第一个月。
-        detail.premiereDate ? isDateInMonth(detail.premiereDate, year, month) : isSeasonStartMonth(month)
-      )
-      .map(({ candidate, detail }) => mapMikanCandidate(candidate, detail, year, month, seasonInfo.season));
+    return detailedCandidates.map(({ candidate, detail }) =>
+      // Mikan 只暴露季度列表；没有明确首播日期时归入该季度第一个月。
+      mapMikanCandidate(candidate, detail, year, startMonth, seasonInfo.season)
+    );
   }
 
   /** 按 Mikan external id 读取单部番剧详情。 */
@@ -330,8 +335,8 @@ function normalizeDate(value?: string): string | undefined {
   return `${year}-${padDatePart(Number(month))}-${padDatePart(Number(day ?? 1))}`;
 }
 
-function isSeasonStartMonth(month: number): boolean {
-  return month === 1 || month === 4 || month === 7 || month === 10;
+function getSeasonStartMonth(season: Season): number {
+  return { winter: 1, spring: 4, summer: 7, fall: 10 }[season];
 }
 
 function readMetaContent(html: string, name: string): string | undefined {

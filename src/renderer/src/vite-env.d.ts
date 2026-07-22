@@ -24,6 +24,8 @@ import type {
   AnimeSourceBindingState,
   AnimeDiscoveryQuery,
   AnimeDiscoveryResult,
+  AnimeDiscoverySeasonQuery,
+  AnimeDiscoverySeasonResult,
   AutomationRunResult,
   AutomationSchedulerStatus,
   ConfirmAnimeSourceBindingInput,
@@ -71,6 +73,7 @@ declare global {
       listAnimeCatalog: (year?: number, month?: number) => Promise<Anime[]>;
       searchAnimeCatalog: (keyword: string) => Promise<Anime[]>;
       collectAnimeMonth: (query: AnimeDiscoveryQuery) => Promise<AnimeDiscoveryResult>;
+      collectAnimeSeason: (query: AnimeDiscoverySeasonQuery) => Promise<AnimeDiscoverySeasonResult>;
       getAnimeDetail: (animeId: string) => Promise<AnimeDetailResult>;
       refreshAnimeDetail: (animeId: string) => Promise<AnimeDetailResult>;
       listEpisodes: (animeId: string) => Promise<Episode[]>;

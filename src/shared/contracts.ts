@@ -34,8 +34,23 @@ export interface AnimeDiscoveryQuery {
   forceRefresh?: boolean;
 }
 
+export interface AnimeDiscoverySeasonQuery {
+  year: number;
+  season: Season;
+  forceRefresh?: boolean;
+}
+
 export interface AnimeDiscoveryResult {
   query: AnimeDiscoveryQuery;
+  items: Anime[];
+  addedCount: number;
+  existingCount: number;
+  source: string;
+  errors: string[];
+}
+
+export interface AnimeDiscoverySeasonResult {
+  query: AnimeDiscoverySeasonQuery;
   items: Anime[];
   addedCount: number;
   existingCount: number;

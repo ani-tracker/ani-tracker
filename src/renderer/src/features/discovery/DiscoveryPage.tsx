@@ -80,7 +80,6 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [loading, setLoading] = useState(true);
   const [collecting, setCollecting] = useState(false);
-  const [collectProgress, setCollectProgress] = useState(0);
   const [addingAnimeId, setAddingAnimeId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const loadRequestId = useRef(0);
@@ -135,46 +134,22 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
 
   /** Collects metadata for every month in the selected season. */
   async function collectSeason(forceRefresh = false) {
-    const months = activeSeason.months;
     setCollecting(true);
-    setCollectProgress(0);
     console.info("[discovery] collecting season catalog", { ...target, forceRefresh });
 
     try {
-      const results = [];
-      const requestErrors: string[] = [];
-      for (const [index, month] of months.entries()) {
-        try {
-          const result = await appApi.collectAnimeMonth({
-            year: target.year,
-            month,
-            forceRefresh
-          });
-          results.push(result);
-        } catch (error) {
-          const errorText = error instanceof Error ? error.message : `${month} 月采集失败`;
-          requestErrors.push(`${month} 月：${errorText}`);
-          console.error("[discovery] failed to collect month catalog", { year: target.year, month, error });
-        } finally {
-          setCollectProgress(index + 1);
-        }
-      }
-
+      const result = await appApi.collectAnimeSeason({ ...target, forceRefresh });
       await loadSeasonCatalog(target.year, target.season);
-      const collectedItems = mergeAnimeItems(results.flatMap((result) => result.items));
-      const errors = [...requestErrors, ...results.flatMap((result) => result.errors)];
-      const addedCount = results.reduce((total, result) => total + result.addedCount, 0);
-      const existingCount = results.reduce((total, result) => total + result.existingCount, 0);
       setMessage({
-        tone: errors.length ? "error" : "success",
-        text: errors.length
-          ? `部分月份采集失败，已保留本地缓存：${errors[0]}`
-          : `季度采集完成：新增 ${addedCount}，更新 ${existingCount}，共 ${collectedItems.length} 部`
+        tone: result.errors.length ? "error" : "success",
+        text: result.errors.length
+          ? `部分来源采集失败，已保留本地缓存：${result.errors[0]}`
+          : `季度采集完成：新增 ${result.addedCount}，更新 ${result.existingCount}，共 ${result.items.length} 部`
       });
       console.info("[discovery] season catalog collected", {
         ...target,
-        itemCount: collectedItems.length,
-        errorCount: errors.length
+        itemCount: result.items.length,
+        errorCount: result.errors.length
       });
     } catch (error) {
       console.error("[discovery] failed to collect season catalog", { ...target, error });
@@ -184,7 +159,6 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
       });
     } finally {
       setCollecting(false);
-      setCollectProgress(0);
     }
   }
 
@@ -254,7 +228,7 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
     setSortKey("premiereAsc");
   }
 
-  const collectingLabel = collecting ? `采集中 ${collectProgress}/3` : "采集当前季度";
+  const collectingLabel = collecting ? "采集中" : "采集当前季度";
   const resultLabel = loading
     ? "正在加载"
     : `${target.year} ${activeSeason.label} · ${visibleItems.length} 部`;
@@ -266,7 +240,7 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
         <PageActions className="grid grid-cols-1 sm:grid-cols-2">
           <Button className="w-full" variant="outline" onClick={() => void collectSeason(true)} disabled={collecting}>
             <RotateCcw data-icon="inline-start" />
-            {collecting ? `刷新中 ${collectProgress}/3` : "强制刷新季度"}
+            {collecting ? "刷新中" : "强制刷新季度"}
           </Button>
           <Button className="w-full" onClick={() => void collectSeason(false)} disabled={collecting}>
             <CalendarPlus data-icon="inline-start" />
