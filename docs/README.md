@@ -10,6 +10,7 @@
 | --- | --- |
 | [架构与设计](design-plan.md) | 当前进程边界、服务职责、数据流和扩展边界 |
 | [实现状态](progress.md) | 已实现能力、明确限制和后续工作 |
+| [内置 libtorrent 下载引擎计划](embedded-libtorrent-engine-plan.md) | 跨平台内置 BT 内核的目标、阶段和验收标准 |
 | [启动说明](startup.md) | 安装、开发、测试、构建和排障 |
 | [界面设计规范](DESIGN.md) | 当前应用壳、设计令牌、组件和响应式约束 |
 

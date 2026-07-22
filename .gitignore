@@ -40,3 +40,7 @@ bin-release/
 /.codex/
 docs/img_*.png
 other.md
+/.tmp-stitch/
+/docs/ui-reference/
+#/docs/assets/
+/commonPrompt/
