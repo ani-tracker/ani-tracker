@@ -25,6 +25,7 @@ import type {
   SetAnimeWatchProgressInput
 } from "@shared/contracts";
 import { mergeAnimeDetailMetadata, normalizeAnimeDetailMetadata } from "@shared/anime-detail";
+import { normalizeMyAnimeAutoDownload } from "@shared/my-anime-policy";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import {
@@ -708,7 +709,8 @@ export class SqliteAppRepository implements AppRepository {
   }
 
   async upsertMyAnime(item: MyAnime): Promise<MyAnime[]> {
-    const saved: MyAnime = { ...item, addedAt: item.addedAt || nowIso(), updatedAt: nowIso() };
+    const normalized = normalizeMyAnimeAutoDownload(item);
+    const saved: MyAnime = { ...normalized, addedAt: normalized.addedAt || nowIso(), updatedAt: nowIso() };
     this.transaction(() => {
       this.upsertAnime(saved.anime);
       this.upsertMyAnimeRow(saved);

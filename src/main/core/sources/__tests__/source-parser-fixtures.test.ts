@@ -408,6 +408,49 @@ test("ReleaseSourceService 过滤 AniBT BGM 搜索返回的其他番剧", async 
   assert.match(result.releases[0].title, /凡人修仙传/);
 });
 
+test("ReleaseSourceService 聚合去重时仍保留各下载源结果", async () => {
+  const configs: ReleaseSourceConfig[] = [
+    { id: "rss-a", name: "来源 A", kind: "rss", enabled: true, rssUrl: "https://a.example.test/feed.xml" },
+    { id: "rss-b", name: "来源 B", kind: "rss", enabled: true, rssUrl: "https://b.example.test/feed.xml" },
+    { id: "rss-error", name: "异常源", kind: "rss", enabled: true, rssUrl: "https://error.example.test/feed.xml" }
+  ];
+  const httpClient: ReleaseHttpClient = {
+    async fetch(input) {
+      const url = String(input);
+      if (url.includes("error.example.test")) {
+        return new Response("unavailable", { status: 503, statusText: "Unavailable" });
+      }
+      const uniqueItem = url.includes("a.example.test")
+        ? "<item><title>[测试组] 多源测试番 - 02 [1080p]</title><guid>unique-a</guid></item>"
+        : "";
+      return new Response(
+        `<rss><channel>
+          <item>
+            <title>[测试组] 多源测试番 - 01 [1080p]</title>
+            <guid>common-${url.includes("a.example.test") ? "a" : "b"}</guid>
+            <link>magnet:?xt=urn:btih:COMMON&amp;dn=common</link>
+          </item>
+          ${uniqueItem}
+        </channel></rss>`,
+        { status: 200, statusText: "OK" }
+      );
+    }
+  };
+
+  const result = await new ReleaseSourceService(configs, [], httpClient).search({
+    keyword: "多源测试番",
+    limit: 10
+  });
+
+  assert.equal(result.releases.length, 2);
+  assert.deepEqual(result.sourceResults.map((item) => [item.sourceName, item.releases.length]), [
+    ["来源 A", 2],
+    ["来源 B", 1],
+    ["异常源", 0]
+  ]);
+  assert.deepEqual(result.errors.map((error) => error.sourceId), ["rss-error"]);
+});
+
 test("ReleaseSourceService 精确来源绑定也会过滤显式旧季度合集", async () => {
   const httpClient: ReleaseHttpClient = {
     async fetch() {
@@ -734,6 +777,17 @@ test("ReleaseSourceService 重启后优先复用持久化查询缓存", async ()
       sourceId: "anibt",
       sourceName: "AniBT",
       publishedAt: "2026-07-18T00:00:00.000Z"
+    }],
+    sourceResults: [{
+      sourceId: "anibt",
+      sourceName: "AniBT",
+      releases: [{
+        id: "anibt:persisted-search-cache",
+        title: "[测试组] 跨重启完结缓存专用查询 - 01 [1080p]",
+        sourceId: "anibt",
+        sourceName: "AniBT",
+        publishedAt: "2026-07-18T00:00:00.000Z"
+      }]
     }],
     searchedSourceIds: ["anibt"],
     errors: []

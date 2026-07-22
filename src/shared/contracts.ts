@@ -79,9 +79,16 @@ export interface AnimeReleaseQuery {
   forceRefresh?: boolean;
 }
 
+export interface ReleaseSourceSearchResult {
+  sourceId: string;
+  sourceName: string;
+  releases: Release[];
+}
+
 export interface ReleaseSearchResult {
   query: ReleaseQuery;
   releases: Release[];
+  sourceResults: ReleaseSourceSearchResult[];
   searchedSourceIds: string[];
   errors: Array<{
     sourceId: string;

@@ -11,6 +11,7 @@ import type {
   SubtitleLanguage
 } from "@shared/domain";
 import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
+import { canAnimeStatusAutoDownload } from "@shared/my-anime-policy";
 import { getSubtitleCoverage, resolveSubtitleLanguages } from "@shared/release-metadata";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
 import { addReleaseTorrentToEngine } from "../downloads/torrent-resource-adder";
@@ -75,6 +76,20 @@ export class AutomationRunService {
     });
 
     for (const anime of myAnimeItems) {
+      if (!canAnimeStatusAutoDownload(anime.status)) {
+        const reason = anime.status === "completed" ? "追番已完成" : "追番已弃";
+        result.skipped.push({
+          animeId: anime.anime.id,
+          animeTitle: anime.anime.title,
+          reason
+        });
+        logger.info("自动下载跳过终止状态追番", {
+          animeId: anime.anime.id,
+          status: anime.status
+        });
+        continue;
+      }
+
       if (!anime.autoDownload) {
         result.skipped.push({
           animeId: anime.anime.id,

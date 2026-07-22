@@ -33,6 +33,7 @@ import { CachedImage } from "@/components/cached-image";
 import { FilterToolbar, Page, PageActions, PageHeader, PageHeading } from "@/components/page-layout";
 import { appApi } from "@/lib/api";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
+import { createDefaultMyAnimePreferences } from "@shared/my-anime-policy";
 import type { Anime, MyAnime, Season } from "@shared/domain";
 
 interface SeasonTarget {
@@ -176,10 +177,7 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
         id: `my-${anime.id}`,
         anime,
         status: "watching",
-        autoDownload: false,
-        preferredResolution: "1080p",
-        preferredCodec: "H.265/HEVC",
-        preferredSubtitleLanguages: ["chs"],
+        ...createDefaultMyAnimePreferences(),
         addedAt: now,
         updatedAt: now
       });

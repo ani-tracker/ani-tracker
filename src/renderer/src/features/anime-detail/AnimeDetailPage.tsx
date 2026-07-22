@@ -53,6 +53,7 @@ import { appApi, isElectronClient } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import type { AnimeDetailResult } from "@shared/contracts";
 import type { Anime, MyAnime } from "@shared/domain";
+import { createDefaultMyAnimePreferences } from "@shared/my-anime-policy";
 import {
   formatSubtitleLanguages,
   formatVideoBitDepth,
@@ -845,10 +846,7 @@ function createDefaultMyAnime(anime: Anime, timestamp: string): MyAnime {
     id: `my-${anime.id}`,
     anime,
     status: "watching",
-    autoDownload: false,
-    preferredResolution: "1080p",
-    preferredCodec: "H.265/HEVC",
-    preferredSubtitleLanguages: ["chs"],
+    ...createDefaultMyAnimePreferences(),
     addedAt: timestamp,
     updatedAt: timestamp
   };

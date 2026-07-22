@@ -42,6 +42,11 @@ import {
 } from "@/features/my-anime/release-groups";
 import { buildAnimeReleaseSearchTerms, classifyAnimeRelease } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
+import {
+  canAnimeStatusAutoDownload,
+  createDefaultMyAnimePreferences,
+  normalizeMyAnimeAutoDownload
+} from "@shared/my-anime-policy";
 import type { AddReleaseDownloadInput, AnimeSourceBindingState, AnimeSourceCandidate, AnimeWatchProgress, EpisodeReleasePreview, ReleaseSearchResult, RssSubscriptionReleaseResult } from "@shared/contracts";
 import type {
   AnimeRssSubscription,
@@ -589,7 +594,7 @@ export function MyAnimePage({
   function openRulesDrawer(item: MyAnime) {
     closeAnimeDownloads();
     closeDownloadDetail();
-    const nextDraft = cloneMyAnime(item);
+    const nextDraft = normalizeMyAnimeAutoDownload(cloneMyAnime(item));
     setDraft(nextDraft);
     setDraftBaseline(serializeMyAnimeDraft(nextDraft));
   }
@@ -1387,12 +1392,14 @@ function RulesPanel({
             label="状态"
             value={draft.status}
             options={statusOptions.map(([value, label]) => ({ value, label }))}
-            onChange={(value) =>
+            onChange={(value) => {
+              const status = value as AnimeStatus;
               onChange({
                 ...draft,
-                status: value as AnimeStatus
-              })
-            }
+                status,
+                autoDownload: canAnimeStatusAutoDownload(status) ? draft.autoDownload : false
+              });
+            }}
           />
             </>
           ) : (
@@ -1421,6 +1428,7 @@ function RulesPanel({
               { value: "on", label: "开启" },
               { value: "off", label: "关闭" }
             ]}
+            disabled={!canAnimeStatusAutoDownload(draft.status)}
             onChange={(value) =>
               onChange({
                 ...draft,
@@ -3124,19 +3132,22 @@ function SelectField({
   label,
   value,
   options,
+  disabled = false,
   onChange
 }: {
   label: string;
   value: string;
   options: Array<{ value: string; label: string }>;
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   const id = useId();
 
   return (
-    <Field>
+    <Field data-disabled={disabled || undefined}>
       <FieldLabel htmlFor={id}>{label}</FieldLabel>
       <Select
+        disabled={disabled}
         value={value || emptySelectValue}
         onValueChange={(nextValue) => onChange(nextValue === emptySelectValue ? "" : nextValue)}
       >
@@ -3210,10 +3221,7 @@ function createEmptyDraft(): MyAnime {
       externalIds: {}
     },
     status: "watching",
-    autoDownload: false,
-    preferredResolution: "1080p",
-    preferredCodec: "H.265/HEVC",
-    preferredSubtitleLanguages: ["chs"],
+    ...createDefaultMyAnimePreferences(),
     addedAt: now.toISOString(),
     updatedAt: now.toISOString()
   };

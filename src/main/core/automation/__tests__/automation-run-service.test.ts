@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { TestContext } from "node:test";
 import type { AnimeSourceBinding, AppSettings, DownloadTask, Episode, EpisodePreference, FansubGroup, MyAnime, Release, ReleaseSourceConfig } from "@shared/domain";
+import { createDefaultMyAnimePreferences } from "@shared/my-anime-policy";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
 import type { AppRepository } from "../../repositories/app-repository";
 import { AutomationRunService } from "../automation-run-service";
@@ -24,6 +25,16 @@ const defaultSettings: AppSettings = {
     }
   }
 };
+
+test("新增追番默认启用自动下载并偏好 1080p HEVC 10bit", () => {
+  assert.deepEqual(createDefaultMyAnimePreferences(), {
+    autoDownload: true,
+    preferredResolution: "1080p",
+    preferredCodec: "H.265/HEVC",
+    preferredBitDepth: 10,
+    preferredSubtitleLanguages: ["chs"]
+  });
+});
 
 test("AutomationRunService 使用单集字幕组覆盖选择最佳资源并写回下载状态", async (t) => {
   const repository = new FakeAutomationRepository({
@@ -221,6 +232,26 @@ test("AutomationRunService 全局自动下载关闭时提前跳过", async () =>
   assert.equal(result.downloaded.length, 0);
   assert.equal(result.skipped.length, 1);
   assert.equal(result.skipped[0].reason, "全局自动下载未开启");
+});
+
+test("AutomationRunService 跳过已完成和已弃追番", async () => {
+  const myAnime = [
+    createMyAnime({ id: "my-completed", status: "completed" }),
+    createMyAnime({ id: "my-dropped", anime: { ...createMyAnime({}).anime, id: "anime-dropped" }, status: "dropped" })
+  ];
+  const repository = new FakeAutomationRepository({
+    settings: defaultSettings,
+    myAnime,
+    episodes: [createEpisode()],
+    fansubs: createFansubs(),
+    sources: [createRssSource()]
+  });
+
+  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+
+  assert.equal(result.checkedEpisodes, 0);
+  assert.equal(result.downloaded.length, 0);
+  assert.deepEqual(result.skipped.map((item) => item.reason), ["追番已完成", "追番已弃"]);
 });
 
 test("AutomationRunService 在 wait 策略下不回退到非默认字幕组候选", async (t) => {

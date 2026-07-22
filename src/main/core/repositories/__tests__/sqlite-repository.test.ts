@@ -114,6 +114,24 @@ test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   second.close();
 });
 
+test("SQLite 强制关闭已完成和已弃追番的自动下载", async () => {
+  const fixture = await createFixture();
+  const runtime = createRepositoryRuntime(fixture.options);
+  await runtime.initialize();
+  const item = createTestMyAnime();
+
+  await runtime.repository.upsertMyAnime({ ...item, status: "completed", autoDownload: true });
+  const completed = (await runtime.repository.listMyAnime()).find((entry) => entry.id === item.id);
+  assert.equal(completed?.status, "completed");
+  assert.equal(completed?.autoDownload, false);
+
+  await runtime.repository.upsertMyAnime({ ...item, status: "dropped", autoDownload: true });
+  const dropped = (await runtime.repository.listMyAnime()).find((entry) => entry.id === item.id);
+  assert.equal(dropped?.status, "dropped");
+  assert.equal(dropped?.autoDownload, false);
+  runtime.close();
+});
+
 test("SQLite 原子维护连续观看进度并按下载状态恢复取消已看的单集", async () => {
   const fixture = await createFixture();
   const runtime = createRepositoryRuntime(fixture.options);
@@ -284,6 +302,17 @@ test("SQLite 资源查询缓存可跨重启恢复并自动淘汰过期项", asyn
       sourceId: "anibt",
       sourceName: "AniBT",
       publishedAt: "2026-07-18T00:00:00.000Z"
+    }],
+    sourceResults: [{
+      sourceId: "anibt",
+      sourceName: "AniBT",
+      releases: [{
+        id: "anibt:completed-cache",
+        title: "[测试组] 完结缓存测试 - 01 [1080p]",
+        sourceId: "anibt",
+        sourceName: "AniBT",
+        publishedAt: "2026-07-18T00:00:00.000Z"
+      }]
     }],
     searchedSourceIds: ["anibt"],
     errors: []
