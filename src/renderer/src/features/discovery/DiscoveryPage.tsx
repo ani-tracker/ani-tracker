@@ -492,11 +492,6 @@ export function DiscoverySchedulePage({ initialTarget, onBack, onOpenAnimeDetail
     }
   }
 
-  /** 切换季度并清空仅适用于旧季度的月份筛选。 */
-  function selectSeason(season: Season) {
-    setTarget((current) => ({ ...current, season }));
-  }
-
   return (
     <Page>
       <PageHeader className="items-start border-b pb-4 sm:items-center">
@@ -523,31 +518,20 @@ export function DiscoverySchedulePage({ initialTarget, onBack, onOpenAnimeDetail
       )}
 
       <FilterToolbar className="items-stretch sm:items-center">
-        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-[112px_minmax(16rem,1fr)_auto] sm:items-center">
-          <Field className="min-w-0">
-            <FieldLabel className="sr-only" htmlFor="schedule-year">选择年份</FieldLabel>
-            <YearPicker
-              id="schedule-year"
-              value={target.year}
-              onValueChange={(year) => setTarget((current) => ({ ...current, year }))}
-            />
-          </Field>
-          <Tabs value={target.season} onValueChange={(value) => selectSeason(value as Season)}>
-            <TabsList className="grid h-auto w-full grid-cols-4" aria-label="选择季度">
-              {seasonOptions.map((season) => (
-                <TabsTrigger key={season.value} value={season.value}>{season.shortLabel}</TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
+        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-[minmax(12rem,16rem)_auto] sm:items-center sm:justify-between">
+          <ScheduleSeasonPicker
+            value={target}
+            onValueChange={(nextTarget) => setTarget(nextTarget)}
+          />
           <ToggleGroup
             aria-label="选择时间表视图"
-            className="grid grid-cols-2"
+            className="grid grid-cols-2 sm:w-fit"
             type="single"
             value={view}
             onValueChange={(value) => value && setView(value as ScheduleView)}
           >
-            <ToggleGroupItem value="grid"><LayoutGrid />网格视图</ToggleGroupItem>
-            <ToggleGroupItem value="list"><List />列表视图</ToggleGroupItem>
+            <ToggleGroupItem value="grid"><LayoutGrid data-icon="inline-start" />网格视图</ToggleGroupItem>
+            <ToggleGroupItem value="list"><List data-icon="inline-start" />列表视图</ToggleGroupItem>
           </ToggleGroup>
         </div>
       </FilterToolbar>
@@ -576,6 +560,49 @@ export function DiscoverySchedulePage({ initialTarget, onBack, onOpenAnimeDetail
         />
       )}
     </Page>
+  );
+}
+
+/** 渲染时间表专用的动态年份与季度组合选择器。 */
+function ScheduleSeasonPicker({
+  value,
+  onValueChange
+}: {
+  value: SeasonTarget;
+  onValueChange: (target: SeasonTarget) => void;
+}) {
+  const currentYear = new Date().getFullYear();
+  const startYear = Math.min(currentYear - 20, value.year - 2);
+  const endYear = Math.max(currentYear + 2, value.year + 2);
+  const options = Array.from({ length: endYear - startYear + 1 }, (_, index) => startYear + index)
+    .flatMap((year) => seasonOptions.map((season) => ({ year, season })));
+  const selectedValue = `${value.year}:${value.season}`;
+
+  return (
+    <Field className="min-w-0">
+      <FieldLabel className="sr-only" htmlFor="schedule-season">选择季度</FieldLabel>
+      <Select
+        value={selectedValue}
+        onValueChange={(nextValue) => {
+          const [yearText, season] = nextValue.split(":");
+          if (!yearText || !season) return;
+          onValueChange({ year: Number(yearText), season: season as Season });
+        }}
+      >
+        <SelectTrigger id="schedule-season" className="w-full justify-between tabular-nums">
+          <SelectValue placeholder="选择季度" />
+        </SelectTrigger>
+        <SelectContent className="max-h-80">
+          <SelectGroup>
+            {options.map(({ year, season }) => (
+              <SelectItem key={`${year}:${season.value}`} value={`${year}:${season.value}`}>
+                {year} {season.label}
+              </SelectItem>
+            ))}
+          </SelectGroup>
+        </SelectContent>
+      </Select>
+    </Field>
   );
 }
 

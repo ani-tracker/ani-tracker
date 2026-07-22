@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, Download, Link2, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, Download, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -1901,13 +1901,16 @@ function AnimeDownloadPanel({
     const families = groupReleaseVersions(groupReleases, target, releaseVersionSelections, releaseGroupingOptions);
     return groupReleaseFamilyEpisodes(families).map((episodeGroup) => (
       <section key={episodeGroup.key}>
-        <div className="flex items-center justify-between bg-muted/30 px-3 py-2 text-xs">
-          <span className="font-medium" title={episodeGroup.label}>
+        <div className="flex min-h-9 items-center justify-between bg-primary/5 px-3 py-2 text-[11px] uppercase tracking-[0.04em]">
+          <span className="font-semibold" title={episodeGroup.label}>
             {episodeGroup.label}
           </span>
-          <span className="text-muted-foreground">{episodeGroup.families.length} 个资源</span>
+          <span className="flex items-center gap-2 text-muted-foreground">
+            {episodeGroup.families.length} 个资源
+            <SlidersHorizontal aria-hidden="true" className="size-3.5" />
+          </span>
         </div>
-        <div className="divide-y border-t">
+        <div className="divide-y border-t border-primary/10">
           {episodeGroup.families.map((family) => {
             const linkedTask = findReleaseDownloadTask(linkedTasks, family.selectedRelease);
             return (
@@ -1932,8 +1935,8 @@ function AnimeDownloadPanel({
   }
 
   return (
-      <div className="flex min-h-0 flex-1 flex-col gap-3 [@media(max-height:760px)]:gap-2">
-        <div className="shrink-0 border-b">
+      <div className="flex min-h-0 flex-1 flex-col gap-2 [@media(max-height:760px)]:gap-1">
+        <div className="shrink-0 border-b pb-1">
           <Tabs value={activeTab} onValueChange={(value) => onTabChange(value as DownloadResourceTab)}>
             <TabsList className="grid w-full max-w-72 grid-cols-2" variant="line">
               <TabsTrigger value="rss">RSS 订阅</TabsTrigger>
@@ -1962,73 +1965,71 @@ function AnimeDownloadPanel({
               onRemove={onRemoveSourceBinding}
             />
 
-          <div className="shrink-0 border-y bg-card/50 px-3 py-3">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-          <Field className="min-w-0 sm:flex-1">
-            <FieldLabel className="sr-only" htmlFor="anime-release-fansub-filter">字幕组筛选</FieldLabel>
-            <Select
-              value={selectedFansubId || emptySelectValue}
-              onValueChange={(value) => onFansubChange(value === emptySelectValue ? "" : value)}
-            >
-              <SelectTrigger id="anime-release-fansub-filter">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value={emptySelectValue}>全部字幕组（{tabReleases.length}）</SelectItem>
-                  {fansubs.map((group) => {
-                    const count = countReleasesByFansub(tabReleases, group.id);
-                    return (
-                      <SelectItem key={group.id} value={group.id}>
-                        {group.name}{count > 0 ? `（${count}）` : ""}
-                      </SelectItem>
-                    );
-                  })}
-                  {unknownFansubCount > 0 && (
-                    <SelectItem value={unknownFansubFilter}>未识别字幕组（{unknownFansubCount}）</SelectItem>
-                  )}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
-          <div className="grid grid-cols-2 gap-2 sm:flex">
-              <>
-                <Button className="min-h-11 shrink-0 sm:min-h-9" variant="outline" onClick={onRefresh} disabled={loading}>
-                  <Search data-icon="inline-start" />
+          <div className="shrink-0 border-y border-primary/10 bg-background px-3 py-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <Field className="min-w-0 sm:w-52 sm:flex-none">
+                <FieldLabel className="sr-only" htmlFor="anime-release-fansub-filter">字幕组筛选</FieldLabel>
+                <Select
+                  value={selectedFansubId || emptySelectValue}
+                  onValueChange={(value) => onFansubChange(value === emptySelectValue ? "" : value)}
+                >
+                  <SelectTrigger className="h-8" id="anime-release-fansub-filter">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectGroup>
+                      <SelectItem value={emptySelectValue}>全部字幕组（{tabReleases.length}）</SelectItem>
+                      {fansubs.map((group) => {
+                        const count = countReleasesByFansub(tabReleases, group.id);
+                        return (
+                          <SelectItem key={group.id} value={group.id}>
+                            {group.name}{count > 0 ? `（${count}）` : ""}
+                          </SelectItem>
+                        );
+                      })}
+                      {unknownFansubCount > 0 && (
+                        <SelectItem value={unknownFansubFilter}>未识别字幕组（{unknownFansubCount}）</SelectItem>
+                      )}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              </Field>
+              <div className="grid grid-cols-2 gap-1 sm:flex">
+                <Button className="min-h-9 shrink-0 px-2 text-xs" variant="ghost" onClick={onRefresh} disabled={loading}>
+                  <RefreshCw data-icon="inline-start" className={cn(loading && "animate-spin")} />
                   {loading ? "查询中" : "刷新"}
                 </Button>
                 <Button
-                  className="min-h-11 shrink-0 px-2 sm:min-h-9 sm:px-3"
-                  variant="outline"
+                  className="min-h-9 shrink-0 px-2 text-xs text-destructive hover:text-destructive"
+                  variant="ghost"
                   onClick={onForceRefresh}
                   disabled={loading}
                   aria-label="强制刷新"
                   title="绕过 1 天缓存重新查询下载源"
                 >
-                  <RefreshCw data-icon="inline-start" />
+                  <AlertTriangle data-icon="inline-start" />
                   <span className="hidden sm:inline">强制刷新</span>
                 </Button>
-              </>
-          </div>
-          </div>
-          <div className="mt-3 flex flex-col gap-2 border-t pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span>显示 <strong className="text-foreground">{visibleFamilies.length}</strong> 组</span>
-              <span>·</span>
-              <span>共 <strong className="text-foreground">{tabFamilies.length}</strong> 组</span>
-              <span>·</span>
-              <span>已选 <strong className="text-primary">{selectedDownloadableReleases.length}</strong> 组</span>
+              </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 sm:flex">
-              <Button variant="outline" onClick={toggleAllVisibleReleases} disabled={selectableVisibleFamilies.length === 0 || activeLoading}>
+            <div className="mt-2 flex flex-col gap-2 border-t pt-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                <span>显示 <strong className="text-foreground">{visibleFamilies.length}</strong> 组</span>
+                <span>·</span>
+                <span>共 <strong className="text-foreground">{tabFamilies.length}</strong> 组</span>
+                <span>·</span>
+                <span>已选 <strong className="text-primary">{selectedDownloadableReleases.length}</strong> 组</span>
+              </div>
+              <Button
+                className="w-full sm:w-auto"
+                variant="outline"
+                onClick={toggleAllVisibleReleases}
+                disabled={selectableVisibleFamilies.length === 0 || activeLoading}
+              >
                 {allSelectableVisibleSelected ? "取消选择" : "全选可下载"}
               </Button>
-              <Button onClick={() => onAddSelected(selectedDownloadableReleases)} disabled={selectedDownloadableReleases.length === 0 || batchAdding || activeLoading}>
-                <Download data-icon="inline-start" />批量下载
-              </Button>
             </div>
           </div>
-        </div>
           </>
         )}
 
@@ -2089,7 +2090,7 @@ function AnimeDownloadPanel({
                   const rssSubscribed = Boolean(rssCandidate && existingRssUrls.has(rssCandidate.url));
                   const collapsed = isGroupCollapsed(group.key, groupIndex);
                   return (
-                    <section key={group.key} className="shrink-0 overflow-hidden rounded-md border bg-background">
+                    <section key={group.key} className="shrink-0 overflow-hidden border border-primary/15 bg-background">
                       <ReleaseGroupHeader
                         allSelected={selection.allSelected}
                         badgeText={`${groupFamilies.length} 个资源`}
@@ -2139,7 +2140,7 @@ function AnimeDownloadPanel({
             )}
 
             {visibleOtherReleases.length > 0 && (
-              <section className="shrink-0 overflow-hidden rounded-md border bg-background">
+                <section className="shrink-0 overflow-hidden border border-primary/15 bg-background">
                 <Button
                   className="h-auto min-h-11 w-full justify-between rounded-none px-3 py-2 text-left md:min-h-11"
                   type="button"
@@ -2295,7 +2296,7 @@ function ReleaseGroupHeader({
   onAddRssSubscription: (subscription: RssSubscriptionDraft) => void;
 }) {
   return (
-    <div className="flex min-h-12 w-full flex-wrap items-center gap-2 border-b bg-primary/10 px-3 py-2">
+    <div className="flex min-h-11 w-full flex-wrap items-center gap-2 border-b border-primary/15 bg-primary/10 px-3 py-2">
       <Button
         className="h-auto min-h-11 min-w-0 flex-1 justify-start px-0 py-0 text-left md:min-h-0"
         type="button"
@@ -2309,13 +2310,13 @@ function ReleaseGroupHeader({
         ) : (
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
-        <span className="truncate text-sm font-bold uppercase">{name}</span>
-        <span className="text-xs font-normal text-muted-foreground">共 {badgeText} · 已选 {selectedCount} · {episodeCount} 集</span>
+        <span className="truncate text-xs font-bold uppercase tracking-[0.04em]">{name}</span>
+        <span className="text-[10px] font-normal text-muted-foreground">共 {badgeText} · 已选 {selectedCount} · {episodeCount} 集</span>
       </Button>
       <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
         {rssCandidate && (
           <Button
-            className="h-11 px-2 text-xs sm:h-7"
+            className="h-9 px-2 text-xs sm:h-7"
             variant="ghost"
             onClick={() => onAddRssSubscription(rssCandidate)}
             disabled={rssSubscribed}
@@ -2326,7 +2327,7 @@ function ReleaseGroupHeader({
           </Button>
         )}
         <Button
-          className="h-11 px-2 text-xs sm:h-7"
+          className="h-9 px-2 text-xs sm:h-7"
           variant="outline"
           onClick={onToggleSelected}
           disabled={selectableCount === 0}
@@ -2367,10 +2368,10 @@ function ReleaseDownloadRow({
   const selectable = canDownload && !linkedTask && batchSelectable;
 
   return (
-    <div className={cn("p-2 sm:p-3 [@media(max-height:760px)]:p-2", (linkedTask || !batchSelectable) && "bg-muted/20")}>
-      <div className="flex items-center justify-between gap-2 sm:gap-3">
+    <div className={cn("px-3 py-2.5 [@media(max-height:760px)]:py-2", (linkedTask || !batchSelectable) && "bg-muted/20")}>
+      <div className="flex items-start justify-between gap-2 sm:gap-3">
         <Checkbox
-          className="mt-0.5"
+          className="mt-1"
           aria-label={`选择资源 ${release.title}`}
           checked={selected}
           disabled={!selectable}
@@ -2378,10 +2379,10 @@ function ReleaseDownloadRow({
         />
         <div className={cn("flex min-w-0 flex-1 flex-col gap-1.5", linkedTask && "opacity-60")}>
           <div className="min-w-0">
-            <div className="line-clamp-2 text-sm font-medium leading-5" title={release.title}>
+            <div className="line-clamp-2 text-[13px] font-medium leading-5" title={release.title}>
               {release.title}
             </div>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] uppercase text-muted-foreground">
+            <div className="mt-1 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[10px] uppercase tracking-[0.03em] text-muted-foreground">
               <span>{release.sourceName}</span><span>|</span>
               <span>{getReleaseFansubName(release, fansubNames)}</span><span>|</span>
               <span>{family.episodeLabel}</span>
@@ -2402,30 +2403,30 @@ function ReleaseDownloadRow({
           <div className="flex min-w-0 flex-col items-start gap-2 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:items-center">
             {family.releases.length > 1 && (
               <Select
-                  value={releaseKey(release)}
-                  onValueChange={(value) => onVersionChange(family.key, value)}
-                >
-                  <SelectTrigger className="h-8 w-full min-w-0 text-xs sm:w-72" aria-label="选择资源版本" title="选择资源版本">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      {family.releases.map((item) => {
-                        const itemKey = releaseKey(item);
-                        return (
-                          <SelectItem key={itemKey} value={itemKey}>
-                            {getReleaseVersionLabel(item, preferences, releaseKey(item) === releaseKey(release))}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                value={releaseKey(release)}
+                onValueChange={(value) => onVersionChange(family.key, value)}
+              >
+                <SelectTrigger className="h-8 w-full min-w-0 border-primary/15 bg-background text-[11px] sm:w-72" aria-label="选择资源版本" title="选择资源版本">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    {family.releases.map((item) => {
+                      const itemKey = releaseKey(item);
+                      return (
+                        <SelectItem key={itemKey} value={itemKey}>
+                          {getReleaseVersionLabel(item, preferences, releaseKey(item) === releaseKey(release))}
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
             )}
           </div>
         </div>
         <Button
-          className="min-h-11 shrink-0 px-2 sm:min-h-9 sm:px-3"
+          className="min-h-9 shrink-0 border-primary/20 bg-primary/10 px-2 text-primary hover:bg-primary/20 sm:px-3"
           variant="outline"
           onClick={() => onAddRelease(release)}
           disabled={!canDownload || Boolean(linkedTask) || addingReleaseId === release.id || addingReleaseId === batchAddingReleaseId}
@@ -2470,36 +2471,35 @@ function AnimeSourceBindingPanel({
   }, [confirmedBindings.length, groupedCandidates.length, loading, state?.errors.length]);
 
   return (
-    <section className="shrink-0 overflow-hidden rounded-md border bg-background">
-      <div className={cn("flex min-h-10 items-center justify-between bg-muted/50 pl-1 pr-2", expanded && "border-b")}>
+    <section className="shrink-0 overflow-hidden border-y border-primary/15 bg-primary/[0.03]">
+      <div className={cn("flex min-h-8 items-center justify-between bg-primary/5 px-1", expanded && "border-b border-primary/15")}>
         <Button
-          className="h-auto min-h-10 min-w-0 flex-1 justify-start px-2 py-2 text-left md:min-h-10"
+          className="h-auto min-h-8 min-w-0 flex-1 justify-start gap-2 px-2 py-1 text-left md:min-h-8"
           type="button"
           variant="ghost"
           aria-expanded={expanded}
           onClick={() => setExpanded((current) => !current)}
         >
-          {expanded ? (
-            <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
-          )}
-          <Link2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="shrink-0">来源匹配</span>
+          <span className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.1em]">Source Matching</span>
           <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
             {confirmedBindings.slice(0, 2).map((binding) => (
-              <Badge key={binding.sourceId} className="max-w-32 truncate" tone="green">
-                {binding.sourceId} 已绑定
+              <Badge key={binding.sourceId} className="h-5 max-w-32 truncate px-1.5 text-[10px]" tone="green">
+                {binding.sourceId} Bound
               </Badge>
             ))}
-            {confirmedBindings.length > 2 && <Badge tone="green">+{confirmedBindings.length - 2}</Badge>}
-            {groupedCandidates.length > 0 && <Badge tone="amber">{groupedCandidates.length} 个待确认</Badge>}
+            {confirmedBindings.length > 2 && <Badge className="h-5 px-1.5 text-[10px]" tone="green">+{confirmedBindings.length - 2}</Badge>}
+            {groupedCandidates.length > 0 && <Badge className="h-5 px-1.5 text-[10px]" tone="amber">{groupedCandidates.length} Pending</Badge>}
             {!hasContent && !loading && <span className="truncate text-xs font-normal text-muted-foreground">暂无精确匹配</span>}
             {loading && <span className="truncate text-xs font-normal text-muted-foreground">读取中</span>}
           </span>
+          {expanded ? (
+            <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+          )}
         </Button>
-        <Button variant="ghost" onClick={onRefresh} disabled={loading} title="重新读取来源候选" aria-label="重新读取来源候选">
-          <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
+        <Button className="size-8 min-h-8 px-1" variant="ghost" onClick={onRefresh} disabled={loading} title="重新读取来源候选" aria-label="重新读取来源候选">
+          <RefreshCw className={cn("size-4", loading && "animate-spin")} />
         </Button>
       </div>
       {expanded && (loading && !hasContent ? (
@@ -2508,9 +2508,9 @@ function AnimeSourceBindingPanel({
           <Skeleton className="h-4 w-64 max-w-full" />
         </div>
       ) : hasContent ? (
-        <div className="max-h-72 divide-y overflow-y-auto">
+        <div className="max-h-72 divide-y divide-primary/10 overflow-y-auto">
           {confirmedBindings.map((binding) => (
-            <div key={binding.sourceId} className="flex items-center justify-between gap-3 px-3 py-2">
+            <div key={binding.sourceId} className="flex items-center justify-between gap-3 px-3 py-2.5">
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <Badge tone="green"><Check className="mr-1 h-3 w-3" />已绑定</Badge>
@@ -2532,16 +2532,16 @@ function AnimeSourceBindingPanel({
             </div>
           ))}
           {groupedCandidates.map((group) => (
-            <div key={group.sourceId} className="px-3 py-3">
+            <div key={group.sourceId} className="px-3 py-2.5">
               <div className="mb-2 flex items-center justify-between gap-2">
-                <div className="text-sm font-medium">{group.sourceName}</div>
+                <div className="text-xs font-semibold uppercase tracking-[0.05em]">{group.sourceName}</div>
                 <Badge tone="amber">待确认</Badge>
               </div>
               <div className="flex flex-col gap-2">
                 {group.candidates.slice(0, 1).map((candidate) => {
                   const candidateKey = `${candidate.sourceId}:${candidate.sourceAnimeId}`;
                   return (
-                    <div key={candidateKey} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                    <div key={candidateKey} className="flex items-center justify-between gap-3 border border-primary/10 bg-background px-3 py-2">
                       <div className="min-w-0">
                         <div className="truncate text-sm" title={candidate.title}>{candidate.title}</div>
                         <div className="mt-1 truncate text-xs text-muted-foreground">
@@ -2568,7 +2568,7 @@ function AnimeSourceBindingPanel({
                       {group.candidates.slice(1).map((candidate) => {
                         const candidateKey = `${candidate.sourceId}:${candidate.sourceAnimeId}`;
                         return (
-                          <div key={candidateKey} className="flex items-center justify-between gap-3 rounded-md border px-3 py-2">
+                          <div key={candidateKey} className="flex items-center justify-between gap-3 border border-primary/10 bg-background px-3 py-2">
                             <div className="min-w-0">
                               <div className="truncate text-sm" title={candidate.title}>{candidate.title}</div>
                               <div className="mt-1 truncate text-xs text-muted-foreground">
