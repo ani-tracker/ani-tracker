@@ -126,6 +126,88 @@ test("AutomationRunService 优先使用追番 RSS 且命中后不请求全局源
   assert.match(repository.myAnime[0].rssSubscriptions?.[0].lastFetchedAt ?? "", /^\d{4}-\d{2}-\d{2}T/);
 });
 
+test("AutomationRunService 在追番 RSS 无结果时回退普通下载源", async (t) => {
+  const requestedUrls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url === "https://example.test/empty-personal.xml") {
+      return createRssResponse([]);
+    }
+    if (url === "https://example.test/feed.xml") {
+      return createRssResponse([
+        {
+          title: "[默认字幕组] 测试番 - 01 [1080p][HEVC][简体]",
+          guid: "fallback-empty-release",
+          magnet: "magnet:?xt=urn:btih:FALLBACKEMPTY01&dn=fallback"
+        }
+      ]);
+    }
+    throw new Error(`未预期的请求：${url}`);
+  });
+  const repository = new FakeAutomationRepository({
+    settings: defaultSettings,
+    myAnime: [createMyAnime({
+      rssSubscriptions: [createRssSubscription({
+        id: "rss-empty",
+        url: "https://example.test/empty-personal.xml"
+      })]
+    })],
+    episodes: [createEpisode()],
+    fansubs: createFansubs(),
+    sources: [createRssSource()]
+  });
+
+  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+
+  assert.deepEqual(requestedUrls, [
+    "https://example.test/empty-personal.xml",
+    "https://example.test/feed.xml"
+  ]);
+  assert.equal(result.downloaded[0].releaseId, "rss-test:fallback-empty-release");
+});
+
+test("AutomationRunService 在追番 RSS 失败时回退普通下载源", async (t) => {
+  const requestedUrls: string[] = [];
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    const url = String(input);
+    requestedUrls.push(url);
+    if (url === "https://rss-failure.example.test/personal.xml") {
+      return new Response("unavailable", { status: 503, statusText: "Unavailable" });
+    }
+    if (url === "https://example.test/feed.xml") {
+      return createRssResponse([
+        {
+          title: "[默认字幕组] 测试番 - 01 [1080p][HEVC][简体]",
+          guid: "fallback-error-release",
+          magnet: "magnet:?xt=urn:btih:FALLBACKERROR01&dn=fallback"
+        }
+      ]);
+    }
+    throw new Error(`未预期的请求：${url}`);
+  });
+  const repository = new FakeAutomationRepository({
+    settings: defaultSettings,
+    myAnime: [createMyAnime({
+      rssSubscriptions: [createRssSubscription({
+        id: "rss-failure",
+        url: "https://rss-failure.example.test/personal.xml"
+      })]
+    })],
+    episodes: [createEpisode()],
+    fansubs: createFansubs(),
+    sources: [createRssSource()]
+  });
+
+  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+
+  assert.deepEqual(requestedUrls, [
+    "https://rss-failure.example.test/personal.xml",
+    "https://example.test/feed.xml"
+  ]);
+  assert.equal(result.downloaded[0].releaseId, "rss-test:fallback-error-release");
+});
+
 test("AutomationRunService 在 RSS 刷新间隔内复用订阅缓存", async (t) => {
   let fetchCount = 0;
   t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {

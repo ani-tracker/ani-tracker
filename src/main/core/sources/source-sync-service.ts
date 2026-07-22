@@ -1,4 +1,8 @@
-import type { SourceSyncRunResult } from "@shared/contracts";
+import type {
+  AnimeRssFeedDescriptor,
+  AnimeRssSubscriptionSource,
+  SourceSyncRunResult
+} from "@shared/contracts";
 import type {
   AppSettings,
   NotificationRecord,
@@ -10,7 +14,7 @@ import type {
 import { logger } from "../logger";
 import { MetadataHttpClient } from "../metadata/metadata-http-client";
 import type { AppRepository } from "../repositories/app-repository";
-import { AniBtReleaseSource } from "./anibt-source";
+import { isAnimeRssSubscriptionSource } from "./anime-rss-subscription-source";
 import { createReleaseSource, isMikanSiteConfig } from "./release-source-service";
 import { createSourceHttpClient, getReleaseSourceCircuitState } from "./source-http-client";
 import type { ReleaseHttpClient } from "./mikan-source";
@@ -95,22 +99,19 @@ export class SourceSyncService {
         result.skippedSourceIds.push(source.id);
         return;
       }
-      const sourceAnimeIds = releaseSource instanceof AniBtReleaseSource
-        ? await this.listTrackedAniBtAnimeIds(source.id)
+      const animeRssSubscriptions = isAnimeRssSubscriptionSource(releaseSource)
+        ? await this.listTrackedAnimeRssSubscriptions(source.id, releaseSource)
         : [];
       let releases;
-      if (releaseSource instanceof AniBtReleaseSource && sourceAnimeIds.length > 0) {
-        logger.info("AniBT 增量同步使用追番 ID 过滤", {
+      if (animeRssSubscriptions.length > 0 && isAnimeRssSubscriptionSource(releaseSource)) {
+        logger.info("下载源增量同步使用单番 RSS", {
           sourceId: source.id,
-          animeCount: sourceAnimeIds.length,
+          animeCount: animeRssSubscriptions.length,
           limit: MAX_RELEASE_SOURCE_FETCH_LIMIT
         });
         const batches: Release[] = [];
-        for (const sourceAnimeId of sourceAnimeIds) {
-          batches.push(...await releaseSource.listReleasesByAnimeId(
-            sourceAnimeId,
-            MAX_RELEASE_SOURCE_FETCH_LIMIT
-          ));
+        for (const subscription of animeRssSubscriptions) {
+          batches.push(...await releaseSource.fetchAnimeRssSubscription(subscription));
         }
         releases = batches;
       } else {
@@ -157,16 +158,27 @@ export class SourceSyncService {
       ?? createEmptyState(sourceId);
   }
 
-  /** 读取追番中已确认的 AniBT 映射，并以 Bangumi ID 作为后备。 */
-  private async listTrackedAniBtAnimeIds(sourceId: string): Promise<string[]> {
+  /** 为追番生成来源支持的精确 RSS，并以番剧外部 ID 作为后备。 */
+  private async listTrackedAnimeRssSubscriptions(
+    sourceId: string,
+    releaseSource: AnimeRssSubscriptionSource
+  ): Promise<AnimeRssFeedDescriptor[]> {
     const trackedAnime = await this.repository.listMyAnime();
-    const sourceAnimeIds = await Promise.all(trackedAnime.map(async (item) => {
+    const subscriptions = await Promise.all(trackedAnime.map(async (item) => {
       const bindings = await this.repository.listAnimeSourceBindings(item.anime.id);
       const binding = bindings.find((candidate) => candidate.sourceId === sourceId && candidate.confirmed);
-      return binding?.sourceAnimeId.trim() || item.anime.externalIds.bangumi?.trim();
+      return releaseSource.buildAnimeRssSubscription({
+        anime: item.anime,
+        binding,
+        limit: MAX_RELEASE_SOURCE_FETCH_LIMIT,
+        allowExternalIdFallback: true
+      });
     }));
 
-    return [...new Set(sourceAnimeIds.filter((value): value is string => Boolean(value)))];
+    const exactSubscriptions = subscriptions.filter(
+      (subscription): subscription is AnimeRssFeedDescriptor => Boolean(subscription?.exactAnimeMatch)
+    );
+    return [...new Map(exactSubscriptions.map((subscription) => [subscription.url, subscription])).values()];
   }
 
   /** 将失败来源、根因和熔断状态写入提醒中心。 */
@@ -216,17 +228,32 @@ function createConditionalSyncClient(
   const client: ConditionalSyncClient = {
     fetch: async (input, options = {}) => {
       const headers = new Headers(options.headers);
-      if (source.kind === "rss") {
+      const isPrimaryRssRequest = source.kind === "rss" && isSameRequestUrl(input, source.rssUrl);
+      if (isPrimaryRssRequest) {
         if (state.etag) headers.set("If-None-Match", state.etag);
         if (state.lastModified) headers.set("If-Modified-Since", state.lastModified);
       }
       const response = await httpClient.fetch(input, { ...options, headers });
-      client.etag = response.headers.get("etag") ?? undefined;
-      client.lastModified = response.headers.get("last-modified") ?? undefined;
+      if (isPrimaryRssRequest) {
+        client.etag = response.headers.get("etag") ?? undefined;
+        client.lastModified = response.headers.get("last-modified") ?? undefined;
+      }
       return response;
     }
   };
   return client;
+}
+
+/** 判断条件请求游标是否属于来源配置中的主 RSS。 */
+function isSameRequestUrl(input: string | URL, configuredUrl?: string): boolean {
+  if (!configuredUrl) {
+    return false;
+  }
+  try {
+    return new URL(String(input)).toString() === new URL(configuredUrl).toString();
+  } catch {
+    return String(input) === configuredUrl;
+  }
 }
 
 function canSynchronizeSource(source: ReleaseSourceConfig): boolean {

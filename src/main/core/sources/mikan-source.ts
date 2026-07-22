@@ -1,4 +1,11 @@
-import type { AnimeSourceCandidate, ReleaseQuery, ReleaseSource } from "@shared/contracts";
+import type {
+  AnimeRssFeedDescriptor,
+  AnimeRssSubscriptionContext,
+  AnimeRssSubscriptionSource,
+  AnimeSourceCandidate,
+  ReleaseQuery,
+  ReleaseSource
+} from "@shared/contracts";
 import type { Anime, Release, ReleaseSourceConfig } from "@shared/domain";
 import { enrichReleaseFromTitle, normalizeFansubName } from "../releases/release-title-parser";
 import { DESKTOP_BROWSER_USER_AGENT } from "../http/user-agents";
@@ -22,13 +29,18 @@ export interface MikanSubgroup {
   rssUrl: string;
 }
 
-export class MikanReleaseSource implements ReleaseSource {
+export class MikanReleaseSource implements ReleaseSource, AnimeRssSubscriptionSource {
+  readonly animeRssBindingError = "请先确认蜜柑计划番剧匹配";
+
   constructor(
     public readonly config: ReleaseSourceConfig,
     private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
   ) {}
 
   async searchReleases(query: ReleaseQuery): Promise<Release[]> {
+    if (this.config.kind === "rss") {
+      return new RssReleaseSource(this.config, this.httpClient).searchReleases(query);
+    }
     const keyword = query.keyword.trim();
     if (!keyword) {
       return [];
@@ -53,24 +65,41 @@ export class MikanReleaseSource implements ReleaseSource {
     return this.searchReleases({ keyword: animeId });
   }
 
-  /** 按 Mikan 番组 ID 精确读取该番剧 RSS。 */
-  async listReleasesByAnimeId(sourceAnimeId: string, limit = 50): Promise<Release[]> {
-    const rssUrl = new URL("/RSS/Bangumi", getMikanBaseUrl(this.config));
-    rssUrl.searchParams.set("bangumiId", sourceAnimeId);
+  /** 根据已确认绑定或 Mikan 外部 ID 生成单番 RSS。 */
+  buildAnimeRssSubscription(context: AnimeRssSubscriptionContext): AnimeRssFeedDescriptor | undefined {
+    const boundSourceAnimeId = context.binding?.confirmed && context.binding.sourceId === this.config.id
+      ? context.binding.sourceAnimeId.trim()
+      : "";
+    const sourceAnimeId = boundSourceAnimeId
+      || (context.allowExternalIdFallback ? context.anime.externalIds.mikan?.trim() : "");
+    if (!sourceAnimeId) {
+      return undefined;
+    }
+
+    return createMikanAnimeRssDescriptor(this.config, sourceAnimeId, context.limit);
+  }
+
+  /** 读取 Mikan 单番 RSS，并补充字幕组订阅元数据。 */
+  async fetchAnimeRssSubscription(subscription: AnimeRssFeedDescriptor): Promise<Release[]> {
+    if (!subscription.sourceAnimeId) {
+      throw new Error(this.animeRssBindingError);
+    }
     const source = new RssReleaseSource(
       {
         ...this.config,
         kind: "rss",
-        rssUrl: rssUrl.toString()
+        rssUrl: subscription.url
       },
       this.httpClient
     );
-    const releases = await source.searchReleases({
-      keyword: "",
-      limit: normalizeReleaseSourceFetchLimit(limit)
-    });
-    const subgroups = await this.readAnimeSubgroups(sourceAnimeId);
-    return attachMikanSubgroupMeta(releases, sourceAnimeId, subgroups, this.config);
+    const releases = await source.fetchAnimeRssSubscription(subscription);
+    const subgroups = await this.readAnimeSubgroups(subscription.sourceAnimeId);
+    return attachMikanSubgroupMeta(releases, subscription.sourceAnimeId, subgroups, this.config);
+  }
+
+  /** 按 Mikan 番组 ID 精确读取该番剧 RSS。 */
+  async listReleasesByAnimeId(sourceAnimeId: string, limit = 50): Promise<Release[]> {
+    return this.fetchAnimeRssSubscription(createMikanAnimeRssDescriptor(this.config, sourceAnimeId, limit));
   }
 
   /** 从 Mikan 对应季度目录查找待确认番剧。 */
@@ -105,6 +134,24 @@ export class MikanReleaseSource implements ReleaseSource {
       return [];
     }
   }
+}
+
+/** 构造 Mikan 单番 RSS 描述并统一限制返回数量。 */
+function createMikanAnimeRssDescriptor(
+  config: ReleaseSourceConfig,
+  sourceAnimeId: string,
+  limit = 50
+): AnimeRssFeedDescriptor {
+  const rssUrl = new URL("/RSS/Bangumi", getMikanBaseUrl(config));
+  rssUrl.searchParams.set("bangumiId", sourceAnimeId);
+  return {
+    sourceId: config.id,
+    sourceName: config.name,
+    sourceAnimeId,
+    url: rssUrl.toString(),
+    limit: normalizeReleaseSourceFetchLimit(limit),
+    exactAnimeMatch: true
+  };
 }
 
 /** 生成 Mikan 资源搜索分页地址。 */

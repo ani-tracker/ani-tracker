@@ -9,6 +9,7 @@ import type { AppRepository } from "../repositories/app-repository";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { AcgnxReleaseSource } from "./acgnx-source";
 import { AcgRipReleaseSource } from "./acgrip-source";
+import { isAnimeRssSubscriptionSource } from "./anime-rss-subscription-source";
 import { AniBtReleaseSource } from "./anibt-source";
 import { DmhyReleaseSource } from "./dmhy-source";
 import { MikanReleaseSource, type ReleaseHttpClient } from "./mikan-source";
@@ -150,44 +151,28 @@ export class ReleaseSourceService {
       sources.map(async (config) => {
         const binding = bindings.find((item) => item.sourceId === config.id && item.confirmed);
         try {
-          const sourceHttpClient = createSourceHttpClient(config, this.httpClient, this.repository);
+          const source = createReleaseSource(config, this.httpClient, this.repository);
           let releases: Release[] = [];
-          if (isMikanRssConfig(config)) {
-            if (!binding) {
+          if (source && isAnimeRssSubscriptionSource(source)) {
+            const subscription = source.buildAnimeRssSubscription({
+              anime,
+              binding,
+              limit: query.limit
+            });
+            if (!subscription) {
               return {
                 sourceId: config.id,
                 sourceName: config.name,
                 releases,
-                error: "请先确认蜜柑计划番剧匹配"
+                error: source.animeRssBindingError ?? "下载源无法生成当前番剧的 RSS 订阅"
               };
             }
-            releases = await new MikanReleaseSource(config, sourceHttpClient).listReleasesByAnimeId(
-              binding.sourceAnimeId,
-              query.limit
+            releases = await source.fetchAnimeRssSubscription(subscription);
+          } else if (source) {
+            const results = await Promise.all(
+              terms.map((keyword) => source.searchReleases({ ...query, keyword, animeId: anime.id }))
             );
-          } else if (isAniBtConfig(config)) {
-            if (!binding) {
-              return {
-                sourceId: config.id,
-                sourceName: config.name,
-                releases,
-                error: "请先确认 AniBT 番剧匹配"
-              };
-            }
-            releases = await new AniBtReleaseSource(config, sourceHttpClient).listReleasesByAnimeId(
-              binding.sourceAnimeId,
-              query.limit
-            );
-          } else {
-            const source = createReleaseSource(config, this.httpClient, this.repository);
-            if (source && config.kind === "rss") {
-              releases = await source.searchReleases({ ...query, keyword: "", animeId: anime.id });
-            } else if (source) {
-              const results = await Promise.all(
-                terms.map((keyword) => source.searchReleases({ ...query, keyword, animeId: anime.id }))
-              );
-              releases = results.flat();
-            }
+            releases = results.flat();
           }
 
           return { sourceId: config.id, sourceName: config.name, releases };
@@ -436,6 +421,10 @@ export function createReleaseSource(
   applyNetworkPolicy = true
 ): ReleaseSource | null {
   const sourceHttpClient = applyNetworkPolicy ? createSourceHttpClient(config, httpClient, repository) : httpClient;
+  if (isMikanRssConfig(config)) {
+    return new MikanReleaseSource(config, sourceHttpClient);
+  }
+
   if (config.kind === "rss") {
     return new RssReleaseSource(config, sourceHttpClient);
   }

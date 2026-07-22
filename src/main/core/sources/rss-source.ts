@@ -1,4 +1,10 @@
-import type { ReleaseQuery, ReleaseSource } from "@shared/contracts";
+import type {
+  AnimeRssFeedDescriptor,
+  AnimeRssSubscriptionContext,
+  AnimeRssSubscriptionSource,
+  ReleaseQuery,
+  ReleaseSource
+} from "@shared/contracts";
 import type { Release, ReleaseSourceConfig } from "@shared/domain";
 import { normalizeReleaseSearchText } from "../../../shared/anime-release-search";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
@@ -53,7 +59,7 @@ interface RssItem {
   };
 }
 
-export class RssReleaseSource implements ReleaseSource {
+export class RssReleaseSource implements ReleaseSource, AnimeRssSubscriptionSource {
   constructor(
     public readonly config: ReleaseSourceConfig,
     private readonly httpClient: RssHttpClient = defaultMetadataHttpClient
@@ -83,6 +89,26 @@ export class RssReleaseSource implements ReleaseSource {
   /** 读取固定 RSS 中的最新番剧资源。 */
   async listLatestByAnime(animeId: string): Promise<Release[]> {
     return this.searchReleases({ keyword: animeId });
+  }
+
+  /** 将固定 RSS 下载源转换为可统一调度的番剧订阅。 */
+  buildAnimeRssSubscription(context: AnimeRssSubscriptionContext): AnimeRssFeedDescriptor | undefined {
+    if (!this.config.rssUrl) {
+      return undefined;
+    }
+    return {
+      sourceId: this.config.id,
+      sourceName: this.config.name,
+      url: this.config.rssUrl,
+      limit: normalizeReleaseSourceFetchLimit(context.limit),
+      exactAnimeMatch: false
+    };
+  }
+
+  /** 读取通用 RSS 订阅并限制单次返回数量。 */
+  async fetchAnimeRssSubscription(subscription: AnimeRssFeedDescriptor): Promise<Release[]> {
+    const releases = await fetchRssReleases(this.config, this.httpClient, subscription.url);
+    return releases.slice(0, normalizeReleaseSourceFetchLimit(subscription.limit));
   }
 
   /** 使用当前来源配置读取 RSS。 */

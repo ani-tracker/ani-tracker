@@ -1,4 +1,11 @@
-import type { AnimeSourceCandidate, ReleaseQuery, ReleaseSource } from "@shared/contracts";
+import type {
+  AnimeRssFeedDescriptor,
+  AnimeRssSubscriptionContext,
+  AnimeRssSubscriptionSource,
+  AnimeSourceCandidate,
+  ReleaseQuery,
+  ReleaseSource
+} from "@shared/contracts";
 import type { Anime, Release, ReleaseSourceConfig, SubtitlePreference } from "@shared/domain";
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { logger } from "../logger";
@@ -65,7 +72,9 @@ interface AniBtRssItem {
   };
 }
 
-export class AniBtReleaseSource implements ReleaseSource {
+export class AniBtReleaseSource implements ReleaseSource, AnimeRssSubscriptionSource {
+  readonly animeRssBindingError = "请先确认 AniBT 番剧匹配";
+
   constructor(
     public readonly config: ReleaseSourceConfig,
     private readonly httpClient: ReleaseHttpClient = defaultMetadataHttpClient
@@ -120,9 +129,29 @@ export class AniBtReleaseSource implements ReleaseSource {
     return this.searchReleases({ keyword: animeId });
   }
 
+  /** 根据已确认绑定或 Bangumi 外部 ID 生成 AniBT 单番 RSS。 */
+  buildAnimeRssSubscription(context: AnimeRssSubscriptionContext): AnimeRssFeedDescriptor | undefined {
+    const boundSourceAnimeId = context.binding?.confirmed && context.binding.sourceId === this.config.id
+      ? context.binding.sourceAnimeId.trim()
+      : "";
+    const sourceAnimeId = boundSourceAnimeId
+      || (context.allowExternalIdFallback ? context.anime.externalIds.bangumi?.trim() : "");
+    if (!sourceAnimeId) {
+      return undefined;
+    }
+
+    return createAniBtAnimeRssDescriptor(this.config, sourceAnimeId, context.limit);
+  }
+
+  /** 读取并解析 AniBT 单番 RSS 扩展字段。 */
+  async fetchAnimeRssSubscription(subscription: AnimeRssFeedDescriptor): Promise<Release[]> {
+    const releases = await this.readFeed(subscription.url);
+    return releases.slice(0, normalizeReleaseSourceFetchLimit(subscription.limit));
+  }
+
   /** 按 Bangumi ID 精确读取 AniBT 番剧 RSS。 */
   async listReleasesByAnimeId(sourceAnimeId: string, limit = 50): Promise<Release[]> {
-    return this.readAnimeFeed(sourceAnimeId, normalizeReleaseSourceFetchLimit(limit));
+    return this.fetchAnimeRssSubscription(createAniBtAnimeRssDescriptor(this.config, sourceAnimeId, limit));
   }
 
   /** 查询 AniBT 可供用户确认的番剧候选。 */
@@ -180,10 +209,7 @@ export class AniBtReleaseSource implements ReleaseSource {
   }
 
   private async readAnimeFeed(bgmId: string, limit: number): Promise<Release[]> {
-    const url = new URL("/rss/anime.xml", this.config.baseUrl ?? DEFAULT_ANIBT_BASE_URL);
-    url.searchParams.set("bgmId", bgmId);
-    url.searchParams.set("limit", String(limit));
-    return this.readFeed(url.toString());
+    return this.fetchAnimeRssSubscription(createAniBtAnimeRssDescriptor(this.config, bgmId, limit));
   }
 
   private async readLatestFeed(limit: number): Promise<Release[]> {
@@ -203,6 +229,26 @@ export class AniBtReleaseSource implements ReleaseSource {
 
     return parseAniBtRss(await response.text(), this.config);
   }
+}
+
+/** 构造 AniBT 单番 RSS 描述，单次请求最多返回 50 条。 */
+function createAniBtAnimeRssDescriptor(
+  config: ReleaseSourceConfig,
+  sourceAnimeId: string,
+  limit = 50
+): AnimeRssFeedDescriptor {
+  const normalizedLimit = normalizeReleaseSourceFetchLimit(limit);
+  const url = new URL("/rss/anime.xml", config.baseUrl ?? DEFAULT_ANIBT_BASE_URL);
+  url.searchParams.set("bgmId", sourceAnimeId);
+  url.searchParams.set("limit", String(normalizedLimit));
+  return {
+    sourceId: config.id,
+    sourceName: config.name,
+    sourceAnimeId,
+    url: url.toString(),
+    limit: normalizedLimit,
+    exactAnimeMatch: true
+  };
 }
 
 export function createAniBtHeaders(config: ReleaseSourceConfig, accept: string): Record<string, string> {

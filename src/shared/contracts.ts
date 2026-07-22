@@ -79,6 +79,24 @@ export interface AnimeReleaseQuery {
   forceRefresh?: boolean;
 }
 
+/** 生成单番 RSS 订阅时需要的番剧和来源绑定上下文。 */
+export interface AnimeRssSubscriptionContext {
+  anime: Anime;
+  binding?: AnimeSourceBinding;
+  limit?: number;
+  allowExternalIdFallback?: boolean;
+}
+
+/** 下载源生成的单番 RSS 描述，由对应适配器负责读取和解析。 */
+export interface AnimeRssFeedDescriptor {
+  sourceId: string;
+  sourceName: string;
+  sourceAnimeId?: string;
+  url: string;
+  limit: number;
+  exactAnimeMatch: boolean;
+}
+
 export interface ReleaseSourceSearchResult {
   sourceId: string;
   sourceName: string;
@@ -413,6 +431,13 @@ export interface ReleaseSource {
   searchReleases(query: ReleaseQuery): Promise<Release[]>;
   listLatestByFansub(groupId: string): Promise<Release[]>;
   listLatestByAnime(animeId: string): Promise<Release[]>;
+}
+
+/** 可提供单番 RSS 的下载源能力；不支持 RSS 的来源无需实现。 */
+export interface AnimeRssSubscriptionSource extends ReleaseSource {
+  readonly animeRssBindingError?: string;
+  buildAnimeRssSubscription(context: AnimeRssSubscriptionContext): AnimeRssFeedDescriptor | undefined;
+  fetchAnimeRssSubscription(subscription: AnimeRssFeedDescriptor): Promise<Release[]>;
 }
 
 export interface TorrentEngine {

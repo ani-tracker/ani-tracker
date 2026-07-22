@@ -4,6 +4,7 @@ import type { ReleaseSearchResult } from "@shared/contracts";
 import type { Anime, AnimeSourceBinding, ReleaseSourceConfig } from "@shared/domain";
 import type { AppRepository } from "../../repositories/app-repository";
 import { AcgRipReleaseSource } from "../acgrip-source";
+import { isAnimeRssSubscriptionSource } from "../anime-rss-subscription-source";
 import { defaultSourceConfigs } from "../default-source-configs";
 import { parseAcgnxApiResponse, parseAcgnxHtml } from "../acgnx-source";
 import { AniBtReleaseSource, createAniBtHeaders, parseAniBtRss } from "../anibt-source";
@@ -114,6 +115,55 @@ test("默认下载源包含 AniBT、ACGNX、Nyaa 和 ACG.RIP 且可创建站点�
   assert.equal(createReleaseSource(acgnx)?.config.id, "acgnx");
   assert.ok(createReleaseSource(nyaa) instanceof NyaaReleaseSource);
   assert.ok(createReleaseSource(acgRip) instanceof AcgRipReleaseSource);
+});
+
+test("通用 RSS、AniBT 和 Mikan 实现统一单番 RSS 能力", () => {
+  const anime: Anime = {
+    id: "anime-rss-capability",
+    title: "统一订阅测试番",
+    aliases: [],
+    premiereYear: 2026,
+    premiereMonth: 7,
+    externalIds: { bangumi: "528828", mikan: "3941" }
+  };
+  const genericSource = createReleaseSource({
+    id: "generic-rss",
+    name: "通用 RSS",
+    kind: "rss",
+    enabled: true,
+    rssUrl: "https://example.test/feed.xml"
+  });
+  const aniBtSource = createReleaseSource(anibtConfig);
+  const mikanSource = createReleaseSource({
+    id: "mikan",
+    name: "蜜柑计划 RSS",
+    kind: "rss",
+    enabled: true,
+    rssUrl: "https://mikanani.me/RSS/Bangumi"
+  });
+
+  assert.ok(genericSource && isAnimeRssSubscriptionSource(genericSource));
+  assert.ok(aniBtSource && isAnimeRssSubscriptionSource(aniBtSource));
+  assert.ok(mikanSource && isAnimeRssSubscriptionSource(mikanSource));
+
+  const genericDescriptor = genericSource.buildAnimeRssSubscription({ anime, limit: 200 });
+  const aniBtDescriptor = aniBtSource.buildAnimeRssSubscription({
+    anime,
+    allowExternalIdFallback: true,
+    limit: 200
+  });
+  const mikanDescriptor = mikanSource.buildAnimeRssSubscription({
+    anime,
+    allowExternalIdFallback: true,
+    limit: 200
+  });
+
+  assert.equal(genericDescriptor?.exactAnimeMatch, false);
+  assert.equal(genericDescriptor?.limit, MAX_RELEASE_SOURCE_FETCH_LIMIT);
+  assert.equal(aniBtDescriptor?.url, "https://anibt.net/rss/anime.xml?bgmId=528828&limit=50");
+  assert.equal(mikanDescriptor?.url, "https://mikanani.me/RSS/Bangumi?bangumiId=3941");
+  assert.equal(aniBtDescriptor?.exactAnimeMatch, true);
+  assert.equal(mikanDescriptor?.exactAnimeMatch, true);
 });
 
 test("parseDmhyList 解析资源行中的标题、下载地址和媒体字段", () => {

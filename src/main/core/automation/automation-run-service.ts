@@ -22,8 +22,10 @@ import { evaluateAutomaticDownload, rankReleases, type ReleaseMatchResult } from
 import { enrichReleaseFromTitle } from "../releases/release-title-parser";
 import { MetadataHttpClient } from "../metadata/metadata-http-client";
 import { ReleaseSourceService, resolveAnimeReleaseCacheTtlMs } from "../sources/release-source-service";
+import { isAnimeRssSubscriptionSource } from "../sources/anime-rss-subscription-source";
 import { RssReleaseSource } from "../sources/rss-source";
 import { createSourceHttpClient } from "../sources/source-http-client";
+import { MAX_RELEASE_SOURCE_FETCH_LIMIT } from "../sources/source-query";
 import { AnimeSourceBindingService } from "../source-bindings/anime-source-binding-service";
 
 const DEFAULT_RSS_REFRESH_INTERVAL_MINUTES = 20;
@@ -426,12 +428,17 @@ async function fetchRssSubscriptionReleases(
     sourceConfig,
     createSourceHttpClient(sourceConfig, input.httpClient)
   );
-  const rssReleases = await source.searchReleases({
-    keyword: "",
-    animeId: input.anime.anime.id,
-    preferredResolution: input.anime.preferredResolution,
-    limit: 200
+  if (!isAnimeRssSubscriptionSource(source)) {
+    return [];
+  }
+  const rssDescriptor = source.buildAnimeRssSubscription({
+    anime: input.anime.anime,
+    limit: MAX_RELEASE_SOURCE_FETCH_LIMIT
   });
+  if (!rssDescriptor) {
+    return [];
+  }
+  const rssReleases = await source.fetchAnimeRssSubscription(rssDescriptor);
   const searchTerms = buildAnimeReleaseSearchTerms(input.anime.anime);
   const relevantReleases = isExactMikanSubscription(rssUrl, input.anime)
     ? rssReleases
