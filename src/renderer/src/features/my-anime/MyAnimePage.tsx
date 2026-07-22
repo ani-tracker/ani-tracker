@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarDays, Check, ChevronDown, ChevronRight, Download, Link2, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, Download, Link2, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -1045,10 +1045,19 @@ export function MyAnimePage({
       {downloadTarget && (
         <WorkbenchSheet
           bodyClassName="flex flex-col overflow-hidden"
-          className="sm:max-w-5xl"
-          description={`${resolveAnimeTitleDisplay(downloadTarget.anime).subtitle ?? "追番资源"} · ${animeReleases.length + animeRssReleaseGroups.reduce((total, group) => total + group.releases.length, 0)} 个资源`}
+          className="sm:max-w-[800px]"
+          description={
+            <span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+              <strong className="text-sm text-foreground">{resolveAnimeTitleDisplay(downloadTarget.anime).title}</strong>
+              <span>
+                关联集 {countReleaseFamilyEpisodes(groupReleaseVersions(animeReleases, downloadTarget, {}))}
+                {" | "}已完成 {downloadTasks.filter((task) => task.animeId === downloadTarget.anime.id && isCompletedDownload(task)).length}
+                {" | "}下载任务 {downloadTasks.filter((task) => task.animeId === downloadTarget.anime.id).length}
+              </span>
+            </span>
+          }
           onClose={closeAnimeDownloads}
-          title={`下载资源 · ${resolveAnimeTitleDisplay(downloadTarget.anime).title}`}
+          title={<span className="flex items-center gap-2">下载资源 <Badge className="h-5" tone="primary-soft">WORKBENCH</Badge></span>}
         >
           <AnimeDownloadPanel
             addingReleaseId={addingReleaseId}
@@ -1069,6 +1078,7 @@ export function MyAnimePage({
             sourceBindingLoading={sourceBindingLoading}
             sourceBindingState={sourceBindingState}
             target={downloadTarget}
+            onCancel={closeAnimeDownloads}
             onAddRelease={(release) => void addAnimeReleaseDownload(release)}
             onAddRssSubscription={(subscription) => void addAnimeRssSubscription(subscription)}
             onAddSelected={(releases) => void addAnimeReleaseDownloads(releases)}
@@ -1715,6 +1725,7 @@ function AnimeDownloadPanel({
   onRefreshRss,
   onRefresh,
   onForceRefresh,
+  onCancel,
   onAddRelease,
   onAddRssSubscription,
   onAddSelected
@@ -1745,25 +1756,31 @@ function AnimeDownloadPanel({
   onRefreshRss: () => void;
   onRefresh: () => void;
   onForceRefresh: () => void;
+  onCancel: () => void;
   onAddRelease: (release: Release) => void;
   onAddRssSubscription: (subscription: RssSubscriptionDraft) => void;
   onAddSelected: (releases: Release[]) => void;
 }) {
-  const titleDisplay = resolveAnimeTitleDisplay(target.anime);
   const [groupCollapseOverrides, setGroupCollapseOverrides] = useState<Record<string, boolean>>({});
   const [otherResourcesCollapsed, setOtherResourcesCollapsed] = useState(true);
+  const [selectedRssSubscriptionId, setSelectedRssSubscriptionId] = useState("");
   const [selectedFamilyKeys, setSelectedFamilyKeys] = useState<Set<string>>(() => new Set());
   const [releaseVersionSelections, setReleaseVersionSelections] = useState<Record<string, string>>({});
-  const rssReleases = rssGroups.flatMap((group) => group.releases);
+  const activeRssGroup = rssGroups.find((group) => group.subscription.id === selectedRssSubscriptionId) ?? rssGroups[0];
+  const rssReleases = activeRssGroup?.releases ?? [];
   const tabReleases = activeTab === "rss" ? rssReleases : releases;
   const releaseGroupingOptions = activeTab === "search" ? { preserveInputOrder: true } : undefined;
   const currentTabReleases = tabReleases.filter((release) => classifyAnimeRelease(release, target.anime) === "current");
   const otherTabReleases = tabReleases.filter((release) => classifyAnimeRelease(release, target.anime) === "other");
-  const visibleReleases = filterReleasesByFansub(currentTabReleases, selectedFansubId);
-  const visibleOtherReleases = filterReleasesByFansub(otherTabReleases, selectedFansubId);
+  const visibleReleases = activeTab === "rss"
+    ? currentTabReleases
+    : filterReleasesByFansub(currentTabReleases, selectedFansubId);
+  const visibleOtherReleases = activeTab === "rss"
+    ? otherTabReleases
+    : filterReleasesByFansub(otherTabReleases, selectedFansubId);
   const releaseGroups = groupReleasesByFansub(visibleReleases, fansubNames);
   const visibleErrors = activeTab === "rss"
-    ? dedupeReleaseErrors(rssGroups.flatMap((group) => group.errors))
+    ? dedupeReleaseErrors(activeRssGroup?.errors ?? [])
     : dedupeReleaseErrors(errors);
   const unknownFansubCount = tabReleases.filter((release) => !release.fansubGroupId).length;
   const activeLoading = activeTab === "rss" ? rssLoading : loading;
@@ -1787,6 +1804,16 @@ function AnimeDownloadPanel({
     setSelectedFamilyKeys(new Set());
     setReleaseVersionSelections({});
   }, [activeTab, releaseSignature]);
+
+  useEffect(() => {
+    if (rssGroups.length === 0) {
+      setSelectedRssSubscriptionId("");
+      return;
+    }
+    if (!rssGroups.some((group) => group.subscription.id === selectedRssSubscriptionId)) {
+      setSelectedRssSubscriptionId(rssGroups[0].subscription.id);
+    }
+  }, [rssGroups, selectedRssSubscriptionId]);
 
   /** 返回分组折叠状态；首次仅展开当前列表第一组。 */
   function isGroupCollapsed(groupKey: string, groupIndex: number): boolean {
@@ -1905,41 +1932,38 @@ function AnimeDownloadPanel({
   }
 
   return (
-        <div className="flex min-h-0 flex-1 flex-col gap-3 [@media(max-height:760px)]:gap-2">
-        <div className="grid shrink-0 items-center gap-2 md:grid-cols-2">
-          <div className="min-w-0">
-            <div className="truncate text-sm font-medium" title={titleDisplay.title}>
-              {titleDisplay.title}
-            </div>
-            {titleDisplay.subtitle && (
-              <div
-                className="mt-1 truncate text-xs text-muted-foreground [@media(max-height:760px)]:hidden"
-                title={titleDisplay.subtitle}
-              >
-                {titleDisplay.subtitle}
-              </div>
-            )}
-          </div>
+      <div className="flex min-h-0 flex-1 flex-col gap-3 [@media(max-height:760px)]:gap-2">
+        <div className="shrink-0 border-b">
           <Tabs value={activeTab} onValueChange={(value) => onTabChange(value as DownloadResourceTab)}>
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="rss">RSS订阅</TabsTrigger>
+            <TabsList className="grid w-full max-w-72 grid-cols-2" variant="line">
+              <TabsTrigger value="rss">RSS 订阅</TabsTrigger>
               <TabsTrigger value="search">资源搜索</TabsTrigger>
             </TabsList>
           </Tabs>
         </div>
 
-        {activeTab === "search" && (
-          <AnimeSourceBindingPanel
-            actionKey={sourceBindingActionKey}
-            loading={sourceBindingLoading}
-            state={sourceBindingState}
-            onConfirm={onConfirmSourceCandidate}
-            onRefresh={onRefreshSourceBindings}
-            onRemove={onRemoveSourceBinding}
+        {activeTab === "rss" ? (
+          <RssResourceToolbar
+            activeGroup={activeRssGroup}
+            groups={rssGroups}
+            loading={rssLoading}
+            selectedId={activeRssGroup?.subscription.id ?? ""}
+            onRefresh={onRefreshRss}
+            onSelect={setSelectedRssSubscriptionId}
           />
-        )}
+        ) : (
+          <>
+            <AnimeSourceBindingPanel
+              actionKey={sourceBindingActionKey}
+              loading={sourceBindingLoading}
+              state={sourceBindingState}
+              onConfirm={onConfirmSourceCandidate}
+              onRefresh={onRefreshSourceBindings}
+              onRemove={onRemoveSourceBinding}
+            />
 
-        <div className="flex shrink-0 flex-col gap-2 sm:flex-row sm:items-end">
+          <div className="shrink-0 border-y bg-card/50 px-3 py-3">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Field className="min-w-0 sm:flex-1">
             <FieldLabel className="sr-only" htmlFor="anime-release-fansub-filter">字幕组筛选</FieldLabel>
             <Select
@@ -1968,17 +1992,6 @@ function AnimeDownloadPanel({
             </Select>
           </Field>
           <div className="grid grid-cols-2 gap-2 sm:flex">
-            {activeTab === "rss" ? (
-              <Button
-                className="col-span-2 min-h-11 shrink-0 sm:min-h-9"
-                variant="outline"
-                onClick={onRefreshRss}
-                disabled={rssLoading}
-              >
-                <RefreshCw data-icon="inline-start" />
-                {rssLoading ? "读取中" : "刷新RSS"}
-              </Button>
-            ) : (
               <>
                 <Button className="min-h-11 shrink-0 sm:min-h-9" variant="outline" onClick={onRefresh} disabled={loading}>
                   <Search data-icon="inline-start" />
@@ -1996,21 +2009,28 @@ function AnimeDownloadPanel({
                   <span className="hidden sm:inline">强制刷新</span>
                 </Button>
               </>
-            )}
+          </div>
+          </div>
+          <div className="mt-3 flex flex-col gap-2 border-t pt-3 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+              <span>显示 <strong className="text-foreground">{visibleFamilies.length}</strong> 组</span>
+              <span>·</span>
+              <span>共 <strong className="text-foreground">{tabFamilies.length}</strong> 组</span>
+              <span>·</span>
+              <span>已选 <strong className="text-primary">{selectedDownloadableReleases.length}</strong> 组</span>
+            </div>
+            <div className="grid grid-cols-2 gap-2 sm:flex">
+              <Button variant="outline" onClick={toggleAllVisibleReleases} disabled={selectableVisibleFamilies.length === 0 || activeLoading}>
+                {allSelectableVisibleSelected ? "取消选择" : "全选可下载"}
+              </Button>
+              <Button onClick={() => onAddSelected(selectedDownloadableReleases)} disabled={selectedDownloadableReleases.length === 0 || batchAdding || activeLoading}>
+                <Download data-icon="inline-start" />批量下载
+              </Button>
+            </div>
           </div>
         </div>
-
-        <BatchDownloadControls
-          allSelected={allSelectableVisibleSelected}
-          batchAdding={batchAdding}
-          disabled={activeLoading}
-          selectedCount={selectedDownloadableReleases.length}
-          selectableCount={selectableVisibleFamilies.length}
-          totalCount={tabFamilies.length}
-          visibleCount={visibleFamilies.length}
-          onAddSelected={() => onAddSelected(selectedDownloadableReleases)}
-          onToggleAll={toggleAllVisibleReleases}
-        />
+          </>
+        )}
 
         {activeLoading && activeResolved && (
           <p aria-live="polite" className="shrink-0 text-xs text-muted-foreground" role="status">
@@ -2038,59 +2058,30 @@ function AnimeDownloadPanel({
         ) : (
           <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-3 overflow-y-auto pr-1">
             {activeTab === "rss"
-              ? rssGroups.map((group, groupIndex) => {
-                  const groupKey = `rss:${group.subscription.id}`;
-                  const collapsed = isGroupCollapsed(groupKey, groupIndex);
-                  const groupReleases = filterReleasesByFansub(
-                    group.releases.filter((release) => classifyAnimeRelease(release, target.anime) === "current"),
-                    selectedFansubId
-                  );
-                  const groupFamilies = groupReleaseVersions(groupReleases, target, releaseVersionSelections, releaseGroupingOptions);
-                  const selection = getGroupSelectionState(groupFamilies);
-                  return (
-                    <section key={group.subscription.id} className="shrink-0 overflow-hidden rounded-md border bg-background">
-                      <ReleaseGroupHeader
-                        allSelected={selection.allSelected}
-                        badgeText={`${groupFamilies.length} 个资源`}
-                        collapsed={collapsed}
-                        episodeCount={countReleaseFamilyEpisodes(groupFamilies)}
-                        name={group.subscription.name}
-                        rssSubscribed={false}
-                        selectableCount={selection.selectableCount}
-                        selectedCount={selection.selectedCount}
-                        title={group.subscription.url}
-                        onAddRssSubscription={onAddRssSubscription}
-                        onToggleCollapsed={() => toggleGroup(groupKey, collapsed)}
-                        onToggleSelected={() => toggleGroupFamilies(groupFamilies)}
-                      />
-                      {!collapsed && (
-                        <div>
-                          {group.errors.length > 0 && (
-                            <div className="flex flex-col gap-2 border-b p-3">
-                              {group.errors.map((error, index) => (
-                                <Alert key={`${error.sourceId}-${index}`}>
-                                  <AlertTitle>{group.subscription.name}</AlertTitle>
-                                  <AlertDescription>{error.message}</AlertDescription>
-                                </Alert>
-                              ))}
-                            </div>
-                          )}
-                          {groupReleases.length > 0 ? (
-                            <div className="divide-y">{renderEpisodeGroups(groupReleases)}</div>
-                          ) : (
-                            <Empty className="m-3 min-h-36 p-4">
-                              <EmptyHeader>
-                                <EmptyMedia variant="icon"><Rss /></EmptyMedia>
-                                <EmptyTitle>暂无匹配资源</EmptyTitle>
-                                <EmptyDescription>当前订阅没有匹配资源。</EmptyDescription>
-                              </EmptyHeader>
-                            </Empty>
-                          )}
-                        </div>
-                      )}
-                    </section>
-                  );
-                })
+              ? visibleFamilies.length > 0 && (
+                  <section className="shrink-0">
+                    <h3 className="flex items-center gap-2 border-b pb-3 text-sm font-semibold">
+                      <CalendarDays />历史发布
+                    </h3>
+                    <div className="mt-3 divide-y border-y bg-background">
+                      {visibleFamilies.map((family) => (
+                        <ReleaseDownloadRow
+                          key={family.key}
+                          addingReleaseId={addingReleaseId}
+                          batchSelectable
+                          fansubNames={fansubNames}
+                          family={family}
+                          linkedTask={findReleaseDownloadTask(linkedTasks, family.selectedRelease)}
+                          preferences={target}
+                          selected={selectedFamilyKeys.has(family.key)}
+                          onAddRelease={onAddRelease}
+                          onToggleSelected={toggleFamilySelection}
+                          onVersionChange={selectReleaseVersion}
+                        />
+                      ))}
+                    </div>
+                  </section>
+                )
               : releaseGroups.map((group, groupIndex) => {
                   const groupFamilies = groupReleaseVersions(group.releases, target, releaseVersionSelections, releaseGroupingOptions);
                   const selection = getGroupSelectionState(groupFamilies);
@@ -2170,7 +2161,65 @@ function AnimeDownloadPanel({
 
           </div>
         )}
-        </div>
+        <BatchDownloadControls
+          batchAdding={batchAdding}
+          disabled={activeLoading}
+          selectedCount={selectedDownloadableReleases.length}
+          totalCount={tabFamilies.length}
+          visibleCount={visibleFamilies.length}
+          onCancel={onCancel}
+          onAddSelected={() => onAddSelected(selectedDownloadableReleases)}
+        />
+      </div>
+  );
+}
+
+/** 渲染 RSS 增强版来源选择、刷新动作与最近同步状态。 */
+function RssResourceToolbar({
+  groups,
+  activeGroup,
+  selectedId,
+  loading,
+  onSelect,
+  onRefresh
+}: {
+  groups: RssReleaseGroupState[];
+  activeGroup?: RssReleaseGroupState;
+  selectedId: string;
+  loading: boolean;
+  onSelect: (id: string) => void;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="flex shrink-0 flex-col gap-3 border-y bg-card/50 px-3 py-3 sm:flex-row sm:items-end sm:justify-between">
+      <div className="flex min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-end">
+        <Field className="min-w-0 sm:max-w-72 sm:flex-1">
+          <FieldLabel htmlFor="anime-rss-source">RSS 来源</FieldLabel>
+          <Select value={selectedId || undefined} onValueChange={onSelect} disabled={groups.length === 0}>
+            <SelectTrigger id="anime-rss-source">
+              <SelectValue placeholder="暂无 RSS 订阅" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectGroup>
+                {groups.map((group) => (
+                  <SelectItem key={group.subscription.id} value={group.subscription.id}>
+                    {group.subscription.name}
+                  </SelectItem>
+                ))}
+              </SelectGroup>
+            </SelectContent>
+          </Select>
+        </Field>
+        <Button variant="ghost" onClick={onRefresh} disabled={loading || groups.length === 0}>
+          <RefreshCw data-icon="inline-start" className={cn(loading && "animate-spin")} />
+          {loading ? "正在刷新" : "刷新 RSS"}
+        </Button>
+      </div>
+      <div className="flex shrink-0 items-center gap-2 pb-2 text-xs text-success">
+        <CheckCircle2 />
+        <span>{activeGroup?.subscription.lastFetchedAt ? `最近同步：${formatReleaseDate(activeGroup.subscription.lastFetchedAt)}` : "尚未同步"}</span>
+      </div>
+    </div>
   );
 }
 
@@ -2179,42 +2228,36 @@ function BatchDownloadControls({
   visibleCount,
   totalCount,
   selectedCount,
-  selectableCount,
-  allSelected,
   batchAdding,
   disabled,
-  onToggleAll,
+  onCancel,
   onAddSelected
 }: {
   visibleCount: number;
   totalCount: number;
   selectedCount: number;
-  selectableCount: number;
-  allSelected: boolean;
   batchAdding: boolean;
   disabled: boolean;
-  onToggleAll: () => void;
+  onCancel: () => void;
   onAddSelected: () => void;
 }) {
   return (
-    <div className="flex shrink-0 flex-col items-stretch gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <span>显示 {visibleCount} 组</span>
-        <span>共 {totalCount} 组</span>
-        <span>已选 {selectedCount} 组</span>
+    <div className="-mx-4 -mb-4 mt-auto flex shrink-0 flex-col items-stretch gap-2 border-t bg-background px-4 py-3 text-xs text-muted-foreground sm:-mx-6 sm:-mb-4 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+      <div>
+        <div className="text-[10px] font-semibold uppercase">选择状态</div>
+        <div className="mt-0.5 font-medium text-foreground">已选 {selectedCount} 项 <span className="font-normal text-muted-foreground">（显示 {visibleCount} / 共 {totalCount} 组）</span></div>
       </div>
       <div className="grid w-full grid-cols-2 gap-2 sm:flex sm:w-auto">
         <Button
           className="min-h-11 px-2 sm:min-h-9 sm:px-3"
           variant="outline"
-          onClick={onToggleAll}
-          disabled={selectableCount === 0 || disabled}
+          onClick={onCancel}
         >
-          {allSelected ? "取消全选" : "全选可下载"}
+          取消
         </Button>
         <Button className="min-h-11 sm:min-h-9" onClick={onAddSelected} disabled={selectedCount === 0 || batchAdding || disabled}>
           <Download data-icon="inline-start" />
-          {batchAdding ? "添加中" : "批量下载"}
+          {batchAdding ? `正在添加 ${selectedCount} 项` : "批量下载"}
         </Button>
       </div>
     </div>
@@ -2252,7 +2295,7 @@ function ReleaseGroupHeader({
   onAddRssSubscription: (subscription: RssSubscriptionDraft) => void;
 }) {
   return (
-    <div className="flex w-full flex-wrap items-center gap-2 border-b bg-muted/70 px-3 py-2">
+    <div className="flex min-h-12 w-full flex-wrap items-center gap-2 border-b bg-primary/10 px-3 py-2">
       <Button
         className="h-auto min-h-11 min-w-0 flex-1 justify-start px-0 py-0 text-left md:min-h-0"
         type="button"
@@ -2266,21 +2309,20 @@ function ReleaseGroupHeader({
         ) : (
           <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
         )}
-        <span className="truncate text-sm font-semibold">{name}</span>
-        <Badge>{badgeText}</Badge>
+        <span className="truncate text-sm font-bold uppercase">{name}</span>
+        <span className="text-xs font-normal text-muted-foreground">共 {badgeText} · 已选 {selectedCount} · {episodeCount} 集</span>
       </Button>
       <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-2">
-        <span className="text-xs text-muted-foreground">已选 {selectedCount}/{selectableCount}</span>
         {rssCandidate && (
           <Button
             className="h-11 px-2 text-xs sm:h-7"
-            variant="outline"
+            variant="ghost"
             onClick={() => onAddRssSubscription(rssCandidate)}
             disabled={rssSubscribed}
             title={rssSubscribed ? "该字幕组 RSS 已订阅" : rssCandidate.url}
           >
             <Rss data-icon="inline-start" />
-            {rssSubscribed ? "已订阅" : "订阅RSS"}
+            {rssSubscribed ? "已订阅" : "订阅 RSS"}
           </Button>
         )}
         <Button
@@ -2291,7 +2333,6 @@ function ReleaseGroupHeader({
         >
           {allSelected ? "取消全选" : "全选"}
         </Button>
-        <span className="min-w-8 text-right text-xs text-muted-foreground">{episodeCount} 集</span>
       </div>
     </div>
   );
@@ -2326,8 +2367,8 @@ function ReleaseDownloadRow({
   const selectable = canDownload && !linkedTask && batchSelectable;
 
   return (
-    <div className="p-2 sm:p-3 [@media(max-height:760px)]:p-2">
-      <div className="flex items-start justify-between gap-2 sm:gap-3">
+    <div className={cn("p-2 sm:p-3 [@media(max-height:760px)]:p-2", (linkedTask || !batchSelectable) && "bg-muted/20")}>
+      <div className="flex items-center justify-between gap-2 sm:gap-3">
         <Checkbox
           className="mt-0.5"
           aria-label={`选择资源 ${release.title}`}
@@ -2335,31 +2376,32 @@ function ReleaseDownloadRow({
           disabled={!selectable}
           onCheckedChange={() => onToggleSelected(family)}
         />
-        <div className="flex min-w-0 flex-1 flex-col gap-2">
+        <div className={cn("flex min-w-0 flex-1 flex-col gap-1.5", linkedTask && "opacity-60")}>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium" title={release.title}>
+            <div className="line-clamp-2 text-sm font-medium leading-5" title={release.title}>
               {release.title}
             </div>
-            <div className="mt-1 flex flex-wrap gap-2">
-              <Badge tone="blue">{release.sourceName}</Badge>
-              <Badge>{getReleaseFansubName(release, fansubNames)}</Badge>
-              <Badge>{family.episodeLabel}</Badge>
-              {!batchSelectable && <Badge tone="amber">季度待确认</Badge>}
-              <ReleaseMetadataBadges metadata={release} />
-              {release.size && <Badge>{formatBytes(release.size)}</Badge>}
+            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] uppercase text-muted-foreground">
+              <span>{release.sourceName}</span><span>|</span>
+              <span>{getReleaseFansubName(release, fansubNames)}</span><span>|</span>
+              <span>{family.episodeLabel}</span>
+              {release.resolution && <><span>|</span><span>{release.resolution}</span></>}
+              {release.normalizedVideoCodec && release.normalizedVideoCodec !== "Unknown" && <><span>|</span><span>{release.normalizedVideoCodec}</span></>}
+              {release.bitDepth && <><span>|</span><span>{release.bitDepth}BIT</span></>}
+              {release.size && <><span>|</span><span>{formatBytes(release.size)}</span></>}
+              <><span>|</span><span>{formatReleaseDate(release.publishedAt)}</span></>
+              {release.seeders !== undefined && <><span>|</span><span className="text-success">{release.seeders} 做种</span></>}
+              {!batchSelectable && <Badge className="h-5" tone="amber">季度待确认</Badge>}
               {linkedTask && (
-                <Badge tone={isCompletedDownload(linkedTask) ? "green" : "amber"}>
+                <Badge className="h-5" tone={isCompletedDownload(linkedTask) ? "green" : "amber"}>
                   {downloadStatusText[linkedTask.status]}
                 </Badge>
               )}
             </div>
           </div>
           <div className="flex min-w-0 flex-col items-start gap-2 text-xs text-muted-foreground sm:flex-row sm:flex-wrap sm:items-center">
-            <span title={release.publishedAt}>{formatReleaseDate(release.publishedAt)}</span>
             {family.releases.length > 1 && (
-              <>
-                <span className="hidden sm:inline">·</span>
-                <Select
+              <Select
                   value={releaseKey(release)}
                   onValueChange={(value) => onVersionChange(family.key, value)}
                 >
@@ -2379,7 +2421,6 @@ function ReleaseDownloadRow({
                     </SelectGroup>
                   </SelectContent>
                 </Select>
-              </>
             )}
           </div>
         </div>

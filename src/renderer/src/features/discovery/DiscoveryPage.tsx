@@ -1,15 +1,20 @@
 import {
   AlertCircle,
+  ArrowLeft,
   CalendarDays,
   CalendarRange,
   CalendarPlus,
   CheckCircle2,
+  Download,
   ExternalLink,
   ImageOff,
+  Info,
   LayoutGrid,
+  List,
   Plus,
   RotateCcw,
-  Search
+  Search,
+  Star
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -31,12 +36,14 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { CachedImage } from "@/components/cached-image";
 import { FilterToolbar, Page, PageActions, PageHeader, PageHeading } from "@/components/page-layout";
+import { YearPicker } from "@/components/year-picker";
 import { appApi } from "@/lib/api";
+import { cn } from "@/lib/cn";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import { createDefaultMyAnimePreferences } from "@shared/my-anime-policy";
 import type { Anime, MyAnime, Season } from "@shared/domain";
 
-interface SeasonTarget {
+export interface SeasonTarget {
   year: number;
   season: Season;
 }
@@ -49,10 +56,10 @@ interface SeasonOption {
 }
 
 type DiscoverySortKey = "premiereAsc" | "premiereDesc" | "ratingDesc";
-type DiscoveryView = "catalog" | "schedule";
-
+type ScheduleView = "grid" | "list";
 interface DiscoveryPageProps {
   onOpenAnimeDetail?: (animeId: string) => void;
+  onOpenSchedule?: (target: SeasonTarget) => void;
 }
 
 const seasonOptions: readonly SeasonOption[] = [
@@ -70,13 +77,12 @@ const seasonText: Record<Season, string> = {
 };
 
 /** Renders the seasonal anime catalog and its follow actions. */
-export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
+export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPageProps = {}) {
   const [target, setTarget] = useState<SeasonTarget>(getCurrentSeasonTarget);
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [keyword, setKeyword] = useState("");
   const [appliedKeyword, setAppliedKeyword] = useState("");
   const [sortKey, setSortKey] = useState<DiscoverySortKey>("premiereAsc");
-  const [viewMode, setViewMode] = useState<DiscoveryView>("catalog");
   const [items, setItems] = useState<Anime[]>([]);
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [loading, setLoading] = useState(true);
@@ -85,7 +91,6 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const loadRequestId = useRef(0);
 
-  const yearOptions = useMemo(buildYearOptions, []);
   const activeSeason = getSeasonOption(target.season);
   const followedIds = useMemo(() => new Set(myAnime.map((item) => item.anime.id)), [myAnime]);
   const visibleItems = useMemo(
@@ -234,11 +239,11 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
   return (
     <Page>
       <PageHeader>
-        <PageHeading description="按季度浏览新番目录，并在时间表中查看首播安排。" title="新番发现" />
+        <PageHeading description="按季度浏览新番目录，并查看作品信息。" title="新番发现" />
         <PageActions className="grid grid-cols-1 sm:grid-cols-2">
-          <Button className="w-full" variant="outline" onClick={() => void collectSeason(true)} disabled={collecting}>
-            <RotateCcw data-icon="inline-start" />
-            {collecting ? "刷新中" : "强制刷新季度"}
+          <Button className="w-full" variant="outline" onClick={() => onOpenSchedule?.(target)}>
+            <CalendarRange data-icon="inline-start" />
+            新番时间表
           </Button>
           <Button className="w-full" onClick={() => void collectSeason(false)} disabled={collecting}>
             <CalendarPlus data-icon="inline-start" />
@@ -256,26 +261,14 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
       )}
 
       <FilterToolbar className="items-stretch sm:flex-col sm:items-stretch">
-          <div className="grid min-w-0 gap-3 md:grid-cols-[112px_minmax(18rem,1fr)] md:items-end min-[1440px]:grid-cols-[112px_minmax(16rem,1fr)_minmax(14rem,auto)_150px_auto]">
+          <div className="grid min-w-0 gap-3 md:grid-cols-[112px_minmax(18rem,1fr)] md:items-end min-[1440px]:grid-cols-[112px_minmax(16rem,1fr)_minmax(14rem,auto)_150px]">
             <Field className="min-w-0">
               <FieldLabel className="sr-only" htmlFor="discovery-year">选择年份</FieldLabel>
-              <Select
-                value={String(target.year)}
-                onValueChange={(value) => setTarget((current) => ({ ...current, year: Number(value) }))}
-              >
-                <SelectTrigger id="discovery-year">
-                  <SelectValue placeholder="选择年份" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    {yearOptions.map((year) => (
-                      <SelectItem key={year} value={String(year)}>
-                        {year} 年
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+              <YearPicker
+                id="discovery-year"
+                value={target.year}
+                onValueChange={(year) => setTarget((current) => ({ ...current, year }))}
+              />
             </Field>
 
             <Tabs className="min-w-0" value={target.season} onValueChange={(value) => selectSeason(value as Season)}>
@@ -319,22 +312,6 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
               </Select>
             </Field>
 
-            <ToggleGroup
-              aria-label="选择新番视图"
-              className="grid grid-cols-2"
-              type="single"
-              value={viewMode}
-              onValueChange={(value) => value && setViewMode(value as DiscoveryView)}
-            >
-              <ToggleGroupItem value="catalog">
-                <LayoutGrid />
-                图鉴
-              </ToggleGroupItem>
-              <ToggleGroupItem value="schedule">
-                <CalendarRange />
-                时间表
-              </ToggleGroupItem>
-            </ToggleGroup>
           </div>
 
           <form
@@ -390,14 +367,6 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
             </div>
           ))}
         </div>
-      ) : viewMode === "schedule" ? (
-        <DiscoverySchedule
-          addingAnimeId={addingAnimeId}
-          followedIds={followedIds}
-          items={visibleItems}
-          onAdd={addToMyAnime}
-          onOpenDetail={onOpenAnimeDetail}
-        />
       ) : (
         <div className="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:gap-x-4 2xl:grid-cols-5">
           {visibleItems.map((anime) => (
@@ -448,6 +417,163 @@ export function DiscoveryPage({ onOpenAnimeDetail }: DiscoveryPageProps = {}) {
             </Empty>
           )}
         </div>
+      )}
+    </Page>
+  );
+}
+
+interface DiscoverySchedulePageProps {
+  initialTarget: SeasonTarget;
+  onBack: () => void;
+  onOpenAnimeDetail?: (animeId: string) => void;
+}
+
+/** 渲染独立的新番时间表二级页面。 */
+export function DiscoverySchedulePage({ initialTarget, onBack, onOpenAnimeDetail }: DiscoverySchedulePageProps) {
+  const [target, setTarget] = useState(initialTarget);
+  const [view, setView] = useState<ScheduleView>("grid");
+  const [items, setItems] = useState<Anime[]>([]);
+  const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [addingAnimeId, setAddingAnimeId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const loadRequestId = useRef(0);
+  const activeSeason = getSeasonOption(target.season);
+  const followedIds = useMemo(() => new Set(myAnime.map((item) => item.anime.id)), [myAnime]);
+  const visibleItems = useMemo(
+    () => sortAnimeItems(items, "premiereAsc"),
+    [items]
+  );
+  const today = new Date();
+  const todayItems = visibleItems.filter((anime) => getAnimeWeekday(anime) === today.getDay());
+
+  useEffect(() => {
+    const requestId = ++loadRequestId.current;
+    setLoading(true);
+    Promise.all([
+      Promise.all(activeSeason.months.map((month) => appApi.listAnimeCatalog(target.year, month))),
+      appApi.listMyAnime()
+    ])
+      .then(([catalogs, followed]) => {
+        if (requestId !== loadRequestId.current) return;
+        setItems(mergeAnimeItems(catalogs.flat()));
+        setMyAnime(followed);
+        setError(null);
+      })
+      .catch((caught) => {
+        if (requestId !== loadRequestId.current) return;
+        console.error("[discovery-schedule] 时间表加载失败", { ...target, error: caught });
+        setError(caught instanceof Error ? caught.message : "加载新番时间表失败");
+      })
+      .finally(() => {
+        if (requestId === loadRequestId.current) setLoading(false);
+      });
+  }, [activeSeason.months, target.season, target.year]);
+
+  /** 添加时间表中的番剧到我的追番。 */
+  async function addToMyAnime(anime: Anime) {
+    setAddingAnimeId(anime.id);
+    try {
+      const now = new Date().toISOString();
+      const updated = await appApi.upsertMyAnime({
+        id: `my-${anime.id}`,
+        anime,
+        status: "watching",
+        ...createDefaultMyAnimePreferences(),
+        addedAt: now,
+        updatedAt: now
+      });
+      setMyAnime(updated);
+      setError(null);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "添加追番失败");
+    } finally {
+      setAddingAnimeId(null);
+    }
+  }
+
+  /** 切换季度并清空仅适用于旧季度的月份筛选。 */
+  function selectSeason(season: Season) {
+    setTarget((current) => ({ ...current, season }));
+  }
+
+  return (
+    <Page>
+      <PageHeader className="items-start border-b pb-4 sm:items-center">
+        <div className="flex min-w-0 flex-col gap-1.5">
+          <Button className="h-auto w-fit min-h-0 justify-start px-0 text-xs" onClick={onBack} variant="ghost">
+            <ArrowLeft data-icon="inline-start" />
+            新番发现 / 新番时间表
+          </Button>
+          <PageHeading title="新番时间表" />
+        </div>
+        <div className="flex items-center gap-2 text-xs font-medium">
+          <span className="uppercase text-muted-foreground">今日放送</span>
+          <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
+          <span>{formatTodayLabel(today)}</span>
+        </div>
+      </PageHeader>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertCircle />
+          <AlertTitle>时间表加载失败</AlertTitle>
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
+      <FilterToolbar className="items-stretch sm:items-center">
+        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-[112px_minmax(16rem,1fr)_auto] sm:items-center">
+          <Field className="min-w-0">
+            <FieldLabel className="sr-only" htmlFor="schedule-year">选择年份</FieldLabel>
+            <YearPicker
+              id="schedule-year"
+              value={target.year}
+              onValueChange={(year) => setTarget((current) => ({ ...current, year }))}
+            />
+          </Field>
+          <Tabs value={target.season} onValueChange={(value) => selectSeason(value as Season)}>
+            <TabsList className="grid h-auto w-full grid-cols-4" aria-label="选择季度">
+              {seasonOptions.map((season) => (
+                <TabsTrigger key={season.value} value={season.value}>{season.shortLabel}</TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+          <ToggleGroup
+            aria-label="选择时间表视图"
+            className="grid grid-cols-2"
+            type="single"
+            value={view}
+            onValueChange={(value) => value && setView(value as ScheduleView)}
+          >
+            <ToggleGroupItem value="grid"><LayoutGrid />网格视图</ToggleGroupItem>
+            <ToggleGroupItem value="list"><List />列表视图</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
+      </FilterToolbar>
+
+      {loading ? (
+        <div className="min-w-0 overflow-x-auto" aria-label="正在加载新番时间表">
+          <div className="grid min-w-[70rem] grid-cols-7 gap-2 overflow-hidden">
+            {Array.from({ length: 7 }, (_, index) => <Skeleton className="h-48 w-full" key={index} />)}
+          </div>
+        </div>
+      ) : view === "grid" ? (
+        <DiscoverySchedule
+          addingAnimeId={addingAnimeId}
+          followedIds={followedIds}
+          items={visibleItems}
+          onAdd={addToMyAnime}
+          onOpenDetail={onOpenAnimeDetail}
+        />
+      ) : (
+        <DiscoveryScheduleList
+          addingAnimeId={addingAnimeId}
+          followedIds={followedIds}
+          items={todayItems}
+          onAdd={addToMyAnime}
+          onOpenDetail={onOpenAnimeDetail}
+        />
       )}
     </Page>
   );
@@ -558,7 +684,7 @@ const weekdayOptions = [
   { day: 0, label: "周日" }
 ] as const;
 
-/** 按首播日期将季度目录组织为桌面周网格和移动单列时间表。 */
+/** 按首播日期将季度目录组织为 Stitch 周视图。 */
 function DiscoverySchedule({
   addingAnimeId,
   followedIds,
@@ -577,19 +703,20 @@ function DiscoverySchedule({
     items: items.filter((anime) => getAnimeWeekday(anime) === weekday.day)
   }));
   const undatedItems = items.filter((anime) => getAnimeWeekday(anime) === null);
-
-  if (items.length === 0) {
-    return <DiscoveryEmptySchedule />;
-  }
+  const todayWeekday = new Date().getDay();
 
   return (
     <div className="min-w-0">
-      <div className="hidden overflow-x-auto pb-2 md:block">
-        <div className="grid min-w-[1120px] grid-cols-7 divide-x border-y">
+      <div className="overflow-x-auto pb-2">
+        <div className="grid min-w-[1040px] grid-cols-7 divide-x border-y">
           {schedule.map((weekday) => (
-            <section className="min-w-0 px-2 pb-3" key={weekday.day}>
-              <div className="sticky top-0 border-b bg-background py-3 text-xs font-semibold">
-                {weekday.label} <span className="text-muted-foreground">{weekday.items.length}</span>
+            <section
+              className={cn("min-w-0 px-2 pb-4", weekday.day === todayWeekday && "bg-primary/5")}
+              key={weekday.day}
+            >
+              <div className="sticky top-0 border-b bg-inherit py-3 text-xs font-semibold uppercase">
+                {weekday.label}
+                {weekday.day === todayWeekday && <span className="ml-1 text-primary">（今天）</span>}
               </div>
               <div className="mt-2 flex flex-col gap-2">
                 {weekday.items.map((anime) => (
@@ -607,29 +734,6 @@ function DiscoverySchedule({
             </section>
           ))}
         </div>
-      </div>
-
-      <div className="flex flex-col gap-5 md:hidden">
-        {schedule.map((weekday) => (
-          <section key={weekday.day}>
-            <div className="flex items-center justify-between border-b pb-2 text-sm font-semibold">
-              <span>{weekday.label}</span>
-              <Badge>{weekday.items.length} 部</Badge>
-            </div>
-            <div className="mt-2 flex flex-col gap-2">
-              {weekday.items.map((anime) => (
-                <DiscoveryScheduleItem
-                  adding={addingAnimeId === anime.id}
-                  anime={anime}
-                  followed={followedIds.has(anime.id)}
-                  key={anime.id}
-                  onAdd={onAdd}
-                  onOpenDetail={onOpenDetail}
-                />
-              ))}
-            </div>
-          </section>
-        ))}
       </div>
 
       {undatedItems.length > 0 && (
@@ -653,6 +757,84 @@ function DiscoverySchedule({
   );
 }
 
+/** 按 Stitch 列表视图展示今天星期对应的番剧。 */
+function DiscoveryScheduleList({
+  addingAnimeId,
+  followedIds,
+  items,
+  onAdd,
+  onOpenDetail
+}: {
+  addingAnimeId: string | null;
+  followedIds: Set<string>;
+  items: Anime[];
+  onAdd: (anime: Anime) => Promise<void>;
+  onOpenDetail?: (animeId: string) => void;
+}) {
+  if (items.length === 0) {
+    return (
+      <Empty>
+        <EmptyHeader>
+          <EmptyMedia variant="icon"><CalendarDays /></EmptyMedia>
+          <EmptyTitle>今天暂无番剧放送</EmptyTitle>
+          <EmptyDescription>当前季度没有安排在今天首播的番剧。</EmptyDescription>
+        </EmptyHeader>
+      </Empty>
+    );
+  }
+
+  return (
+    <div className="min-w-0 overflow-x-auto">
+      <div className="min-w-[760px] border-y">
+        <div className="grid grid-cols-[4.5rem_minmax(17rem,1.7fr)_7rem_7rem_minmax(11rem,1fr)_6rem] gap-4 border-b bg-muted/40 px-3 py-2 text-xs font-semibold uppercase text-muted-foreground">
+          <span>海报</span><span>标题与信息</span><span>放送</span><span>状态</span><span>资源</span><span className="text-right">操作</span>
+        </div>
+        <div className="divide-y">
+          {items.map((anime) => {
+            const titleDisplay = resolveAnimeTitleDisplay(anime);
+            const followed = followedIds.has(anime.id);
+            const metadata = anime.detail;
+            const detail = [metadata?.genres?.slice(0, 2).join("、"), metadata?.studios?.[0]].filter(Boolean).join(" · ");
+            return (
+              <article
+                className="grid min-h-28 grid-cols-[4.5rem_minmax(17rem,1.7fr)_7rem_7rem_minmax(11rem,1fr)_6rem] items-center gap-4 px-3 py-3"
+                key={anime.id}
+              >
+                <button className="aspect-[2/3] overflow-hidden border bg-muted" onClick={() => onOpenDetail?.(anime.id)} type="button">
+                  {anime.coverUrl ? <CachedImage alt={titleDisplay.title} className="size-full object-cover" sourceUrl={anime.coverUrl} /> : <ImageOff className="m-auto" />}
+                </button>
+                <button className="min-w-0 text-left" onClick={() => onOpenDetail?.(anime.id)} type="button">
+                  <h3 className="line-clamp-2 text-sm font-semibold">{titleDisplay.title}{titleDisplay.subtitle ? `（${titleDisplay.subtitle}）` : ""}</h3>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">{detail || `${anime.premiereYear} ${seasonText[anime.season ?? "winter"]}`}</p>
+                </button>
+                <span className="text-xs font-medium text-primary">{formatBroadcastTime(anime)}</span>
+                <Badge className="w-fit" tone={followed ? "primary-soft" : "neutral"}>{followed ? "追番中" : "待关注"}</Badge>
+                <div className="min-w-0 text-xs">
+                  <div className="truncate font-medium">{followed ? "可搜索最新资源" : "等待追番后匹配"}</div>
+                  <div className="mt-1 truncate text-muted-foreground">{formatScheduleDate(anime)}</div>
+                </div>
+                <div className="flex justify-end gap-1">
+                  <Button aria-label={`搜索${titleDisplay.title}资源`} className="size-9 p-0" onClick={() => onOpenDetail?.(anime.id)} title="查看资源" variant="ghost"><Download /></Button>
+                  <Button
+                    aria-label={followed ? `${titleDisplay.title}已追番` : `添加${titleDisplay.title}到追番`}
+                    className="size-9 p-0"
+                    disabled={followed || addingAnimeId === anime.id}
+                    onClick={() => void onAdd(anime)}
+                    title={followed ? "已追番" : "添加追番"}
+                    variant="ghost"
+                  >
+                    {followed ? <Info /> : <Plus />}
+                  </Button>
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** 渲染时间表中的紧凑新番条目。 */
 function DiscoveryScheduleItem({
   adding,
@@ -669,15 +851,15 @@ function DiscoveryScheduleItem({
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(anime);
   return (
-    <article className="flex min-w-0 items-start gap-2 rounded-md border-l-2 border-primary bg-card p-3">
+    <article className={cn("flex min-w-0 items-start gap-2 bg-background p-3", followed && "border-l-2 border-primary")}>
       <button
         className="min-w-0 flex-1 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={() => onOpenDetail?.(anime.id)}
         type="button"
       >
-        <div className="text-xs font-medium text-primary">{formatScheduleDate(anime)}</div>
+        <div className="text-xs font-medium text-primary">{formatBroadcastTime(anime)}</div>
         <h3 className="mt-1 line-clamp-2 text-sm font-semibold">{titleDisplay.title}</h3>
-        <p className="mt-1 truncate text-xs text-muted-foreground">{titleDisplay.subtitle ?? seasonText[anime.season ?? "winter"]}</p>
+        <p className="mt-1 truncate text-xs text-muted-foreground">{followed ? "追番中" : titleDisplay.subtitle ?? formatScheduleDate(anime)}</p>
       </button>
       <Button
         aria-label={followed ? `${titleDisplay.title}已追番` : `添加${titleDisplay.title}到追番`}
@@ -687,30 +869,34 @@ function DiscoveryScheduleItem({
         title={followed ? "已追番" : "添加追番"}
         variant={followed ? "secondary" : "outline"}
       >
-        {followed ? <CheckCircle2 /> : <Plus />}
+        {followed ? <Star /> : <Search />}
       </Button>
     </article>
   );
 }
 
-/** 渲染时间表无结果状态。 */
-function DiscoveryEmptySchedule() {
-  return (
-    <Empty>
-      <EmptyHeader>
-        <EmptyMedia variant="icon"><CalendarRange /></EmptyMedia>
-        <EmptyTitle>暂无时间表条目</EmptyTitle>
-        <EmptyDescription>当前筛选条件下没有可展示的新番首播安排。</EmptyDescription>
-      </EmptyHeader>
-    </Empty>
-  );
-}
-
 /** 返回新番首播日期对应的星期索引。 */
 function getAnimeWeekday(anime: Anime): number | null {
+  if (anime.detail?.broadcast?.weekday !== undefined) return anime.detail.broadcast.weekday;
   if (!anime.premiereDate) return null;
   const date = new Date(`${anime.premiereDate.slice(0, 10)}T00:00:00`);
   return Number.isNaN(date.getTime()) ? null : date.getDay();
+}
+
+/** 格式化番剧的常规放送时间。 */
+function formatBroadcastTime(anime: Anime): string {
+  const time = anime.detail?.broadcast?.time;
+  const timezone = anime.detail?.broadcast?.timezone;
+  return time ? `${time}${timezone ? ` ${timezone}` : ""}` : formatScheduleDate(anime);
+}
+
+/** 格式化时间表右上角的今天日期。 */
+function formatTodayLabel(date: Date): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "long",
+    day: "numeric",
+    weekday: "long"
+  }).format(date);
 }
 
 /** 格式化时间表条目的首播日期。 */
@@ -742,12 +928,6 @@ function getCurrentSeasonTarget(): SeasonTarget {
     year: date.getFullYear(),
     season: getSeasonByMonth(date.getMonth() + 1)
   };
-}
-
-/** Builds a compact year range for recent and upcoming seasonal catalogs. */
-function buildYearOptions(): number[] {
-  const currentYear = new Date().getFullYear();
-  return Array.from({ length: 4 }, (_, index) => currentYear + 1 - index);
 }
 
 /** Finds the season containing the supplied month. */

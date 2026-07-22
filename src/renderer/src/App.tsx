@@ -11,7 +11,11 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { AppShell, type AppShellStatus } from "@/components/app-shell";
 import { AnimeDetailPage, type AnimeDetailLibraryAction } from "@/features/anime-detail/AnimeDetailPage";
-import { DiscoveryPage } from "@/features/discovery/DiscoveryPage";
+import {
+  DiscoveryPage,
+  DiscoverySchedulePage,
+  type SeasonTarget
+} from "@/features/discovery/DiscoveryPage";
 import { DownloadsPage } from "@/features/downloads/DownloadsPage";
 import { HomePage } from "@/features/home/HomePage";
 import { MyAnimePage } from "@/features/my-anime/MyAnimePage";
@@ -55,6 +59,12 @@ interface AnimeDetailState {
   origin: AnimeDetailOrigin;
 }
 
+interface DiscoveryScheduleState {
+  target: SeasonTarget;
+  scrollTop: number;
+  focusElement: HTMLElement | null;
+}
+
 interface ReleaseSearchIntent {
   keyword: string;
   key: number;
@@ -65,6 +75,7 @@ interface RenderPageOptions {
   onOpenDownloads: () => void;
   onOpenLibraryAction: (animeId: string, action: AnimeDetailLibraryAction) => void;
   onOpenReleaseSearch: (anime: Anime) => void;
+  onOpenDiscoverySchedule: (target: SeasonTarget) => void;
   myAnimeIntent: MyAnimePageIntent | null;
   onMyAnimeIntentHandled: () => void;
   releaseSearchIntent: ReleaseSearchIntent | null;
@@ -90,7 +101,10 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
       ) : <RemoteMyAnimePage onOpenAnimeDetail={options.onOpenAnimeDetail} />;
     case "discovery":
       return electronClient ? (
-        <DiscoveryPage onOpenAnimeDetail={options.onOpenAnimeDetail} />
+        <DiscoveryPage
+          onOpenAnimeDetail={options.onOpenAnimeDetail}
+          onOpenSchedule={options.onOpenDiscoverySchedule}
+        />
       ) : <RemoteDiscoveryPage onOpenAnimeDetail={options.onOpenAnimeDetail} />;
     case "releaseSearch":
       return <ReleaseSearchPage initialIntent={options.releaseSearchIntent} />;
@@ -109,6 +123,7 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
 export function App() {
   const [activePage, setActivePage] = useState<PageId>("home");
   const [detailView, setDetailView] = useState<AnimeDetailState | null>(null);
+  const [discoverySchedule, setDiscoverySchedule] = useState<DiscoveryScheduleState | null>(null);
   const [detailActionHostActive, setDetailActionHostActive] = useState(false);
   const [detailRevision, setDetailRevision] = useState(0);
   const [myAnimeIntent, setMyAnimeIntent] = useState<MyAnimePageIntent | null>(null);
@@ -122,7 +137,9 @@ export function App() {
   });
   const contentRef = useRef<HTMLElement | null>(null);
   const detailViewRef = useRef<AnimeDetailState | null>(null);
+  const discoveryScheduleRef = useRef<DiscoveryScheduleState | null>(null);
   detailViewRef.current = detailView;
+  discoveryScheduleRef.current = discoverySchedule;
   const electronClient = isElectronClient();
   const customTitleBar = electronClient && window.aniBridge?.platform === "win32";
   const remotePlayerTaskId = electronClient
@@ -167,6 +184,30 @@ export function App() {
     });
   }
 
+  /** 进入独立时间表并保留发现页的滚动与焦点上下文。 */
+  function openDiscoverySchedule(target: SeasonTarget) {
+    const nextState: DiscoveryScheduleState = {
+      target,
+      scrollTop: contentRef.current?.scrollTop ?? 0,
+      focusElement: document.activeElement instanceof HTMLElement ? document.activeElement : null
+    };
+    window.history.pushState({ aniView: "discoverySchedule", target }, "");
+    setDiscoverySchedule(nextState);
+    window.requestAnimationFrame(() => contentRef.current?.scrollTo({ top: 0, behavior: "auto" }));
+    console.info("[discovery] 已打开新番时间表", target);
+  }
+
+  /** 返回新番发现并恢复进入时间表前的滚动与焦点。 */
+  function restoreDiscoverySchedule() {
+    const origin = discoveryScheduleRef.current;
+    setDiscoverySchedule(null);
+    if (!origin) return;
+    window.requestAnimationFrame(() => {
+      contentRef.current?.scrollTo({ top: origin.scrollTop, behavior: "auto" });
+      origin.focusElement?.focus({ preventScroll: true });
+    });
+  }
+
   /** 关闭详情并切换到指定业务页，供详情快捷操作使用。 */
   function leaveDetailToPage(pageId: PageId) {
     if (detailViewRef.current) {
@@ -175,6 +216,7 @@ export function App() {
       setMyAnimeIntent(null);
       setDetailView(null);
     }
+    setDiscoverySchedule(null);
     setActivePage(pageId);
     window.requestAnimationFrame(() => contentRef.current?.scrollTo({ top: 0, behavior: "auto" }));
   }
@@ -201,11 +243,12 @@ export function App() {
 
   /** 主导航切换时退出详情并回到页面顶部。 */
   function navigatePage(pageId: PageId) {
-    if (detailViewRef.current) {
+    if (detailViewRef.current || discoveryScheduleRef.current) {
       window.history.replaceState({ aniView: "page", pageId }, "");
       setDetailActionHostActive(false);
       setMyAnimeIntent(null);
       setDetailView(null);
+      setDiscoverySchedule(null);
     }
     setActivePage(pageId);
   }
@@ -217,6 +260,8 @@ export function App() {
     const handlePopState = () => {
       if (detailViewRef.current) {
         restoreDetailView();
+      } else if (discoveryScheduleRef.current) {
+        restoreDiscoverySchedule();
       }
     };
     window.addEventListener("popstate", handlePopState);
@@ -312,22 +357,34 @@ export function App() {
       items={availableNavItems}
       onNavigate={(pageId) => navigatePage(pageId as PageId)}
       contentRef={contentRef}
-      secondaryView={detailView ? { title: "番剧详情", onBack: () => window.history.back() } : undefined}
+      secondaryView={detailView
+        ? { title: "番剧详情", onBack: () => window.history.back() }
+        : discoverySchedule
+          ? { title: "新番时间表", onBack: () => window.history.back() }
+          : undefined}
       status={shellStatus}
       unreadCount={unreadCount}
       customTitleBar={customTitleBar}
     >
-      <div className={detailView ? "hidden" : undefined}>
+      <div className={detailView || discoverySchedule ? "hidden" : undefined}>
         {renderPage(activePage, electronClient, {
           onOpenAnimeDetail: openAnimeDetail,
           onOpenDownloads: () => navigatePage("downloads"),
           onOpenLibraryAction: openLibraryAction,
           onOpenReleaseSearch: openReleaseSearch,
+          onOpenDiscoverySchedule: openDiscoverySchedule,
           myAnimeIntent: detailView ? null : myAnimeIntent,
           onMyAnimeIntentHandled: () => setMyAnimeIntent(null),
           releaseSearchIntent
         })}
       </div>
+      {discoverySchedule && !detailView && (
+        <DiscoverySchedulePage
+          initialTarget={discoverySchedule.target}
+          onBack={() => window.history.back()}
+          onOpenAnimeDetail={openAnimeDetail}
+        />
+      )}
       {detailView && electronClient && detailActionHostActive && (
         <MyAnimePage
           actionOnly

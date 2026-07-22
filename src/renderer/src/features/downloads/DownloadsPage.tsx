@@ -1,6 +1,7 @@
 import {
   ChevronDown,
   ChevronRight,
+  Clock3,
   Download as DownloadIcon,
   FileSearch,
   Files,
@@ -486,12 +487,21 @@ function DownloadTaskRow({
           </div>
         </div>
 
-        <div className="flex flex-wrap gap-x-5 gap-y-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5"><Gauge className="size-4" />{task.engine === "embedded" ? "内置引擎" : "qBittorrent"}</span>
           <ReleaseMetadataBadges metadata={task} />
-          <span className="font-medium text-foreground">{formatSpeed(task.downloadSpeed)}</span>
-          <span className="flex items-center gap-1.5"><Upload className="size-4" />{formatSpeed(task.uploadSpeed)}</span>
-          <span className="sm:ml-auto">剩余 {formatDuration(task.etaSeconds)}</span>
+          <span className="flex min-w-24 items-center gap-1.5 tabular-nums" title="下载速度">
+            <DownloadIcon className="size-4" />
+            {formatSpeed(task.downloadSpeed)}
+          </span>
+          <span className="flex min-w-24 items-center gap-1.5 tabular-nums" title="上传速度">
+            <Upload className="size-4" />
+            {formatSpeed(task.uploadSpeed)}
+          </span>
+          <span className="flex min-w-28 items-center gap-1.5 tabular-nums sm:ml-auto" title="预计剩余时间">
+            <Clock3 className="size-4" />
+            {formatDownloadEta(task)}
+          </span>
         </div>
 
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_3rem] items-center gap-3">
@@ -541,6 +551,15 @@ function DownloadTaskRow({
       </div>
     </article>
   );
+}
+
+/** 按任务状态格式化稳定的剩余时间文本。 */
+function formatDownloadEta(task: DownloadTask): string {
+  if (task.status === "completed" || task.status === "seeding") return "已完成";
+  if (task.status === "paused") return "已暂停";
+  const etaSeconds = task.etaSeconds;
+  if (etaSeconds === undefined || !Number.isFinite(etaSeconds) || etaSeconds <= 0) return "计算中";
+  return `剩余 ${formatDuration(etaSeconds)}`;
 }
 
 interface DownloadFansubGroup {

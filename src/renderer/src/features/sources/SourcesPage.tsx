@@ -36,7 +36,7 @@ import {
   TableHeader,
   TableRow
 } from "@/components/ui/table";
-import { Page, PageActions, PageHeader, PageHeading } from "@/components/page-layout";
+import { Page, PageActions } from "@/components/page-layout";
 import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -303,9 +303,6 @@ export function SourcesPage() {
   if (loadingError) {
     return (
       <Page>
-        <PageHeader>
-          <PageHeading breadcrumb="下载源" description="RSS、Torznab 和站点适配器的桌面配置工作台。" title="下载源" />
-        </PageHeader>
         <Alert variant="destructive">
           <AlertTitle>下载源加载失败</AlertTitle>
           <AlertDescription>{loadingError.message || "请重新进入下载源页面或重启应用后再试。"}</AlertDescription>
@@ -321,19 +318,14 @@ export function SourcesPage() {
 
   return (
     <Page>
-      <PageHeader className="border-b pb-4 sm:items-center">
-        <PageHeading
-          breadcrumb="下载源"
-          description="管理元数据代理以及 RSS、Torznab 和站点适配器。"
-          title="下载源"
-        />
-        <PageActions>
+      <div className="flex justify-end border-b pb-4">
+        <PageActions className="w-full sm:w-auto">
           <Button className="w-full sm:w-auto" onClick={() => setAddSheetOpen(true)}>
             <Plus data-icon="inline-start" />
             添加下载源
           </Button>
         </PageActions>
-      </PageHeader>
+      </div>
 
       <div className="flex flex-wrap gap-x-4 gap-y-2 border-y py-3 text-xs font-medium text-muted-foreground">
         <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />已启用 {enabledCount}</span>
@@ -827,7 +819,6 @@ function ResponsiveSummarySeparator() {
 function SourcesPageSkeleton() {
   return (
     <Page aria-busy="true" aria-label="正在加载下载源">
-      <div className="flex flex-col gap-2"><Skeleton className="h-7 w-24" /><Skeleton className="h-4 w-72 max-w-full" /></div>
       <Skeleton className="h-10 w-full" />
       <Skeleton className="h-40 w-full" />
       <Skeleton className="h-56 w-full" />
