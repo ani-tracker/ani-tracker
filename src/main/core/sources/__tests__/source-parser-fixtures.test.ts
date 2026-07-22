@@ -543,6 +543,88 @@ test("ReleaseSourceService 精确来源绑定也会过滤显式旧季度合集",
   assert.deepEqual(result.releases.map((release) => release.id), [`${rssConfig.id}:current-season`]);
 });
 
+test("ReleaseSourceService 按番剧标识读取缓存且不再校验缓存标题", async () => {
+  const anime: Anime = {
+    id: "anime-cache-scope",
+    title: "目标测试番",
+    aliases: [],
+    premiereYear: 2026,
+    premiereMonth: 7,
+    externalIds: {}
+  };
+  const cachedRelease = {
+    id: "rss-test:anime-scoped-cache",
+    title: "标题不包含目标名称 - 01 [1080p]",
+    animeId: anime.id,
+    sourceId: rssConfig.id,
+    sourceName: rssConfig.name,
+    publishedAt: "2026-07-18T00:00:00.000Z"
+  };
+  const queries: unknown[] = [];
+  const repository = {
+    async listCachedReleases(query: unknown) {
+      queries.push(query);
+      return [cachedRelease];
+    },
+    async upsertCachedReleases() {
+      return 0;
+    }
+  } as unknown as AppRepository;
+  const httpClient: ReleaseHttpClient = {
+    async fetch() {
+      return new Response("<rss><channel></channel></rss>");
+    }
+  };
+
+  const result = await new ReleaseSourceService([rssConfig], [], httpClient, repository).searchAnime(
+    anime,
+    { animeId: anime.id, limit: 10 },
+    []
+  );
+
+  assert.deepEqual(queries, [{ sourceIds: [rssConfig.id], animeId: anime.id, limit: 2_000 }]);
+  assert.deepEqual(result.releases.map((release) => release.id), [cachedRelease.id]);
+});
+
+test("ReleaseSourceService 信任 AniBT 精确绑定且不校验资源标题", async (t) => {
+  const anime: Anime = {
+    id: "anime-anibt-exact",
+    title: "目标测试番",
+    aliases: [],
+    premiereYear: 2026,
+    premiereMonth: 7,
+    externalIds: {}
+  };
+  const binding: AnimeSourceBinding = {
+    id: "binding-anibt-exact",
+    animeId: anime.id,
+    sourceId: anibtConfig.id,
+    sourceAnimeId: "528828",
+    sourceAnimeTitle: anime.title,
+    matchMethod: "manual",
+    confidence: 1,
+    confirmed: true,
+    createdAt: "2026-07-18T00:00:00.000Z",
+    updatedAt: "2026-07-18T00:00:00.000Z"
+  };
+  t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0]) => {
+    assert.equal(String(input), "https://anibt.net/rss/anime.xml?bgmId=528828&limit=10");
+    return new Response(`<rss><channel><item>
+      <anibt:releaseId>exact-bound-release</anibt:releaseId>
+      <anibt:releaseTitle>标题不包含目标名称 - 01 [1080p]</anibt:releaseTitle>
+    </item></channel></rss>`);
+  });
+
+  const result = await new ReleaseSourceService([anibtConfig]).searchAnime(
+    anime,
+    { animeId: anime.id, limit: 10 },
+    [binding]
+  );
+
+  assert.deepEqual(result.releases.map((release) => release.id), ["anibt:exact-bound-release"]);
+  assert.equal(result.releases[0]?.animeId, anime.id);
+});
+
 test("parseAcgnxApiResponse 兼容 ACGNX JSON/API 风格响应", () => {
   const releases = parseAcgnxApiResponse(
     {

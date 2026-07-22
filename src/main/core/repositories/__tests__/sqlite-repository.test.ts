@@ -377,7 +377,7 @@ test("SQLite 重启后保留下载源网络策略、退避状态和增量资源"
   const restoredState = (await second.repository.listSourceSyncStates()).find((state) => state.sourceId === "anibt");
   const restoredCircuit = (await second.repository.listRequestCircuitStates())
     .find((state) => state.key === "release-source:anibt");
-  const restoredReleases = await second.repository.listCachedReleases(["anibt"]);
+  const restoredReleases = await second.repository.listCachedReleases({ sourceIds: ["anibt"] });
   assert.equal(restoredSource?.useProxy, false);
   assert.equal(restoredSource?.requestIntervalMs, 2_750);
   assert.equal(restoredState?.requestFailureCount, 2);
@@ -388,6 +388,75 @@ test("SQLite 重启后保留下载源网络策略、退避状态和增量资源"
   assert.equal(restoredReleases[0]?.normalizedVideoCodec, "H.265/HEVC");
   assert.equal(restoredReleases[0]?.bitDepth, 10);
   second.close();
+});
+
+test("SQLite 资源缓存按来源和番剧标识隔离查询", async () => {
+  const fixture = await createFixture();
+  const runtime = createRepositoryRuntime(fixture.options);
+  await runtime.initialize();
+  const firstAnime = createTestMyAnime();
+  const secondAnime: MyAnime = {
+    ...createTestMyAnime(),
+    id: "my-anime-sqlite-other",
+    anime: {
+      ...createTestMyAnime().anime,
+      id: "anime-sqlite-other",
+      title: "其他测试番"
+    }
+  };
+  await runtime.repository.upsertMyAnime(firstAnime);
+  await runtime.repository.upsertMyAnime(secondAnime);
+
+  const source = (await runtime.repository.listSources()).find((item) => item.id === "anibt");
+  assert.ok(source);
+  const createCachedRelease = (id: string, animeId: string) => enrichReleaseFromTitle({
+    id: `anibt:${id}`,
+    title: `[测试组] ${id} - 01 [1080p]`,
+    animeId,
+    sourceId: source.id,
+    sourceName: source.name,
+    publishedAt: `2026-07-18T00:0${id === "first" ? "2" : "1"}:00.000Z`
+  });
+  await runtime.repository.upsertCachedReleases([
+    createCachedRelease("first", firstAnime.anime.id),
+    createCachedRelease("second", secondAnime.anime.id)
+  ]);
+
+  const firstAnimeReleases = await runtime.repository.listCachedReleases({
+    sourceIds: [source.id],
+    animeId: firstAnime.anime.id
+  });
+
+  assert.deepEqual(firstAnimeReleases.map((release) => release.id), ["anibt:first"]);
+  runtime.close();
+});
+
+test("SQLite 通用同步不会清空已有资源的番剧关联", async () => {
+  const fixture = await createFixture();
+  const runtime = createRepositoryRuntime(fixture.options);
+  await runtime.initialize();
+  const anime = createTestMyAnime();
+  await runtime.repository.upsertMyAnime(anime);
+  const source = (await runtime.repository.listSources()).find((item) => item.id === "anibt");
+  assert.ok(source);
+  const linkedRelease = enrichReleaseFromTitle({
+    id: "anibt:stable-link",
+    title: "[测试组] 测试番 - 01 [1080p]",
+    animeId: anime.anime.id,
+    sourceId: source.id,
+    sourceName: source.name,
+    publishedAt: "2026-07-18T00:00:00.000Z"
+  });
+  await runtime.repository.upsertCachedReleases([linkedRelease]);
+  await runtime.repository.upsertCachedReleases([{ ...linkedRelease, animeId: undefined }]);
+
+  const restored = await runtime.repository.listCachedReleases({
+    sourceIds: [source.id],
+    animeId: anime.anime.id
+  });
+
+  assert.equal(restored[0]?.id, linkedRelease.id);
+  runtime.close();
 });
 
 test("SQLite schema 13 将旧下载源熔断字段迁移到通用状态表", async () => {
@@ -421,6 +490,48 @@ test("SQLite schema 13 将旧下载源熔断字段迁移到通用状态表", asy
   assert.equal(circuit?.backoffUntil, "2026-07-18T01:05:00.000Z");
   assert.equal(legacy?.requestFailureCount, 0);
   assert.equal(legacy?.backoffUntil, undefined);
+  migrated.close();
+});
+
+test("SQLite schema 15 清理旧番剧资源关联和查询缓存", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const anime = createTestMyAnime();
+  await first.repository.upsertMyAnime(anime);
+  const source = (await first.repository.listSources()).find((item) => item.id === "anibt");
+  assert.ok(source);
+  await first.repository.upsertCachedReleases([enrichReleaseFromTitle({
+    id: "anibt:legacy-anime-link",
+    title: "[测试组] 旧关联资源 - 01 [1080p]",
+    animeId: anime.anime.id,
+    sourceId: source.id,
+    sourceName: source.name,
+    publishedAt: "2026-07-18T00:00:00.000Z"
+  })]);
+  await first.repository.upsertReleaseSearchCache("legacy-anime-search", {
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    result: {
+      query: { keyword: anime.anime.title },
+      releases: [],
+      sourceResults: [],
+      searchedSourceIds: [source.id],
+      errors: []
+    }
+  });
+  first.close();
+
+  const legacyDatabase = new DatabaseConstructor(fixture.databasePath);
+  try {
+    legacyDatabase.prepare("UPDATE app_meta SET value = '14' WHERE key = 'schema_version'").run();
+  } finally {
+    legacyDatabase.close();
+  }
+
+  const migrated = createRepositoryRuntime(fixture.options);
+  await migrated.initialize();
+  assert.deepEqual(await migrated.repository.listCachedReleases({ animeId: anime.anime.id }), []);
+  assert.equal(await migrated.repository.getReleaseSearchCache("legacy-anime-search"), undefined);
   migrated.close();
 });
 

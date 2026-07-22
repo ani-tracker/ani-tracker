@@ -1,5 +1,9 @@
 import type { FansubGroup, MyAnime, Release } from "@shared/domain";
-import { classifyAnimeRelease } from "../../../shared/anime-release-search";
+import {
+  buildAnimeReleaseSearchTerms,
+  classifyAnimeRelease,
+  matchesAnimeReleaseTitle
+} from "../../../shared/anime-release-search";
 import { getSubtitleCoverage, resolveSubtitleLanguages } from "../../../shared/release-metadata";
 import { enrichReleaseFromTitle } from "./release-title-parser";
 
@@ -89,6 +93,10 @@ export function scoreRelease(release: Release, context: ReleaseMatchContext): Re
     return createResult(release, 0, 0, 0, ["资源季度不兼容"], warnings);
   }
 
+  if (!matchesReleaseAnime(release, context.anime)) {
+    return createResult(release, 0, 0, 0, ["资源番剧不匹配"], warnings);
+  }
+
   const episodeMatched = context.episodeNo === undefined ||
     release.episodeNo === context.episodeNo ||
     isEpisodeInRange(context.episodeNo, release.episodeRange);
@@ -96,9 +104,10 @@ export function scoreRelease(release: Release, context: ReleaseMatchContext): Re
     return createResult(release, 0, 0, 0, ["资源未覆盖目标集数"], warnings);
   }
 
-  if (matchesAnimeAlias(release.title, context.anime)) {
-    matchScore += 20;
-    reasons.push("标题匹配番剧别名");
+  matchScore += 20;
+  reasons.push(release.animeId ? "资源已关联目标番剧" : "标题匹配番剧别名");
+  if (release.animeId === context.anime.anime.id) {
+    matchScore += 5;
   }
 
   if (context.episodeNo && release.episodeNo === context.episodeNo) {
@@ -109,11 +118,6 @@ export function scoreRelease(release: Release, context: ReleaseMatchContext): Re
     reasons.push("集数范围覆盖");
   } else if (context.episodeNo === undefined) {
     matchScore += 25;
-  }
-
-  if (release.animeId === context.anime.anime.id) {
-    matchScore += 5;
-    reasons.push("资源已关联目标番剧");
   }
 
   const preferredFansubId = context.episodeFansubOverrideId ?? context.anime.defaultFansubGroupId;
@@ -231,11 +235,10 @@ function isEpisodeInRange(episodeNo: number, range: Release["episodeRange"]): bo
   return Boolean(range && episodeNo >= range.start && episodeNo <= range.end);
 }
 
-function matchesAnimeAlias(title: string, myAnime: MyAnime): boolean {
-  const lowerTitle = title.toLowerCase();
-  const aliases = [myAnime.anime.title, myAnime.anime.originalTitle, ...myAnime.anime.aliases.map((alias) => alias.alias)]
-    .filter(Boolean)
-    .map((alias) => alias!.toLowerCase());
-
-  return aliases.some((alias) => lowerTitle.includes(alias));
+/** 优先使用已确认的本地番剧关联，无关联时复用统一标题匹配。 */
+function matchesReleaseAnime(release: Release, myAnime: MyAnime): boolean {
+  if (release.animeId) {
+    return release.animeId === myAnime.anime.id;
+  }
+  return matchesAnimeReleaseTitle(release.title, buildAnimeReleaseSearchTerms(myAnime.anime));
 }

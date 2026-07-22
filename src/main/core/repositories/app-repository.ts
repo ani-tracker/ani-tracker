@@ -30,6 +30,13 @@ export interface ReleaseSearchCacheEntry {
   result: ReleaseSearchResult;
 }
 
+/** 约束持久化资源缓存的来源、番剧和返回数量。 */
+export interface CachedReleaseQuery {
+  sourceIds?: string[];
+  animeId?: string;
+  limit?: number;
+}
+
 /** 定义主进程业务服务使用的应用数据访问能力。 */
 export interface AppRepository {
   getDashboard(): Promise<DashboardData>;
@@ -81,7 +88,7 @@ export interface AppRepository {
   upsertSourceSyncState(state: ReleaseSourceSyncState): Promise<ReleaseSourceSyncState[]>;
   listRequestCircuitStates(): Promise<RequestCircuitState[]>;
   upsertRequestCircuitState(state: RequestCircuitState): Promise<RequestCircuitState[]>;
-  listCachedReleases(sourceIds?: string[], limit?: number): Promise<Release[]>;
+  listCachedReleases(query?: CachedReleaseQuery): Promise<Release[]>;
   upsertCachedReleases(releases: Release[]): Promise<number>;
   pruneCachedReleases(before: string): Promise<number>;
   getReleaseSearchCache(cacheKey: string): Promise<ReleaseSearchCacheEntry | undefined>;

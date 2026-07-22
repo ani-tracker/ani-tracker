@@ -82,6 +82,7 @@ test("SourceSyncService 使用追番 Bangumi ID 直连同步 AniBT 且单次限�
   assert.equal(proxyRequestCount, 0);
   assert.deepEqual(result.syncedSourceIds, ["anibt"]);
   assert.equal(result.addedReleaseCount, 1);
+  assert.equal(repository.releases[0]?.animeId, "anime-1");
 });
 
 test("SourceSyncService 通知显示失败来源、真实原因和熔断状态", async (t) => {

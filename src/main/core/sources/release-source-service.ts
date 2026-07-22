@@ -20,12 +20,14 @@ import { createSourceHttpClient } from "./source-http-client";
 
 export const COMPLETED_ANIME_RELEASE_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_RELEASE_SEARCH_CACHE_TTL_MS = COMPLETED_ANIME_RELEASE_CACHE_TTL_MS;
+const RELEASE_SEARCH_CACHE_VERSION = 2;
 const releaseSearchCache = new Map<string, { expiresAt: number; result: ReleaseSearchResult }>();
 
 interface SourceFetchResult {
   sourceId: string;
   sourceName: string;
   releases: Release[];
+  animeScoped?: boolean;
   error?: string;
 }
 
@@ -149,10 +151,13 @@ export class ReleaseSourceService {
     const terms = buildAnimeReleaseSearchTerms(anime, [], 8);
     const sourceFetchResults: SourceFetchResult[] = await Promise.all(
       sources.map(async (config) => {
-        const binding = bindings.find((item) => item.sourceId === config.id && item.confirmed);
+        const binding = bindings.find(
+          (item) => item.animeId === anime.id && item.sourceId === config.id && item.confirmed
+        );
         try {
           const source = createReleaseSource(config, this.httpClient, this.repository);
           let releases: Release[] = [];
+          let animeScoped = false;
           if (source && isAnimeRssSubscriptionSource(source)) {
             const subscription = source.buildAnimeRssSubscription({
               anime,
@@ -167,6 +172,7 @@ export class ReleaseSourceService {
                 error: source.animeRssBindingError ?? "下载源无法生成当前番剧的 RSS 订阅"
               };
             }
+            animeScoped = Boolean(binding && subscription.exactAnimeMatch);
             releases = await source.fetchAnimeRssSubscription(subscription);
           } else if (source) {
             const results = await Promise.all(
@@ -175,7 +181,12 @@ export class ReleaseSourceService {
             releases = results.flat();
           }
 
-          return { sourceId: config.id, sourceName: config.name, releases };
+          return {
+            sourceId: config.id,
+            sourceName: config.name,
+            releases,
+            animeScoped
+          };
         } catch (error) {
           return {
             sourceId: config.id,
@@ -189,34 +200,33 @@ export class ReleaseSourceService {
     const errors: ReleaseSearchResult["errors"] = sourceFetchResults.flatMap((sourceResult) =>
       sourceResult.error ? [{ sourceId: sourceResult.sourceId, message: sourceResult.error }] : []
     );
-    const releases = sourceFetchResults.flatMap((sourceResult) =>
-      sourceResult.releases.map((release) => ({
-        ...enrichReleaseFromTitle(release, this.fansubs),
-        animeId: anime.id
-      }))
+    const animeScopedSourceIds = new Set(
+      sourceFetchResults.filter((result) => result.animeScoped).map((result) => result.sourceId)
     );
-    const matchesAnimeQuery = (release: Release) => {
-      const hasConfirmedExactBinding = bindings.some(
-        (binding) => binding.sourceId === release.sourceId && binding.confirmed
-      );
-      const titleMatched = hasConfirmedExactBinding || matchesAnimeReleaseTitle(release.title, terms);
-      return titleMatched &&
-        classifyAnimeRelease(release, anime) !== "mismatch" &&
-        releaseMatchesEpisode(release, query.episodeNo);
-    };
-    const liveRelevantReleases = dedupeReleases(releases).filter(matchesAnimeQuery);
+    const releases = sourceFetchResults.flatMap((sourceResult) =>
+      sourceResult.releases.map((release) => enrichReleaseFromTitle(release, this.fansubs))
+    );
+    const matchesAnimeConstraints = (release: Release) =>
+      classifyAnimeRelease(release, anime) !== "mismatch" &&
+      releaseMatchesEpisode(release, query.episodeNo);
+    const matchesLiveAnime = (release: Release) =>
+      (animeScopedSourceIds.has(release.sourceId) || matchesAnimeReleaseTitle(release.title, terms)) &&
+      matchesAnimeConstraints(release);
+    const liveRelevantReleases = dedupeReleases(releases)
+      .filter(matchesLiveAnime)
+      .map((release) => ({ ...release, animeId: anime.id }));
     await this.persistCachedReleases(liveRelevantReleases);
-    const cachedReleases = await this.loadCachedReleases(sources.map((source) => source.id));
+    const cachedReleases = await this.loadCachedReleases(sources.map((source) => source.id), anime.id);
     const relevantReleases = sortReleasesByPublishedAt(dedupeReleases([
       ...liveRelevantReleases,
-      ...cachedReleases.filter(matchesAnimeQuery)
+      ...cachedReleases.filter(matchesAnimeConstraints)
     ]));
     const sourceResults = createSourceSearchResults(
       sources,
-      releases,
+      liveRelevantReleases,
       cachedReleases,
-      matchesAnimeQuery,
-      matchesAnimeQuery,
+      matchesAnimeConstraints,
+      matchesAnimeConstraints,
       query.limit ?? 100
     );
 
@@ -285,6 +295,7 @@ export class ReleaseSourceService {
       sourceIds: group.sourceIds
     }));
     const cacheInput = {
+      version: RELEASE_SEARCH_CACHE_VERSION,
       query: {
         keyword: query.keyword,
         animeId: query.animeId,
@@ -313,6 +324,7 @@ export class ReleaseSourceService {
 
     return hashValue(JSON.stringify({
       kind: "anime",
+      version: RELEASE_SEARCH_CACHE_VERSION,
       anime: {
         id: anime.id,
         title: anime.title,
@@ -343,11 +355,11 @@ export class ReleaseSourceService {
   }
 
   /** 读取持久化资源缓存；仓库不可用时保持原有纯网络搜索行为。 */
-  private async loadCachedReleases(sourceIds: string[]): Promise<Release[]> {
+  private async loadCachedReleases(sourceIds: string[], animeId?: string): Promise<Release[]> {
     if (typeof this.repository?.listCachedReleases !== "function") {
       return [];
     }
-    return this.repository.listCachedReleases(sourceIds, 2_000);
+    return this.repository.listCachedReleases({ sourceIds, animeId, limit: 2_000 });
   }
 
   /** 将网络结果写入持久化缓存，同时兼容尚未扩展的仓库实现。 */

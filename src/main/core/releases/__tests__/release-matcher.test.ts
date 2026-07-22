@@ -31,6 +31,23 @@ test("rankReleases 自动匹配排除旧季度和无目标集数的合集", () =
   assert.deepEqual(ranked.map((item) => item.release.id), ["current"]);
 });
 
+test("rankReleases 优先信任番剧关联且拒绝其他番剧关联", () => {
+  const anime = createMyAnime();
+  const linked = {
+    ...createRelease("linked", "标题未包含番剧名称 - 02 [1080p]"),
+    animeId: anime.anime.id
+  };
+  const wrongLink = {
+    ...createRelease("wrong-link", "[字幕组] 测试番 - 02 [1080p]"),
+    animeId: "anime-other"
+  };
+
+  const ranked = rankReleases([wrongLink, linked], { anime, episodeNo: 2 });
+
+  assert.deepEqual(ranked.map((item) => item.release.id), ["linked"]);
+  assert.ok(ranked[0].reasons.includes("资源已关联目标番剧"));
+});
+
 test("rankReleases 将编码、位深和多语言覆盖作为独立偏好评分", () => {
   const anime = createMyAnime();
   anime.preferredCodec = "H.265/HEVC";

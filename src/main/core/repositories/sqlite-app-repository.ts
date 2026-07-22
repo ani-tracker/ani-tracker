@@ -41,7 +41,7 @@ import { defaultSourceConfigs } from "../sources/default-source-configs";
 import { createDefaultSettingsProvider, type DefaultSettingsProvider } from "../platform/default-settings-provider";
 import { createSeedData } from "../storage/seed-data";
 import { SQLITE_SCHEMA, SQLITE_SCHEMA_VERSION } from "../storage/sqlite-schema";
-import type { AppRepository, ReleaseSearchCacheEntry } from "./app-repository";
+import type { AppRepository, CachedReleaseQuery, ReleaseSearchCacheEntry } from "./app-repository";
 import {
   buildDailyReminderSummary,
   buildPendingActions,
@@ -611,25 +611,37 @@ export class SqliteAppRepository implements AppRepository {
     return this.listRequestCircuitStates();
   }
 
-  /** 读取最近采集的资源，用于重启后搜索缓存和来源故障兜底。 */
-  async listCachedReleases(sourceIds?: string[], limit = 2_000): Promise<Release[]> {
-    const normalizedLimit = Math.max(1, Math.min(10_000, Math.round(limit)));
-    if (!sourceIds?.length) {
-      return this.all("SELECT * FROM release ORDER BY published_at DESC LIMIT @limit", { limit: normalizedLimit }).map(mapRelease);
+  /** 按来源和本地番剧标识读取最近采集的资源缓存。 */
+  async listCachedReleases(query: CachedReleaseQuery = {}): Promise<Release[]> {
+    const normalizedLimit = Math.max(1, Math.min(10_000, Math.round(query.limit ?? 2_000)));
+    const conditions: string[] = [];
+    const params: SqliteParams = { limit: normalizedLimit };
+
+    if (query.sourceIds) {
+      const uniqueSourceIds = [...new Set(query.sourceIds.filter(Boolean))];
+      if (!uniqueSourceIds.length) {
+        return [];
+      }
+      const placeholders = uniqueSourceIds.map((sourceId, index) => {
+        const key = `sourceId${index}`;
+        params[key] = sourceId;
+        return `@${key}`;
+      });
+      conditions.push(`source_id IN (${placeholders.join(", ")})`);
     }
 
-    const uniqueSourceIds = [...new Set(sourceIds.filter(Boolean))];
-    if (!uniqueSourceIds.length) {
-      return [];
+    if (query.animeId !== undefined) {
+      const animeId = query.animeId.trim();
+      if (!animeId) {
+        return [];
+      }
+      params.animeId = animeId;
+      conditions.push("anime_id = @animeId");
     }
-    const params: SqliteParams = { limit: normalizedLimit };
-    const placeholders = uniqueSourceIds.map((sourceId, index) => {
-      const key = `sourceId${index}`;
-      params[key] = sourceId;
-      return `@${key}`;
-    });
+
+    const whereClause = conditions.length ? ` WHERE ${conditions.join(" AND ")}` : "";
     return this.all(
-      `SELECT * FROM release WHERE source_id IN (${placeholders.join(", ")}) ORDER BY published_at DESC LIMIT @limit`,
+      `SELECT * FROM release${whereClause} ORDER BY published_at DESC LIMIT @limit`,
       params
     ).map(mapRelease);
   }
@@ -942,6 +954,17 @@ export class SqliteAppRepository implements AppRepository {
       logger.info("SQLite 通用网络熔断状态迁移完成", {
         fromVersion: currentSchemaVersion,
         toVersion: SQLITE_SCHEMA_VERSION
+      });
+    }
+
+    if (currentSchemaVersion < 15) {
+      const removedReleaseCount = this.run("DELETE FROM release WHERE anime_id IS NOT NULL").changes;
+      const removedSearchCacheCount = this.run("DELETE FROM release_search_cache").changes;
+      logger.info("SQLite 番剧资源缓存关联迁移完成", {
+        fromVersion: currentSchemaVersion,
+        toVersion: SQLITE_SCHEMA_VERSION,
+        removedReleaseCount,
+        removedSearchCacheCount
       });
     }
 
@@ -1471,7 +1494,7 @@ export class SqliteAppRepository implements AppRepository {
         @infoHash, @size, @resolution, @declaredVideoCodec, @normalizedVideoCodec, @bitDepth, @subtitle,
         @subtitleLanguagesJson, @publishedAt, @seeders, @rawJson
       ) ON CONFLICT(id) DO UPDATE SET
-        title = excluded.title, anime_id = excluded.anime_id, episode_no = excluded.episode_no,
+        title = excluded.title, anime_id = COALESCE(excluded.anime_id, release.anime_id), episode_no = excluded.episode_no,
         fansub_group_id = excluded.fansub_group_id, source_name = excluded.source_name,
         magnet_url = excluded.magnet_url, torrent_url = excluded.torrent_url, info_hash = excluded.info_hash,
         size = excluded.size, resolution = excluded.resolution, declared_video_codec = excluded.declared_video_codec,

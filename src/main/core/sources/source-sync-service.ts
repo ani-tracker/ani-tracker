@@ -27,6 +27,11 @@ export interface SourceSyncRunOptions {
   now?: Date;
 }
 
+interface TrackedAnimeRssSubscription {
+  animeId: string;
+  descriptor: AnimeRssFeedDescriptor;
+}
+
 /** 按来源执行每日增量采集，并保存可跨重启复用的资源缓存。 */
 export class SourceSyncService {
   constructor(
@@ -111,7 +116,11 @@ export class SourceSyncService {
         });
         const batches: Release[] = [];
         for (const subscription of animeRssSubscriptions) {
-          batches.push(...await releaseSource.fetchAnimeRssSubscription(subscription));
+          const animeReleases = await releaseSource.fetchAnimeRssSubscription(subscription.descriptor);
+          batches.push(...animeReleases.map((release) => ({
+            ...release,
+            animeId: subscription.animeId
+          })));
         }
         releases = batches;
       } else {
@@ -162,23 +171,26 @@ export class SourceSyncService {
   private async listTrackedAnimeRssSubscriptions(
     sourceId: string,
     releaseSource: AnimeRssSubscriptionSource
-  ): Promise<AnimeRssFeedDescriptor[]> {
+  ): Promise<TrackedAnimeRssSubscription[]> {
     const trackedAnime = await this.repository.listMyAnime();
     const subscriptions = await Promise.all(trackedAnime.map(async (item) => {
       const bindings = await this.repository.listAnimeSourceBindings(item.anime.id);
       const binding = bindings.find((candidate) => candidate.sourceId === sourceId && candidate.confirmed);
-      return releaseSource.buildAnimeRssSubscription({
+      const descriptor = releaseSource.buildAnimeRssSubscription({
         anime: item.anime,
         binding,
         limit: MAX_RELEASE_SOURCE_FETCH_LIMIT,
         allowExternalIdFallback: true
       });
+      return descriptor?.exactAnimeMatch ? { animeId: item.anime.id, descriptor } : undefined;
     }));
 
     const exactSubscriptions = subscriptions.filter(
-      (subscription): subscription is AnimeRssFeedDescriptor => Boolean(subscription?.exactAnimeMatch)
+      (subscription): subscription is TrackedAnimeRssSubscription => Boolean(subscription)
     );
-    return [...new Map(exactSubscriptions.map((subscription) => [subscription.url, subscription])).values()];
+    return [...new Map(
+      exactSubscriptions.map((subscription) => [subscription.descriptor.url, subscription])
+    ).values()];
   }
 
   /** 将失败来源、根因和熔断状态写入提醒中心。 */
