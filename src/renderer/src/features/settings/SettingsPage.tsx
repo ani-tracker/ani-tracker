@@ -1652,24 +1652,6 @@ export function SettingsPage() {
                   </SelectContent>
                 </Select>
               </Field>
-              {draft.automation.fallbackWhenDefaultFansubMissing === "candidate" && (
-                <Field className="gap-2">
-                  <FieldLabel htmlFor="automation-candidate-fansubs">候补字幕组</FieldLabel>
-                  <CandidateFansubMultiSelect
-                    id="automation-candidate-fansubs"
-                    onChange={(candidateFansubNames) =>
-                      setDraft({
-                        ...draft,
-                        automation: {
-                          ...draft.automation,
-                          candidateFansubNames
-                        }
-                      })
-                    }
-                    value={draft.automation.candidateFansubNames}
-                  />
-                </Field>
-              )}
             </FieldGroup>
             <FieldGroup className="gap-5">
               <Field className="items-center justify-between" orientation="horizontal">
@@ -1704,6 +1686,24 @@ export function SettingsPage() {
                   }
                 />
               </Field>
+              {draft.automation.fallbackWhenDefaultFansubMissing === "candidate" && (
+                <Field>
+                  <FieldLabel className="sr-only" htmlFor="automation-candidate-fansubs">候补字幕组</FieldLabel>
+                  <CandidateFansubMultiSelect
+                    id="automation-candidate-fansubs"
+                    onChange={(candidateFansubNames) =>
+                      setDraft({
+                        ...draft,
+                        automation: {
+                          ...draft.automation,
+                          candidateFansubNames
+                        }
+                      })
+                    }
+                    value={draft.automation.candidateFansubNames}
+                  />
+                </Field>
+              )}
             </FieldGroup>
           </FieldGroup>
         </CardContent>

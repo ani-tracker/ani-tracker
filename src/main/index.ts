@@ -33,6 +33,8 @@ import { DesktopPlayerWindowService } from "./core/media/desktop-player-window-s
 
 declare const __ANI_TRUSTED_ORIGINS__: string;
 
+const APP_ID = "dev.ani.tracker";
+const APP_ICON_PATH = join(__dirname, "../renderer/icons/ani-tracker-512.png");
 const trustedOriginsFromEnvFile = typeof __ANI_TRUSTED_ORIGINS__ === "string"
   ? __ANI_TRUSTED_ORIGINS__
   : undefined;
@@ -118,6 +120,7 @@ function createWindow(): void {
     minWidth: 720,
     minHeight: 560,
     title: "Ani Tracker",
+    icon: APP_ICON_PATH,
     autoHideMenuBar: process.platform === "win32",
     frame: process.platform !== "win32",
     backgroundColor: appearanceService.getWindowBackgroundColor(),
@@ -185,7 +188,7 @@ function showMainWindow(): void {
 
 app.whenReady().then(async () => {
   if (process.platform === "win32") {
-    app.setAppUserModelId("AniTracker");
+    app.setAppUserModelId(APP_ID);
     Menu.setApplicationMenu(null);
   }
 

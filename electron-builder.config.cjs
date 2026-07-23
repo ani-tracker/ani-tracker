@@ -10,6 +10,7 @@ const extraResources = ["torrent-core", "ffmpeg", "qbittorrent"]
 module.exports = {
   appId: "dev.ani.tracker",
   productName: "Ani Tracker",
+  executableName: "Ani Tracker",
   copyright: "Copyright (c) 2026 Ani Tracker contributors",
   asar: true,
   asarUnpack: ["node_modules/better-sqlite3/**/*"],

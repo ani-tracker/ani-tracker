@@ -1,4 +1,4 @@
-import { ArrowLeft, Bell, Link2, Menu, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowUp, Bell, Link2, Menu, X, type LucideIcon } from "lucide-react";
 import { type CSSProperties, type MutableRefObject, type ReactNode, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -84,11 +84,30 @@ export function AppShell({
   framelessWindow = false
 }: AppShellProps) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
+  const [showDiscoveryScrollTop, setShowDiscoveryScrollTop] = useState(false);
   const expandedDesktopSidebar = useExpandedDesktopSidebar();
   const mainRef = useRef<HTMLElement | null>(null);
   const activeItem = items.find((item) => item.id === activePageId) ?? items[0];
   const notificationsItem = items.find((item) => item.id === "notifications");
   const visibleUnreadCount = Math.min(unreadCount, 99);
+  const discoveryScrollTopEnabled = activePageId === "discovery" && !secondaryView;
+
+  useEffect(() => {
+    const scrollContainer = mainRef.current;
+    if (!scrollContainer || !discoveryScrollTopEnabled) {
+      setShowDiscoveryScrollTop(false);
+      return;
+    }
+
+    /** 根据发现页滚动距离同步回顶按钮可见性。 */
+    const updateScrollTopVisibility = () => {
+      setShowDiscoveryScrollTop(scrollContainer.scrollTop >= 320);
+    };
+
+    updateScrollTopVisibility();
+    scrollContainer.addEventListener("scroll", updateScrollTopVisibility, { passive: true });
+    return () => scrollContainer.removeEventListener("scroll", updateScrollTopVisibility);
+  }, [discoveryScrollTopEnabled]);
 
   /** 切换页面后关闭移动导航，并恢复主内容的滚动与键盘焦点。 */
   function navigate(pageId: string) {
@@ -106,6 +125,12 @@ export function AppShell({
     if (contentRef) {
       contentRef.current = element;
     }
+  }
+
+  /** 平滑滚动到新番发现页顶部。 */
+  function scrollDiscoveryToTop() {
+    mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    console.info("[discovery] 已回到页面顶部");
   }
 
   return (
@@ -270,6 +295,24 @@ export function AppShell({
 
           <div className="mx-auto min-h-full w-full max-w-[1600px] p-[var(--app-content-padding)]">{children}</div>
         </SidebarInset>
+
+        {showDiscoveryScrollTop && (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label="回到顶部"
+                className="fixed bottom-[max(1rem,var(--safe-area-bottom))] right-[max(1rem,var(--safe-area-right))] z-20 size-11 shadow-md md:size-11"
+                onClick={scrollDiscoveryToTop}
+                size="icon"
+                type="button"
+                variant="outline"
+              >
+                <ArrowUp aria-hidden="true" data-icon="inline-start" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="left">回到顶部</TooltipContent>
+          </Tooltip>
+        )}
 
         <Sheet onOpenChange={setMobileNavigationOpen} open={mobileNavigationOpen}>
           <SheetContent
