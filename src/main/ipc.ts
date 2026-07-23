@@ -60,6 +60,19 @@ import type { ImageCacheService } from "./core/cache/image-cache-service";
 import { SourceSyncScheduler } from "./core/sources/source-sync-scheduler";
 import type { DesktopPlaybackSessionService } from "./core/media/desktop-playback-session-service";
 import type { DesktopPlayerWindowService } from "./core/media/desktop-player-window-service";
+import {
+  createUnavailablePlayerCapabilities,
+  type PlayerCapabilities,
+  type PlayerCommand,
+  type PlayerCommandResult
+} from "@shared/player-contract";
+
+interface DesktopPlayerControlService {
+  /** 返回指定播放器窗口可使用的原生播放能力。 */
+  getCapabilities(ownerId: number): PlayerCapabilities | Promise<PlayerCapabilities>;
+  /** 将受校验的播放器命令发送到指定窗口的原生后端。 */
+  dispatch(command: PlayerCommand, ownerId: number): PlayerCommandResult | Promise<PlayerCommandResult>;
+}
 
 export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
@@ -82,6 +95,7 @@ interface RegisterIpcHandlersOptions {
   imageCacheService?: ImageCacheService;
   desktopPlaybackSessionService?: Pick<DesktopPlaybackSessionService, "createSession" | "closeSession">;
   desktopPlayerWindowService?: Pick<DesktopPlayerWindowService, "open" | "close">;
+  desktopPlayerControlService?: DesktopPlayerControlService;
   getMainWindow?: () => BrowserWindow | null;
 }
 
@@ -552,6 +566,16 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       options.desktopPlayerWindowService!.close(event.sender.id);
     });
   }
+  ipcMain.handle("player:getCapabilities", (event) =>
+    options.desktopPlayerControlService?.getCapabilities(event.sender.id)
+      ?? createUnavailablePlayerCapabilities("libvlc", "electron", "libVLC 原生运行时尚未就绪")
+  );
+  ipcMain.handle("player:dispatch", (event, command: PlayerCommand) => {
+    if (options.desktopPlayerControlService) {
+      return options.desktopPlayerControlService.dispatch(command, event.sender.id);
+    }
+    return createPlayerRuntimeMissingResult(command);
+  });
   ipcMain.handle("media:reveal", async (_event, filePath: string) => {
     const settings = await repository.getSettings();
     await new PlayerLauncherService(settings).reveal(filePath);
@@ -562,6 +586,20 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     ipcMain.handle("remote:createPairingCode", () => options.remoteGateway?.createPairingCode());
     ipcMain.handle("remote:revokeDevice", (_event, deviceId: string) => options.remoteGateway?.revokeDevice(deviceId));
   }
+}
+
+/** 在原生播放器尚未接入时返回可展示的运行时错误。 */
+function createPlayerRuntimeMissingResult(command: PlayerCommand | undefined): PlayerCommandResult {
+  return {
+    commandId: typeof command?.commandId === "string" ? command.commandId : "invalid-command",
+    accepted: false,
+    error: {
+      code: "runtime-missing",
+      message: "libVLC 原生运行时尚未就绪",
+      recoverable: false,
+      recoveryActions: ["close"]
+    }
+  };
 }
 
 /** 返回无边框主窗口可读取的最小窗口状态。 */

@@ -35,6 +35,12 @@ import type {
   SourceSyncSchedulerStatus
 } from "@shared/contracts";
 import type { ImageCacheResolveResult } from "@shared/contracts";
+import type {
+  PlayerCapabilities,
+  PlayerCommand,
+  PlayerCommandResult,
+  PlayerSnapshot
+} from "@shared/player-contract";
 
 const api = {
   platform: process.platform,
@@ -139,6 +145,15 @@ const api = {
     ipcRenderer.invoke("media:createPlaybackSession", input),
   closeDesktopPlaybackSession: (sessionId: string): Promise<void> =>
     ipcRenderer.invoke("media:closePlaybackSession", sessionId),
+  getDesktopPlayerCapabilities: (): Promise<PlayerCapabilities> =>
+    ipcRenderer.invoke("player:getCapabilities"),
+  dispatchDesktopPlayerCommand: (command: PlayerCommand): Promise<PlayerCommandResult> =>
+    ipcRenderer.invoke("player:dispatch", command),
+  onDesktopPlayerSnapshot: (listener: (snapshot: PlayerSnapshot) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, snapshot: PlayerSnapshot) => listener(snapshot);
+    ipcRenderer.on("player:snapshot", handler);
+    return () => ipcRenderer.off("player:snapshot", handler);
+  },
   revealMedia: (filePath: string) => ipcRenderer.invoke("media:reveal", filePath),
   openExternal: (url: string) => ipcRenderer.invoke("platform:openExternal", url),
   getRemoteGatewayStatus: (): Promise<RemoteGatewayStatus> => ipcRenderer.invoke("remote:getStatus"),

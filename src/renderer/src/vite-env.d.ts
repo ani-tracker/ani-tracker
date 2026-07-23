@@ -52,6 +52,12 @@ import type {
   TorrentConnectionTestResult
 } from "@shared/contracts";
 import type { ImageCacheResolveResult } from "@shared/contracts";
+import type {
+  PlayerCapabilities,
+  PlayerCommand,
+  PlayerCommandResult,
+  PlayerSnapshot
+} from "@shared/player-contract";
 
 declare global {
   interface Window {
@@ -131,6 +137,9 @@ declare global {
       closeDesktopPlayerWindow: () => void;
       createDesktopPlaybackSession: (input: DesktopPlaybackSessionInput) => Promise<RemotePlaybackSession>;
       closeDesktopPlaybackSession: (sessionId: string) => Promise<void>;
+      getDesktopPlayerCapabilities: () => Promise<PlayerCapabilities>;
+      dispatchDesktopPlayerCommand: (command: PlayerCommand) => Promise<PlayerCommandResult>;
+      onDesktopPlayerSnapshot: (listener: (snapshot: PlayerSnapshot) => void) => () => void;
       revealMedia: (filePath: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       getRemoteGatewayStatus: () => Promise<RemoteGatewayStatus>;
