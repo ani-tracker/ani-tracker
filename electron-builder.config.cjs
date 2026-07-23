@@ -1,0 +1,55 @@
+const { existsSync } = require("node:fs");
+const { resolve } = require("node:path");
+
+/** 仅把当前 runner 已准备好的原生资源加入安装包。 */
+const extraResources = ["torrent-core", "ffmpeg", "qbittorrent"]
+  .map((name) => ({ name, path: resolve("out", name) }))
+  .filter((item) => existsSync(item.path))
+  .map((item) => ({ from: item.path, to: item.name }));
+
+module.exports = {
+  appId: "dev.ani.tracker",
+  productName: "Ani Tracker",
+  copyright: "Copyright (c) 2026 Ani Tracker contributors",
+  asar: true,
+  asarUnpack: ["node_modules/better-sqlite3/**/*"],
+  npmRebuild: false,
+  directories: {
+    output: "release",
+    buildResources: "src/renderer/public/icons"
+  },
+  files: [
+    "out/main/**/*",
+    "out/preload/**/*",
+    "out/renderer/**/*",
+    "package.json"
+  ],
+  extraResources,
+  artifactName: "${productName}-${version}-${os}-${arch}.${ext}",
+  mac: {
+    category: "public.app-category.entertainment",
+    hardenedRuntime: true,
+    minimumSystemVersion: "12.0",
+    icon: "src/renderer/public/icons/ani-tracker-512.png",
+    target: ["dmg", "zip"]
+  },
+  dmg: {
+    sign: false
+  },
+  win: {
+    icon: "src/renderer/public/icons/ani-tracker-512.png",
+    target: ["nsis", "zip"]
+  },
+  nsis: {
+    oneClick: false,
+    allowToChangeInstallationDirectory: true,
+    createDesktopShortcut: true,
+    createStartMenuShortcut: true
+  },
+  linux: {
+    category: "AudioVideo",
+    executableName: "ani-tracker",
+    icon: "src/renderer/public/icons/ani-tracker-512.png",
+    target: ["AppImage", "deb"]
+  }
+};

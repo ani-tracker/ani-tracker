@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="torrent_notification_channel">BT 下载</string>
+    <string name="torrent_notification_channel_description">保持下载任务在后台运行</string>
+    <string name="torrent_notification_title">Ani Tracker 正在下载</string>
+    <string name="torrent_notification_text">BT 下载核心正在后台运行</string>
+</resources>

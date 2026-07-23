@@ -3,7 +3,9 @@ import { join } from "node:path";
 import { test } from "node:test";
 import type { AppSettings } from "@shared/domain";
 import {
+  AndroidDefaultSettingsProvider,
   GenericDefaultSettingsProvider,
+  LinuxDefaultSettingsProvider,
   MacDefaultSettingsProvider,
   WindowsDefaultSettingsProvider,
   createDefaultSettingsProvider,
@@ -37,7 +39,7 @@ test("MacDefaultSettingsProvider 生成 macOS 默认目录和 IINA 播放器模�
   });
 });
 
-test("WindowsDefaultSettingsProvider 生成 Windows 四种播放器选择模板", () => {
+test("WindowsDefaultSettingsProvider 生成 Windows 三种播放器选择模板", () => {
   const settings = new WindowsDefaultSettingsProvider(paths).getSettings();
 
   assertSharedDefaults(settings);
@@ -81,10 +83,33 @@ test("GenericDefaultSettingsProvider 只提供跨平台 mpv 模板", () => {
   ]);
 });
 
+test("LinuxDefaultSettingsProvider 提供 mpv 与 VLC 默认路径", () => {
+  const settings = new LinuxDefaultSettingsProvider(paths).getSettings();
+
+  assertSharedDefaults(settings);
+  assert.deepEqual(settings.players.map((player) => player.id), ["mpv", "vlc"]);
+  assert.deepEqual(settings.players.map((player) => player.executablePath), ["/usr/bin/mpv", "/usr/bin/vlc"]);
+  assert.ok(settings.players.every((player) => player.platform === "linux"));
+});
+
+test("AndroidDefaultSettingsProvider 使用移动端保守下载默认值", () => {
+  const settings = new AndroidDefaultSettingsProvider(paths).getSettings();
+
+  assertSharedDefaults(settings, {
+    maxActiveDownloads: 1,
+    upnpEnabled: false,
+    managedQbittorrentEnabled: false,
+    minimizeToTray: false
+  });
+  assert.deepEqual(settings.players, []);
+});
+
 test("createDefaultSettingsProvider 根据 process.platform 兼容值选择子类", () => {
   assert.ok(createDefaultSettingsProvider("darwin", paths) instanceof MacDefaultSettingsProvider);
   assert.ok(createDefaultSettingsProvider("win32", paths) instanceof WindowsDefaultSettingsProvider);
-  assert.ok(createDefaultSettingsProvider("linux", paths) instanceof GenericDefaultSettingsProvider);
+  assert.ok(createDefaultSettingsProvider("linux", paths) instanceof LinuxDefaultSettingsProvider);
+  assert.ok(createDefaultSettingsProvider("android", paths) instanceof AndroidDefaultSettingsProvider);
+  assert.ok(createDefaultSettingsProvider("freebsd", paths) instanceof GenericDefaultSettingsProvider);
 });
 
 test("mergeSettings 拒绝非法远程端口并接受有效端口", () => {
@@ -127,7 +152,15 @@ test("mergeSettings 兼容旧设置并按匹配规则清理候补字幕组", () 
   assert.deepEqual(normalized.automation.candidateFansubNames, ["Neko Moe", "字幕 组"]);
 });
 
-function assertSharedDefaults(settings: AppSettings): void {
+function assertSharedDefaults(
+  settings: AppSettings,
+  overrides: {
+    maxActiveDownloads?: number;
+    upnpEnabled?: boolean;
+    managedQbittorrentEnabled?: boolean;
+    minimizeToTray?: boolean;
+  } = {}
+): void {
   assert.deepEqual(settings.appearance, {
     themeMode: "system",
     themePackId: "default",
@@ -140,8 +173,8 @@ function assertSharedDefaults(settings: AppSettings): void {
     enabled: true,
     listenPort: 51413,
     dhtEnabled: true,
-    upnpEnabled: true,
-    maxActiveDownloads: 3,
+    upnpEnabled: overrides.upnpEnabled ?? true,
+    maxActiveDownloads: overrides.maxActiveDownloads ?? 3,
     maxDownloadSpeed: 0,
     maxUploadSpeed: 0,
     seedingLimits: {
@@ -156,7 +189,7 @@ function assertSharedDefaults(settings: AppSettings): void {
     baseUrl: "http://127.0.0.1:18080",
     username: "admin",
     password: "ani-tracker",
-    autoConnect: true,
+    autoConnect: overrides.managedQbittorrentEnabled ?? true,
     downloadLimitKiBps: 0,
     uploadLimitKiBps: 0,
     seedingLimits: {
@@ -167,7 +200,7 @@ function assertSharedDefaults(settings: AppSettings): void {
       timeLimitMinutes: 120
     },
     managed: {
-      enabled: true,
+      enabled: overrides.managedQbittorrentEnabled ?? true,
       profileDir: join(paths.userData, "qbittorrent"),
       startupTimeoutMs: 15_000
     }
@@ -193,7 +226,7 @@ function assertSharedDefaults(settings: AppSettings): void {
     videoExtensions: [".mkv", ".mp4", ".avi"]
   });
   assert.deepEqual(settings.desktop, {
-    minimizeToTray: true,
+    minimizeToTray: overrides.minimizeToTray ?? true,
     launchAtLogin: false
   });
   assert.deepEqual(settings.network, {

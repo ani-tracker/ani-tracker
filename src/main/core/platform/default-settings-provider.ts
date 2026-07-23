@@ -29,8 +29,8 @@ export abstract class DefaultSettingsProvider {
           enabled: true,
           listenPort: 51413,
           dhtEnabled: true,
-          upnpEnabled: true,
-          maxActiveDownloads: 3,
+          upnpEnabled: this.isEmbeddedUpnpEnabled(),
+          maxActiveDownloads: this.getEmbeddedMaxActiveDownloads(),
           maxDownloadSpeed: 0,
           maxUploadSpeed: 0,
           seedingLimits: {
@@ -45,7 +45,7 @@ export abstract class DefaultSettingsProvider {
           baseUrl: "http://127.0.0.1:18080",
           username: "admin",
           password: "ani-tracker",
-          autoConnect: true,
+          autoConnect: this.isManagedQbittorrentEnabled(),
           downloadLimitKiBps: 0,
           uploadLimitKiBps: 0,
           seedingLimits: {
@@ -56,7 +56,7 @@ export abstract class DefaultSettingsProvider {
             timeLimitMinutes: 120
           },
           managed: {
-            enabled: true,
+            enabled: this.isManagedQbittorrentEnabled(),
             profileDir: join(userDataDir, "qbittorrent"),
             startupTimeoutMs: 15_000
           }
@@ -89,7 +89,7 @@ export abstract class DefaultSettingsProvider {
         videoExtensions: [".mkv", ".mp4", ".avi"]
       },
       desktop: {
-        minimizeToTray: true,
+        minimizeToTray: this.shouldMinimizeToTray(),
         launchAtLogin: false
       },
       network: {
@@ -107,6 +107,26 @@ export abstract class DefaultSettingsProvider {
 
   protected getDefaultDownloadDir(): string {
     return join(this.paths.downloads, "Ani Tracker");
+  }
+
+  /** 返回平台建议的并行下载数量。 */
+  protected getEmbeddedMaxActiveDownloads(): number {
+    return 3;
+  }
+
+  /** 返回平台是否默认启用 UPnP/NAT-PMP。 */
+  protected isEmbeddedUpnpEnabled(): boolean {
+    return true;
+  }
+
+  /** 返回平台是否支持应用托管 qBittorrent。 */
+  protected isManagedQbittorrentEnabled(): boolean {
+    return true;
+  }
+
+  /** 返回平台是否默认启用最小化到托盘。 */
+  protected shouldMinimizeToTray(): boolean {
+    return true;
   }
 
   protected abstract getPlayerProfiles(): PlayerProfile[];
@@ -162,6 +182,61 @@ export class WindowsDefaultSettingsProvider extends DefaultSettingsProvider {
   }
 }
 
+export class LinuxDefaultSettingsProvider extends DefaultSettingsProvider {
+  /** Linux 优先提供发行版常见的 mpv 与 VLC 命令路径。 */
+  protected getPlayerProfiles(): PlayerProfile[] {
+    return [
+      {
+        id: "mpv",
+        name: "mpv",
+        executablePath: "/usr/bin/mpv",
+        argumentTemplate: "--force-window=yes \"{file}\"",
+        supportsMadVr: false,
+        platform: "linux"
+      },
+      {
+        id: "vlc",
+        name: "VLC",
+        executablePath: "/usr/bin/vlc",
+        argumentTemplate: "--play-and-exit \"{file}\"",
+        supportsMadVr: false,
+        platform: "linux"
+      }
+    ];
+  }
+
+  protected getDefaultPlayerProfileId(): string {
+    return "auto";
+  }
+}
+
+export class AndroidDefaultSettingsProvider extends DefaultSettingsProvider {
+  /** Android 播放由移动宿主处理，不声明桌面可执行文件。 */
+  protected getPlayerProfiles(): PlayerProfile[] {
+    return [];
+  }
+
+  protected getDefaultPlayerProfileId(): string {
+    return "auto";
+  }
+
+  protected getEmbeddedMaxActiveDownloads(): number {
+    return 1;
+  }
+
+  protected isEmbeddedUpnpEnabled(): boolean {
+    return false;
+  }
+
+  protected isManagedQbittorrentEnabled(): boolean {
+    return false;
+  }
+
+  protected shouldMinimizeToTray(): boolean {
+    return false;
+  }
+}
+
 export class GenericDefaultSettingsProvider extends DefaultSettingsProvider {
   protected getPlayerProfiles(): PlayerProfile[] {
     return [createMpvProfile()];
@@ -184,6 +259,16 @@ export function createDefaultSettingsProvider(
   if (platform === "win32") {
     logger.info("Default settings provider selected", { platform, provider: "windows" });
     return new WindowsDefaultSettingsProvider(paths);
+  }
+
+  if (platform === "linux") {
+    logger.info("Default settings provider selected", { platform, provider: "linux" });
+    return new LinuxDefaultSettingsProvider(paths);
+  }
+
+  if (platform === "android") {
+    logger.info("Default settings provider selected", { platform, provider: "android" });
+    return new AndroidDefaultSettingsProvider(paths);
   }
 
   logger.info("Default settings provider selected", { platform, provider: "generic" });
@@ -221,6 +306,10 @@ function getDefaultCacheDir(userData: string): string {
 
   if (process.platform === "win32" && process.env.LOCALAPPDATA) {
     return join(process.env.LOCALAPPDATA, appName, "Cache");
+  }
+
+  if (process.platform === "linux") {
+    return join(process.env.XDG_CACHE_HOME ?? join(app.getPath("home"), ".cache"), appName);
   }
 
   return join(userData, "cache");

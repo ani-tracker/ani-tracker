@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Ani Tracker Torrent Host</string>
+    <string name="app_description">内置 libtorrent 下载核心状态与生命周期控制</string>
+    <string name="start_core">启动</string>
+    <string name="refresh_status">刷新</string>
+    <string name="stop_core">停止</string>
+    <string name="status_starting">正在启动下载核心…</string>
+    <string name="status_not_connected">下载核心尚未连接</string>
+    <string name="status_disconnected">下载核心连接已断开</string>
+    <string name="status_stopped">下载核心已停止</string>
+    <string name="status_error">核心请求失败：%1$s</string>
+</resources>

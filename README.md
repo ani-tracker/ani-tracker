@@ -37,7 +37,7 @@ Desktop Renderer / Remote PWA
 - `ReleaseSource`：RSS、Torznab 和站点资源适配器。
 - `SourceRequestScheduler`：下载源代理选择、域名限速、请求合并、退避和熔断。
 - `SourceSyncScheduler`：每日增量采集、启动补跑和持久化资源缓存。
-- `TorrentEngine`：qBittorrent 兼容引擎和内置引擎占位。
+- `TorrentEngine`：qBittorrent 兼容引擎和 libtorrent 内置引擎。
 - `RemoteHttpGateway`：配对、RPC、远程静态页面、媒体和图片缓存路由。
 - `ImageCacheService`：桌面协议与远程 HTTP 共用的持久图片缓存。
 - `MediaProbeService`：文件名和 ffprobe 媒体探测。
@@ -70,6 +70,8 @@ src/renderer/src               桌面与远程 React UI
 src/shared                     共享领域模型和契约
 resources/qbittorrent          内置 qBittorrent-nox 资源
 resources/ffmpeg               三平台 FFmpeg 预构建资源
+native/torrent-core            桌面 sidecar 与 Android JNI 共用的 C++ 运行时
+android                        Android 前台服务、AAR 与宿主 APK 工程
 docs                           设计、进度、启动和专项计划
 ```
 
@@ -89,6 +91,7 @@ pnpm.cmd install
 | `pnpm.cmd dev:desktop` | Vite HMR | 不保证可用 | 仅调试桌面端，启动更快 |
 | `pnpm.cmd preview` | 生产构建 | `out/renderer` | 自动重新构建后启动 Electron |
 | `pnpm.cmd build` | 生成产物 | `out/renderer` | 同时准备目标平台 qBittorrent 与 FFmpeg 资源，不启动应用 |
+| `pnpm.cmd package:desktop` | 安装包 | `release/` | 生成当前平台 Electron 安装包并内置 torrent-core |
 
 ### 日常开发
 

@@ -1,3 +1,5 @@
+#include "ani/torrent_core_runtime.hpp"
+
 #include <libtorrent/add_torrent_params.hpp>
 #include <libtorrent/alert_types.hpp>
 #include <libtorrent/error_code.hpp>
@@ -46,8 +48,6 @@ namespace pt = boost::property_tree;
 namespace {
 
 using Clock = std::chrono::steady_clock;
-
-std::atomic<bool> signal_stop{false};
 
 struct Command {
   std::string id;
@@ -141,26 +141,26 @@ std::vector<char> read_binary(const fs::path& path) {
   return {std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
 }
 
-/** 将 property_tree 输出为单行 JSON。 */
-void emit_json(const pt::ptree& tree) {
+/** 将 property_tree 序列化为单行 JSON。 */
+std::string serialize_json(const pt::ptree& tree) {
   std::ostringstream output;
   pt::write_json(output, tree, false);
   std::string line = output.str();
   line.erase(std::remove(line.begin(), line.end(), '\n'), line.end());
-  std::cout << line << '\n' << std::flush;
+  return line;
 }
 
-/** 输出成功响应。 */
-void emit_success(const std::string& id, const pt::ptree& result) {
+/** 构造成功响应。 */
+std::string success_response(const std::string& id, const pt::ptree& result) {
   pt::ptree response;
   response.put("id", id);
   response.put("ok", true);
   response.add_child("result", result);
-  emit_json(response);
+  return serialize_json(response);
 }
 
-/** 输出结构化失败响应。 */
-void emit_error(const std::string& id, const std::string& code, const std::string& message) {
+/** 构造结构化失败响应。 */
+std::string error_response(const std::string& id, const std::string& code, const std::string& message) {
   pt::ptree response;
   response.put("id", id);
   response.put("ok", false);
@@ -168,7 +168,7 @@ void emit_error(const std::string& id, const std::string& code, const std::strin
   error.put("code", code);
   error.put("message", message);
   response.add_child("error", error);
-  emit_json(response);
+  return serialize_json(response);
 }
 
 /** 将数组节点加入 property_tree。 */
@@ -652,84 +652,66 @@ class TorrentCore {
   Clock::time_point last_resume_save_ = Clock::now();
 };
 
-/** 处理 SIGINT/SIGTERM，交由主循环优雅退出。 */
-void handle_signal(int) { signal_stop = true; }
-
-/** 解析命令行中的核心数据目录。 */
-fs::path parse_data_directory(int argc, char** argv) {
-  for (int index = 1; index < argc - 1; ++index) {
-    if (std::string(argv[index]) == "--data-dir") return fs::absolute(argv[index + 1]);
-  }
-  throw std::runtime_error("缺少 --data-dir 参数");
-}
-
 }  // namespace
 
-int main(int argc, char** argv) {
+namespace ani::torrent_core {
+
+struct Runtime::Impl {
+  explicit Impl(std::string data_directory) : core(fs::absolute(std::move(data_directory))) {}
+
+  mutable std::mutex mutex;
+  TorrentCore core;
+  bool stop_requested = false;
+  bool stopped = false;
+};
+
+Runtime::Runtime(std::string data_directory) : impl_(std::make_unique<Impl>(std::move(data_directory))) {}
+
+Runtime::~Runtime() { shutdown(); }
+
+std::string Runtime::execute(std::string_view request_json) {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (impl_->stopped) {
+    return error_response("", "CORE_STOPPED", "内置下载核心已停止");
+  }
+
+  Command command;
   try {
-    std::signal(SIGINT, handle_signal);
-    std::signal(SIGTERM, handle_signal);
-
-    TorrentCore core(parse_data_directory(argc, argv));
-    std::mutex queue_mutex;
-    std::condition_variable queue_changed;
-    std::queue<Command> commands;
-    std::atomic<bool> input_closed{false};
-
-    std::thread reader([&]() {
-      std::string line;
-      while (std::getline(std::cin, line)) {
-        try {
-          std::istringstream input(line);
-          pt::ptree request;
-          pt::read_json(input, request);
-          pt::ptree empty_params;
-          Command command{
-              request.get<std::string>("id"),
-              request.get<std::string>("method"),
-              request.get_child("params", empty_params)};
-          {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            commands.push(std::move(command));
-          }
-          queue_changed.notify_one();
-        } catch (const std::exception& error) {
-          emit_error("", "INVALID_REQUEST", error.what());
-        }
-      }
-      input_closed = true;
-      queue_changed.notify_one();
-    });
-
-    bool should_stop = false;
-    while (!should_stop && !signal_stop) {
-      std::optional<Command> command;
-      {
-        std::unique_lock<std::mutex> lock(queue_mutex);
-        queue_changed.wait_for(lock, std::chrono::milliseconds(100), [&]() {
-          return !commands.empty() || input_closed.load() || signal_stop.load();
-        });
-        if (!commands.empty()) {
-          command = std::move(commands.front());
-          commands.pop();
-        }
-      }
-      if (command) {
-        try {
-          emit_success(command->id, core.execute(*command, should_stop));
-        } catch (const std::exception& error) {
-          emit_error(command->id, "CORE_ERROR", error.what());
-        }
-      }
-      core.tick();
-      if (input_closed && !command) should_stop = true;
-    }
-
-    core.shutdown();
-    if (reader.joinable()) reader.join();
-    return 0;
+    std::istringstream input{std::string(request_json)};
+    pt::ptree request;
+    pt::read_json(input, request);
+    pt::ptree empty_params;
+    command = {
+        request.get<std::string>("id"),
+        request.get<std::string>("method"),
+        request.get_child("params", empty_params)};
   } catch (const std::exception& error) {
-    std::cerr << "[torrent-core] fatal: " << error.what() << '\n';
-    return 1;
+    return error_response("", "INVALID_REQUEST", error.what());
+  }
+
+  try {
+    return success_response(command.id, impl_->core.execute(command, impl_->stop_requested));
+  } catch (const std::exception& error) {
+    return error_response(command.id, "CORE_ERROR", error.what());
   }
 }
+
+void Runtime::tick() {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (!impl_->stopped) impl_->core.tick();
+}
+
+void Runtime::shutdown() {
+  if (!impl_) return;
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  if (impl_->stopped) return;
+  impl_->core.shutdown();
+  impl_->stopped = true;
+}
+
+bool Runtime::should_stop() const {
+  std::lock_guard<std::mutex> lock(impl_->mutex);
+  return impl_->stop_requested;
+}
+
+}  // namespace ani::torrent_core

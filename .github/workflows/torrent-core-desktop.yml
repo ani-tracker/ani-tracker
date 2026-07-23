@@ -1,0 +1,231 @@
+name: Desktop Application Packages
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  unix:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            target: linux-x64
+            platform: linux
+            arch: x64
+            builderTarget: linux
+          - runner: macos-15-intel
+            target: darwin-x64
+            platform: darwin
+            arch: x64
+            builderTarget: mac
+          - runner: macos-15
+            target: darwin-arm64
+            platform: darwin
+            arch: arm64
+            builderTarget: mac
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install JavaScript dependencies
+        shell: bash
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Verify runner architecture
+        shell: bash
+        run: |
+          expected="${{ matrix.arch }}"
+          actual="$(node -p 'process.arch')"
+          test "${actual}" = "${expected}"
+
+      - name: Install Linux build dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libboost-system-dev libssl-dev ninja-build
+
+      - name: Install macOS build dependencies
+        if: matrix.platform == 'darwin'
+        run: brew install boost openssl@3 ninja
+
+      - name: Configure portable core
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == "darwin" ]]; then
+            export CMAKE_PREFIX_PATH="$(brew --prefix boost);$(brew --prefix openssl@3)"
+          fi
+          cmake --preset portable-release -S native/torrent-core
+
+      - name: Build portable core
+        run: cmake --build native/torrent-core/build/portable-release --config Release
+
+      - name: Stage and verify bundle
+        shell: bash
+        run: |
+          node scripts/package-torrent-core-bundle.mjs --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}"
+          node scripts/prepare-torrent-core-resources.mjs \
+            --source artifacts/torrent-core \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --required \
+            --verify-only
+
+      - name: Build Electron application
+        shell: bash
+        run: |
+          pnpm exec electron-vite build
+          node scripts/prepare-torrent-core-resources.mjs \
+            --source artifacts/torrent-core \
+            --target out/torrent-core \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --required
+          pnpm run prepare:ffmpeg
+          pnpm run prepare:qbittorrent
+
+      - name: Package desktop application
+        env:
+          CSC_LINK: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_LINK || '' }}
+          CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
+          APPLE_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_ID || '' }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
+          APPLE_TEAM_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_TEAM_ID || '' }}
+        run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.builderTarget }} --${{ matrix.arch }} --publish never
+
+      - name: Verify packaged embedded core
+        shell: bash
+        run: |
+          core="$(find release -type f -path "*/torrent-core/${{ matrix.target }}/torrent-core" -print -quit)"
+          test -n "${core}"
+          test -x "${core}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: torrent-core-${{ matrix.target }}
+          path: artifacts/torrent-core/${{ matrix.target }}
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ani-tracker-${{ matrix.target }}
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+          if-no-files-found: error
+
+  windows:
+    name: win32-x64
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install JavaScript dependencies
+        shell: pwsh
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile
+
+      - name: Install static dependencies
+        shell: pwsh
+        run: |
+          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-system:x64-windows-static openssl:x64-windows-static
+
+      - name: Configure portable core
+        shell: pwsh
+        run: |
+          cmake --preset portable-release -S native/torrent-core `
+            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            "-DVCPKG_TARGET_TRIPLET=x64-windows-static" `
+            "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+
+      - name: Build portable core
+        run: cmake --build native/torrent-core/build/portable-release --config Release
+
+      - name: Stage and verify bundle
+        shell: pwsh
+        run: |
+          node scripts/package-torrent-core-bundle.mjs --platform win32 --arch x64
+          node scripts/prepare-torrent-core-resources.mjs --source artifacts/torrent-core --platform win32 --arch x64 --required --verify-only
+
+      - name: Build Electron application
+        shell: pwsh
+        run: |
+          pnpm exec electron-vite build
+          node scripts/prepare-torrent-core-resources.mjs --source artifacts/torrent-core --target out/torrent-core --platform win32 --arch x64 --required
+          pnpm run prepare:ffmpeg
+          pnpm run prepare:qbittorrent
+
+      - name: Package desktop application
+        shell: pwsh
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: pnpm exec electron-builder --config electron-builder.config.cjs --win --x64 --publish never
+
+      - name: Verify packaged embedded core
+        shell: pwsh
+        run: |
+          $core = Get-ChildItem -Path release -Recurse -Filter torrent-core.exe |
+            Where-Object { $_.FullName -like "*torrent-core\win32-x64\torrent-core.exe" } |
+            Select-Object -First 1
+          if (-not $core) {
+            throw "Packaged torrent-core.exe was not found"
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: torrent-core-win32-x64
+          path: artifacts/torrent-core/win32-x64
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ani-tracker-win32-x64
+          path: |
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error
+
+  publish-draft:
+    name: Publish desktop application draft
+    if: ${{ startsWith(github.ref, 'refs/tags/') }}
+    needs: [unix, windows]
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ani-tracker-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate desktop SHA-256 checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS-desktop.txt
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          generate_release_notes: true
+          files: release-assets/*

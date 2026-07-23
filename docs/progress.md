@@ -1,6 +1,6 @@
 # Ani Tracker 实现状态
 
-最近核对：2026-07-21
+最近核对：2026-07-23
 
 状态只描述当前代码。已结束的阶段计划见 [历史归档](archive/README.md)。
 
@@ -11,7 +11,7 @@
 | 持久化 | SQLite-only；应用数据版本 21，Schema 版本 14 |
 | 桌面页面 | 8 个一级页面及番剧详情二级页面 |
 | 远程页面 | 首页、我的追番、新番发现、下载队列、提醒中心 |
-| 下载内核 | qBittorrent 可用；内置 BT 占位 |
+| 下载内核 | libtorrent 内置核心与 qBittorrent 均可用 |
 | 托管资源 | macOS x64、Windows x64 qBittorrent-nox |
 | 媒体资源 | macOS x64/arm64、Windows x64 FFmpeg/ffprobe |
 | 主题 | 跟随系统、浅色、深色、3 套内置主题、自定义导入导出 |
@@ -47,6 +47,10 @@
 - 内置核心支持磁链、种子、任务状态、暂停、恢复、移除、文件优先级、限速及做种停止策略。
 - 默认使用内置引擎；切换只影响新任务，旧任务继续按创建时引擎路由。
 - 下载设置提供内置 libtorrent、内置 qBittorrent-nox、外部 qBittorrent WebUI 三种模式。
+- 原生运行时由桌面 sidecar 与 Android JNI 共用，Android 前台服务应用移动端默认设置。
+- Linux 与 Android 独立默认设置已加入；macOS、Windows 默认值保持兼容。
+- GitHub Actions 已配置桌面安装包和 Android AAR/APK/AAB 构建，并以草稿 Release 交付标签产物。
+- Android/iOS 移动端能力边界已确定：不打包远程 Renderer、FFmpeg/FFprobe 或媒体转码服务。
 - qBittorrent Web API、Enhanced 添加结果、真实 hash 确认和 Ani Tracker 标签关联。
 - 添加、刷新、暂停、继续、移除、进度、速度、ETA 和文件优先级管理。
 - qBittorrent-nox 托管启动、自动连接、动态高位端口、限速和做种停止目标。
@@ -72,8 +76,8 @@
 
 ## 未完成或受限
 
-- Windows、Linux、macOS arm64 的 `torrent-core` 发布资源和签名验证尚未完成。
-- Android JNI、前台下载服务、ABI 产物和真机恢复尚未实现。
+- Windows、Linux、macOS arm64 仍需在 GitHub runner 生成并签收最终资源。
+- Android JNI 与前台服务已实现，AAR/APK/AAB 仍需 CI 构建及 arm64 真机恢复验收。
 - 内置核心尚缺公网完整下载、网络切换、磁盘满和损坏 fastresume 的发布级回归。
 - qBittorrent-nox 尚缺 macOS arm64、Linux x64 内置资源。
 - 更多站点镜像和站点专有筛选项尚未实现。

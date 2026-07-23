@@ -13,8 +13,8 @@
 | 默认内置引擎、按任务原引擎路由、切换不迁移旧任务 | 已实现 |
 | 设置页三种模式、内置配置和核心状态 | 已实现并完成 1280/720px 验收 |
 | 资源哈希、许可证、依赖闭合、运行握手校验 | 已实现；macOS x64 资源已通过 |
-| Windows、Linux、macOS arm64 发布资源 | 待对应平台构建、签名和验证 |
-| Android JNI、前台服务与真机恢复 | 待阶段 3 实施 |
+| Windows、Linux、macOS arm64 发布资源 | CI 构建、安装包和草稿发布流程已实现；待 runner 产物签收 |
+| Android JNI、前台服务与真机恢复 | JNI、前台服务、AAR/APK/AAB 流程已实现；待 CI 与真机恢复验收 |
 | 公网 BT 完整下载、异常退出和磁盘异常回归 | 待发布验收 |
 
 ## 目标
@@ -33,9 +33,9 @@
 | Windows | 随 Electron 打包的本地核心进程 | 完整下载与做种 |
 | macOS | 随 Electron 打包的本地核心进程 | 完整下载与做种 |
 | Linux | 随 Electron 打包的本地核心进程 | 完整下载与做种 |
-| Android | `libtorrent` `.so` + 前台下载服务 | 完整下载与做种，受系统省电策略约束 |
+| Android | `libtorrent` `.so` + 前台下载服务 | 完整下载与做种；不提供远程 Renderer 和转码 |
 | Web/PWA | 调用桌面或移动宿主的受限远程接口 | 仅控制与查看，不在浏览器内运行 BT 内核 |
-| iOS/iPadOS | 后续独立验证 | 可评估编译集成；系统不允许长期后台做种，不能承诺与桌面端同等常驻行为 |
+| iOS/iPadOS | 后续独立验证 | 可评估编译集成；不提供远程 Renderer 和转码，且不承诺长期后台做种 |
 
 首批发布目标为 Windows x64、macOS arm64/x64、Linux x64 和 Android arm64-v8a。Android `armeabi-v7a`、`x86_64` 在构建与真机验证通过后纳入发布矩阵。
 
@@ -65,7 +65,7 @@ Electron Main     Android ForegroundService
 - libtorrent alert 转换为稳定的任务状态与事件流。
 - Session 状态和 resume data 的原子保存与恢复。
 
-桌面端采用随包分发的本地核心进程，经受限本地 IPC 通信。该进程属于应用内部组件，不暴露 WebUI 或局域网服务；它将原生崩溃与 Electron 主进程隔离。Android 使用同一核心代码编译为动态库，由前台服务通过 JNI 调用。
+桌面端采用随包分发的本地核心进程，经受限本地 IPC 通信。该进程属于应用内部组件，不暴露 WebUI 或局域网服务；它将原生崩溃与 Electron 主进程隔离。Android 使用同一 C++ 运行时编译为动态库，由前台服务通过 JNI 调用。
 
 ## 应用层改造
 
@@ -124,6 +124,7 @@ resources/torrent-core/
 - 添加、暂停、修改文件优先级、完成和退出前均触发可恢复状态落盘；写入失败记录结构化日志且不伪报成功。
 - 桌面端启动时恢复 session，退出时请求优雅停止并在超时后记录明确错误。
 - Android 使用前台服务、常驻通知、存储权限与电池优化提示；应用被系统终止后必须能从 resume data 恢复。
+- Android 与 iOS 移动包不得包含 `.remote-pwa`、FFmpeg、FFprobe 或转码服务，播放仅使用系统或宿主播放器能力。
 - 不将私有 Tracker 凭据、磁链中的敏感参数或本地路径写入可公开日志。
 
 ## 实施阶段

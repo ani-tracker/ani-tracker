@@ -36,6 +36,11 @@ bin-release/
 # information for Eclipse / Flash Builder.
 /.build/
 /native/torrent-core/build/
+/android/.gradle/
+/android/**/build/
+/artifacts/torrent-core/
+/.cache/android-torrent/
+/.vcpkg/
 /.tmp-qbt*/
 /.cache/ffmpeg/
 /.codex/
