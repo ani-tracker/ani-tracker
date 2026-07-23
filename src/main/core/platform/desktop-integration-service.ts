@@ -154,10 +154,11 @@ export class DesktopIntegrationService {
   }
 }
 
-/** 优先从应用资源加载跨平台托盘图标，并在缺失时回退内嵌图像。 */
+/** 从应用资源加载跨平台托盘图标，缺失时返回空图像并跳过托盘初始化。 */
 function createTrayIcon(): NativeImage {
   const fileCandidates = [
-    join(__dirname, "../../../renderer/icons/ani-tracker-192.png"),
+    join(__dirname, "../renderer/icons/ani-tracker-192.png"),
+    join(app.getAppPath(), "out/renderer/icons/ani-tracker-192.png"),
     join(app.getAppPath(), "src/renderer/public/icons/ani-tracker-192.png")
   ];
   for (const [index, candidate] of fileCandidates.entries()) {
@@ -168,15 +169,8 @@ function createTrayIcon(): NativeImage {
     logger.warn("Tray icon file candidate is empty", { candidateIndex: index });
   }
 
-  const svg = [
-    '<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">',
-    '<rect width="32" height="32" rx="7" fill="#111827"/>',
-    '<path d="M9 22L16 8l7 14h-4l-1.1-2.6h-4L12.8 22H9zm6-6h2l-1-2.6L15 16z" fill="#f8fafc"/>',
-    "</svg>"
-  ].join("");
-  const image = nativeImage.createFromDataURL(`data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`);
-
-  return resizeTrayIcon(image);
+  logger.error("Tray icon files are unavailable");
+  return nativeImage.createEmpty();
 }
 
 /** 按平台生成托盘所需尺寸，并为 macOS 标记模板图像。 */

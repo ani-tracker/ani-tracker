@@ -1,4 +1,4 @@
-import { ArrowLeft, Bell, Link2, Menu, Play, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, Bell, Link2, Menu, X, type LucideIcon } from "lucide-react";
 import { type CSSProperties, type MutableRefObject, type ReactNode, useEffect, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,8 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import { WindowTitleBar } from "@/components/window-title-bar";
+
+const APP_LOGO_SRC = "./icons/ani-tracker-mark.png";
 
 export interface AppNavigationItem {
   id: string;
@@ -122,11 +124,14 @@ export function AppShell({
         } as CSSProperties}
       >
         <Sidebar aria-label="主导航" className="hidden md:flex">
-          <SidebarHeader className="h-20 justify-center border-b-0 px-4 py-4">
-            <div className="flex items-center gap-3 group-data-[state=collapsed]/sidebar:justify-center">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-sidebar-primary text-sidebar-primary-foreground">
-                <Play aria-hidden="true" className="fill-current" />
-              </div>
+          <SidebarHeader className="h-20 justify-center border-b-0 px-3 py-4">
+            <div className="flex items-center gap-2 group-data-[state=collapsed]/sidebar:justify-center">
+              <img
+                alt=""
+                className="h-8 w-9 shrink-0 object-contain"
+                draggable={false}
+                src={APP_LOGO_SRC}
+              />
               <div className="min-w-0 group-data-[state=collapsed]/sidebar:hidden">
                 <div className="truncate text-base font-bold text-sidebar-primary">Ani-tracker</div>
                 <div className="truncate text-[10px] text-sidebar-foreground/65">追番与下载管理</div>
@@ -268,9 +273,12 @@ export function AppShell({
           >
             <SheetHeader className="flex-row items-center justify-between border-b p-6 text-left">
               <div className="flex min-w-0 items-center gap-3">
-                <div className="flex size-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                  <Play aria-hidden="true" className="fill-current" />
-                </div>
+                <img
+                  alt=""
+                  className="h-9 w-11 shrink-0 object-contain"
+                  draggable={false}
+                  src={APP_LOGO_SRC}
+                />
                 <div className="min-w-0">
                   <SheetTitle className="truncate text-base font-bold text-primary">Ani-tracker</SheetTitle>
                   <SheetDescription className="sr-only">在应用页面之间切换</SheetDescription>

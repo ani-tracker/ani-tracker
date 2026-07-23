@@ -38,7 +38,12 @@ export function WindowTitleBar() {
         className="flex min-w-0 flex-1 items-center gap-2 px-3"
         onDoubleClick={() => void toggleMaximize()}
       >
-        <img alt="" className="size-4 shrink-0" draggable={false} src="./icons/ani-tracker.svg" />
+        <img
+          alt=""
+          className="h-4 w-6 shrink-0 object-contain"
+          draggable={false}
+          src="./icons/ani-tracker-mark.png"
+        />
         <span className="truncate text-xs font-medium">Ani Tracker</span>
       </div>
       <div className="flex h-full shrink-0" style={noDragRegionStyle}>
