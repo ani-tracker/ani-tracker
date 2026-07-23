@@ -28,11 +28,16 @@ import { RemoteMyAnimePage } from "@/features/remote/RemoteMyAnimePage";
 import { RemotePlayerPage, resolveRemotePlayerTaskId } from "@/features/remote/RemotePlayerPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { PlayerDesignPreview } from "@/features/player/PlayerDesignPreview";
+import { DesktopPlayerPage } from "@/features/player/DesktopPlayerPage";
+import { DesktopVlcHostPage } from "@/features/player/DesktopVlcHostPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { appApi, getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
 import type { Anime } from "@shared/domain";
 import type { MyAnimePageIntent } from "@/features/my-anime/MyAnimePage";
-import { resolveDesktopPlayerWindowInput } from "@shared/desktop-player-route";
+import {
+  isDesktopVlcHostView,
+  resolveDesktopPlayerWindowInput
+} from "@shared/desktop-player-route";
 import {
   resolvePlaybackFileIndex,
   usesBuiltinPlayer,
@@ -131,6 +136,9 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
 
 /** 按当前窗口用途渲染主界面或独立播放器。 */
 export function App() {
+  if (isDesktopVlcHostView(window.location.search)) {
+    return <DesktopVlcHostPage />;
+  }
   const playerPreview = import.meta.env.DEV
     ? new URLSearchParams(window.location.search).get("playerPreview")
     : null;
@@ -142,8 +150,7 @@ export function App() {
     : null;
   if (desktopPlayerTarget) {
     return (
-      <RemotePlayerPage
-        environment="desktop"
+      <DesktopPlayerPage
         initialFileIndex={desktopPlayerTarget.fileIndex}
         onClose={() => {
           try {

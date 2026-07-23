@@ -109,7 +109,7 @@ Stitch 项目：`12075319551332625536`
 | --- | --- | --- | --- |
 | P0 契约 | 统一命令、快照、能力、错误和会话模型；IPC/preload 类型 | 类型检查通过；现有远程接口字段不破坏；适配器可独立测试 | 已完成 |
 | P1 UI | PC、移动竖屏、移动横屏和中央错误提示；控制层自动隐藏 | 四个目标视口无溢出/遮挡；核心布局与 Stitch 接近；键盘和触屏可操作 | 已完成 |
-| P2 Electron | libVLC 生命周期服务、双窗口协调、无边框/全屏、轨道与进度事件 | Windows/macOS/Linux 构建成功；窗口同步；关闭后无 VLC/窗口残留 | 进行中 |
+| P2 Electron | libVLC 生命周期服务、双窗口协调、无边框/全屏、轨道与进度事件 | Windows/macOS/Linux 构建成功；窗口同步；关闭后无 VLC/窗口残留 | 已完成（运行时包验收并入 P7） |
 | P3 远程网页 | 新 UI 接入 ArtPlayer 适配器，保留 HLS/字幕/外部播放器逻辑 | 现有远程 URL 与 API 不变；HLS、字幕、进度和错误恢复回归通过 | 待开始 |
 | P4 Android | Compose 播放页、LibVLC Surface、横竖屏与生命周期 | debug/release 构建通过；旋转不断播；后台/前台和音频焦点行为正确 | 待开始 |
 | P5 iOS | SwiftUI 播放页、MobileVLCKit 视图桥接、方向与生命周期 | 模拟器可编译；真机播放/字幕/横竖屏通过；安全区无控件遮挡 | 待开始 |
@@ -142,6 +142,13 @@ Stitch 项目：`12075319551332625536`
 - Android：VLC 生命周期绑定到 ViewModel/宿主生命周期，旋转只重建视图表面，不重建业务会话。
 - iOS：用 `UIViewRepresentable`/`UIViewControllerRepresentable` 桥接 VLC 视频视图，SwiftUI 保存可观察播放状态。
 - 远程网页：只新增统一契约适配层，保留 ArtPlayer、HLS 与字幕加载器。
+
+P2 验证记录（2026-07-24）：
+
+- 已精确锁定 `electron-vlc-player@1.0.2`，桌面内置入口改为 libVLC 专用宿主与透明 React 控制层，不再复用远程 ArtPlayer 页面。
+- 主进程完成受控资源解析、命令映射、轨道/进度快照、双窗口同步和幂等释放；新增服务与窗口协调测试。
+- `typecheck`、主题对比度、309 项 Node 测试（308 通过、1 跳过）和 Electron/Vite 生产构建通过。
+- 本机缺少 VLC/MSVC，原生绑定实播与三平台安装包完整性继续由 P7 Actions 和 P8 真机清单验收。
 
 ### P6：播放业务
 

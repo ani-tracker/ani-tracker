@@ -85,6 +85,7 @@ interface PlayerChromeProps {
   onTogglePictureInPicture: () => void;
   onTogglePlay: () => void;
   pictureInPicture: boolean;
+  pictureInPictureAvailable?: boolean;
   playbackRate: number;
   playing: boolean;
   selectedSubtitleId?: string;
@@ -235,9 +236,11 @@ function PlayerBottomBar(
           <PlaybackRateMenu {...props} />
           <AspectRatioMenu {...props} />
           <PlaybackModeMenu {...props} />
-          <PlayerIconButton aria-pressed={props.pictureInPicture} label="画中画" onClick={props.onTogglePictureInPicture}>
-            <PictureInPicture2 />
-          </PlayerIconButton>
+          {props.pictureInPictureAvailable !== false && (
+            <PlayerIconButton aria-pressed={props.pictureInPicture} label="画中画" onClick={props.onTogglePictureInPicture}>
+              <PictureInPicture2 />
+            </PlayerIconButton>
+          )}
           <PlayerIconButton className="player-wide-control" label="播放列表" onClick={props.onOpenPlaylist}>
             <ListVideo />
           </PlayerIconButton>
@@ -395,7 +398,9 @@ function PlayerMoreMenu(props: PlayerChromeProps) {
             </DropdownMenuItem>
           )}
           <DropdownMenuItem onSelect={props.onOpenPlaylist}><ListVideo />播放列表</DropdownMenuItem>
-          <DropdownMenuItem onSelect={props.onTogglePictureInPicture}><PictureInPicture2 />画中画</DropdownMenuItem>
+          {props.pictureInPictureAvailable !== false && (
+            <DropdownMenuItem onSelect={props.onTogglePictureInPicture}><PictureInPicture2 />画中画</DropdownMenuItem>
+          )}
         </DropdownMenuGroup>
         <DropdownMenuSeparator />
         <DropdownMenuGroup>

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, safeStorage } from "electron";
+import { app, BrowserWindow, dialog, Menu, safeStorage, webContents } from "electron";
 import { join } from "node:path";
 import { DailyReminderService } from "./core/automation/daily-reminder-service";
 import { logger } from "./core/logger";
@@ -30,6 +30,7 @@ import { MetadataHttpClient } from "./core/metadata/metadata-http-client";
 import { DesktopPlaybackSessionService } from "./core/media/desktop-playback-session-service";
 import { registerDesktopMediaProtocol, registerDesktopMediaScheme } from "./core/media/desktop-media-protocol";
 import { DesktopPlayerWindowService } from "./core/media/desktop-player-window-service";
+import { DesktopLibVlcPlayerService } from "./core/media/desktop-libvlc-player-service";
 
 declare const __ANI_TRUSTED_ORIGINS__: string;
 
@@ -84,13 +85,28 @@ const remoteMethodRegistry = createRemoteMethodRegistry({
 });
 const remoteMediaSessionService = new RemoteMediaSessionService(repository);
 const desktopPlaybackSessionService = new DesktopPlaybackSessionService(remoteMediaSessionService);
-const desktopPlayerWindowService = new DesktopPlayerWindowService({
+let desktopPlayerWindowService: DesktopPlayerWindowService;
+const desktopLibVlcPlayerService = new DesktopLibVlcPlayerService({
+  resolveAsset: (requestUrl) => desktopPlaybackSessionService.resolveAsset(requestUrl),
+  publishSnapshot: (ownerId, snapshot) => {
+    const target = webContents.fromId(ownerId);
+    if (target && !target.isDestroyed()) target.send("player:snapshot", snapshot);
+  },
+  setFullscreen: (ownerId, fullscreen) => desktopPlayerWindowService.setFullscreen(ownerId, fullscreen),
+  closeWindow: (ownerId) => desktopPlayerWindowService.close(ownerId)
+});
+desktopPlayerWindowService = new DesktopPlayerWindowService({
   createWindow: (options) => new BrowserWindow(options),
   preloadPath: join(__dirname, "../preload/index.mjs"),
   rendererFilePath: join(__dirname, "../renderer/index.html"),
   rendererUrl: process.env.ELECTRON_RENDERER_URL,
-  getBackgroundColor: () => appearanceService.getWindowBackgroundColor(),
-  onWindowClosed: (webContentsId) => desktopPlaybackSessionService.closeOwnerSessions(webContentsId)
+  prepareVideoHost: (ownerId, window) => desktopLibVlcPlayerService.attach(ownerId, window),
+  onWindowClosed: async (webContentsId) => {
+    await Promise.all([
+      desktopLibVlcPlayerService.dispose(webContentsId),
+      desktopPlaybackSessionService.closeOwnerSessions(webContentsId)
+    ]);
+  }
 });
 const secretProtector = {
   isAvailable: () => safeStorage.isEncryptionAvailable(),
@@ -200,6 +216,7 @@ app.whenReady().then(async () => {
     imageCacheService,
     desktopPlaybackSessionService,
     desktopPlayerWindowService,
+    desktopPlayerControlService: desktopLibVlcPlayerService,
     getMainWindow: () => mainWindow,
     onSettingsUpdated: async (settings) => {
       imageCacheService.setCacheDirectory(join(settings.storage.cacheDir, "images"));
