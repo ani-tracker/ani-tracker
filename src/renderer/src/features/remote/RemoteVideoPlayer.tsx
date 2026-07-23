@@ -1,5 +1,3 @@
-import Artplayer from "artplayer";
-import Hls from "hls.js";
 import { LoaderCircle } from "lucide-react";
 import {
   useCallback,
@@ -29,11 +27,15 @@ import {
 import { cn } from "@/lib/cn";
 import type {
   RemotePlaybackRequestMode,
-  RemotePlaybackSession,
-  RemotePlaybackSubtitle
+  RemotePlaybackSession
 } from "@shared/contracts";
 import type { Anime, DownloadTask, Episode } from "@shared/domain";
-import type { PlayerAspectRatio } from "@shared/player-contract";
+import type {
+  PlayerAspectRatio,
+  PlayerCommand,
+  PlayerSnapshot
+} from "@shared/player-contract";
+import { ArtPlayerAdapter } from "./art-player-adapter";
 import {
   buildExternalPlayerProtocolUrl,
   detectExternalPlayer
@@ -74,10 +76,13 @@ export function RemoteVideoPlayer({
   sessionClient
 }: RemoteVideoPlayerProps) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
-  const artPlayerRef = useRef<Artplayer | null>(null);
+  const playerAdapterRef = useRef<ArtPlayerAdapter | null>(null);
   const onSelectItemRef = useRef(onSelectItem);
   const toolbarTimerRef = useRef<number>();
   const automaticFallbackStartedRef = useRef(false);
+  const progressReportedRef = useRef(false);
+  const endedSessionIdRef = useRef<string>();
+  const commandSequenceRef = useRef(0);
   const [requestedMode, setRequestedMode] = useState<RemotePlaybackRequestMode>("direct");
   const [session, setSession] = useState<RemotePlaybackSession | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -86,17 +91,7 @@ export function RemoteVideoPlayer({
   const [playlistOpen, setPlaylistOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [externalPlayerOpening, setExternalPlayerOpening] = useState(false);
-  const [playing, setPlaying] = useState(false);
-  const [buffering, setBuffering] = useState(true);
-  const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0);
-  const [durationSeconds, setDurationSeconds] = useState(0);
-  const [bufferedSeconds, setBufferedSeconds] = useState(0);
-  const [volume, setVolume] = useState(0.7);
-  const [muted, setMuted] = useState(false);
-  const [playbackRate, setPlaybackRate] = useState(1);
-  const [selectedSubtitleId, setSelectedSubtitleId] = useState<string>();
-  const [fullscreen, setFullscreen] = useState(false);
-  const [pictureInPicture, setPictureInPicture] = useState(false);
+  const [playerSnapshot, setPlayerSnapshot] = useState<PlayerSnapshot>();
   const externalPlayer = useMemo(
     () => allowExternalPlayback
       ? detectExternalPlayer(navigator.userAgent, navigator.platform)
@@ -111,6 +106,19 @@ export function RemoteVideoPlayer({
   const nextItem = activeIndex >= 0 && activeIndex < playlist.length - 1
     ? playlist[activeIndex + 1]
     : undefined;
+  const playing = playerSnapshot?.status === "playing";
+  const buffering = !playerSnapshot
+    || playerSnapshot.status === "loading"
+    || playerSnapshot.status === "buffering";
+  const currentTimeSeconds = playerSnapshot?.positionSeconds ?? 0;
+  const durationSeconds = playerSnapshot?.durationSeconds ?? session?.durationSeconds ?? 0;
+  const bufferedSeconds = playerSnapshot?.bufferedSeconds ?? 0;
+  const volume = playerSnapshot?.volume ?? 0.7;
+  const muted = playerSnapshot?.muted ?? false;
+  const playbackRate = playerSnapshot?.playbackRate ?? 1;
+  const selectedSubtitleId = playerSnapshot?.subtitleTracks.find((track) => track.selected)?.id;
+  const fullscreen = playerSnapshot?.fullscreen ?? false;
+  const pictureInPicture = playerSnapshot?.pictureInPicture ?? false;
   const animeTitle = anime?.title ?? activeItem?.task.animeTitle ?? "Ani Tracker";
   const episodeLabel = activeItem?.task.episodeNo === undefined
     ? "当前视频"
@@ -163,11 +171,10 @@ export function RemoteVideoPlayer({
     let active = true;
     let createdSession: RemotePlaybackSession | undefined;
     setSession(null);
+    setPlayerSnapshot(undefined);
     setPlaybackError(null);
-    setBuffering(true);
-    setPlaying(false);
-    setCurrentTimeSeconds(0);
-    setBufferedSeconds(0);
+    progressReportedRef.current = false;
+    endedSessionIdRef.current = undefined;
 
     // 延迟到微任务阶段，避免 React 严格模式的探测挂载重复创建媒体会话。
     queueMicrotask(() => {
@@ -182,7 +189,6 @@ export function RemoteVideoPlayer({
           createdSession = result;
           if (!active) return sessionClient.close(result.id);
           setSession(result);
-          setDurationSeconds(result.durationSeconds ?? 0);
           console.info("[remote] 播放会话已创建", {
             taskId: activeItem.task.id,
             fileIndex: result.fileIndex,
@@ -197,7 +203,6 @@ export function RemoteVideoPlayer({
             requestedMode,
             error: caught
           });
-          setBuffering(false);
           setPlaybackError(caught instanceof Error ? caught.message : "播放会话创建失败");
         });
     });
@@ -224,178 +229,99 @@ export function RemoteVideoPlayer({
   useEffect(() => {
     const container = playerContainerRef.current;
     if (!container || !session || !activeItem) return;
-
-    let hls: Hls | undefined;
-    let progressReported = false;
-    const streamUrl = new URL(session.streamUrl, window.location.origin).toString();
-    const defaultSubtitle = session.subtitles.find((subtitle) => subtitle.default) ?? session.subtitles[0];
-    const handlePlaybackError = (message: string): void => {
-      setBuffering(false);
+    const adapter = new ArtPlayerAdapter({ container, sessionId: session.id });
+    playerAdapterRef.current = adapter;
+    const unsubscribe = adapter.subscribe((nextSnapshot) => {
+      setPlayerSnapshot(nextSnapshot);
+      if (nextSnapshot.status !== "error" || !nextSnapshot.error) return;
       if (session.mode === "direct" && !automaticFallbackStartedRef.current) {
         startAutomaticTranscode();
         return;
       }
-      console.error("[remote] ArtPlayer 播放失败", {
+      console.error("[remote] ArtPlayer 适配器播放失败", {
+        taskId: activeItem.task.id,
+        fileIndex: activeItem.fileIndex,
+        mode: session.mode,
+        errorCode: nextSnapshot.error.code
+      });
+      setPlaybackError(nextSnapshot.error.message);
+    });
+    const loadCommand: PlayerCommand = {
+      type: "load",
+      commandId: createRemoteCommandId(commandSequenceRef),
+      sessionId: session.id,
+      source: {
+        taskId: activeItem.task.id,
+        fileIndex: session.fileIndex,
+        title: session.fileName,
+        uri: session.streamUrl,
+        mode: session.mode,
+        durationSeconds: session.durationSeconds,
+        subtitles: session.subtitles.map((subtitle) => ({
+          id: subtitle.id,
+          label: subtitle.label,
+          language: subtitle.language,
+          type: subtitle.type,
+          uri: subtitle.url,
+          default: subtitle.default
+        }))
+      }
+    };
+    void adapter.dispatch(loadCommand).then((result) => {
+      if (!result.accepted) setPlaybackError(result.error.message);
+      else console.info("[remote] ArtPlayer 适配器已加载媒体", {
         taskId: activeItem.task.id,
         fileIndex: activeItem.fileIndex,
         mode: session.mode
       });
-      setPlaybackError(message);
+    });
+    return () => {
+      unsubscribe();
+      if (playerAdapterRef.current === adapter) playerAdapterRef.current = null;
+      void adapter.dispose();
     };
-    let player: Artplayer;
+  }, [activeItem, session, startAutomaticTranscode]);
 
-    try {
-      player = new Artplayer({
-        container,
-        url: streamUrl,
-        ...(session.mode === "hls" ? { type: "m3u8" as const } : {}),
-        lang: "zh-cn",
-        autoplay: true,
-        volume: 0.7,
-        setting: false,
-        subtitleOffset: false,
-        playbackRate: false,
-        aspectRatio: false,
-        pip: false,
-        airplay: false,
-        fullscreen: false,
-        fullscreenWeb: false,
-        hotkey: false,
-        mutex: true,
-        playsInline: true,
-        lock: false,
-        fastForward: false,
-        customType: {
-          m3u8(video, url, art) {
-            if (video.canPlayType("application/vnd.apple.mpegurl")) {
-              video.src = url;
-              return;
-            }
-            if (!Hls.isSupported()) {
-              handlePlaybackError("当前浏览器不支持 HLS 实时转码播放");
-              return;
-            }
-            hls = new Hls({ enableWorker: false });
-            art.hls = hls;
-            hls.loadSource(url);
-            hls.attachMedia(video);
-            hls.on(Hls.Events.ERROR, (_event, data) => {
-              if (data.fatal) handlePlaybackError("实时转码视频流中断，请重试");
-            });
-          }
-        }
-      }, () => {
-        setBuffering(false);
-        setDurationSeconds(player.duration || session.durationSeconds || 0);
-        console.info("[remote] ArtPlayer 已就绪", {
-          taskId: activeItem.task.id,
-          fileIndex: activeItem.fileIndex,
-          mode: session.mode
-        });
+  useEffect(() => {
+    if (!activeItem || !playerSnapshot || progressReportedRef.current) return;
+    const percent = playerSnapshot.status === "ended"
+      ? 100
+      : playerSnapshot.durationSeconds > 0
+        ? playerSnapshot.positionSeconds / playerSnapshot.durationSeconds * 100
+        : 0;
+    if (percent < 90) return;
+    progressReportedRef.current = true;
+    const normalizedPercent = Math.max(0, Math.min(100, percent));
+    void appApi.reportPlaybackProgress({
+      taskId: activeItem.task.id,
+      fileIndex: activeItem.fileIndex,
+      percent: normalizedPercent
+    }).then((handled) => {
+      console.info("[remote] 播放进度已上报", {
+        taskId: activeItem.task.id,
+        fileIndex: activeItem.fileIndex,
+        percent: normalizedPercent,
+        handled
       });
-    } catch (caught) {
-      console.error("[remote] ArtPlayer 初始化失败", {
+    }).catch((caught) => {
+      console.warn("[remote] 播放进度上报失败", {
         taskId: activeItem.task.id,
         fileIndex: activeItem.fileIndex,
         error: caught
       });
-      setBuffering(false);
-      setPlaybackError("播放器初始化失败，请重试");
-      return;
-    }
-    artPlayerRef.current = player;
+    });
+  }, [activeItem, playerSnapshot]);
 
-    /** 达到阈值后按当前任务只上报一次观看进度。 */
-    const reportPlaybackProgress = (percent: number): void => {
-      if (progressReported || percent < 90) return;
-      progressReported = true;
-      const normalizedPercent = Math.max(0, Math.min(100, percent));
-      void appApi.reportPlaybackProgress({
-        taskId: activeItem.task.id,
-        fileIndex: activeItem.fileIndex,
-        percent: normalizedPercent
-      }).then((handled) => {
-        console.info("[remote] 播放进度已上报", {
-          taskId: activeItem.task.id,
-          fileIndex: activeItem.fileIndex,
-          percent: normalizedPercent,
-          handled
-        });
-      }).catch((caught) => {
-        console.warn("[remote] 播放进度上报失败", {
-          taskId: activeItem.task.id,
-          fileIndex: activeItem.fileIndex,
-          error: caught
-        });
-      });
-    };
-
-    player.on("video:error", () => handlePlaybackError(
-      session.mode === "direct"
-        ? "浏览器无法解码当前原文件"
-        : "浏览器无法播放当前转码视频流，请重试"
-    ));
-    player.on("video:play", () => setPlaying(true));
-    player.on("video:pause", () => setPlaying(false));
-    player.on("video:playing", () => setBuffering(false));
-    player.on("video:waiting", () => setBuffering(true));
-    player.on("video:stalled", () => setBuffering(true));
-    player.on("video:loadedmetadata", () => setDurationSeconds(player.duration || session.durationSeconds || 0));
-    player.on("video:progress", () => setBufferedSeconds(player.loadedTime || 0));
-    player.on("video:volumechange", () => {
-      setVolume(player.volume);
-      setMuted(player.muted);
+  useEffect(() => {
+    if (playerSnapshot?.status !== "ended" || !session || !nextItem) return;
+    if (endedSessionIdRef.current === session.id) return;
+    endedSessionIdRef.current = session.id;
+    console.info("[remote] 当前文件播放完成，切换下一项", {
+      taskId: nextItem.task.id,
+      fileIndex: nextItem.fileIndex
     });
-    player.on("video:ratechange", () => setPlaybackRate(player.playbackRate));
-    player.on("fullscreen", setFullscreen);
-    player.on("fullscreenWeb", setFullscreen);
-    player.on("pip", setPictureInPicture);
-    player.on("video:timeupdate", () => {
-      const duration = player.duration;
-      setCurrentTimeSeconds(player.currentTime || 0);
-      setDurationSeconds(duration || session.durationSeconds || 0);
-      setBufferedSeconds(player.loadedTime || 0);
-      if (!progressReported && Number.isFinite(duration) && duration > 0) {
-        reportPlaybackProgress(player.currentTime / duration * 100);
-      }
-    });
-    player.on("video:ended", () => {
-      reportPlaybackProgress(100);
-      setPlaying(false);
-      if (nextItem) {
-        console.info("[remote] 当前文件播放完成，切换下一项", {
-          taskId: nextItem.task.id,
-          fileIndex: nextItem.fileIndex
-        });
-        onSelectItemRef.current(nextItem);
-      }
-    });
-    player.on("subtitleLoad", (cues) => {
-      console.info("[remote] ArtPlayer 字幕加载完成", {
-        taskId: activeItem.task.id,
-        cueCount: cues.length
-      });
-    });
-    if (defaultSubtitle) {
-      void switchArtPlayerSubtitle(player, defaultSubtitle).then(() => {
-        setSelectedSubtitleId(defaultSubtitle.id);
-      }).catch((caught) => {
-        console.error("[remote] 默认字幕加载失败", {
-          taskId: activeItem.task.id,
-          subtitleId: defaultSubtitle.id,
-          error: caught
-        });
-      });
-    } else {
-      setSelectedSubtitleId(undefined);
-    }
-
-    return () => {
-      if (artPlayerRef.current === player) artPlayerRef.current = null;
-      hls?.destroy();
-      player.destroy(true);
-    };
-  }, [activeItem, nextItem, session, startAutomaticTranscode]);
+    onSelectItemRef.current(nextItem);
+  }, [nextItem, playerSnapshot?.status, session]);
 
   /** 手动切换播放模式，并允许下次直传失败时再次自动升级。 */
   const handleModeChange = (value: RemotePlaybackRequestMode): void => {
@@ -409,12 +335,37 @@ export function RemoteVideoPlayer({
     });
   };
 
+  /** 为当前远程媒体会话构造并发送统一播放器命令。 */
+  const dispatchPlayerCommand = useCallback(async (command: PlayerCommand): Promise<boolean> => {
+    const adapter = playerAdapterRef.current;
+    if (!adapter) return false;
+    const result = await adapter.dispatch(command);
+    if (result.accepted) return true;
+    setPlaybackError(result.error.message);
+    return false;
+  }, []);
+
+  const createPlayerCommand = useCallback(<T extends PlayerCommand>(
+    command: Omit<T, "commandId" | "sessionId">
+  ): T | undefined => {
+    if (!session) return undefined;
+    return {
+      ...command,
+      commandId: createRemoteCommandId(commandSequenceRef),
+      sessionId: session.id
+    } as T;
+  }, [session]);
+
+  const sendSimpleCommand = useCallback((type: "play" | "pause" | "retry"): void => {
+    const command = createPlayerCommand<PlayerCommand>({ type } as Omit<PlayerCommand, "commandId" | "sessionId">);
+    if (command) void dispatchPlayerCommand(command);
+  }, [createPlayerCommand, dispatchPlayerCommand]);
+
   /** 创建外部拉流会话并调用远程设备本机播放器。 */
   const handleExternalPlayback = async (): Promise<void> => {
     if (!activeItem || !externalPlayer || externalPlayerOpening) return;
-    const currentPlayer = artPlayerRef.current;
-    const wasPlaying = currentPlayer?.playing ?? false;
-    currentPlayer?.pause();
+    const wasPlaying = playing;
+    sendSimpleCommand("pause");
     setExternalPlayerOpening(true);
     const toastId = toast.loading(`正在准备 ${externalPlayer.label} 播放地址`);
     let externalSession: RemotePlaybackSession | undefined;
@@ -438,7 +389,7 @@ export function RemoteVideoPlayer({
       });
     } catch (caught) {
       if (externalSession) void closeRemotePlaybackSession(externalSession.id);
-      if (wasPlaying && currentPlayer) void currentPlayer.play().catch(() => undefined);
+      if (wasPlaying) sendSimpleCommand("play");
       console.error("[remote] 本地播放器调起失败", {
         player: externalPlayer.kind,
         taskId: activeItem.task.id,
@@ -471,48 +422,70 @@ export function RemoteVideoPlayer({
   };
 
   /** 切换 ArtPlayer 播放状态。 */
-  const togglePlayback = (): void => {
-    const player = artPlayerRef.current;
-    if (!player) return;
-    if (player.playing) {
-      player.pause();
-    } else {
-      void player.play().catch(() => setPlaybackError("浏览器阻止了视频播放，请重试"));
-    }
-  };
+  const togglePlayback = (): void => sendSimpleCommand(playing ? "pause" : "play");
 
   /** 跳转到合法媒体时间。 */
   const seekTo = (seconds: number): void => {
-    const player = artPlayerRef.current;
-    if (!player) return;
-    player.currentTime = Math.max(0, Math.min(player.duration || durationSeconds || 0, seconds));
+    const command = createPlayerCommand<Extract<PlayerCommand, { type: "seek" }>>({
+      type: "seek",
+      positionSeconds: Math.max(0, Math.min(durationSeconds, seconds))
+    });
+    if (command) void dispatchPlayerCommand(command);
   };
 
   /** 切换 ArtPlayer 字幕轨道或关闭字幕。 */
   const changeSubtitle = (subtitleId?: string): void => {
-    const player = artPlayerRef.current;
-    if (!player) return;
-    const subtitle = session?.subtitles.find((item) => item.id === subtitleId);
-    if (!subtitle) {
-      player.subtitle.show = false;
-      setSelectedSubtitleId(undefined);
-      return;
-    }
-    void switchArtPlayerSubtitle(player, subtitle).then(() => {
-      setSelectedSubtitleId(subtitle.id);
-      console.info("[remote] ArtPlayer 字幕已切换", { subtitleId: subtitle.id });
-    }).catch((caught) => {
-      console.error("[remote] ArtPlayer 字幕切换失败", { subtitleId: subtitle.id, error: caught });
-      toast.error("字幕加载失败");
+    const command = createPlayerCommand<Extract<PlayerCommand, { type: "select-subtitle-track" }>>({
+      type: "select-subtitle-track",
+      trackId: subtitleId
     });
+    if (command) void dispatchPlayerCommand(command);
   };
 
   /** 设置视频比例并保持默认模式不裁切。 */
   const setAspectRatio = (aspectRatio: PlayerAspectRatio): void => {
-    const player = artPlayerRef.current;
-    if (!player) return;
-    player.template.$video.style.objectFit = aspectRatio === "fill" ? "cover" : "contain";
-    player.aspectRatio = aspectRatio === "16:9" || aspectRatio === "4:3" ? aspectRatio : "default";
+    const command = createPlayerCommand<Extract<PlayerCommand, { type: "set-aspect-ratio" }>>({
+      type: "set-aspect-ratio",
+      aspectRatio
+    });
+    if (command) void dispatchPlayerCommand(command);
+  };
+
+  const setPlayerVolume = (nextVolume: number): void => {
+    const command = createPlayerCommand<Extract<PlayerCommand, { type: "set-volume" }>>({
+      type: "set-volume",
+      volume: nextVolume
+    });
+    if (command) void dispatchPlayerCommand(command);
+  };
+
+  const setPlayerRate = (rate: number): void => {
+    const command = createPlayerCommand<Extract<PlayerCommand, { type: "set-rate" }>>({ type: "set-rate", rate });
+    if (command) void dispatchPlayerCommand(command);
+  };
+
+  const togglePlayerMute = (): void => {
+    const command = createPlayerCommand<Extract<PlayerCommand, { type: "set-muted" }>>({
+      type: "set-muted",
+      muted: !muted
+    });
+    if (command) void dispatchPlayerCommand(command);
+  };
+
+  const togglePlayerFullscreen = (): void => {
+    const command = createPlayerCommand<Extract<PlayerCommand, { type: "set-fullscreen" }>>({
+      type: "set-fullscreen",
+      fullscreen: !fullscreen
+    });
+    if (command) void dispatchPlayerCommand(command);
+  };
+
+  const togglePictureInPicture = (): void => {
+    const command = createPlayerCommand<Extract<PlayerCommand, { type: "set-picture-in-picture" }>>({
+      type: "set-picture-in-picture",
+      enabled: !pictureInPicture
+    });
+    if (command) void dispatchPlayerCommand(command);
   };
 
   /** 处理播放器获得焦点后的快捷键。 */
@@ -523,10 +496,10 @@ export function RemoteVideoPlayer({
     if (key === " ") togglePlayback();
     if (key === "arrowleft") seekTo(currentTimeSeconds - 10);
     if (key === "arrowright") seekTo(currentTimeSeconds + 10);
-    if (key === "arrowup") artPlayerRef.current && (artPlayerRef.current.volume = Math.min(1, volume + 0.05));
-    if (key === "arrowdown") artPlayerRef.current && (artPlayerRef.current.volume = Math.max(0, volume - 0.05));
-    if (key === "m" && artPlayerRef.current) artPlayerRef.current.muted = !artPlayerRef.current.muted;
-    if (key === "f" && artPlayerRef.current) artPlayerRef.current.fullscreen = !artPlayerRef.current.fullscreen;
+    if (key === "arrowup") setPlayerVolume(Math.min(1, volume + 0.05));
+    if (key === "arrowdown") setPlayerVolume(Math.max(0, volume - 0.05));
+    if (key === "m") togglePlayerMute();
+    if (key === "f") togglePlayerFullscreen();
     if (key === "l") openPlaylist();
     if (key === "p" && previousItem) onSelectItem(previousItem);
     if (key === "n" && nextItem) onSelectItem(nextItem);
@@ -613,9 +586,7 @@ export function RemoteVideoPlayer({
           muted={muted}
           onActivity={revealToolbar}
           onChangeMode={handleModeChange}
-          onChangeRate={(rate) => {
-            if (artPlayerRef.current) artPlayerRef.current.playbackRate = rate;
-          }}
+          onChangeRate={setPlayerRate}
           onChangeSubtitle={changeSubtitle}
           onClose={onClose}
           onGoNext={() => nextItem && onSelectItem(nextItem)}
@@ -625,21 +596,10 @@ export function RemoteVideoPlayer({
           onPanelOpenChange={setPanelOpen}
           onSeek={seekTo}
           onSetAspectRatio={setAspectRatio}
-          onSetVolume={(value) => {
-            if (artPlayerRef.current) {
-              artPlayerRef.current.muted = false;
-              artPlayerRef.current.volume = value;
-            }
-          }}
-          onToggleFullscreen={() => {
-            if (artPlayerRef.current) artPlayerRef.current.fullscreen = !artPlayerRef.current.fullscreen;
-          }}
-          onToggleMute={() => {
-            if (artPlayerRef.current) artPlayerRef.current.muted = !artPlayerRef.current.muted;
-          }}
-          onTogglePictureInPicture={() => {
-            if (artPlayerRef.current) artPlayerRef.current.pip = !artPlayerRef.current.pip;
-          }}
+          onSetVolume={setPlayerVolume}
+          onToggleFullscreen={togglePlayerFullscreen}
+          onToggleMute={togglePlayerMute}
+          onTogglePictureInPicture={togglePictureInPicture}
           onTogglePlay={togglePlayback}
           pictureInPicture={pictureInPicture}
           playbackRate={playbackRate}
@@ -678,13 +638,7 @@ export function RemoteVideoPlayer({
   );
 }
 
-/** 切换并显示远程会话中的指定字幕轨道。 */
-async function switchArtPlayerSubtitle(player: Artplayer, subtitle: RemotePlaybackSubtitle): Promise<void> {
-  const subtitleUrl = new URL(subtitle.url, window.location.origin).toString();
-  await player.subtitle.switch(subtitleUrl, {
-    name: subtitle.label,
-    type: subtitle.type,
-    encoding: "utf-8"
-  });
-  player.subtitle.show = true;
+function createRemoteCommandId(sequenceRef: { current: number }): string {
+  sequenceRef.current += 1;
+  return `remote-${Date.now()}-${sequenceRef.current}`;
 }
