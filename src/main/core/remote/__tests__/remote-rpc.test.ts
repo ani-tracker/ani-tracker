@@ -200,6 +200,37 @@ test("远程播放器进度仅接受任务关联和有效百分比", async () =>
   );
 });
 
+test("远程续播写入需要 library.write 并拒绝未知字段", async () => {
+  const dispatcher = createDispatcher(createHandlers());
+  const input = {
+    taskId: "task-1",
+    fileIndex: 0,
+    positionSeconds: 120,
+    durationSeconds: 1_400,
+    completed: false
+  };
+
+  await assert.rejects(
+    dispatcher.dispatch({ method: "savePlaybackCheckpoint", args: [input] }, context("library.read")),
+    (error) => isRemoteError(error, "FORBIDDEN", 403)
+  );
+  await assert.rejects(
+    dispatcher.dispatch(
+      { method: "savePlaybackCheckpoint", args: [{ ...input, filePath: "C:\\secret.mkv" }] },
+      context("library.write")
+    ),
+    (error) => isRemoteError(error, "INVALID_ARGUMENTS", 400)
+  );
+  assert.deepEqual(
+    await dispatcher.dispatch({ method: "savePlaybackCheckpoint", args: [input] }, context("library.write")),
+    {
+      ...input,
+      watchedReported: false,
+      updatedAt: "2026-07-24T00:00:00.000Z"
+    }
+  );
+});
+
 test("下载、追番和首页返回值强制隐藏路径、哈希及订阅地址", async () => {
   const dispatcher = createDispatcher(createHandlers());
   const downloads = (await dispatcher.dispatch(
@@ -264,6 +295,12 @@ function createHandlers(overrides: Partial<RemoteRpcHandlers> = {}): RemoteRpcHa
     listMyAnimeWatchProgress: () => [{ animeId: myAnime.anime.id, watchedEpisodeCount: 2, totalEpisodeCount: 12 }],
     setAnimeWatchProgress: (input) => ({ ...input, totalEpisodeCount: 12 }),
     reportPlaybackProgress: () => true,
+    savePlaybackCheckpoint: (input) => ({
+      ...input,
+      completed: input.completed ?? false,
+      watchedReported: false,
+      updatedAt: "2026-07-24T00:00:00.000Z"
+    }),
     listAnimeCatalog: () => [myAnime.anime],
     getAnimeDetail: () => ({
       anime: myAnime.anime,

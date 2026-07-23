@@ -19,6 +19,7 @@ import type {
 } from "@shared/domain";
 import type {
   AnimeWatchProgress,
+  PlaybackCheckpoint,
   ReleaseSearchResult,
   SetAnimeWatchProgressInput
 } from "@shared/contracts";
@@ -67,6 +68,8 @@ export interface AppRepository {
   upsertEpisode(episode: Episode): Promise<Episode[]>;
   listMyAnimeWatchProgress(): Promise<AnimeWatchProgress[]>;
   setAnimeWatchProgress(input: SetAnimeWatchProgressInput): Promise<AnimeWatchProgress>;
+  getPlaybackCheckpoint(taskId: string, fileIndex?: number): Promise<PlaybackCheckpoint | undefined>;
+  upsertPlaybackCheckpoint(checkpoint: PlaybackCheckpoint): Promise<PlaybackCheckpoint>;
   listEpisodePreferences(animeId: string): Promise<EpisodePreference[]>;
   upsertEpisodePreference(preference: EpisodePreference): Promise<EpisodePreference[]>;
   removeEpisodePreference(episodeId: string): Promise<EpisodePreference[]>;

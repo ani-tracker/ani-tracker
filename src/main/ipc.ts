@@ -29,6 +29,7 @@ import type {
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
   SelectPlayerExecutableInput,
+  SavePlaybackCheckpointInput,
   SetAnimeWatchProgressInput
 } from "@shared/contracts";
 import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
@@ -53,6 +54,7 @@ import { AnimeFollowPreparationService } from "./core/follows/anime-follow-prepa
 import { enrichReleaseFromTitle } from "./core/releases/release-title-parser";
 import { sortReleasesByRules } from "./core/releases/release-matcher";
 import { PlaybackStatusService } from "./core/media/playback-status-service";
+import { PlaybackCheckpointService } from "./core/media/playback-checkpoint-service";
 import { DownloadTaskControlService } from "./core/downloads/download-task-control-service";
 import { PlayerDetectionService } from "./core/platform/player-detection-service";
 import type { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
@@ -87,6 +89,7 @@ export const downloadTaskControlService = new DownloadTaskControlService(reposit
 });
 export const animeDetailService = new AnimeDetailService(repository);
 export const playbackStatusService = new PlaybackStatusService(repository);
+export const playbackCheckpointService = new PlaybackCheckpointService(repository, playbackStatusService);
 export const animeFollowPreparationService = new AnimeFollowPreparationService(repository);
 
 interface RegisterIpcHandlersOptions {
@@ -151,6 +154,9 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   );
   ipcMain.handle("playback:reportProgress", (_event, input: ReportPlaybackProgressInput) =>
     playbackStatusService.handleTaskProgress(input)
+  );
+  ipcMain.handle("playback:saveCheckpoint", (_event, input: SavePlaybackCheckpointInput) =>
+    playbackCheckpointService.save(input)
   );
   ipcMain.handle("animeCatalog:list", (_event, year?: number, month?: number) =>
     new AnimeDiscoveryService(repository).listCatalog(year, month)

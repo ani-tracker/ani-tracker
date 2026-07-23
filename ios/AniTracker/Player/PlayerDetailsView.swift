@@ -223,7 +223,7 @@ private struct EpisodeRow: View {
     let onSelect: () -> Void
 
     private var active: Bool { index == snapshot.activeIndex }
-    private var completed: Bool { index < snapshot.activeIndex }
+    private var completed: Bool { snapshot.watchedEpisodeIDs.contains(snapshot.episodes[index].id) }
 
     var body: some View {
         Button(action: onSelect) {

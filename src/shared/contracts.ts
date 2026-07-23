@@ -308,6 +308,26 @@ export interface ReportPlaybackProgressInput {
   percent: number;
 }
 
+/** 单个下载任务文件的持久化播放位置。 */
+export interface PlaybackCheckpoint {
+  taskId: string;
+  fileIndex?: number;
+  positionSeconds: number;
+  durationSeconds: number;
+  completed: boolean;
+  watchedReported: boolean;
+  updatedAt: string;
+}
+
+/** 播放器保存当前位置时使用的最小输入。 */
+export interface SavePlaybackCheckpointInput {
+  taskId: string;
+  fileIndex?: number;
+  positionSeconds: number;
+  durationSeconds: number;
+  completed?: boolean;
+}
+
 export interface AnimeDetailResult {
   anime: Anime;
   myAnime?: MyAnime;
@@ -454,6 +474,7 @@ export interface RemotePlaybackSession {
   streamUrl: string;
   expiresAt: string;
   durationSeconds?: number;
+  startPositionSeconds?: number;
   subtitles: RemotePlaybackSubtitle[];
 }
 

@@ -13,6 +13,7 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
 
     private let mediaPlayer: VLCMediaPlayer
     private let audioSession = AVAudioSession.sharedInstance()
+    private let checkpointStore = PlaybackCheckpointStore()
     private let logger = Logger(subsystem: "dev.ani.tracker", category: "MobileVLCKit")
     private weak var attachedView: UIView?
     private var pendingStartPosition: Int64 = 0
@@ -22,6 +23,8 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
     private var resumeAfterBackground = false
     private var resumeAfterInterruption = false
     private var securityScopedURL: URL?
+    private var checkpointTimer: Timer?
+    private var autoNextTimer: Timer?
 
     /** 创建固定缓存策略的 MobileVLCKit 播放器并监听音频中断。 */
     override init() {
@@ -39,10 +42,17 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
             name: AVAudioSession.interruptionNotification,
             object: audioSession
         )
+        checkpointTimer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            self.persistCheckpoint(completed: self.snapshot.status == .ended, reason: "interval")
+        }
         logger.info("iOS MobileVLCKit 运行时初始化完成")
     }
 
     deinit {
+        persistCheckpoint(completed: snapshot.status == .ended, reason: "release")
+        checkpointTimer?.invalidate()
+        autoNextTimer?.invalidate()
         NotificationCenter.default.removeObserver(self)
         mediaPlayer.delegate = nil
         mediaPlayer.stop()
@@ -117,6 +127,7 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
         resumeAfterBackground = false
         resumeAfterInterruption = false
         pauseKeepingResumeIntent()
+        persistCheckpoint(completed: false, reason: "pause")
     }
 
     /** 跳转到当前媒体中的合法毫秒位置。 */
@@ -182,21 +193,27 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
 
     /** 加载播放列表中的指定单集。 */
     func selectEpisode(at index: Int) {
-        loadEpisode(at: index, startPosition: 0)
+        loadEpisode(at: index, startPosition: nil)
     }
 
     /** 播放上一集，列表首项不执行操作。 */
     func previousEpisode() {
         let target = snapshot.activeIndex - 1
         guard target >= 0 else { return }
-        loadEpisode(at: target, startPosition: 0)
+        loadEpisode(at: target, startPosition: nil)
     }
 
     /** 播放下一集，列表末项保持结束状态。 */
     func nextEpisode() {
         let target = snapshot.activeIndex + 1
         guard snapshot.episodes.indices.contains(target) else { return }
-        loadEpisode(at: target, startPosition: 0)
+        loadEpisode(at: target, startPosition: nil)
+    }
+
+    /** 取消片尾自动下一集并保留结束画面。 */
+    func cancelAutoNext() {
+        cancelAutoNextCountdown()
+        logger.info("iOS 自动下一集已取消")
     }
 
     /** 使用当前媒体和位置重建 VLC 输入。 */
@@ -211,6 +228,7 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
 
     /** 真正进入后台时暂停，返回前台后按原状态恢复。 */
     func enterBackground() {
+        persistCheckpoint(completed: snapshot.status == .ended, reason: "background")
         resumeAfterBackground = mediaPlayer.isPlaying
         if resumeAfterBackground {
             pauseKeepingResumeIntent()
@@ -228,6 +246,8 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
     func close() {
         resumeAfterBackground = false
         resumeAfterInterruption = false
+        persistCheckpoint(completed: snapshot.status == .ended, reason: "close")
+        cancelAutoNextCountdown()
         mediaPlayer.stop()
         try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         releaseSecurityScopedResource()
@@ -258,6 +278,7 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
         if !preservingSecurityScope {
             releaseSecurityScopedResource()
         }
+        persistCheckpoint(completed: snapshot.status == .ended, reason: "replace-session")
         autoplay = request.autoplay
         snapshot = PlayerSnapshot(
             sessionID: request.sessionID,
@@ -267,16 +288,26 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
             episodes: request.episodes,
             activeIndex: min(max(request.activeIndex, 0), request.episodes.count - 1),
             status: .idle,
-            volume: snapshot.volume
+            volume: snapshot.volume,
+            watchedEpisodeIDs: Set(request.episodes.filter(checkpointStore.isWatched).map(\.id))
         )
-        loadEpisode(at: snapshot.activeIndex, startPosition: max(request.startPositionMilliseconds, 0))
+        let activeEpisode = snapshot.activeEpisode
+        let startPosition = request.startPositionMilliseconds > 0
+            ? request.startPositionMilliseconds
+            : activeEpisode.map { checkpointStore.resumePositionMilliseconds(for: $0) } ?? 0
+        loadEpisode(at: snapshot.activeIndex, startPosition: startPosition)
     }
 
     /** 创建 VLCMedia 并开始当前单集的原生播放。 */
-    private func loadEpisode(at index: Int, startPosition: Int64) {
+    private func loadEpisode(at index: Int, startPosition: Int64?) {
         guard snapshot.episodes.indices.contains(index) else { return }
         let episode = snapshot.episodes[index]
-        pendingStartPosition = max(startPosition, 0)
+        persistCheckpoint(completed: snapshot.status == .ended, reason: "switch-item")
+        cancelAutoNextCountdown()
+        pendingStartPosition = max(
+            startPosition ?? checkpointStore.resumePositionMilliseconds(for: episode),
+            0
+        )
         pendingSubtitles = episode.subtitles
         subtitlesAttached = false
         snapshot.activeIndex = index
@@ -309,6 +340,8 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
         case 3:
             snapshot.status = .ended
             snapshot.positionMilliseconds = snapshot.durationMilliseconds
+            persistCheckpoint(completed: true, reason: "ended")
+            startAutoNextCountdown()
             try? audioSession.setActive(false, options: .notifyOthersOnDeactivation)
         case 4:
             fail("MobileVLCKit 无法解码或读取当前媒体")
@@ -335,6 +368,67 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
         if mediaLength > 0 {
             snapshot.durationMilliseconds = Int64(mediaLength)
         }
+        persistWatchedThresholdIfNeeded()
+    }
+
+    /** 每十秒及关键生命周期节点保存当前单集，并同步 90% 已看集合。 */
+    private func persistCheckpoint(completed: Bool, reason: String) {
+        guard let episode = snapshot.activeEpisode, snapshot.durationMilliseconds > 0 else { return }
+        let checkpoint = checkpointStore.save(
+            episode: episode,
+            positionMilliseconds: snapshot.positionMilliseconds,
+            durationMilliseconds: snapshot.durationMilliseconds,
+            completed: completed
+        )
+        if checkpoint.watched, !snapshot.watchedEpisodeIDs.contains(episode.id) {
+            snapshot.watchedEpisodeIDs.insert(episode.id)
+            logger.info("iOS 单集首次达到 90%: episode=\(episode.id, privacy: .public)")
+        }
+        logger.debug("iOS 续播位置已保存: reason=\(reason, privacy: .public), position=\(checkpoint.positionMilliseconds)")
+    }
+
+    /** 首次达到 90% 时立即持久化，避免在下一次定时保存前回退而漏标。 */
+    private func persistWatchedThresholdIfNeeded() {
+        guard
+            let episode = snapshot.activeEpisode,
+            !snapshot.watchedEpisodeIDs.contains(episode.id),
+            PlaybackCheckpointStore.playbackPercent(
+                positionMilliseconds: snapshot.positionMilliseconds,
+                durationMilliseconds: snapshot.durationMilliseconds
+            ) >= 90
+        else { return }
+        persistCheckpoint(completed: false, reason: "watched-threshold")
+    }
+
+    /** 在片尾启动五秒倒计时，到期后加载下一集。 */
+    private func startAutoNextCountdown() {
+        let target = snapshot.activeIndex + 1
+        guard snapshot.episodes.indices.contains(target) else { return }
+        cancelAutoNextCountdown()
+        var remaining = 5
+        snapshot.autoNextSecondsRemaining = remaining
+        autoNextTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] timer in
+            guard let self else {
+                timer.invalidate()
+                return
+            }
+            remaining -= 1
+            if remaining <= 0 {
+                timer.invalidate()
+                self.autoNextTimer = nil
+                self.snapshot.autoNextSecondsRemaining = nil
+                self.loadEpisode(at: target, startPosition: nil)
+                return
+            }
+            self.snapshot.autoNextSecondsRemaining = remaining
+        }
+    }
+
+    /** 停止仍在运行的自动切集倒计时。 */
+    private func cancelAutoNextCountdown() {
+        autoNextTimer?.invalidate()
+        autoNextTimer = nil
+        snapshot.autoNextSecondsRemaining = nil
     }
 
     /** 在 VLC 真正开始后应用续播位置与外部字幕。 */
@@ -408,7 +502,7 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
                     self.pauseKeepingResumeIntent()
                 }
             case .ended:
-                let rawOptions = notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt ?? 0
+                let rawOptions = (notification.userInfo?[AVAudioSessionInterruptionOptionKey] as? UInt) ?? 0
                 let options = AVAudioSession.InterruptionOptions(rawValue: rawOptions)
                 if self.resumeAfterInterruption, options.contains(.shouldResume) {
                     self.resumeAfterInterruption = false

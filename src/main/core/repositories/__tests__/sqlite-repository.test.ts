@@ -67,6 +67,35 @@ test("SQLite 二次启动保留增量数据且不重复 seed", async () => {
   second.close();
 });
 
+test("SQLite 按任务文件保存并跨重启恢复续播位置", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const checkpoint = {
+    taskId: "checkpoint-task",
+    fileIndex: 2,
+    positionSeconds: 612.5,
+    durationSeconds: 1_440,
+    completed: false,
+    watchedReported: true,
+    updatedAt: "2026-07-24T00:00:00.000Z"
+  };
+  await first.repository.upsertDownloadTask(createDownloadTask("", checkpoint.taskId));
+  await first.repository.upsertPlaybackCheckpoint(checkpoint);
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  assert.deepEqual(
+    await second.repository.getPlaybackCheckpoint(checkpoint.taskId, checkpoint.fileIndex),
+    checkpoint
+  );
+  assert.equal(await second.repository.getPlaybackCheckpoint(checkpoint.taskId, 3), undefined);
+  await second.repository.removeDownloadTask(checkpoint.taskId);
+  assert.equal(await second.repository.getPlaybackCheckpoint(checkpoint.taskId, checkpoint.fileIndex), undefined);
+  second.close();
+});
+
 test("SQLite 保存并恢复追番 RSS 订阅配置", async () => {
   const fixture = await createFixture();
   const first = createRepositoryRuntime(fixture.options);

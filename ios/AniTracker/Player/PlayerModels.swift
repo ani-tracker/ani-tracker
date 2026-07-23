@@ -92,6 +92,8 @@ struct PlayerSnapshot: Equatable {
     var audioTracks: [PlayerTrack] = []
     var subtitleTracks: [PlayerTrack] = []
     var aspectRatio: PlayerAspectRatio = .automatic
+    var watchedEpisodeIDs: Set<String> = []
+    var autoNextSecondsRemaining: Int?
     var errorMessage: String?
 
     var activeEpisode: PlayerEpisode? {

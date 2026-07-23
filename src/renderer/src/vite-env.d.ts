@@ -34,6 +34,7 @@ import type {
   EmbeddedTorrentCoreStatus,
   EpisodeReleasePreview,
   MediaScanResult,
+  PlaybackCheckpoint,
   PlayerDetectionResult,
   QbittorrentManagedStatus,
   ReportPlaybackProgressInput,
@@ -46,6 +47,7 @@ import type {
   RssSubscriptionReleaseQuery,
   RssSubscriptionReleaseResult,
   SelectPlayerExecutableInput,
+  SavePlaybackCheckpointInput,
   SetAnimeWatchProgressInput,
   SourceSyncRunResult,
   SourceSyncSchedulerStatus,
@@ -81,6 +83,7 @@ declare global {
       listMyAnimeWatchProgress: () => Promise<AnimeWatchProgress[]>;
       setAnimeWatchProgress: (input: SetAnimeWatchProgressInput) => Promise<AnimeWatchProgress>;
       reportPlaybackProgress: (input: ReportPlaybackProgressInput) => Promise<boolean>;
+      savePlaybackCheckpoint: (input: SavePlaybackCheckpointInput) => Promise<PlaybackCheckpoint>;
       listAnimeCatalog: (year?: number, month?: number) => Promise<Anime[]>;
       searchAnimeCatalog: (keyword: string) => Promise<Anime[]>;
       collectAnimeMonth: (query: AnimeDiscoveryQuery) => Promise<AnimeDiscoveryResult>;

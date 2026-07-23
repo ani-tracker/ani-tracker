@@ -11,10 +11,12 @@ import {
 import { toast } from "sonner";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlayerChrome } from "@/features/player/PlayerChrome";
+import { PlayerAutoNextPrompt } from "@/features/player/PlayerAutoNextPrompt";
 import { PlayerEpisodeList } from "@/features/player/PlayerEpisodeList";
 import { PlayerErrorState } from "@/features/player/PlayerErrorState";
 import { PlayerMobileDetails } from "@/features/player/PlayerMobileDetails";
 import { PlayerPlaylistSheet } from "@/features/player/PlayerPlaylistSheet";
+import { usePlaybackBusiness } from "@/features/player/use-playback-business";
 import {
   buildPlayerEpisodeItems,
   type PlayerEpisodeUiItem
@@ -77,11 +79,8 @@ export function RemoteVideoPlayer({
 }: RemoteVideoPlayerProps) {
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const playerAdapterRef = useRef<ArtPlayerAdapter | null>(null);
-  const onSelectItemRef = useRef(onSelectItem);
   const toolbarTimerRef = useRef<number>();
   const automaticFallbackStartedRef = useRef(false);
-  const progressReportedRef = useRef(false);
-  const endedSessionIdRef = useRef<string>();
   const commandSequenceRef = useRef(0);
   const [requestedMode, setRequestedMode] = useState<RemotePlaybackRequestMode>("direct");
   const [session, setSession] = useState<RemotePlaybackSession | null>(null);
@@ -132,10 +131,17 @@ export function RemoteVideoPlayer({
     playlist,
     session
   }), [activeItem, currentTimeSeconds, downloadTasks, durationSeconds, episodes, playlist, session]);
-
-  useEffect(() => {
-    onSelectItemRef.current = onSelectItem;
-  }, [onSelectItem]);
+  const {
+    autoNextSeconds,
+    cancelAutoNext,
+    closeAfterFlush,
+    selectItemAfterFlush
+  } = usePlaybackBusiness({
+    activeItem,
+    nextItem,
+    onSelectItem,
+    snapshot: playerSnapshot
+  });
 
   /** 清理并重新安排控制层的自动隐藏计时。 */
   const scheduleToolbarHide = useCallback((): void => {
@@ -173,8 +179,6 @@ export function RemoteVideoPlayer({
     setSession(null);
     setPlayerSnapshot(undefined);
     setPlaybackError(null);
-    progressReportedRef.current = false;
-    endedSessionIdRef.current = undefined;
 
     // 延迟到微任务阶段，避免 React 严格模式的探测挂载重复创建媒体会话。
     queueMicrotask(() => {
@@ -250,6 +254,7 @@ export function RemoteVideoPlayer({
       type: "load",
       commandId: createRemoteCommandId(commandSequenceRef),
       sessionId: session.id,
+      startPositionSeconds: session.startPositionSeconds,
       source: {
         taskId: activeItem.task.id,
         fileIndex: session.fileIndex,
@@ -281,47 +286,6 @@ export function RemoteVideoPlayer({
       void adapter.dispose();
     };
   }, [activeItem, session, startAutomaticTranscode]);
-
-  useEffect(() => {
-    if (!activeItem || !playerSnapshot || progressReportedRef.current) return;
-    const percent = playerSnapshot.status === "ended"
-      ? 100
-      : playerSnapshot.durationSeconds > 0
-        ? playerSnapshot.positionSeconds / playerSnapshot.durationSeconds * 100
-        : 0;
-    if (percent < 90) return;
-    progressReportedRef.current = true;
-    const normalizedPercent = Math.max(0, Math.min(100, percent));
-    void appApi.reportPlaybackProgress({
-      taskId: activeItem.task.id,
-      fileIndex: activeItem.fileIndex,
-      percent: normalizedPercent
-    }).then((handled) => {
-      console.info("[remote] 播放进度已上报", {
-        taskId: activeItem.task.id,
-        fileIndex: activeItem.fileIndex,
-        percent: normalizedPercent,
-        handled
-      });
-    }).catch((caught) => {
-      console.warn("[remote] 播放进度上报失败", {
-        taskId: activeItem.task.id,
-        fileIndex: activeItem.fileIndex,
-        error: caught
-      });
-    });
-  }, [activeItem, playerSnapshot]);
-
-  useEffect(() => {
-    if (playerSnapshot?.status !== "ended" || !session || !nextItem) return;
-    if (endedSessionIdRef.current === session.id) return;
-    endedSessionIdRef.current = session.id;
-    console.info("[remote] 当前文件播放完成，切换下一项", {
-      taskId: nextItem.task.id,
-      fileIndex: nextItem.fileIndex
-    });
-    onSelectItemRef.current(nextItem);
-  }, [nextItem, playerSnapshot?.status, session]);
 
   /** 手动切换播放模式，并允许下次直传失败时再次自动升级。 */
   const handleModeChange = (value: RemotePlaybackRequestMode): void => {
@@ -406,7 +370,7 @@ export function RemoteVideoPlayer({
 
   /** 切换当前播放项并关闭播放列表。 */
   const selectEpisode = (item: PlayerEpisodeUiItem): void => {
-    if (item.playlistItem && item.playlistItem.id !== activeItem?.id) onSelectItem(item.playlistItem);
+    if (item.playlistItem && item.playlistItem.id !== activeItem?.id) selectItemAfterFlush(item.playlistItem);
     setPlaylistOpen(false);
   };
 
@@ -501,8 +465,8 @@ export function RemoteVideoPlayer({
     if (key === "m") togglePlayerMute();
     if (key === "f") togglePlayerFullscreen();
     if (key === "l") openPlaylist();
-    if (key === "p" && previousItem) onSelectItem(previousItem);
-    if (key === "n" && nextItem) onSelectItem(nextItem);
+    if (key === "p" && previousItem) selectItemAfterFlush(previousItem);
+    if (key === "n" && nextItem) selectItemAfterFlush(nextItem);
     if (key === "c") changeSubtitle(selectedSubtitleId ? undefined : session?.subtitles[0]?.id);
     revealToolbar();
   };
@@ -564,10 +528,20 @@ export function RemoteVideoPlayer({
         {(loadError || playbackError) && (
           <PlayerErrorState
             message={loadError ?? playbackError ?? "未知播放错误"}
-            onClose={onClose}
+            onClose={() => closeAfterFlush(onClose)}
             onRetry={playbackError ? () => setRetryNonce((value) => value + 1) : undefined}
             onTranscode={playbackError && requestedMode === "direct" ? startAutomaticTranscode : undefined}
             title={loadError ? "播放器无法打开" : "播放失败"}
+          />
+        )}
+        {autoNextSeconds !== undefined && nextItem && (
+          <PlayerAutoNextPrompt
+            episodeLabel={nextItem.task.episodeNo === undefined
+              ? nextItem.fileName
+              : `第 ${String(nextItem.task.episodeNo).padStart(2, "0")} 集`}
+            onCancel={cancelAutoNext}
+            onPlayNow={() => selectItemAfterFlush(nextItem)}
+            seconds={autoNextSeconds}
           />
         )}
         <PlayerChrome
@@ -588,9 +562,9 @@ export function RemoteVideoPlayer({
           onChangeMode={handleModeChange}
           onChangeRate={setPlayerRate}
           onChangeSubtitle={changeSubtitle}
-          onClose={onClose}
-          onGoNext={() => nextItem && onSelectItem(nextItem)}
-          onGoPrevious={() => previousItem && onSelectItem(previousItem)}
+          onClose={() => closeAfterFlush(onClose)}
+          onGoNext={() => nextItem && selectItemAfterFlush(nextItem)}
+          onGoPrevious={() => previousItem && selectItemAfterFlush(previousItem)}
           onOpenExternalPlayer={externalPlayer ? () => void handleExternalPlayback() : undefined}
           onOpenPlaylist={openPlaylist}
           onPanelOpenChange={setPanelOpen}

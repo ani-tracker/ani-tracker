@@ -313,6 +313,7 @@ test("媒体会话使用设备 Cookie 输出 206 范围响应", async (context) 
   };
   const mediaSessionService = new RemoteMediaSessionService({
     getDownloadTask: async (taskId) => taskId === task.id ? task : undefined,
+    getPlaybackCheckpoint: async () => undefined,
     listMediaFiles: async () => [],
     getSettings: async () => ({
       media: { ffprobePath: "ffprobe", ffprobeTimeoutSeconds: 20, videoExtensions: [".mp4"] }
@@ -728,6 +729,12 @@ function createHandlers(): RemoteRpcHandlers {
     listMyAnimeWatchProgress: () => [],
     setAnimeWatchProgress: (input) => ({ ...input, totalEpisodeCount: input.watchedEpisodeCount }),
     reportPlaybackProgress: () => true,
+    savePlaybackCheckpoint: (input) => ({
+      ...input,
+      completed: input.completed ?? false,
+      watchedReported: false,
+      updatedAt: "2026-07-24T00:00:00.000Z"
+    }),
     listAnimeCatalog: () => [],
     getAnimeDetail: () => {
       throw new Error("测试未使用番剧详情");

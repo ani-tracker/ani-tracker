@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import type { ChildProcessWithoutNullStreams, spawn } from "node:child_process";
+import type { PlaybackCheckpoint } from "@shared/contracts";
 import type { AppSettings, DownloadTask, MediaFile } from "@shared/domain";
 import {
   RemoteMediaSessionError,
@@ -19,7 +20,15 @@ test("RemoteMediaSessionService 为浏览器兼容文件创建直传会话", asy
   const filePath = join(directory, "episode.mp4");
   await writeFile(filePath, Buffer.from("0123456789"));
   const service = createService(
-    createRepository(createTask(directory, "episode.mp4"), []),
+    createRepository(createTask(directory, "episode.mp4"), [], {
+      taskId: "task-1",
+      fileIndex: 0,
+      positionSeconds: 120,
+      durationSeconds: 1_445,
+      completed: false,
+      watchedReported: false,
+      updatedAt: "2026-07-24T00:00:00.000Z"
+    }),
     async (_sourcePath, outputDirectory) => {
       await writeFile(join(outputDirectory, "subtitle-000.ass"), "[Events]\n", "utf8");
       return {
@@ -48,6 +57,7 @@ test("RemoteMediaSessionService 为浏览器兼容文件创建直传会话", asy
 
   assert.equal(session.mode, "direct");
   assert.equal(session.durationSeconds, 1_445);
+  assert.equal(session.startPositionSeconds, 120);
   assert.deepEqual(session.subtitles, [{
     id: "subtitle-2",
     label: "简体中文",
@@ -238,9 +248,14 @@ const silentLogger = {
 };
 
 /** 创建只覆盖媒体播放所需方法的仓库。 */
-function createRepository(task: DownloadTask, mediaFiles: MediaFile[]): RemoteMediaRepository {
+function createRepository(
+  task: DownloadTask,
+  mediaFiles: MediaFile[],
+  checkpoint?: PlaybackCheckpoint
+): RemoteMediaRepository {
   return {
     getDownloadTask: async (taskId) => taskId === task.id ? task : undefined,
+    getPlaybackCheckpoint: async () => checkpoint,
     listMediaFiles: async () => mediaFiles,
     getSettings: async () => ({
       media: {

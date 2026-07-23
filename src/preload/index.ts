@@ -21,6 +21,7 @@ import type {
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
   EmbeddedTorrentCoreStatus,
+  PlaybackCheckpoint,
   PlayerDetectionResult,
   ReportPlaybackProgressInput,
   RemoteGatewayStatus,
@@ -30,6 +31,7 @@ import type {
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
   SelectPlayerExecutableInput,
+  SavePlaybackCheckpointInput,
   SetAnimeWatchProgressInput,
   SourceSyncRunResult,
   SourceSyncSchedulerStatus
@@ -70,6 +72,8 @@ const api = {
     ipcRenderer.invoke("myAnime:setWatchProgress", input),
   reportPlaybackProgress: (input: ReportPlaybackProgressInput): Promise<boolean> =>
     ipcRenderer.invoke("playback:reportProgress", input),
+  savePlaybackCheckpoint: (input: SavePlaybackCheckpointInput): Promise<PlaybackCheckpoint> =>
+    ipcRenderer.invoke("playback:saveCheckpoint", input),
   listAnimeCatalog: (year?: number, month?: number): Promise<Anime[]> =>
     ipcRenderer.invoke("animeCatalog:list", year, month),
   searchAnimeCatalog: (keyword: string): Promise<Anime[]> => ipcRenderer.invoke("animeCatalog:search", keyword),

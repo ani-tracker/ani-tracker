@@ -31,9 +31,11 @@ import {
 } from "@/features/remote/remote-player-model";
 import { desktopPlaybackSessionClient } from "@/features/remote/playback-session-client";
 import { PlayerChrome } from "./PlayerChrome";
+import { PlayerAutoNextPrompt } from "./PlayerAutoNextPrompt";
 import { PlayerErrorState } from "./PlayerErrorState";
 import { PlayerPlaylistSheet } from "./PlayerPlaylistSheet";
 import { buildPlayerEpisodeItems, type PlayerEpisodeUiItem } from "./player-ui-model";
+import { usePlaybackBusiness } from "./use-playback-business";
 
 const TOOLBAR_HIDE_DELAY_MS = 3_000;
 
@@ -213,6 +215,17 @@ function DesktopVlcControls({
     })) ?? []
   ), [snapshot?.subtitleTracks]);
   const selectedSubtitleId = snapshot?.subtitleTracks.find((track) => track.selected)?.id;
+  const {
+    autoNextSeconds,
+    cancelAutoNext,
+    closeAfterFlush,
+    selectItemAfterFlush
+  } = usePlaybackBusiness({
+    activeItem,
+    nextItem,
+    onSelectItem,
+    snapshot
+  });
 
   useEffect(() => {
     let active = true;
@@ -263,6 +276,7 @@ function DesktopVlcControls({
           type: "load",
           commandId: createCommandId(commandSequenceRef),
           sessionId: result.id,
+          startPositionSeconds: result.startPositionSeconds,
           source: {
             taskId: activeItem.task.id,
             fileIndex: result.fileIndex,
@@ -416,8 +430,8 @@ function DesktopVlcControls({
     if (key === "m") toggleMute();
     if (key === "f") toggleFullscreen();
     if (key === "l") setPlaylistOpen(true);
-    if (key === "p" && previousItem) onSelectItem(previousItem);
-    if (key === "n" && nextItem) onSelectItem(nextItem);
+    if (key === "p" && previousItem) selectItemAfterFlush(previousItem);
+    if (key === "n" && nextItem) selectItemAfterFlush(nextItem);
     if (key === "c") changeSubtitle(selectedSubtitleId ? undefined : snapshot?.subtitleTracks[0]?.id);
     revealToolbar();
   };
@@ -437,7 +451,7 @@ function DesktopVlcControls({
   };
 
   const selectEpisode = (item: PlayerEpisodeUiItem): void => {
-    if (item.playlistItem && item.playlistItem.id !== activeItem?.id) onSelectItem(item.playlistItem);
+    if (item.playlistItem && item.playlistItem.id !== activeItem?.id) selectItemAfterFlush(item.playlistItem);
     setPlaylistOpen(false);
   };
   const changeMode = (mode: RemotePlaybackRequestMode): void => {
@@ -483,12 +497,22 @@ function DesktopVlcControls({
         {currentError && (
           <PlayerErrorState
             message={currentError}
-            onClose={onClose}
+            onClose={() => closeAfterFlush(onClose)}
             onRetry={capabilities?.availability === "available" ? retry : undefined}
             onTranscode={requestedMode === "direct" && capabilities?.supportsTranscodingFallback
               ? () => changeMode("transcode")
               : undefined}
             title={runtimeError ? "libVLC 无法启动" : loadError ? "播放器无法打开" : "播放失败"}
+          />
+        )}
+        {autoNextSeconds !== undefined && nextItem && (
+          <PlayerAutoNextPrompt
+            episodeLabel={nextItem.task.episodeNo === undefined
+              ? nextItem.fileName
+              : `第 ${String(nextItem.task.episodeNo).padStart(2, "0")} 集`}
+            onCancel={cancelAutoNext}
+            onPlayNow={() => selectItemAfterFlush(nextItem)}
+            seconds={autoNextSeconds}
           />
         )}
         <PlayerChrome
@@ -507,9 +531,9 @@ function DesktopVlcControls({
           onChangeMode={changeMode}
           onChangeRate={setRate}
           onChangeSubtitle={changeSubtitle}
-          onClose={onClose}
-          onGoNext={() => nextItem && onSelectItem(nextItem)}
-          onGoPrevious={() => previousItem && onSelectItem(previousItem)}
+          onClose={() => closeAfterFlush(onClose)}
+          onGoNext={() => nextItem && selectItemAfterFlush(nextItem)}
+          onGoPrevious={() => previousItem && selectItemAfterFlush(previousItem)}
           onOpenPlaylist={() => setPlaylistOpen(true)}
           onPanelOpenChange={setPanelOpen}
           onSeek={seekTo}

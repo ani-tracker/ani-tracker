@@ -1,7 +1,9 @@
 import type {
   AnimeDetailResult,
   AnimeWatchProgress,
+  PlaybackCheckpoint,
   ReportPlaybackProgressInput,
+  SavePlaybackCheckpointInput,
   SetAnimeWatchProgressInput
 } from "@shared/contracts";
 import type {
@@ -26,7 +28,8 @@ import {
   sanitizeEpisodePreferenceList,
   sanitizeFansubList,
   sanitizeMyAnimeList,
-  sanitizeNotificationList
+  sanitizeNotificationList,
+  sanitizePlaybackCheckpoint
 } from "./remote-dto";
 
 export const REMOTE_RPC_METHOD_NAMES = [
@@ -39,6 +42,7 @@ export const REMOTE_RPC_METHOD_NAMES = [
   "listMyAnimeWatchProgress",
   "setAnimeWatchProgress",
   "reportPlaybackProgress",
+  "savePlaybackCheckpoint",
   "listAnimeCatalog",
   "getAnimeDetail",
   "searchAnimeCatalog",
@@ -77,6 +81,7 @@ export interface RemoteRpcHandlers {
   listMyAnimeWatchProgress(): MaybePromise<AnimeWatchProgress[]>;
   setAnimeWatchProgress(input: SetAnimeWatchProgressInput): MaybePromise<AnimeWatchProgress>;
   reportPlaybackProgress(input: ReportPlaybackProgressInput): MaybePromise<boolean>;
+  savePlaybackCheckpoint(input: SavePlaybackCheckpointInput): MaybePromise<PlaybackCheckpoint>;
   listAnimeCatalog(year?: number, month?: number): MaybePromise<Anime[]>;
   getAnimeDetail(animeId: string): MaybePromise<AnimeDetailResult>;
   searchAnimeCatalog(keyword: string): MaybePromise<Anime[]>;
@@ -191,6 +196,14 @@ export function createRemoteMethodRegistry(handlers: RemoteRpcHandlers): RemoteM
       playbackProgressInput,
       booleanResult,
       handlers.reportPlaybackProgress
+    ),
+    defineMethod(
+      "savePlaybackCheckpoint",
+      "library.write",
+      "write",
+      playbackCheckpointInput,
+      sanitizePlaybackCheckpoint,
+      handlers.savePlaybackCheckpoint
     ),
     defineMethod(
       "listAnimeCatalog",
@@ -341,6 +354,40 @@ function playbackProgressInput(args: readonly unknown[]): [ReportPlaybackProgres
     taskId: parseId(candidate.taskId, "下载任务标识"),
     ...(candidate.fileIndex === undefined ? {} : { fileIndex: candidate.fileIndex as number }),
     percent: candidate.percent
+  }];
+}
+
+/** 校验远程播放器续播位置写入参数。 */
+function playbackCheckpointInput(args: readonly unknown[]): [SavePlaybackCheckpointInput] {
+  assertArgumentCount(args, 1);
+  const input = args[0];
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new RemoteRpcValidationError("播放续播参数格式无效");
+  }
+  const candidate = input as Record<string, unknown>;
+  const allowedKeys = new Set(["taskId", "fileIndex", "positionSeconds", "durationSeconds", "completed"]);
+  if (Object.keys(candidate).some((key) => !allowedKeys.has(key))) {
+    throw new RemoteRpcValidationError("播放续播参数包含未知字段");
+  }
+  if (candidate.fileIndex !== undefined &&
+      (!Number.isSafeInteger(candidate.fileIndex) || (candidate.fileIndex as number) < 0)) {
+    throw new RemoteRpcValidationError("播放文件索引必须是非负整数");
+  }
+  for (const key of ["positionSeconds", "durationSeconds"] as const) {
+    const value = candidate[key];
+    if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 2_678_400) {
+      throw new RemoteRpcValidationError("播放位置和时长必须是有效的非负秒数");
+    }
+  }
+  if (candidate.completed !== undefined && typeof candidate.completed !== "boolean") {
+    throw new RemoteRpcValidationError("播放完成状态必须是布尔值");
+  }
+  return [{
+    taskId: parseId(candidate.taskId, "下载任务标识"),
+    ...(candidate.fileIndex === undefined ? {} : { fileIndex: candidate.fileIndex as number }),
+    positionSeconds: candidate.positionSeconds as number,
+    durationSeconds: candidate.durationSeconds as number,
+    completed: candidate.completed === true
   }];
 }
 

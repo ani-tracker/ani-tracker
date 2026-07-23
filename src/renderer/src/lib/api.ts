@@ -25,6 +25,7 @@ const REMOTE_METHODS = new Set([
   "listMyAnimeWatchProgress",
   "setAnimeWatchProgress",
   "reportPlaybackProgress",
+  "savePlaybackCheckpoint",
   "listAnimeCatalog",
   "getAnimeDetail",
   "searchAnimeCatalog",

@@ -11,6 +11,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -224,7 +225,7 @@ private fun PortraitPlayer(
                     episode = episode,
                     index = index,
                     active = index == state.activeIndex,
-                    completed = index < state.activeIndex,
+                    completed = episode.id in state.watchedEpisodeIds,
                     onClick = { viewModel.selectEpisode(index) }
                 )
             }
@@ -322,6 +323,58 @@ private fun PlayerVideoStage(
                 onRetry = viewModel::retry,
                 onClose = onClose
             )
+        }
+        state.autoNextSecondsRemaining?.let { seconds ->
+            AutoNextOverlay(
+                episodeLabel = state.episodes.getOrNull(state.activeIndex + 1)?.episodeLabel ?: "下一集",
+                seconds = seconds,
+                compact = compact,
+                onCancel = viewModel::cancelAutoNext,
+                onPlayNow = viewModel::nextEpisode
+            )
+        }
+    }
+}
+
+/** 在视频内显示可取消的自动下一集提示。 */
+@Composable
+private fun BoxScope.AutoNextOverlay(
+    episodeLabel: String,
+    seconds: Int,
+    compact: Boolean,
+    onCancel: () -> Unit,
+    onPlayNow: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .align(Alignment.BottomEnd)
+            .padding(end = 12.dp, bottom = if (compact) 68.dp else 84.dp),
+        color = Color(0xF20E0E0E),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(8.dp),
+        border = BorderStroke(1.dp, Color.White.copy(alpha = 0.18f))
+    ) {
+        Row(
+            modifier = Modifier.padding(10.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(modifier = Modifier.width(116.dp)) {
+                Text("${seconds} 秒后播放", color = Color.White.copy(alpha = 0.68f), fontSize = 11.sp)
+                Text(
+                    episodeLabel,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            IconButton(onClick = onPlayNow, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Rounded.NavigateNext, "立即播放下一集")
+            }
+            IconButton(onClick = onCancel, modifier = Modifier.size(44.dp)) {
+                Icon(Icons.Rounded.Close, "取消自动下一集")
+            }
         }
     }
 }

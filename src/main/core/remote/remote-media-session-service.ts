@@ -22,6 +22,7 @@ import {
 } from "../media/ffmpeg-binary-resolver";
 import type { AppRepository } from "../repositories/app-repository";
 import { logger as defaultLogger } from "../logger";
+import { resolvePlaybackResumePosition } from "../media/playback-checkpoint-service";
 import {
   prepareRemoteSubtitles,
   type RemoteSubtitlePreparationOptions,
@@ -42,7 +43,7 @@ export interface RemoteMediaAsset {
 
 export type RemoteMediaRepository = Pick<
   AppRepository,
-  "getDownloadTask" | "listMediaFiles" | "getSettings"
+  "getDownloadTask" | "listMediaFiles" | "getSettings" | "getPlaybackCheckpoint"
 >;
 
 export interface RemoteMediaSessionLogger {
@@ -183,6 +184,7 @@ export class RemoteMediaSessionService {
     }
 
     const media = await this.resolveMedia(task, requestedMode, requestedFileIndex);
+    const checkpoint = await this.repository.getPlaybackCheckpoint(task.id, media.fileIndex);
     await this.closeMatchingSession(deviceId, taskId, access);
     await this.reserveSessionSlot();
 
@@ -203,6 +205,7 @@ export class RemoteMediaSessionService {
         : `${assetBaseUrl}/hls/index.m3u8`,
       expiresAt: new Date(now + this.sessionTtlMs).toISOString(),
       durationSeconds: media.durationSeconds,
+      startPositionSeconds: resolvePlaybackResumePosition(checkpoint),
       subtitles: [],
       access,
       externalAccessToken,
@@ -716,6 +719,7 @@ function toPublicSession(session: MediaSessionRecord): RemotePlaybackSession {
     streamUrl: session.streamUrl,
     expiresAt: session.expiresAt,
     durationSeconds: session.durationSeconds,
+    startPositionSeconds: session.startPositionSeconds,
     subtitles: session.subtitles.map((subtitle) => ({ ...subtitle }))
   };
 }

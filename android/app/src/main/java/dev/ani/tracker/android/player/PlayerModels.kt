@@ -68,6 +68,8 @@ data class PlayerUiState(
     val audioTracks: List<PlayerTrack> = emptyList(),
     val subtitleTracks: List<PlayerTrack> = emptyList(),
     val aspectRatio: String? = null,
+    val watchedEpisodeIds: Set<String> = emptySet(),
+    val autoNextSecondsRemaining: Int? = null,
     val errorMessage: String? = null
 ) {
     val activeEpisode: PlayerEpisode?

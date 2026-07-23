@@ -9,7 +9,7 @@ import type {
   MyAnime,
   NotificationRecord
 } from "@shared/domain";
-import type { AnimeDetailResult, AnimeWatchProgress } from "@shared/contracts";
+import type { AnimeDetailResult, AnimeWatchProgress, PlaybackCheckpoint } from "@shared/contracts";
 
 const HIDDEN_LOCAL_PATH = "本机路径已隐藏";
 const WINDOWS_PATH_PATTERN = /(?:[a-zA-Z]:\\|\\\\)[^\s，。；、]+/g;
@@ -113,6 +113,20 @@ export function sanitizeAnimeWatchProgress(value: unknown): AnimeWatchProgress {
     animeId: progress.animeId,
     watchedEpisodeCount: progress.watchedEpisodeCount,
     totalEpisodeCount: progress.totalEpisodeCount
+  };
+}
+
+/** 将续播记录限制为播放器业务所需字段。 */
+export function sanitizePlaybackCheckpoint(value: unknown): PlaybackCheckpoint {
+  const checkpoint = requireRecord<PlaybackCheckpoint>(value, "播放续播记录");
+  return {
+    taskId: checkpoint.taskId,
+    fileIndex: checkpoint.fileIndex,
+    positionSeconds: checkpoint.positionSeconds,
+    durationSeconds: checkpoint.durationSeconds,
+    completed: Boolean(checkpoint.completed),
+    watchedReported: Boolean(checkpoint.watchedReported),
+    updatedAt: checkpoint.updatedAt
   };
 }
 

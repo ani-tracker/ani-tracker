@@ -21,6 +21,7 @@ import type {
 } from "@shared/domain";
 import type {
   AnimeWatchProgress,
+  PlaybackCheckpoint,
   ReleaseSearchResult,
   SetAnimeWatchProgressInput
 } from "@shared/contracts";
@@ -381,6 +382,41 @@ export class SqliteAppRepository implements AppRepository {
     const progress = this.getAnimeWatchProgress(item, await this.listEpisodes(input.animeId));
     logger.info("Anime watch progress updated", { ...progress });
     return progress;
+  }
+
+  /** 读取指定下载文件最近一次可靠的播放位置。 */
+  async getPlaybackCheckpoint(taskId: string, fileIndex?: number): Promise<PlaybackCheckpoint | undefined> {
+    const row = this.get(
+      "SELECT * FROM playback_checkpoint WHERE task_id = @taskId AND file_index = @fileIndex",
+      { taskId, fileIndex: normalizeCheckpointFileIndex(fileIndex) }
+    );
+    return row ? mapPlaybackCheckpoint(row) : undefined;
+  }
+
+  /** 原子覆盖指定下载文件的播放位置和幂等观看标记。 */
+  async upsertPlaybackCheckpoint(checkpoint: PlaybackCheckpoint): Promise<PlaybackCheckpoint> {
+    this.run(
+      `INSERT INTO playback_checkpoint (
+        task_id, file_index, position_seconds, duration_seconds, completed, watched_reported, updated_at
+      ) VALUES (
+        @taskId, @fileIndex, @positionSeconds, @durationSeconds, @completed, @watchedReported, @updatedAt
+      ) ON CONFLICT(task_id, file_index) DO UPDATE SET
+        position_seconds = excluded.position_seconds,
+        duration_seconds = excluded.duration_seconds,
+        completed = excluded.completed,
+        watched_reported = excluded.watched_reported,
+        updated_at = excluded.updated_at`,
+      {
+        taskId: checkpoint.taskId,
+        fileIndex: normalizeCheckpointFileIndex(checkpoint.fileIndex),
+        positionSeconds: checkpoint.positionSeconds,
+        durationSeconds: checkpoint.durationSeconds,
+        completed: toInteger(checkpoint.completed),
+        watchedReported: toInteger(checkpoint.watchedReported),
+        updatedAt: checkpoint.updatedAt
+      }
+    );
+    return checkpoint;
   }
 
   async listEpisodePreferences(animeId: string): Promise<EpisodePreference[]> {
@@ -968,6 +1004,28 @@ export class SqliteAppRepository implements AppRepository {
       });
     }
 
+    if (currentSchemaVersion < 16) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS playback_checkpoint (
+          task_id TEXT NOT NULL REFERENCES download_task(id) ON DELETE CASCADE,
+          file_index INTEGER NOT NULL DEFAULT -1,
+          position_seconds REAL NOT NULL DEFAULT 0,
+          duration_seconds REAL NOT NULL DEFAULT 0,
+          completed INTEGER NOT NULL DEFAULT 0,
+          watched_reported INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (task_id, file_index)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_playback_checkpoint_updated_at
+          ON playback_checkpoint (updated_at DESC);
+      `);
+      logger.info("SQLite 播放续播记录迁移完成", {
+        fromVersion: currentSchemaVersion,
+        toVersion: SQLITE_SCHEMA_VERSION
+      });
+    }
+
     if (currentSchemaVersion < 8) {
       this.database.exec(`
         UPDATE my_anime
@@ -1133,7 +1191,7 @@ export class SqliteAppRepository implements AppRepository {
 
   private clearAllData(): void {
     for (const table of [
-      "notification", "media_file", "torrent_file", "download_task", "episode_preference", "episode",
+      "notification", "playback_checkpoint", "media_file", "torrent_file", "download_task", "episode_preference", "episode",
       "request_circuit_state", "release_search_cache", "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_fansub_group", "anime_alias", "release", "anime_catalog", "fansub_group",
       "release_source", "app_settings", "app_state", "app_meta"
     ]) {
@@ -2143,6 +2201,25 @@ function mapEpisodePreference(row: SqliteRow): EpisodePreference {
   return compact({ id: asString(row.id), animeId: asString(row.anime_id), episodeId: asString(row.episode_id),
     fansubGroupId: optionalString(row.fansub_group_id), releaseId: optionalString(row.release_id),
     isManualOverride: toBoolean(row.is_manual_override) });
+}
+
+/** 将 SQLite 的 -1 文件索引还原为未指定索引。 */
+function mapPlaybackCheckpoint(row: SqliteRow): PlaybackCheckpoint {
+  const fileIndex = Number(row.file_index);
+  return compact({
+    taskId: asString(row.task_id),
+    fileIndex: fileIndex >= 0 ? fileIndex : undefined,
+    positionSeconds: Number(row.position_seconds),
+    durationSeconds: Number(row.duration_seconds),
+    completed: toBoolean(row.completed),
+    watchedReported: toBoolean(row.watched_reported),
+    updatedAt: asString(row.updated_at)
+  });
+}
+
+/** 用 -1 表示未指定文件索引，确保 SQLite 复合主键可稳定去重。 */
+function normalizeCheckpointFileIndex(fileIndex?: number): number {
+  return fileIndex ?? -1;
 }
 
 function mapFansub(row: SqliteRow): FansubGroup {

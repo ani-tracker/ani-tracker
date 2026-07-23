@@ -23,6 +23,7 @@ import org.videolan.libvlc.util.VLCVideoLayout
 class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(application) {
     private val stateFlow = MutableStateFlow(PlayerUiState())
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val checkpointStore = PlaybackCheckpointStore(application)
     private val audioManager = application.getSystemService(Context.AUDIO_SERVICE) as AudioManager
     private val audioFocusRequest = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN).run {
         setAudioAttributes(
@@ -45,11 +46,22 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     private var resumeAfterHostStop = false
     private var resumeAfterFocusGain = false
     private var released = false
+    private var autoNextRunnable: Runnable? = null
+    private val checkpointRunnable = object : Runnable {
+        override fun run() {
+            persistCheckpoint(
+                completed = stateFlow.value.status == PlayerStatus.ENDED,
+                reason = "interval"
+            )
+            if (!released) mainHandler.postDelayed(this, CHECKPOINT_INTERVAL_MILLIS)
+        }
+    }
 
     val state: StateFlow<PlayerUiState> = stateFlow.asStateFlow()
 
     init {
         initializeVlc()
+        mainHandler.postDelayed(checkpointRunnable, CHECKPOINT_INTERVAL_MILLIS)
     }
 
     /** 初始化或替换当前业务播放会话。 */
@@ -62,6 +74,10 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             return
         }
         autoplay = request.autoplay
+        persistCheckpoint(completed = stateFlow.value.status == PlayerStatus.ENDED, reason = "replace-session")
+        val watchedEpisodeIds = request.episodes
+            .filter(checkpointStore::isWatched)
+            .mapTo(mutableSetOf(), PlayerEpisode::id)
         stateFlow.value = PlayerUiState(
             sessionId = request.sessionId,
             animeTitle = request.animeTitle,
@@ -69,9 +85,14 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             artworkUri = request.artworkUri,
             episodes = request.episodes,
             activeIndex = request.activeIndex,
-            volume = stateFlow.value.volume
+            volume = stateFlow.value.volume,
+            watchedEpisodeIds = watchedEpisodeIds
         )
-        loadEpisode(request.activeIndex, request.startPositionMillis)
+        val activeEpisode = request.episodes.getOrNull(request.activeIndex)
+        val startPosition = request.startPositionMillis.takeIf { it > 0L }
+            ?: activeEpisode?.let(checkpointStore::resumePositionMillis)
+            ?: 0L
+        loadEpisode(request.activeIndex, startPosition)
     }
 
     /** 把当前 VLC 视频输出绑定到新建的原生 Surface。 */
@@ -103,6 +124,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     /** 在宿主进入后台时暂停，旋转重建时保持播放会话。 */
     fun onHostStop(changingConfigurations: Boolean) {
         if (changingConfigurations) return
+        persistCheckpoint(completed = stateFlow.value.status == PlayerStatus.ENDED, reason = "host-stop")
         resumeAfterHostStop = mediaPlayer?.isPlaying == true
         if (resumeAfterHostStop) pauseInternal(abandonFocus = true)
     }
@@ -142,6 +164,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
         resumeAfterHostStop = false
         resumeAfterFocusGain = false
         pauseInternal(abandonFocus = true)
+        persistCheckpoint(completed = false, reason = "pause")
     }
 
     /** 跳转到当前媒体中的合法毫秒位置。 */
@@ -206,19 +229,25 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
 
     /** 切换到播放列表中的指定单集。 */
     fun selectEpisode(index: Int) {
-        loadEpisode(index, 0L)
+        loadEpisode(index, null)
     }
 
     /** 播放上一集，列表首项保持不变。 */
     fun previousEpisode() {
         val target = stateFlow.value.activeIndex - 1
-        if (target >= 0) loadEpisode(target, 0L)
+        if (target >= 0) loadEpisode(target, null)
     }
 
     /** 播放下一集，列表末项保持结束状态。 */
     fun nextEpisode() {
         val target = stateFlow.value.activeIndex + 1
-        if (target < stateFlow.value.episodes.size) loadEpisode(target, 0L)
+        if (target < stateFlow.value.episodes.size) loadEpisode(target, null)
+    }
+
+    /** 取消片尾自动下一集并保留结束画面。 */
+    fun cancelAutoNext() {
+        cancelAutoNextCountdown()
+        Log.i(TAG, "Android 自动下一集已取消")
     }
 
     /** 使用当前单集和位置重建媒体对象。 */
@@ -230,6 +259,8 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     fun closePlayback() {
         resumeAfterHostStop = false
         resumeAfterFocusGain = false
+        persistCheckpoint(completed = stateFlow.value.status == PlayerStatus.ENDED, reason = "close")
+        cancelAutoNextCountdown()
         try {
             mediaPlayer?.stop()
         } catch (error: Throwable) {
@@ -240,6 +271,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
 
     /** 释放原生播放器、视频表面和 libVLC 运行时。 */
     override fun onCleared() {
+        persistCheckpoint(completed = stateFlow.value.status == PlayerStatus.ENDED, reason = "release")
         released = true
         mainHandler.removeCallbacksAndMessages(null)
         audioManager.abandonAudioFocusRequest(audioFocusRequest)
@@ -283,7 +315,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     }
 
     /** 创建新的 VLC Media，并在同一 ViewModel 内保持播放列表会话。 */
-    private fun loadEpisode(index: Int, startPositionMillis: Long) {
+    private fun loadEpisode(index: Int, startPositionMillis: Long?) {
         val episode = stateFlow.value.episodes.getOrNull(index) ?: return
         val runtime = libVlc
         val player = mediaPlayer
@@ -291,7 +323,10 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             fail("libVLC 原生运行时尚未就绪")
             return
         }
-        pendingStartPositionMillis = startPositionMillis.coerceAtLeast(0L)
+        persistCheckpoint(completed = stateFlow.value.status == PlayerStatus.ENDED, reason = "switch-item")
+        cancelAutoNextCountdown()
+        pendingStartPositionMillis = (startPositionMillis
+            ?: checkpointStore.resumePositionMillis(episode)).coerceAtLeast(0L)
         stateFlow.value = stateFlow.value.copy(
             activeIndex = index,
             status = PlayerStatus.LOADING,
@@ -339,7 +374,10 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
                 refreshTracks()
             }
             MediaPlayer.Event.Paused -> patch(status = PlayerStatus.PAUSED)
-            MediaPlayer.Event.TimeChanged -> patch(positionMillis = event.timeChanged.coerceAtLeast(0L))
+            MediaPlayer.Event.TimeChanged -> {
+                patch(positionMillis = event.timeChanged.coerceAtLeast(0L))
+                persistWatchedThresholdIfNeeded()
+            }
             MediaPlayer.Event.LengthChanged -> patch(durationMillis = event.lengthChanged.coerceAtLeast(0L))
             MediaPlayer.Event.ESAdded,
             MediaPlayer.Event.ESDeleted,
@@ -350,6 +388,8 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
                     status = PlayerStatus.ENDED,
                     positionMillis = stateFlow.value.durationMillis
                 )
+                persistCheckpoint(completed = true, reason = "ended")
+                startAutoNextCountdown()
             }
             MediaPlayer.Event.EncounteredError -> fail("libVLC 无法解码或读取当前媒体")
         }
@@ -362,6 +402,69 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
         pendingStartPositionMillis = 0L
         mediaPlayer?.setTime(target, true)
         patch(positionMillis = target)
+    }
+
+    /** 每十秒及关键生命周期节点保存当前单集，并同步 90% 已看集合。 */
+    private fun persistCheckpoint(completed: Boolean, reason: String) {
+        val state = stateFlow.value
+        val episode = state.activeEpisode ?: return
+        if (state.durationMillis <= 0L) return
+        val checkpoint = checkpointStore.save(
+            episode = episode,
+            positionMillis = state.positionMillis,
+            durationMillis = state.durationMillis,
+            completed = completed
+        )
+        if (checkpoint.watched && episode.id !in state.watchedEpisodeIds) {
+            stateFlow.value = stateFlow.value.copy(
+                watchedEpisodeIds = stateFlow.value.watchedEpisodeIds + episode.id
+            )
+            Log.i(TAG, "Android 单集首次达到 90%: episode=${episode.id}")
+        }
+        Log.d(TAG, "Android 续播位置已保存: reason=$reason, position=${checkpoint.positionMillis}")
+    }
+
+    /** 首次达到 90% 时立即持久化，避免在下一次定时保存前回退而漏标。 */
+    private fun persistWatchedThresholdIfNeeded() {
+        val state = stateFlow.value
+        val episode = state.activeEpisode ?: return
+        if (episode.id in state.watchedEpisodeIds || state.durationMillis <= 0L) return
+        if (PlaybackCheckpointStore.playbackPercent(state.positionMillis, state.durationMillis) >= 90.0) {
+            persistCheckpoint(completed = false, reason = "watched-threshold")
+        }
+    }
+
+    /** 在片尾启动五秒倒计时，到期后加载下一集。 */
+    private fun startAutoNextCountdown() {
+        val target = stateFlow.value.activeIndex + 1
+        if (target !in stateFlow.value.episodes.indices) return
+        cancelAutoNextCountdown()
+        var remaining = AUTO_NEXT_COUNTDOWN_SECONDS
+        stateFlow.value = stateFlow.value.copy(autoNextSecondsRemaining = remaining)
+        val runnable = object : Runnable {
+            override fun run() {
+                remaining -= 1
+                if (remaining <= 0) {
+                    autoNextRunnable = null
+                    stateFlow.value = stateFlow.value.copy(autoNextSecondsRemaining = null)
+                    loadEpisode(target, null)
+                    return
+                }
+                stateFlow.value = stateFlow.value.copy(autoNextSecondsRemaining = remaining)
+                mainHandler.postDelayed(this, 1_000L)
+            }
+        }
+        autoNextRunnable = runnable
+        mainHandler.postDelayed(runnable, 1_000L)
+    }
+
+    /** 停止仍在运行的自动切集倒计时。 */
+    private fun cancelAutoNextCountdown() {
+        autoNextRunnable?.let(mainHandler::removeCallbacks)
+        autoNextRunnable = null
+        if (stateFlow.value.autoNextSecondsRemaining != null) {
+            stateFlow.value = stateFlow.value.copy(autoNextSecondsRemaining = null)
+        }
     }
 
     /** 从 libVLC 读取最新音轨与字幕轨选择。 */
@@ -446,6 +549,8 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
 
     companion object {
         private const val TAG = "AniVlcPlayer"
+        private const val CHECKPOINT_INTERVAL_MILLIS = 10_000L
+        private const val AUTO_NEXT_COUNTDOWN_SECONDS = 5
         val SUPPORTED_RATES = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
     }
 }

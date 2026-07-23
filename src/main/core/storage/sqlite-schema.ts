@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 15;
+export const SQLITE_SCHEMA_VERSION = 16;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -298,6 +298,20 @@ CREATE TABLE IF NOT EXISTS media_file (
 );
 
 CREATE INDEX IF NOT EXISTS idx_media_file_anime_episode ON media_file (anime_id, episode_id);
+
+CREATE TABLE IF NOT EXISTS playback_checkpoint (
+  task_id TEXT NOT NULL REFERENCES download_task(id) ON DELETE CASCADE,
+  file_index INTEGER NOT NULL DEFAULT -1,
+  position_seconds REAL NOT NULL DEFAULT 0,
+  duration_seconds REAL NOT NULL DEFAULT 0,
+  completed INTEGER NOT NULL DEFAULT 0,
+  watched_reported INTEGER NOT NULL DEFAULT 0,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (task_id, file_index)
+);
+
+CREATE INDEX IF NOT EXISTS idx_playback_checkpoint_updated_at
+  ON playback_checkpoint (updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS notification (
   id TEXT PRIMARY KEY,

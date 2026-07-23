@@ -165,6 +165,22 @@ struct PlayerScreen: View {
                 }
             }
 
+            if
+                let seconds = controller.snapshot.autoNextSecondsRemaining,
+                let nextEpisode = controller.snapshot.episodes[safe: controller.snapshot.activeIndex + 1],
+                currentErrorMessage == nil
+            {
+                AutoNextOverlay(
+                    episodeLabel: nextEpisode.episodeLabel,
+                    seconds: seconds,
+                    onCancel: controller.cancelAutoNext,
+                    onPlayNow: controller.nextEpisode
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                .padding(.trailing, max(12, safeAreaInsets.trailing))
+                .padding(.bottom, compact ? 68 : max(84, safeAreaInsets.bottom + 68))
+            }
+
             if let errorMessage = currentErrorMessage {
                 PlayerErrorOverlay(
                     message: errorMessage,
@@ -269,6 +285,59 @@ struct PlayerScreen: View {
             playerScreenLogger.error("iOS 本地媒体选择失败: \(error.localizedDescription, privacy: .public)")
             controller.showError("无法访问所选视频文件")
         }
+    }
+}
+
+/** 在视频内显示可取消的自动下一集提示。 */
+private struct AutoNextOverlay: View {
+    let episodeLabel: String
+    let seconds: Int
+    let onCancel: () -> Void
+    let onPlayNow: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(seconds) 秒后播放")
+                    .font(.system(size: 11))
+                    .foregroundStyle(.white.opacity(0.68))
+                Text(episodeLabel)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+            }
+            .frame(width: 116, alignment: .leading)
+
+            Button(action: onPlayNow) {
+                Image(systemName: "forward.end.fill")
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("立即播放下一集")
+
+            Button(action: onCancel) {
+                Image(systemName: "xmark")
+                    .frame(width: 44, height: 44)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("取消自动下一集")
+        }
+        .padding(10)
+        .foregroundStyle(.white)
+        .background(Color.black.opacity(0.95))
+        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.white.opacity(0.18), lineWidth: 1)
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+private extension Collection {
+    /** 安全读取集合索引，避免播放列表更新时越界。 */
+    subscript(safe index: Index) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
 
