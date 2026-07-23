@@ -39,6 +39,9 @@ bin-release/
 /android/.gradle/
 /android/**/build/
 /artifacts/torrent-core/
+/.cache/qbittorrent-build/
+/artifacts/qbittorrent/
+/artifacts/qbittorrent-packages/
 /.cache/android-torrent/
 /.vcpkg/
 /.tmp-qbt*/

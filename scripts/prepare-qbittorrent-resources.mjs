@@ -88,7 +88,8 @@ await mkdir(options.targetRoot, { recursive: true });
 for (const target of availableTargets) {
   await cp(join(options.sourceRoot, target.dir), join(options.targetRoot, target.dir), {
     recursive: true,
-    dereference: false
+    dereference: false,
+    verbatimSymlinks: true
   });
   console.log(`[qbittorrent] copied ${target.dir} from ${target.binaryPath}`);
 }

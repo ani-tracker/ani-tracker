@@ -39,6 +39,34 @@ jobs:
         with:
           node-version: 22
 
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: ${{ matrix.platform == 'linux' && 'linux' || 'mac' }}
+          target: desktop
+          arch: ${{ matrix.platform == 'linux' && 'linux_gcc_64' || 'clang_64' }}
+          modules: qttools
+          cache: true
+
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: "2025.06.13"
+          path: .vcpkg
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .vcpkg/downloads
+            .vcpkg/buildtrees
+            .vcpkg/packages
+            .vcpkg/installed
+            .cache/qbittorrent-build/downloads
+          key: qbittorrent-vcpkg-${{ runner.os }}-${{ matrix.arch }}-2025.06.13-v1
+
+      - name: Bootstrap qBittorrent vcpkg
+        run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
       - name: Install JavaScript dependencies
         shell: bash
         run: |
@@ -56,7 +84,7 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libboost-system-dev libssl-dev ninja-build
+          sudo apt-get install -y libboost-system-dev libssl-dev ninja-build patchelf pax-utils
 
       - name: Install macOS build dependencies
         if: matrix.platform == 'darwin'
@@ -84,6 +112,15 @@ jobs:
             --required \
             --verify-only
 
+      - name: Build and verify qBittorrent-nox
+        shell: bash
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: |
+          ./scripts/build-qbittorrent-nox-unix.sh \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}"
+
       - name: Build Electron application
         shell: bash
         run: |
@@ -95,7 +132,12 @@ jobs:
             --arch "${{ matrix.arch }}" \
             --required
           pnpm run prepare:ffmpeg
-          pnpm run prepare:qbittorrent
+          node scripts/prepare-qbittorrent-resources.mjs \
+            --source artifacts/qbittorrent \
+            --target out/qbittorrent \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --required
 
       - name: Package desktop application
         env:
@@ -106,17 +148,49 @@ jobs:
           APPLE_TEAM_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_TEAM_ID || '' }}
         run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.builderTarget }} --${{ matrix.arch }} --publish never
 
-      - name: Verify packaged embedded core
+      - name: Verify packaged native resources
         shell: bash
         run: |
           core="$(find release -type f -path "*/torrent-core/${{ matrix.target }}/torrent-core" -print -quit)"
           test -n "${core}"
           test -x "${core}"
+          if [[ "${{ matrix.platform }}" == "darwin" ]]; then
+            qbittorrent="$(find release -type f -path "*/qbittorrent/${{ matrix.target }}/qbittorrent-nox.app/Contents/MacOS/qbittorrent-nox" -print -quit)"
+          else
+            qbittorrent="$(find release -type f -path "*/qbittorrent/${{ matrix.target }}/qbittorrent-nox" -print -quit)"
+          fi
+          test -n "${qbittorrent}"
+          test -x "${qbittorrent}"
+          qbittorrent_root="$(dirname "${qbittorrent}")"
+          if [[ "${{ matrix.platform }}" == "darwin" ]]; then
+            qbittorrent_root="$(dirname "$(dirname "$(dirname "${qbittorrent_root}")")")"
+          fi
+          test -f "${qbittorrent_root}/manifest.json"
+          node scripts/verify-qbittorrent-bundle.mjs \
+            --platform "${{ matrix.platform }}" \
+            --arch "${{ matrix.arch }}" \
+            --directory "${qbittorrent_root}"
 
       - uses: actions/upload-artifact@v4
         with:
           name: torrent-core-${{ matrix.target }}
           path: artifacts/torrent-core/${{ matrix.target }}
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qbittorrent-nox-${{ matrix.target }}
+          path: artifacts/qbittorrent-packages/qbittorrent-nox-${{ matrix.target }}.tar.gz
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        if: matrix.target == 'linux-x64'
+        with:
+          name: qbittorrent-nox-sources
+          path: |
+            .cache/qbittorrent-build/downloads/qbittorrent-enhanced-5.2.1.10.tar.gz
+            .cache/qbittorrent-build/downloads/libtorrent-rasterbar-2.0.13.tar.gz
+          include-hidden-files: true
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
@@ -141,6 +215,35 @@ jobs:
 
       - uses: ilammy/msvc-dev-cmd@v1
 
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          modules: qttools
+          cache: true
+
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: "2025.06.13"
+          path: .vcpkg
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .vcpkg/downloads
+            .vcpkg/buildtrees
+            .vcpkg/packages
+            .vcpkg/installed
+            .cache/qbittorrent-build/downloads
+          key: qbittorrent-vcpkg-${{ runner.os }}-x64-2025.06.13-v1
+
+      - name: Bootstrap qBittorrent vcpkg
+        shell: pwsh
+        run: ./.vcpkg/bootstrap-vcpkg.bat -disableMetrics
+
       - name: Install JavaScript dependencies
         shell: pwsh
         run: |
@@ -150,13 +253,13 @@ jobs:
       - name: Install static dependencies
         shell: pwsh
         run: |
-          & "$env:VCPKG_INSTALLATION_ROOT\vcpkg.exe" install boost-system:x64-windows-static openssl:x64-windows-static
+          & "${{ github.workspace }}\.vcpkg\vcpkg.exe" install boost-system:x64-windows-static openssl:x64-windows-static
 
       - name: Configure portable core
         shell: pwsh
         run: |
           cmake --preset portable-release -S native/torrent-core `
-            "-DCMAKE_TOOLCHAIN_FILE=$env:VCPKG_INSTALLATION_ROOT/scripts/buildsystems/vcpkg.cmake" `
+            "-DCMAKE_TOOLCHAIN_FILE=${{ github.workspace }}/.vcpkg/scripts/buildsystems/vcpkg.cmake" `
             "-DVCPKG_TARGET_TRIPLET=x64-windows-static" `
             "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
 
@@ -169,13 +272,19 @@ jobs:
           node scripts/package-torrent-core-bundle.mjs --platform win32 --arch x64
           node scripts/prepare-torrent-core-resources.mjs --source artifacts/torrent-core --platform win32 --arch x64 --required --verify-only
 
+      - name: Build and verify qBittorrent-nox
+        shell: pwsh
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}\.vcpkg
+        run: ./scripts/build-qbittorrent-nox-windows.ps1 -Arch x64
+
       - name: Build Electron application
         shell: pwsh
         run: |
           pnpm exec electron-vite build
           node scripts/prepare-torrent-core-resources.mjs --source artifacts/torrent-core --target out/torrent-core --platform win32 --arch x64 --required
           pnpm run prepare:ffmpeg
-          pnpm run prepare:qbittorrent
+          node scripts/prepare-qbittorrent-resources.mjs --source artifacts/qbittorrent --target out/qbittorrent --platform win32 --arch x64 --required
 
       - name: Package desktop application
         shell: pwsh
@@ -184,7 +293,7 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: pnpm exec electron-builder --config electron-builder.config.cjs --win --x64 --publish never
 
-      - name: Verify packaged embedded core
+      - name: Verify packaged native resources
         shell: pwsh
         run: |
           $core = Get-ChildItem -Path release -Recurse -Filter torrent-core.exe |
@@ -193,11 +302,31 @@ jobs:
           if (-not $core) {
             throw "Packaged torrent-core.exe was not found"
           }
+          $qbittorrent = Get-ChildItem -Path release -Recurse -Filter qbittorrent-nox.exe |
+            Where-Object { $_.FullName -like "*qbittorrent\win32-x64\qbittorrent-nox.exe" } |
+            Select-Object -First 1
+          if (-not $qbittorrent) {
+            throw "Packaged qbittorrent-nox.exe was not found"
+          }
+          $qbittorrentManifest = Join-Path $qbittorrent.DirectoryName "manifest.json"
+          if (-not (Test-Path $qbittorrentManifest -PathType Leaf)) {
+            throw "Packaged qBittorrent manifest.json was not found"
+          }
+          node scripts/verify-qbittorrent-bundle.mjs `
+            --platform win32 `
+            --arch x64 `
+            --directory $qbittorrent.DirectoryName
 
       - uses: actions/upload-artifact@v4
         with:
           name: torrent-core-win32-x64
           path: artifacts/torrent-core/win32-x64
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qbittorrent-nox-win32-x64
+          path: artifacts/qbittorrent-packages/qbittorrent-nox-win32-x64.tar.gz
           if-no-files-found: error
 
       - uses: actions/upload-artifact@v4
@@ -217,6 +346,12 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           pattern: ani-tracker-*
+          path: release-assets
+          merge-multiple: true
+
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: qbittorrent-nox-*
           path: release-assets
           merge-multiple: true
 

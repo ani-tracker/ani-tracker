@@ -4,12 +4,12 @@
 
 ## 交付矩阵
 
-| 目标 | GitHub runner | 内置核心 | 应用产物 |
+| 目标 | GitHub runner | 内置下载引擎 | 应用产物 |
 | --- | --- | --- | --- |
-| Windows x64 | `windows-2022` | `torrent-core.exe` | NSIS `.exe`、`.zip` |
-| macOS x64 | `macos-15-intel` | `torrent-core` | `.dmg`、`.zip` |
-| macOS arm64 | `macos-15` | `torrent-core` | `.dmg`、`.zip` |
-| Linux x64 | `ubuntu-22.04` | `torrent-core` | `.AppImage`、`.deb` |
+| Windows x64 | `windows-2022` | `torrent-core.exe`、`qbittorrent-nox.exe` | NSIS `.exe`、`.zip` |
+| macOS x64 | `macos-15-intel` | `torrent-core`、`qbittorrent-nox` | `.dmg`、`.zip` |
+| macOS arm64 | `macos-15` | `torrent-core`、`qbittorrent-nox` | `.dmg`、`.zip` |
+| Linux x64 | `ubuntu-22.04` | `torrent-core`、`qbittorrent-nox` | `.AppImage`、`.deb` |
 | Android arm64-v8a | `ubuntu-22.04` + NDK | `libani_torrent_core.so` | Debug `.apk`、签名 Release `.apk/.aab`、`.aar` |
 
 桌面流程位于 `.github/workflows/torrent-core-desktop.yml`，Android 流程位于 `.github/workflows/torrent-core-android.yml`。手动运行会把结果保存为 Actions Artifacts；推送 `v*` 标签后会创建或更新 GitHub 草稿 Release，并附带桌面与 Android SHA-256 清单，签收后再公开。
@@ -36,7 +36,9 @@ Android 未配置密钥时只生成可安装的 Debug APK与 AAR，不生成 Rel
 
 ## 构建链路
 
-桌面 runner 先编译固定 SHA-256 的 libtorrent 2.1.0 与 `torrent-core`，生成许可证和哈希清单并执行真实 `status/shutdown` 握手；随后只把当前目标资源复制到 `out/torrent-core`，最后由 electron-builder 打入应用 `resources/torrent-core`。
+桌面 runner 先编译固定 SHA-256 的 libtorrent 2.1.0 与 `torrent-core`，生成许可证和哈希清单并执行真实 `status/shutdown` 握手。随后从固定摘要源码构建 qBittorrent Enhanced Edition `5.2.1.10` 无头版：`GUI=OFF`、`WEBUI=ON`，使用 libtorrent `2.0.13`、Qt `6.8.3`、vcpkg `2025.06.13`。Boost、OpenSSL、zlib 和 libtorrent 静态链接，Qt 运行库随 bundle 部署。
+
+qBittorrent bundle 会执行版本、SHA-256、许可证、运行库闭合、无 Gui/Widgets 依赖和 WebUI 冒烟验证。每个平台同时上传独立 `qbittorrent-nox-<target>.tar.gz`，Linux job 额外上传固定摘要的 qBittorrent 与 libtorrent 源码归档；同一 bundle 会注入 `out/qbittorrent`，由 electron-builder 写入应用 `resources/qbittorrent`。现有内置 libtorrent、内置 qBittorrent-nox、外部 qBittorrent WebUI 三种设置和任务路由语义不变。
 
 Android 使用 NDK 27、vcpkg 交叉编译 Boost/OpenSSL，CMake 编译同一核心运行时和 JNI。Gradle 在 AAR、APK 与 AAB 中仅加入 `arm64-v8a`，并校验 JNI `.so` 与许可证。APK 当前是下载核心控制宿主，用于前台服务、JNI、恢复和真机验收；完整移动追番界面仍需后续独立实现。
 
@@ -44,7 +46,8 @@ Android 与 iOS 均不提供远程 Renderer 和媒体转码。移动包不得包
 
 ## 发布验收
 
-1. 各桌面包离线安装后无需安装 qBittorrent即可启动内置核心。
-2. Windows、macOS 两种架构和 Linux 均完成磁链下载、暂停、恢复与重启恢复。
-3. Android 真机允许通知后可启动前台服务，APK 内 ABI 为 `arm64-v8a`，杀进程后任务可恢复。
-4. 草稿 Release 中的文件先完成签名、公证、病毒扫描和 SHA-256 复核，再转为公开版本。
+1. 各桌面包离线安装后无需另装 qBittorrent，可分别启动内置 libtorrent 与内置 qBittorrent-nox。
+2. Windows、macOS 两种架构和 Linux 的 qBittorrent bundle 均通过版本、清单、许可证、依赖和 WebUI 冒烟验证。
+3. 四种桌面应用包均包含对应 `torrent-core`、`qbittorrent-nox` 和 qBittorrent `manifest.json`。
+4. Android 真机允许通知后可启动前台服务，APK 内 ABI 为 `arm64-v8a`，杀进程后任务可恢复。
+5. 草稿 Release 中的文件先完成签名、公证、病毒扫描和 SHA-256 复核，再转为公开版本。
