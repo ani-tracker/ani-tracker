@@ -217,12 +217,6 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     }
   }
 
-  /** Changes the active season and resets its month-only filter. */
-  function selectSeason(season: Season) {
-    setSelectedMonth(null);
-    setTarget((current) => ({ ...current, season }));
-  }
-
   /** 清空目录筛选并恢复默认首播排序。 */
   function resetFilters() {
     setSelectedMonth(null);
@@ -261,58 +255,48 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
       )}
 
       <FilterToolbar className="items-stretch sm:flex-col sm:items-stretch">
-          <div className="grid min-w-0 gap-3 md:grid-cols-[112px_minmax(18rem,1fr)] md:items-end min-[1440px]:grid-cols-[112px_minmax(16rem,1fr)_minmax(14rem,auto)_150px]">
-            <Field className="min-w-0">
-              <FieldLabel className="sr-only" htmlFor="discovery-year">选择年份</FieldLabel>
-              <YearPicker
-                id="discovery-year"
-                value={target.year}
-                onValueChange={(year) => setTarget((current) => ({ ...current, year }))}
-              />
-            </Field>
+        <div className="grid min-w-0 gap-3 md:grid-cols-[8rem_minmax(14rem,1fr)] md:items-end min-[1440px]:grid-cols-[8rem_minmax(14rem,1fr)_150px]">
+          <SeasonTargetPicker
+            id="discovery-season"
+            value={target}
+            onValueChange={(nextTarget) => {
+              if (nextTarget.season !== target.season) setSelectedMonth(null);
+              setTarget(nextTarget);
+            }}
+          />
 
-            <Tabs className="min-w-0" value={target.season} onValueChange={(value) => selectSeason(value as Season)}>
-              <TabsList className="grid h-auto w-full grid-cols-4" aria-label="选择季度">
-                {seasonOptions.map((season) => (
-                  <TabsTrigger className="min-w-0 px-2" key={season.value} value={season.value}>
-                    <span>{season.shortLabel}</span>
-                  </TabsTrigger>
+          <Field className="min-w-0">
+            <FieldLabel className="sr-only">选择月份</FieldLabel>
+            <Tabs
+              value={selectedMonth === null ? "all" : String(selectedMonth)}
+              onValueChange={(value) => setSelectedMonth(value === "all" ? null : Number(value))}
+            >
+              <TabsList className="grid h-auto w-full grid-cols-4" aria-label="选择月份">
+                <TabsTrigger value="all">全部</TabsTrigger>
+                {activeSeason.months.map((month) => (
+                  <TabsTrigger key={month} value={String(month)}>{month} 月</TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
+          </Field>
 
-            <Field className="min-w-0 md:col-span-2 min-[1440px]:col-span-1">
-              <FieldLabel className="sr-only">选择月份</FieldLabel>
-              <Tabs
-                value={selectedMonth === null ? "all" : String(selectedMonth)}
-                onValueChange={(value) => setSelectedMonth(value === "all" ? null : Number(value))}
-              >
-                <TabsList className="grid h-auto w-full grid-cols-4" aria-label="选择月份">
-                  <TabsTrigger value="all">全部</TabsTrigger>
-                  {activeSeason.months.map((month) => (
-                    <TabsTrigger key={month} value={String(month)}>{month} 月</TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-            </Field>
+          <Field className="min-w-0">
+            <FieldLabel className="sr-only" htmlFor="discovery-sort">排序方式</FieldLabel>
+            <Select value={sortKey} onValueChange={(value) => setSortKey(value as DiscoverySortKey)}>
+              <SelectTrigger id="discovery-sort">
+                <SelectValue placeholder="排序方式" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectGroup>
+                  <SelectItem value="premiereAsc">发布时间升序</SelectItem>
+                  <SelectItem value="premiereDesc">发布时间降序</SelectItem>
+                  <SelectItem value="ratingDesc">评分降序</SelectItem>
+                </SelectGroup>
+              </SelectContent>
+            </Select>
+          </Field>
 
-            <Field className="min-w-0">
-              <FieldLabel className="sr-only" htmlFor="discovery-sort">排序方式</FieldLabel>
-              <Select value={sortKey} onValueChange={(value) => setSortKey(value as DiscoverySortKey)}>
-                <SelectTrigger id="discovery-sort">
-                  <SelectValue placeholder="排序方式" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectGroup>
-                    <SelectItem value="premiereAsc">发布时间升序</SelectItem>
-                    <SelectItem value="premiereDesc">发布时间降序</SelectItem>
-                    <SelectItem value="ratingDesc">评分降序</SelectItem>
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
-            </Field>
-
-          </div>
+        </div>
 
           <form
             className="min-w-0"
@@ -494,14 +478,11 @@ export function DiscoverySchedulePage({ initialTarget, onBack, onOpenAnimeDetail
 
   return (
     <Page>
-      <PageHeader className="items-start border-b pb-4 sm:items-center">
-        <div className="flex min-w-0 flex-col gap-1.5">
-          <Button className="h-auto w-fit min-h-0 justify-start px-0 text-xs" onClick={onBack} variant="ghost">
-            <ArrowLeft data-icon="inline-start" />
-            新番发现 / 新番时间表
-          </Button>
-          <PageHeading title="新番时间表" />
-        </div>
+      <PageHeader className="items-center sm:items-center">
+        <Button className="h-auto w-fit min-h-0 justify-start px-0 text-xs" onClick={onBack} variant="ghost">
+          <ArrowLeft data-icon="inline-start" />
+          新番发现 / 新番时间表
+        </Button>
         <div className="flex items-center gap-2 text-xs font-medium">
           <span className="uppercase text-muted-foreground">今日放送</span>
           <span className="size-1.5 rounded-full bg-primary" aria-hidden="true" />
@@ -518,8 +499,9 @@ export function DiscoverySchedulePage({ initialTarget, onBack, onOpenAnimeDetail
       )}
 
       <FilterToolbar className="items-stretch sm:items-center">
-        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-[minmax(12rem,16rem)_auto] sm:items-center sm:justify-between">
-          <ScheduleSeasonPicker
+        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-[8rem_auto] sm:items-center sm:justify-between">
+          <SeasonTargetPicker
+            id="schedule-season"
             value={target}
             onValueChange={(nextTarget) => setTarget(nextTarget)}
           />
@@ -563,45 +545,61 @@ export function DiscoverySchedulePage({ initialTarget, onBack, onOpenAnimeDetail
   );
 }
 
-/** 渲染时间表专用的动态年份与季度组合选择器。 */
-function ScheduleSeasonPicker({
+/** 渲染新番页面共用的年份与季度选择器。 */
+function SeasonTargetPicker({
+  id,
   value,
   onValueChange
 }: {
+  id: string;
   value: SeasonTarget;
   onValueChange: (target: SeasonTarget) => void;
 }) {
-  const currentYear = new Date().getFullYear();
-  const startYear = Math.min(currentYear - 20, value.year - 2);
-  const endYear = Math.max(currentYear + 2, value.year + 2);
-  const options = Array.from({ length: endYear - startYear + 1 }, (_, index) => startYear + index)
-    .flatMap((year) => seasonOptions.map((season) => ({ year, season })));
-  const selectedValue = `${value.year}:${value.season}`;
+  const activeSeason = getSeasonOption(value.season);
+
+  /** 选择季度，并保留当前年份。 */
+  function selectSeason(season: string) {
+    if (!season) return;
+    console.info("[season-target-picker] 季度已选择", { year: value.year, season });
+    onValueChange({ ...value, season: season as Season });
+  }
 
   return (
     <Field className="min-w-0">
-      <FieldLabel className="sr-only" htmlFor="schedule-season">选择季度</FieldLabel>
-      <Select
-        value={selectedValue}
-        onValueChange={(nextValue) => {
-          const [yearText, season] = nextValue.split(":");
-          if (!yearText || !season) return;
-          onValueChange({ year: Number(yearText), season: season as Season });
-        }}
-      >
-        <SelectTrigger id="schedule-season" className="w-full justify-between tabular-nums">
-          <SelectValue placeholder="选择季度" />
-        </SelectTrigger>
-        <SelectContent className="max-h-80">
-          <SelectGroup>
-            {options.map(({ year, season }) => (
-              <SelectItem key={`${year}:${season.value}`} value={`${year}:${season.value}`}>
-                {year} {season.label}
-              </SelectItem>
+      <FieldLabel className="sr-only" htmlFor={`${id}-year`}>选择年份和季度</FieldLabel>
+      <YearPicker
+        closeOnValueChange={false}
+        id={`${id}-year`}
+        triggerLabel={`${value.year} ${activeSeason.shortLabel}`}
+        value={value.year}
+        onValueChange={(year) => onValueChange({ ...value, year })}
+        renderAside={({ close }) => (
+          <ToggleGroup
+            aria-label="在选择器中选择季度"
+            className="grid h-full grid-rows-4 items-stretch gap-2 rounded-2xl bg-muted/50 p-1.5"
+            orientation="vertical"
+            type="single"
+            value={value.season}
+            variant="outline"
+            onValueChange={(season) => {
+              if (!season) return;
+              selectSeason(season);
+              close();
+            }}
+          >
+            {seasonOptions.map((season) => (
+              <ToggleGroupItem
+                aria-label={`选择${season.label}`}
+                className="h-auto min-h-9 whitespace-nowrap rounded-xl px-3"
+                key={season.value}
+                value={season.value}
+              >
+                {season.shortLabel}
+              </ToggleGroupItem>
             ))}
-          </SelectGroup>
-        </SelectContent>
-      </Select>
+          </ToggleGroup>
+        )}
+      />
     </Field>
   );
 }
