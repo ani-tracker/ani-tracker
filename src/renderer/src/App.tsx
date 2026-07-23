@@ -31,6 +31,12 @@ import { SourcesPage } from "@/features/sources/SourcesPage";
 import { appApi, getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
 import type { Anime } from "@shared/domain";
 import type { MyAnimePageIntent } from "@/features/my-anime/MyAnimePage";
+import { resolveDesktopPlayerWindowInput } from "@shared/desktop-player-route";
+import {
+  resolvePlaybackFileIndex,
+  usesBuiltinPlayer,
+  type MediaPlaybackTarget
+} from "@shared/player-selection";
 
 type PageId = "home" | "myAnime" | "discovery" | "releaseSearch" | "downloads" | "notifications" | "sources" | "settings";
 
@@ -76,6 +82,7 @@ interface RenderPageOptions {
   onOpenLibraryAction: (animeId: string, action: AnimeDetailLibraryAction) => void;
   onOpenReleaseSearch: (anime: Anime) => void;
   onOpenDiscoverySchedule: (target: SeasonTarget) => void;
+  onPlayMedia: (target: MediaPlaybackTarget) => Promise<void>;
   myAnimeIntent: MyAnimePageIntent | null;
   onMyAnimeIntentHandled: () => void;
   releaseSearchIntent: ReleaseSearchIntent | null;
@@ -89,6 +96,7 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
         <HomePage
           onOpenAnimeDetail={options.onOpenAnimeDetail}
           onOpenDownloads={options.onOpenDownloads}
+          onPlayMedia={options.onPlayMedia}
         />
       );
     case "myAnime":
@@ -97,6 +105,7 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
           intent={options.myAnimeIntent}
           onIntentHandled={options.onMyAnimeIntentHandled}
           onOpenAnimeDetail={options.onOpenAnimeDetail}
+          onPlayMedia={options.onPlayMedia}
         />
       ) : <RemoteMyAnimePage onOpenAnimeDetail={options.onOpenAnimeDetail} />;
     case "discovery":
@@ -119,8 +128,32 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
   }
 }
 
-/** 渲染适配桌面、平板和移动端的应用壳。 */
+/** 按当前窗口用途渲染主界面或独立播放器。 */
 export function App() {
+  const desktopPlayerTarget = isElectronClient()
+    ? resolveDesktopPlayerWindowInput(window.location.search)
+    : null;
+  if (desktopPlayerTarget) {
+    return (
+      <RemotePlayerPage
+        environment="desktop"
+        initialFileIndex={desktopPlayerTarget.fileIndex}
+        onClose={() => {
+          try {
+            appApi.closeDesktopPlayerWindow();
+          } catch (error) {
+            console.error("[player] 独立播放器窗口关闭失败", error);
+          }
+        }}
+        taskId={desktopPlayerTarget.taskId}
+      />
+    );
+  }
+  return <MainApplication />;
+}
+
+/** 渲染适配桌面、平板和移动端的应用主界面。 */
+function MainApplication() {
   const [activePage, setActivePage] = useState<PageId>("home");
   const [detailView, setDetailView] = useState<AnimeDetailState | null>(null);
   const [discoverySchedule, setDiscoverySchedule] = useState<DiscoveryScheduleState | null>(null);
@@ -253,6 +286,31 @@ export function App() {
     setActivePage(pageId);
   }
 
+  /** 按默认播放器配置打开独立内置窗口或调用外部播放器。 */
+  async function playMedia(target: MediaPlaybackTarget): Promise<void> {
+    const settings = await appApi.getSettings();
+    if (!usesBuiltinPlayer(settings)) {
+      await appApi.playMedia(target.filePath);
+      return;
+    }
+    if (!target.taskId) {
+      throw new Error("当前媒体缺少下载任务关联，无法使用内置播放器");
+    }
+    let fileIndex = target.fileIndex;
+    if (fileIndex === undefined) {
+      const task = (await appApi.listDownloads()).find((item) => item.id === target.taskId);
+      if (task) {
+        fileIndex = resolvePlaybackFileIndex(target, task);
+      }
+    }
+    const playerTarget = {
+      taskId: target.taskId,
+      ...(fileIndex === undefined ? {} : { fileIndex })
+    };
+    await appApi.openDesktopPlayerWindow(playerTarget);
+    console.info("[player] 已打开独立内置播放器窗口", playerTarget);
+  }
+
   useEffect(() => {
     if (!window.history.state?.aniView) {
       window.history.replaceState({ aniView: "page", pageId: activePage }, "");
@@ -373,6 +431,7 @@ export function App() {
           onOpenLibraryAction: openLibraryAction,
           onOpenReleaseSearch: openReleaseSearch,
           onOpenDiscoverySchedule: openDiscoverySchedule,
+          onPlayMedia: playMedia,
           myAnimeIntent: detailView ? null : myAnimeIntent,
           onMyAnimeIntentHandled: () => setMyAnimeIntent(null),
           releaseSearchIntent
@@ -391,6 +450,7 @@ export function App() {
           intent={myAnimeIntent}
           onDataChanged={() => setDetailRevision((revision) => revision + 1)}
           onIntentHandled={() => setMyAnimeIntent(null)}
+          onPlayMedia={playMedia}
         />
       )}
       {detailView && (

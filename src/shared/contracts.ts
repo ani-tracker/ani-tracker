@@ -423,6 +423,17 @@ export type RemotePlaybackMode = "direct" | "hls";
 
 export type RemotePlaybackRequestMode = "direct" | "transcode";
 
+export interface DesktopPlayerWindowInput {
+  taskId: string;
+  fileIndex?: number;
+}
+
+export interface DesktopPlaybackSessionInput {
+  taskId: string;
+  mode: RemotePlaybackRequestMode;
+  fileIndex?: number;
+}
+
 export type RemotePlaybackSubtitleType = "ass" | "vtt";
 
 export interface RemotePlaybackSubtitle {

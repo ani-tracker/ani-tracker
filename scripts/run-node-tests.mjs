@@ -20,7 +20,10 @@ const sharedModuleTarget = join(outputDir, "node_modules", "@shared");
 mkdirSync(sharedModuleTarget, { recursive: true });
 cpSync(join(outputDir, "shared"), sharedModuleTarget, { recursive: true });
 
-const testFiles = collectTestFiles(join(outputDir, "main", "core"));
+const testFiles = [
+  ...collectTestFiles(join(outputDir, "main", "core")),
+  ...collectTestFiles(join(outputDir, "shared", "__tests__"))
+];
 const result = spawnSync(
   electronPath,
   ["--test", ...testFiles],

@@ -29,6 +29,8 @@ import type {
   AutomationRunResult,
   AutomationSchedulerStatus,
   ConfirmAnimeSourceBindingInput,
+  DesktopPlayerWindowInput,
+  DesktopPlaybackSessionInput,
   EmbeddedTorrentCoreStatus,
   EpisodeReleasePreview,
   MediaScanResult,
@@ -37,6 +39,7 @@ import type {
   ReportPlaybackProgressInput,
   RemoteGatewayStatus,
   RemotePairingChallenge,
+  RemotePlaybackSession,
   ReportAnimeSourceCandidateMismatchInput,
   ReleaseQuery,
   ReleaseSearchResult,
@@ -124,6 +127,10 @@ declare global {
       listMediaFiles: () => Promise<MediaFile[]>;
       scanDownloadMedia: (taskId: string) => Promise<MediaScanResult>;
       playMedia: (filePath: string, profileId?: string) => Promise<void>;
+      openDesktopPlayerWindow: (input: DesktopPlayerWindowInput) => Promise<void>;
+      closeDesktopPlayerWindow: () => void;
+      createDesktopPlaybackSession: (input: DesktopPlaybackSessionInput) => Promise<RemotePlaybackSession>;
+      closeDesktopPlaybackSession: (sessionId: string) => Promise<void>;
       revealMedia: (filePath: string) => Promise<void>;
       openExternal: (url: string) => Promise<void>;
       getRemoteGatewayStatus: () => Promise<RemoteGatewayStatus>;

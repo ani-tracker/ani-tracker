@@ -14,7 +14,8 @@ import { MetricItem, MetricStrip, Page, PageActions, PageHeader, PageHeading } f
 import { appApi, isElectronClient } from "@/lib/api";
 import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
 import { useAsyncData } from "@/lib/use-async-data";
-import type { AnimeStatus, MyAnime } from "@shared/domain";
+import type { AnimeStatus, MediaFile, MyAnime } from "@shared/domain";
+import type { MediaPlaybackTarget } from "@shared/player-selection";
 
 const dashboardPreviewLimit = 4;
 
@@ -34,10 +35,12 @@ async function loadHomeData() {
 /** 渲染首页追番、下载与提醒概览。 */
 export function HomePage({
   onOpenAnimeDetail,
-  onOpenDownloads
+  onOpenDownloads,
+  onPlayMedia
 }: {
   onOpenAnimeDetail?: (animeId: string) => void;
   onOpenDownloads?: () => void;
+  onPlayMedia?: (target: MediaPlaybackTarget) => Promise<void>;
 } = {}) {
   const [revision, setRevision] = useState(0);
   const [scanning, setScanning] = useState(false);
@@ -64,6 +67,22 @@ export function HomePage({
       console.error("[home] manual scan failed", { message });
     } finally {
       setScanning(false);
+    }
+  }
+
+  /** 使用默认播放器打开首页最近完成的媒体。 */
+  async function playRecentMedia(file: MediaFile): Promise<void> {
+    try {
+      const target: MediaPlaybackTarget = {
+        filePath: file.filePath,
+        taskId: file.downloadTaskId
+      };
+      if (onPlayMedia) await onPlayMedia(target);
+      else await appApi.playMedia(file.filePath);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "播放失败";
+      toast.error(message);
+      console.error("[home] 媒体播放失败", { mediaId: file.id, message });
     }
   }
 
@@ -303,7 +322,7 @@ export function HomePage({
                           variant="outline"
                           aria-label="播放"
                           title="播放"
-                          onClick={() => void appApi.playMedia(file.filePath)}
+                          onClick={() => void playRecentMedia(file)}
                         >
                           <Play data-icon="inline-start" />
                         </Button>

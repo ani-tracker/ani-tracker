@@ -28,8 +28,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import {
   appApi,
   closeRemotePlaybackSession,
-  createRemoteExternalPlaybackSession,
-  createRemotePlaybackSession
+  createRemoteExternalPlaybackSession
 } from "@/lib/api";
 import { formatBytes } from "@/lib/format";
 import type {
@@ -42,6 +41,7 @@ import {
   buildExternalPlayerProtocolUrl,
   detectExternalPlayer
 } from "./external-player-launch";
+import type { PlaybackSessionClient } from "./playback-session-client";
 
 const TOOLBAR_HIDE_DELAY_MS = 3_000;
 
@@ -50,16 +50,20 @@ interface RemoteVideoPlayerProps {
   playlist: RemotePlaylistItem[];
   loading: boolean;
   error: string | null;
+  sessionClient: PlaybackSessionClient;
+  allowExternalPlayback: boolean;
   onClose: () => void;
   onSelectItem: (item: RemotePlaylistItem) => void;
 }
 
-/** 展示独立远程播放器，并协调会话、自动转码、顶栏和播放列表。 */
+/** 展示共享视频播放器，并协调会话、自动转码、顶栏和播放列表。 */
 export function RemoteVideoPlayer({
   activeItem,
   playlist,
   loading,
   error: loadError,
+  sessionClient,
+  allowExternalPlayback,
   onClose,
   onSelectItem
 }: RemoteVideoPlayerProps) {
@@ -76,8 +80,10 @@ export function RemoteVideoPlayer({
   const [playlistOpen, setPlaylistOpen] = useState(false);
   const [externalPlayerOpening, setExternalPlayerOpening] = useState(false);
   const externalPlayer = useMemo(
-    () => detectExternalPlayer(navigator.userAgent, navigator.platform),
-    []
+    () => allowExternalPlayback
+      ? detectExternalPlayer(navigator.userAgent, navigator.platform)
+      : undefined,
+    [allowExternalPlayback]
   );
   const activeIndex = useMemo(
     () => activeItem ? playlist.findIndex((item) => item.id === activeItem.id) : -1,
@@ -127,44 +133,50 @@ export function RemoteVideoPlayer({
     let createdSession: RemotePlaybackSession | undefined;
     setSession(null);
     setPlaybackError(null);
-    console.info("[remote] 正在创建播放会话", {
-      taskId: activeItem.task.id,
-      fileIndex: activeItem.fileIndex,
-      requestedMode
-    });
 
-    createRemotePlaybackSession(activeItem.task.id, requestedMode, activeItem.fileIndex)
-      .then((result) => {
-        createdSession = result;
-        if (!active) {
-          return closeRemotePlaybackSession(result.id);
-        }
-        setSession(result);
-        console.info("[remote] 播放会话已创建", {
-          taskId: activeItem.task.id,
-          fileIndex: result.fileIndex,
-          mode: result.mode
-        });
-      })
-      .catch((caught) => {
-        if (active) {
-          console.error("[remote] 播放会话创建失败", {
-            taskId: activeItem.task.id,
-            fileIndex: activeItem.fileIndex,
-            requestedMode,
-            error: caught
-          });
-          setPlaybackError(caught instanceof Error ? caught.message : "播放会话创建失败");
-        }
+    // 延迟到微任务阶段，避免 React 严格模式的探测挂载重复创建媒体会话。
+    queueMicrotask(() => {
+      if (!active) {
+        return;
+      }
+      console.info("[remote] 正在创建播放会话", {
+        taskId: activeItem.task.id,
+        fileIndex: activeItem.fileIndex,
+        requestedMode
       });
+      void sessionClient.create(activeItem.task.id, requestedMode, activeItem.fileIndex)
+        .then((result) => {
+          createdSession = result;
+          if (!active) {
+            return sessionClient.close(result.id);
+          }
+          setSession(result);
+          console.info("[remote] 播放会话已创建", {
+            taskId: activeItem.task.id,
+            fileIndex: result.fileIndex,
+            mode: result.mode
+          });
+        })
+        .catch((caught) => {
+          if (active) {
+            console.error("[remote] 播放会话创建失败", {
+              taskId: activeItem.task.id,
+              fileIndex: activeItem.fileIndex,
+              requestedMode,
+              error: caught
+            });
+            setPlaybackError(caught instanceof Error ? caught.message : "播放会话创建失败");
+          }
+        });
+    });
 
     return () => {
       active = false;
       if (createdSession) {
-        void closeRemotePlaybackSession(createdSession.id);
+        void sessionClient.close(createdSession.id);
       }
     };
-  }, [activeItem, requestedMode, retryNonce]);
+  }, [activeItem, requestedMode, retryNonce, sessionClient]);
 
   /** 原文件发生媒体错误时仅自动升级一次实时转码。 */
   const startAutomaticTranscode = useCallback((): void => {

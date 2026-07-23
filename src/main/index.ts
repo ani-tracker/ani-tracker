@@ -27,6 +27,9 @@ import { RemoteTlsCertificateStore } from "./core/remote/remote-tls-certificate-
 import { ImageCacheService } from "./core/cache/image-cache-service";
 import { registerImageCacheProtocol, registerImageCacheScheme } from "./core/cache/image-cache-protocol";
 import { MetadataHttpClient } from "./core/metadata/metadata-http-client";
+import { DesktopPlaybackSessionService } from "./core/media/desktop-playback-session-service";
+import { registerDesktopMediaProtocol, registerDesktopMediaScheme } from "./core/media/desktop-media-protocol";
+import { DesktopPlayerWindowService } from "./core/media/desktop-player-window-service";
 
 declare const __ANI_TRUSTED_ORIGINS__: string;
 
@@ -38,6 +41,7 @@ let mainWindow: BrowserWindow | null = null;
 let quitAfterManagedQbittorrentStops = false;
 const appearanceService = new AppearanceService(() => mainWindow);
 registerImageCacheScheme();
+registerDesktopMediaScheme();
 const imageCacheService = new ImageCacheService({
   cacheDirectory: join(app.getPath("userData"), "Cache", "images"),
   fetcher: async (input, options) => {
@@ -77,6 +81,15 @@ const remoteMethodRegistry = createRemoteMethodRegistry({
   resumeDownload: (taskId) => downloadTaskControlService.resume(taskId)
 });
 const remoteMediaSessionService = new RemoteMediaSessionService(repository);
+const desktopPlaybackSessionService = new DesktopPlaybackSessionService(remoteMediaSessionService);
+const desktopPlayerWindowService = new DesktopPlayerWindowService({
+  createWindow: (options) => new BrowserWindow(options),
+  preloadPath: join(__dirname, "../preload/index.mjs"),
+  rendererFilePath: join(__dirname, "../renderer/index.html"),
+  rendererUrl: process.env.ELECTRON_RENDERER_URL,
+  getBackgroundColor: () => appearanceService.getWindowBackgroundColor(),
+  onWindowClosed: (webContentsId) => desktopPlaybackSessionService.closeOwnerSessions(webContentsId)
+});
 const secretProtector = {
   isAvailable: () => safeStorage.isEncryptionAvailable(),
   encryptString: (value: string) => safeStorage.encryptString(value),
@@ -178,9 +191,12 @@ app.whenReady().then(async () => {
 
   await repositoryRuntime.initialize();
   registerImageCacheProtocol(imageCacheService);
+  registerDesktopMediaProtocol(desktopPlaybackSessionService);
   registerIpcHandlers({
     remoteGateway,
     imageCacheService,
+    desktopPlaybackSessionService,
+    desktopPlayerWindowService,
     getMainWindow: () => mainWindow,
     onSettingsUpdated: async (settings) => {
       imageCacheService.setCacheDirectory(join(settings.storage.cacheDir, "images"));

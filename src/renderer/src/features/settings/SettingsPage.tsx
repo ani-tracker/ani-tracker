@@ -71,6 +71,7 @@ import type {
 } from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
 import { normalizeCandidateFansubNames, normalizeFansubMatchName } from "@shared/fansub-name-matcher";
+import { BUILTIN_PLAYER_PROFILE_ID } from "@shared/player-selection";
 
 type SettingsCategoryId =
   | "appearance"
@@ -1005,6 +1006,7 @@ export function SettingsPage() {
                 <SelectContent>
                   <SelectGroup>
                     <SelectItem value="auto">自动</SelectItem>
+                    <SelectItem value={BUILTIN_PLAYER_PROFILE_ID}>内置</SelectItem>
                     {playerOptions.map((player) => (
                       <SelectItem key={player.id} value={player.id}>{player.name}</SelectItem>
                     ))}

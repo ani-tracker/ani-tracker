@@ -62,6 +62,7 @@ import type {
   SubtitleLanguage,
   VideoBitDepth
 } from "@shared/domain";
+import type { MediaPlaybackTarget } from "@shared/player-selection";
 import { formatSubtitleLanguages, formatVideoBitDepth, resolveSubtitleLanguages, subtitleLanguageText } from "@shared/release-metadata";
 
 const statusText: Record<AnimeStatus, string> = {
@@ -138,6 +139,7 @@ interface MyAnimePageProps {
   onDataChanged?: () => void;
   onIntentHandled?: () => void;
   onOpenAnimeDetail?: (animeId: string) => void;
+  onPlayMedia?: (target: MediaPlaybackTarget) => Promise<void>;
 }
 
 /** 渲染追番列表并协调规则、资源下载和任务明细抽屉。 */
@@ -146,7 +148,8 @@ export function MyAnimePage({
   intent,
   onDataChanged,
   onIntentHandled,
-  onOpenAnimeDetail
+  onOpenAnimeDetail,
+  onPlayMedia
 }: MyAnimePageProps = {}) {
   const [items, setItems] = useState<MyAnime[]>([]);
   const [watchProgress, setWatchProgress] = useState<Record<string, AnimeWatchProgress>>({});
@@ -1140,6 +1143,7 @@ export function MyAnimePage({
           onFilterChange={(filter) =>
             setDownloadDetail((current) => (current ? { ...current, filter } : current))
           }
+          onPlayMedia={onPlayMedia}
         />
       )}
 

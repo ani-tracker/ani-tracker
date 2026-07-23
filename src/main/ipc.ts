@@ -22,6 +22,8 @@ import type {
   AnimeDiscoveryQuery,
   AnimeDiscoverySeasonQuery,
   ConfirmAnimeSourceBindingInput,
+  DesktopPlayerWindowInput,
+  DesktopPlaybackSessionInput,
   ReportAnimeSourceCandidateMismatchInput,
   ReportPlaybackProgressInput,
   ReleaseQuery,
@@ -56,6 +58,8 @@ import { PlayerDetectionService } from "./core/platform/player-detection-service
 import type { RemoteHttpGateway } from "./core/remote/remote-http-gateway";
 import type { ImageCacheService } from "./core/cache/image-cache-service";
 import { SourceSyncScheduler } from "./core/sources/source-sync-scheduler";
+import type { DesktopPlaybackSessionService } from "./core/media/desktop-playback-session-service";
+import type { DesktopPlayerWindowService } from "./core/media/desktop-player-window-service";
 
 export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
@@ -76,6 +80,8 @@ interface RegisterIpcHandlersOptions {
   onSettingsUpdated?: (settings: AppSettings) => void | Promise<void>;
   remoteGateway?: RemoteHttpGateway;
   imageCacheService?: ImageCacheService;
+  desktopPlaybackSessionService?: Pick<DesktopPlaybackSessionService, "createSession" | "closeSession">;
+  desktopPlayerWindowService?: Pick<DesktopPlayerWindowService, "open" | "close">;
   getMainWindow?: () => BrowserWindow | null;
 }
 
@@ -530,6 +536,22 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       }
     }).play(filePath, profileId);
   });
+  if (options.desktopPlaybackSessionService) {
+    ipcMain.handle("media:createPlaybackSession", (event, input: DesktopPlaybackSessionInput) =>
+      options.desktopPlaybackSessionService!.createSession(input, event.sender.id)
+    );
+    ipcMain.handle("media:closePlaybackSession", (event, sessionId: string) =>
+      options.desktopPlaybackSessionService!.closeSession(sessionId, event.sender.id)
+    );
+  }
+  if (options.desktopPlayerWindowService) {
+    ipcMain.handle("media:openPlayerWindow", (_event, input: DesktopPlayerWindowInput) =>
+      options.desktopPlayerWindowService!.open(input)
+    );
+    ipcMain.on("media:closePlayerWindow", (event) => {
+      options.desktopPlayerWindowService!.close(event.sender.id);
+    });
+  }
   ipcMain.handle("media:reveal", async (_event, filePath: string) => {
     const settings = await repository.getSettings();
     await new PlayerLauncherService(settings).reveal(filePath);

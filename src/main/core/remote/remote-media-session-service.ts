@@ -349,6 +349,13 @@ export class RemoteMediaSessionService {
     return true;
   }
 
+  /** 关闭指定设备拥有的全部播放会话。 */
+  async closeDeviceSessions(deviceId: string): Promise<number> {
+    const matched = [...this.sessions.values()].filter((session) => session.deviceId === deviceId);
+    await Promise.all(matched.map((session) => this.closeSession(session.id, deviceId)));
+    return matched.length;
+  }
+
   /** 停止全部播放会话，供网关关闭和应用退出时回收资源。 */
   async stopAll(): Promise<void> {
     const sessions = [...this.sessions.values()];

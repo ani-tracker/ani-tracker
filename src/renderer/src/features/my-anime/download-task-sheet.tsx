@@ -13,6 +13,7 @@ import { cn } from "@/lib/cn";
 import { formatDateTime, formatPercent, formatSpeed } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { DownloadTask, MyAnime } from "@shared/domain";
+import type { MediaPlaybackTarget } from "@shared/player-selection";
 
 export type AnimeDownloadDetailFilter = "all" | "active" | "completed";
 
@@ -27,6 +28,7 @@ interface AnimeDownloadTaskSheetProps {
   fansubNames: Map<string, string>;
   onClose: () => void;
   onFilterChange: (filter: AnimeDownloadDetailFilter) => void;
+  onPlayMedia?: (target: MediaPlaybackTarget) => Promise<void>;
 }
 
 const filterOptions: Array<{ value: AnimeDownloadDetailFilter; label: string }> = [
@@ -55,7 +57,8 @@ export function AnimeDownloadTaskSheet({
   downloadTasks,
   fansubNames,
   onClose,
-  onFilterChange
+  onFilterChange,
+  onPlayMedia
 }: AnimeDownloadTaskSheetProps) {
   const titleDisplay = resolveAnimeTitleDisplay(detail.item.anime);
   const animeTasks = getAnimeDownloadTasks(downloadTasks, detail.item.anime.id);
@@ -90,7 +93,12 @@ export function AnimeDownloadTaskSheet({
       {visibleTasks.length > 0 ? (
         <div className="flex min-w-0 flex-col gap-3">
           {visibleTasks.map((task) => (
-            <DownloadTaskCard key={task.id} task={task} fansubNames={fansubNames} />
+            <DownloadTaskCard
+              key={task.id}
+              task={task}
+              fansubNames={fansubNames}
+              onPlayMedia={onPlayMedia}
+            />
           ))}
         </div>
       ) : (
@@ -119,10 +127,20 @@ export function isCompletedDownload(task: DownloadTask): boolean {
 }
 
 /** 渲染单个下载任务的完整进度与文件动作。 */
-function DownloadTaskCard({ task, fansubNames }: { task: DownloadTask; fansubNames: Map<string, string> }) {
+function DownloadTaskCard({
+  task,
+  fansubNames,
+  onPlayMedia
+}: {
+  task: DownloadTask;
+  fansubNames: Map<string, string>;
+  onPlayMedia?: (target: MediaPlaybackTarget) => Promise<void>;
+}) {
   const fansubName = (task.fansubGroupId ? fansubNames.get(task.fansubGroupId) : undefined) ?? task.fansubName ?? "未识别字幕组";
-  const playableFilePath = resolveTaskFilePath(task, true);
-  const revealFilePath = resolveTaskFilePath(task, false);
+  const playableFile = resolveTaskFile(task, true);
+  const revealFile = resolveTaskFile(task, false);
+  const playableFilePath = playableFile?.filePath;
+  const revealFilePath = revealFile?.filePath;
   const [activeFileAction, setActiveFileAction] = useState<"play" | "reveal" | null>(null);
   const [fileActionError, setFileActionError] = useState<string | null>(null);
 
@@ -133,7 +151,13 @@ function DownloadTaskCard({ task, fansubNames }: { task: DownloadTask; fansubNam
 
     setActiveFileAction(action);
     try {
-      if (action === "play") await appApi.playMedia(filePath);
+      if (action === "play" && onPlayMedia && playableFile) {
+        await onPlayMedia({
+          filePath: playableFile.filePath,
+          taskId: task.id,
+          fileIndex: playableFile.fileIndex
+        });
+      } else if (action === "play") await appApi.playMedia(filePath);
       else await appApi.revealMedia(filePath);
       setFileActionError(null);
     } catch (error) {
@@ -242,12 +266,20 @@ function getDownloadStatusTone(status: DownloadTask["status"]): "neutral" | "gre
   return "neutral";
 }
 
-/** 选择任务中的完整视频文件，并生成播放器或文件管理器可用的绝对路径。 */
-function resolveTaskFilePath(task: DownloadTask, videoOnly: boolean): string | undefined {
+interface ResolvedTaskFile {
+  filePath: string;
+  fileIndex: number;
+}
+
+/** 选择任务中的完整文件，并生成播放器或文件管理器可用的目标。 */
+function resolveTaskFile(task: DownloadTask, videoOnly: boolean): ResolvedTaskFile | undefined {
   const completedFiles = task.files.filter((file) => file.selected && file.progress >= 1);
   const videoFile = completedFiles.find((file) => /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i.test(file.name));
   const targetFile = videoOnly ? videoFile : videoFile ?? completedFiles[0];
-  return targetFile ? joinDownloadFilePath(task.savePath, targetFile.name) : undefined;
+  return targetFile ? {
+    filePath: joinDownloadFilePath(task.savePath, targetFile.name),
+    fileIndex: targetFile.index
+  } : undefined;
 }
 
 /** 按任务保存路径的格式拼接 qBittorrent 返回的相对文件名。 */

@@ -18,11 +18,14 @@ import type {
   AnimeDiscoveryQuery,
   AnimeDiscoverySeasonQuery,
   ConfirmAnimeSourceBindingInput,
+  DesktopPlayerWindowInput,
+  DesktopPlaybackSessionInput,
   EmbeddedTorrentCoreStatus,
   PlayerDetectionResult,
   ReportPlaybackProgressInput,
   RemoteGatewayStatus,
   RemotePairingChallenge,
+  RemotePlaybackSession,
   ReportAnimeSourceCandidateMismatchInput,
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
@@ -129,6 +132,13 @@ const api = {
   listMediaFiles: () => ipcRenderer.invoke("media:list"),
   scanDownloadMedia: (taskId: string) => ipcRenderer.invoke("media:scanDownload", taskId),
   playMedia: (filePath: string, profileId?: string) => ipcRenderer.invoke("media:play", filePath, profileId),
+  openDesktopPlayerWindow: (input: DesktopPlayerWindowInput): Promise<void> =>
+    ipcRenderer.invoke("media:openPlayerWindow", input),
+  closeDesktopPlayerWindow: (): void => ipcRenderer.send("media:closePlayerWindow"),
+  createDesktopPlaybackSession: (input: DesktopPlaybackSessionInput): Promise<RemotePlaybackSession> =>
+    ipcRenderer.invoke("media:createPlaybackSession", input),
+  closeDesktopPlaybackSession: (sessionId: string): Promise<void> =>
+    ipcRenderer.invoke("media:closePlaybackSession", sessionId),
   revealMedia: (filePath: string) => ipcRenderer.invoke("media:reveal", filePath),
   openExternal: (url: string) => ipcRenderer.invoke("platform:openExternal", url),
   getRemoteGatewayStatus: (): Promise<RemoteGatewayStatus> => ipcRenderer.invoke("remote:getStatus"),
