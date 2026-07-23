@@ -1,7 +1,8 @@
 import type {
   AnimeSourceBindingState,
   AnimeSourceCandidate,
-  ConfirmAnimeSourceBindingInput
+  ConfirmAnimeSourceBindingInput,
+  ReportAnimeSourceCandidateMismatchInput
 } from "@shared/contracts";
 import type { Anime, AnimeSourceBinding, ReleaseSourceConfig } from "@shared/domain";
 import type { AppRepository } from "../repositories/app-repository";
@@ -104,6 +105,38 @@ export class AnimeSourceBindingService {
       sourceAnimeId
     });
     return this.getState(input.animeId, true);
+  }
+
+  /** 记录人工确认的来源候选不匹配，不创建持久化排除记录。 */
+  async reportMismatch(input: ReportAnimeSourceCandidateMismatchInput): Promise<void> {
+    const [anime, sources] = await Promise.all([
+      this.findAnime(input.animeId),
+      this.repository.listSources()
+    ]);
+    if (!anime) {
+      throw new Error("追番不存在");
+    }
+
+    const source = sources.find((item) => item.id === input.sourceId && isBindableSource(item));
+    if (!source) {
+      throw new Error("来源不存在或不支持番剧绑定");
+    }
+
+    const sourceAnimeId = input.sourceAnimeId.trim();
+    if (!sourceAnimeId) {
+      throw new Error("来源番剧 ID 不能为空");
+    }
+
+    logger.info("来源番剧候选已确认不匹配", {
+      animeId: anime.id,
+      animeTitle: anime.title,
+      sourceId: source.id,
+      sourceName: source.name,
+      sourceAnimeId,
+      sourceAnimeTitle: input.sourceAnimeTitle.trim(),
+      candidateScore: Math.max(0, Math.min(100, Math.round(input.score))),
+      reasons: input.reasons.slice(0, 6)
+    });
   }
 
   /** 删除绑定，允许用户重新发现并确认候选。 */

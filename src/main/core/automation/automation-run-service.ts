@@ -13,6 +13,7 @@ import type {
 import { buildAnimeReleaseSearchTerms, matchesAnimeReleaseTitle } from "@shared/anime-release-search";
 import { canAnimeStatusAutoDownload } from "@shared/my-anime-policy";
 import { getSubtitleCoverage, resolveSubtitleLanguages } from "@shared/release-metadata";
+import { matchesCandidateFansub } from "@shared/fansub-name-matcher";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
 import { addReleaseTorrentToEngine } from "../downloads/torrent-resource-adder";
 import { logger } from "../logger";
@@ -62,6 +63,7 @@ export class AutomationRunService {
         reason: "全局自动下载未开启"
       });
       result.finishedAt = new Date().toISOString();
+      logger.info("自动下载扫描跳过", { reason: "全局自动下载未开启" });
       return result;
     }
 
@@ -75,6 +77,11 @@ export class AutomationRunService {
     const engine = createTorrentEngine(settings, {
       qbittorrentBaseUrl: this.options.getQbittorrentBaseUrl?.(settings),
       torrentHttpClient: httpClient
+    });
+    logger.info("自动下载扫描开始", {
+      animeCount: myAnimeItems.length,
+      fallbackPolicy: settings.automation.fallbackWhenDefaultFansubMissing,
+      candidateFansubNames: settings.automation.candidateFansubNames
     });
 
     for (const anime of myAnimeItems) {
@@ -117,6 +124,16 @@ export class AutomationRunService {
         continue;
       }
 
+      logger.info("自动下载开始扫描番剧", {
+        animeId: anime.anime.id,
+        animeTitle: anime.anime.title,
+        episodeCount: actionableEpisodes.length,
+        defaultFansubGroupId: anime.defaultFansubGroupId,
+        defaultFansubName: resolveFansubName(anime.defaultFansubGroupId, fansubs),
+        fallbackPolicy: settings.automation.fallbackWhenDefaultFansubMissing,
+        candidateFansubNames: settings.automation.candidateFansubNames
+      });
+
       const animeRssSearch = await searchAnimeRssSubscriptions({
         repository: this.repository,
         anime,
@@ -145,20 +162,29 @@ export class AutomationRunService {
         try {
           const preference = preferences.find((item) => item.episodeId === episode.id);
           const preferredFansubGroupId = preference?.fansubGroupId ?? anime.defaultFansubGroupId;
+          const candidateFansubNames = settings.automation.fallbackWhenDefaultFansubMissing === "candidate"
+            ? settings.automation.candidateFansubNames
+            : [];
           const rssRanked = rankReleases(
             animeRssSearch.releases,
             {
               anime,
               episodeNo: episode.episodeNo,
-              episodeFansubOverrideId: preference?.fansubGroupId
+              episodeFansubOverrideId: preference?.fansubGroupId,
+              candidateFansubNames
             },
             fansubs
           );
           const rssCandidates = applyFansubFallbackPolicy(
             rssRanked,
             preferredFansubGroupId,
-            settings.automation.fallbackWhenDefaultFansubMissing
+            settings.automation.fallbackWhenDefaultFansubMissing,
+            candidateFansubNames,
+            fansubs
           );
+          if (animeRssSearch.releases.length) {
+            logAutomationCandidates(anime, episode, rssRanked, rssCandidates, "anime_rss");
+          }
           let ranked = rssRanked;
           let candidates = rssCandidates;
 
@@ -168,7 +194,8 @@ export class AutomationRunService {
               anime,
               episode,
               bindingState.bindings,
-              preference?.fansubGroupId
+              preference?.fansubGroupId,
+              settings.automation.fallbackWhenDefaultFansubMissing === "candidate"
             );
             const releases = dedupeReleases(searchResults.flatMap((item) => item.releases));
             await this.repository.observeAnimeFansubs(anime.anime.id, releases);
@@ -177,24 +204,31 @@ export class AutomationRunService {
               {
                 anime,
                 episodeNo: episode.episodeNo,
-                episodeFansubOverrideId: preference?.fansubGroupId
+                episodeFansubOverrideId: preference?.fansubGroupId,
+                candidateFansubNames
               },
               fansubs
             );
             candidates = applyFansubFallbackPolicy(
               ranked,
               preferredFansubGroupId,
-              settings.automation.fallbackWhenDefaultFansubMissing
+              settings.automation.fallbackWhenDefaultFansubMissing,
+              candidateFansubNames,
+              fansubs
             );
+            logAutomationCandidates(anime, episode, ranked, candidates, "configured_sources");
           }
 
           if (ranked.length && !candidates.length && preferredFansubGroupId) {
-            logger.info("Automation run waiting for preferred fansub release", {
+            logger.info("自动下载未找到可用字幕组资源", {
               animeId: anime.anime.id,
+              animeTitle: anime.anime.title,
               episodeId: episode.id,
               episodeNo: episode.episodeNo,
               preferredFansubGroupId,
-              fallbackPolicy: settings.automation.fallbackWhenDefaultFansubMissing
+              preferredFansubName: resolveFansubName(preferredFansubGroupId, fansubs),
+              fallbackPolicy: settings.automation.fallbackWhenDefaultFansubMissing,
+              candidateFansubNames
             });
           }
 
@@ -218,9 +252,14 @@ export class AutomationRunService {
             const bestCandidate = candidates[0];
             logger.info("自动下载候选未通过可信度门槛", {
               animeId: anime.anime.id,
+              animeTitle: anime.anime.title,
               episodeId: episode.id,
               episodeNo: episode.episodeNo,
               reason: decision.reason,
+              releaseId: bestCandidate?.release.id,
+              releaseTitle: bestCandidate?.release.title,
+              sourceId: bestCandidate?.release.sourceId,
+              fansubName: bestCandidate?.release.fansubName,
               score: bestCandidate?.score,
               matchScore: bestCandidate?.matchScore,
               preferenceScore: bestCandidate?.preferenceScore,
@@ -241,7 +280,25 @@ export class AutomationRunService {
             continue;
           }
 
-          const best = candidates[0].release;
+          const bestCandidate = candidates[0];
+          const best = bestCandidate.release;
+
+          logger.info("自动下载候选通过可信度判定", {
+            animeId: anime.anime.id,
+            animeTitle: anime.anime.title,
+            episodeId: episode.id,
+            episodeNo: episode.episodeNo,
+            releaseId: best.id,
+            releaseTitle: best.title,
+            sourceId: best.sourceId,
+            fansubGroupId: best.fansubGroupId,
+            fansubName: best.fansubName,
+            score: bestCandidate.score,
+            matchScore: bestCandidate.matchScore,
+            preferenceScore: bestCandidate.preferenceScore,
+            availabilityScore: bestCandidate.availabilityScore,
+            decision: decision.reason
+          });
 
           if (!best.magnetUrl && !best.torrentUrl) {
             result.skipped.push({
@@ -301,7 +358,24 @@ export class AutomationRunService {
             releaseTitle: best.title,
             downloadTaskId: task.id
           });
+          logger.info("自动下载资源已加入下载队列", {
+            animeId: anime.anime.id,
+            animeTitle: anime.anime.title,
+            episodeId: episode.id,
+            episodeNo: episode.episodeNo,
+            releaseId: best.id,
+            sourceId: best.sourceId,
+            fansubName: best.fansubName,
+            downloadTaskId: task.id
+          });
         } catch (error) {
+          logger.error("自动下载单集扫描失败", {
+            animeId: anime.anime.id,
+            animeTitle: anime.anime.title,
+            episodeId: episode.id,
+            episodeNo: episode.episodeNo,
+            message: error instanceof Error ? error.message : "自动下载失败"
+          });
           result.errors.push({
             animeId: anime.anime.id,
             animeTitle: anime.anime.title,
@@ -314,6 +388,12 @@ export class AutomationRunService {
     }
 
     result.finishedAt = new Date().toISOString();
+    logger.info("自动下载扫描完成", {
+      checkedEpisodes: result.checkedEpisodes,
+      downloadedCount: result.downloaded.length,
+      skippedCount: result.skipped.length,
+      errorCount: result.errors.length
+    });
     return result;
   }
 }
@@ -459,12 +539,13 @@ async function searchEpisodeReleases(
   anime: MyAnime,
   episode: Episode,
   bindings: AnimeSourceBinding[],
-  fansubGroupId?: string
+  fansubGroupId?: string,
+  includeCandidateFansubs = false
 ): Promise<ReleaseSearchResult[]> {
   return [await sourceService.searchAnime(anime.anime, {
     animeId: anime.anime.id,
     episodeNo: episode.episodeNo,
-    fansubGroupId: fansubGroupId ?? anime.defaultFansubGroupId,
+    fansubGroupId: includeCandidateFansubs ? undefined : fansubGroupId ?? anime.defaultFansubGroupId,
     preferredResolution: anime.preferredResolution,
     limit: 80,
     cacheTtlMs: resolveAnimeReleaseCacheTtlMs(anime.status)
@@ -572,7 +653,9 @@ function dedupeReleases(releases: Release[]): Release[] {
 function applyFansubFallbackPolicy(
   ranked: ReleaseMatchResult[],
   preferredFansubGroupId: string | undefined,
-  policy: AutomationSettings["fallbackWhenDefaultFansubMissing"]
+  policy: AutomationSettings["fallbackWhenDefaultFansubMissing"],
+  candidateFansubNames: readonly string[],
+  fansubs: readonly FansubGroup[]
 ): ReleaseMatchResult[] {
   if (!preferredFansubGroupId) {
     return ranked;
@@ -584,8 +667,47 @@ function applyFansubFallbackPolicy(
   }
 
   if (policy === "candidate") {
-    return ranked;
+    return ranked.filter((result) => matchesCandidateFansub(result.release, candidateFansubNames, fansubs));
   }
 
   return [];
+}
+
+/** 输出单集候选的字幕组、来源及评分分项，限制为前五项。 */
+function logAutomationCandidates(
+  anime: MyAnime,
+  episode: Episode,
+  ranked: ReleaseMatchResult[],
+  eligible: ReleaseMatchResult[],
+  origin: string
+): void {
+  const eligibleReleaseIds = new Set(eligible.map((item) => item.release.id));
+  logger.info("自动下载资源候选评分完成", {
+    animeId: anime.anime.id,
+    animeTitle: anime.anime.title,
+    episodeId: episode.id,
+    episodeNo: episode.episodeNo,
+    origin,
+    candidateCount: ranked.length,
+    eligibleCount: eligible.length,
+    candidates: ranked.slice(0, 5).map((item) => ({
+      releaseId: item.release.id,
+      releaseTitle: item.release.title,
+      sourceId: item.release.sourceId,
+      fansubGroupId: item.release.fansubGroupId,
+      fansubName: item.release.fansubName,
+      score: item.score,
+      matchScore: item.matchScore,
+      preferenceScore: item.preferenceScore,
+      availabilityScore: item.availabilityScore,
+      eligible: eligibleReleaseIds.has(item.release.id),
+      reasons: item.reasons,
+      warnings: item.warnings
+    }))
+  });
+}
+
+/** 将字幕组标识转换为便于排查日志的显示名称。 */
+function resolveFansubName(fansubGroupId: string | undefined, fansubs: readonly FansubGroup[]): string | undefined {
+  return fansubGroupId ? fansubs.find((fansub) => fansub.id === fansubGroupId)?.name : undefined;
 }

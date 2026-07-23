@@ -55,7 +55,8 @@ function createSettings(): AppSettings {
       checkIntervalMinutes: 30,
       notifyOnNewEpisode: false,
       autoDownloadEnabledGlobally: false,
-      fallbackWhenDefaultFansubMissing: "wait"
+      fallbackWhenDefaultFansubMissing: "wait",
+      candidateFansubNames: []
     },
     media: { ffprobePath: "ffprobe", ffprobeTimeoutSeconds: 20, videoExtensions: [".mkv"] },
     desktop: { minimizeToTray: false, launchAtLogin: false },

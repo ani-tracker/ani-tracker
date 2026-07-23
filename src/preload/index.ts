@@ -22,6 +22,7 @@ import type {
   ReportPlaybackProgressInput,
   RemoteGatewayStatus,
   RemotePairingChallenge,
+  ReportAnimeSourceCandidateMismatchInput,
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
   SelectPlayerExecutableInput,
@@ -97,6 +98,8 @@ const api = {
     ipcRenderer.invoke("animeSourceBindings:getState", animeId, discoverCandidates),
   confirmAnimeSourceBinding: (input: ConfirmAnimeSourceBindingInput) =>
     ipcRenderer.invoke("animeSourceBindings:confirm", input),
+  reportAnimeSourceCandidateMismatch: (input: ReportAnimeSourceCandidateMismatchInput): Promise<void> =>
+    ipcRenderer.invoke("animeSourceBindings:reportMismatch", input),
   removeAnimeSourceBinding: (animeId: string, sourceId: string) =>
     ipcRenderer.invoke("animeSourceBindings:remove", animeId, sourceId),
   searchReleases: (query: ReleaseQuery) => ipcRenderer.invoke("releases:search", query),

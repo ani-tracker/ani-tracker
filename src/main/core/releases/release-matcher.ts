@@ -5,6 +5,7 @@ import {
   matchesAnimeReleaseTitle
 } from "../../../shared/anime-release-search";
 import { getSubtitleCoverage, resolveSubtitleLanguages } from "../../../shared/release-metadata";
+import { matchesCandidateFansub } from "../../../shared/fansub-name-matcher";
 import { enrichReleaseFromTitle } from "./release-title-parser";
 
 export const AUTOMATIC_DOWNLOAD_MIN_SCORE = 75;
@@ -16,6 +17,7 @@ export interface ReleaseMatchContext {
   episodeNo?: number;
   episodeFansubOverrideId?: string;
   candidateFansubGroupIds?: string[];
+  candidateFansubNames?: string[];
 }
 
 export interface ReleaseMatchResult {
@@ -39,7 +41,7 @@ export function rankReleases(
   groups: FansubGroup[] = []
 ): ReleaseMatchResult[] {
   return releases
-    .map((release) => scoreRelease(enrichReleaseFromTitle(release, groups), context))
+    .map((release) => scoreRelease(enrichReleaseFromTitle(release, groups), context, groups))
     .filter((result) => result.score > 0)
     .sort((a, b) => {
       if (a.score !== b.score) {
@@ -63,7 +65,7 @@ export function sortReleasesByRules(
       const enrichedRelease = enrichReleaseFromTitle(release, groups);
       return {
         index,
-        result: scoreRelease(enrichedRelease, resolveContext(enrichedRelease))
+        result: scoreRelease(enrichedRelease, resolveContext(enrichedRelease), groups)
       };
     })
     .sort((left, right) => {
@@ -82,7 +84,11 @@ export function sortReleasesByRules(
     .map(({ result }) => result.release);
 }
 
-export function scoreRelease(release: Release, context: ReleaseMatchContext): ReleaseMatchResult {
+export function scoreRelease(
+  release: Release,
+  context: ReleaseMatchContext,
+  groups: FansubGroup[] = []
+): ReleaseMatchResult {
   const reasons: string[] = [];
   const warnings: string[] = [];
   let matchScore = 0;
@@ -126,7 +132,10 @@ export function scoreRelease(release: Release, context: ReleaseMatchContext): Re
   } else if (release.fansubGroupId === preferredFansubId) {
     preferenceScore += 14;
     reasons.push(context.episodeFansubOverrideId ? "匹配单集字幕组覆盖" : "匹配默认字幕组");
-  } else if (release.fansubGroupId && context.candidateFansubGroupIds?.includes(release.fansubGroupId)) {
+  } else if (
+    Boolean(release.fansubGroupId && context.candidateFansubGroupIds?.includes(release.fansubGroupId)) ||
+    matchesCandidateFansub(release, context.candidateFansubNames ?? [], groups)
+  ) {
     preferenceScore += 5;
     reasons.push("匹配候补字幕组");
   }

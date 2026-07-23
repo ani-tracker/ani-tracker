@@ -389,6 +389,7 @@ export interface AutomationSettings {
   notifyOnNewEpisode: boolean;
   autoDownloadEnabledGlobally: boolean;
   fallbackWhenDefaultFansubMissing: "wait" | "candidate" | "notify_only";
+  candidateFansubNames: string[];
 }
 
 export interface SourceSyncSettings {

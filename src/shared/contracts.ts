@@ -148,6 +148,15 @@ export interface ConfirmAnimeSourceBindingInput {
   confidence?: number;
 }
 
+export interface ReportAnimeSourceCandidateMismatchInput {
+  animeId: string;
+  sourceId: string;
+  sourceAnimeId: string;
+  sourceAnimeTitle: string;
+  score: number;
+  reasons: string[];
+}
+
 export interface RssSubscriptionReleaseQuery {
   animeId: string;
   subscriptionId: string;

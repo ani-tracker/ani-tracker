@@ -65,7 +65,8 @@ export abstract class DefaultSettingsProvider {
         checkIntervalMinutes: 30,
         notifyOnNewEpisode: true,
         autoDownloadEnabledGlobally: true,
-        fallbackWhenDefaultFansubMissing: "wait"
+        fallbackWhenDefaultFansubMissing: "wait",
+        candidateFansubNames: []
       },
       sourceSync: {
         enabled: true,

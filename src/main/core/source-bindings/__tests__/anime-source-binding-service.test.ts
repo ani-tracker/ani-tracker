@@ -33,6 +33,29 @@ test("Mikan 外部 ID 自动绑定，取消后使用站点候选重新匹配", a
   assert.equal(rematched.candidates[0].title, "测试番");
 });
 
+test("来源候选不匹配仅写入包含番名、来源和评分的日志", async (t) => {
+  const repository = new FakeBindingRepository();
+  const lines: string[] = [];
+  t.mock.method(console, "log", (line: unknown) => lines.push(String(line)));
+  const service = new AnimeSourceBindingService(repository.asAppRepository());
+
+  await service.reportMismatch({
+    animeId: "anime-1",
+    sourceId: "mikan",
+    sourceAnimeId: "4999",
+    sourceAnimeTitle: "其他番剧",
+    score: 63,
+    reasons: ["标题近似", "首播年月不一致"]
+  });
+
+  assert.equal(repository.bindingCount, 0);
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /来源番剧候选已确认不匹配/);
+  assert.match(lines[0], /"animeTitle":"测试番"/);
+  assert.match(lines[0], /"sourceName":"蜜柑计划 RSS"/);
+  assert.match(lines[0], /"candidateScore":63/);
+});
+
 class FakeBindingRepository {
   private readonly item: MyAnime = {
     id: "my-anime-1",
@@ -66,6 +89,10 @@ class FakeBindingRepository {
     }
   ];
   private bindings: AnimeSourceBinding[] = [];
+
+  get bindingCount(): number {
+    return this.bindings.length;
+  }
 
   asAppRepository(): AppRepository {
     return this as unknown as AppRepository;

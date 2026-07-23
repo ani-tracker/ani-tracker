@@ -23,6 +23,7 @@ import type {
   SetAnimeWatchProgressInput
 } from "@shared/contracts";
 import { normalizeAppearanceSettings } from "@shared/theme";
+import { normalizeCandidateFansubNames } from "@shared/fansub-name-matcher";
 import type { AppDataFile } from "@shared/persistence/app-data";
 
 export interface ReleaseSearchCacheEntry {
@@ -229,7 +230,10 @@ export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>)
     },
     automation: {
       ...current.automation,
-      ...patch.automation
+      ...patch.automation,
+      candidateFansubNames: normalizeCandidateFansubNames(
+        patch.automation?.candidateFansubNames ?? current.automation.candidateFansubNames ?? []
+      )
     },
     sourceSync: {
       enabled: patch.sourceSync?.enabled ?? current.sourceSync?.enabled ?? true,

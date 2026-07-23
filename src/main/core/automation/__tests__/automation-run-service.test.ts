@@ -368,7 +368,7 @@ test("AutomationRunService 在 wait 策略下不回退到非默认字幕组候�
   assert.equal(repository.episodes[0].status, "aired");
 });
 
-test("AutomationRunService 在 candidate 策略下允许使用非默认字幕组候选", async (t) => {
+test("AutomationRunService 在 candidate 策略空名单下不回退到任意字幕组", async (t) => {
   const repository = new FakeAutomationRepository({
     settings: {
       ...defaultSettings,
@@ -393,9 +393,46 @@ test("AutomationRunService 在 candidate 策略下允许使用非默认字幕组
   const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
 
   assert.equal(result.checkedEpisodes, 1);
+  assert.equal(result.downloaded.length, 0);
+  assert.equal(result.skipped[0].reason, "未找到匹配资源");
+  assert.equal(repository.downloads.length, 0);
+  assert.equal(repository.episodes[0].status, "aired");
+});
+
+test("AutomationRunService 在 candidate 策略下只允许名单内字幕组", async (t) => {
+  const repository = new FakeAutomationRepository({
+    settings: {
+      ...defaultSettings,
+      automation: {
+        ...defaultSettings.automation,
+        fallbackWhenDefaultFansubMissing: "candidate",
+        candidateFansubNames: ["候 补字幕组"]
+      }
+    },
+    myAnime: [createMyAnime({ defaultFansubGroupId: "fansub-default" })],
+    episodes: [createEpisode()],
+    fansubs: createFansubs(),
+    sources: [createRssSource()]
+  });
+  mockRssFeed(t, [
+    {
+      title: "[其他字幕组] 测试番 - 01 [1080p][HEVC][简体]",
+      guid: "release-other",
+      magnet: "magnet:?xt=urn:btih:OTHER01&dn=other"
+    },
+    {
+      title: "[候补字幕组] 测试番 - 01 [1080p][HEVC][简体]",
+      guid: "release-candidate-allowed",
+      magnet: "magnet:?xt=urn:btih:CANDIDATE02&dn=candidate"
+    }
+  ]);
+
+  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+
+  assert.equal(result.checkedEpisodes, 1);
   assert.equal(result.skipped.length, 0);
   assert.equal(result.downloaded.length, 1);
-  assert.equal(result.downloaded[0].releaseId, "rss-test:release-candidate");
+  assert.equal(result.downloaded[0].releaseId, "rss-test:release-candidate-allowed");
   assert.equal(repository.downloads.length, 1);
   assert.equal(repository.episodes[0].status, "downloading");
 });

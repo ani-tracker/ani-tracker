@@ -3,6 +3,7 @@ import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import {
   Activity,
+  ChevronDown,
   Clock3,
   Copy,
   Download,
@@ -13,10 +14,12 @@ import {
   HardDrive,
   KeyRound,
   Languages,
+  Minus,
   Monitor,
   Palette,
   PlayCircle,
   Power,
+  Plus,
   RefreshCw,
   RotateCcw,
   Save,
@@ -28,6 +31,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Command, CommandEmpty, CommandGroup, CommandItem, CommandList } from "@/components/ui/command";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
@@ -36,6 +40,7 @@ import {
   InputGroupButton,
   InputGroupInput
 } from "@/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -64,6 +69,7 @@ import type {
   RemotePairingChallenge
 } from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
+import { normalizeCandidateFansubNames, normalizeFansubMatchName } from "@shared/fansub-name-matcher";
 
 type SettingsCategoryId =
   | "appearance"
@@ -1378,6 +1384,24 @@ export function SettingsPage() {
                   </SelectContent>
                 </Select>
               </Field>
+              {draft.automation.fallbackWhenDefaultFansubMissing === "candidate" && (
+                <Field className="gap-2">
+                  <FieldLabel htmlFor="automation-candidate-fansubs">候补字幕组</FieldLabel>
+                  <CandidateFansubMultiSelect
+                    id="automation-candidate-fansubs"
+                    onChange={(candidateFansubNames) =>
+                      setDraft({
+                        ...draft,
+                        automation: {
+                          ...draft.automation,
+                          candidateFansubNames
+                        }
+                      })
+                    }
+                    value={draft.automation.candidateFansubNames}
+                  />
+                </Field>
+              )}
             </FieldGroup>
             <FieldGroup className="gap-5">
               <Field className="items-center justify-between" orientation="horizontal">
@@ -1452,6 +1476,116 @@ export function SettingsPage() {
         title="确认恢复默认设置？"
       />
     </div>
+  );
+}
+
+/** 提供候补字幕组的下拉多选、新增和删除操作。 */
+function CandidateFansubMultiSelect({
+  id,
+  value,
+  onChange
+}: {
+  id: string;
+  value: string[];
+  onChange: (value: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState("");
+  const normalizedInput = normalizeFansubMatchName(input);
+  const canAdd = Boolean(
+    normalizedInput && !value.some((name) => normalizeFansubMatchName(name) === normalizedInput)
+  );
+
+  /** 将有效且不重复的输入加入候补名单。 */
+  function addCandidateFansub() {
+    if (!canAdd) {
+      return;
+    }
+    onChange(normalizeCandidateFansubNames([...value, input]));
+    setInput("");
+  }
+
+  /** 从候补名单移除指定字幕组。 */
+  function removeCandidateFansub(name: string) {
+    const normalizedName = normalizeFansubMatchName(name);
+    onChange(value.filter((item) => normalizeFansubMatchName(item) !== normalizedName));
+  }
+
+  return (
+    <Popover
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setInput("");
+      }}
+      open={open}
+    >
+      <PopoverTrigger asChild>
+        <Button
+          aria-expanded={open}
+          className="w-full justify-between font-normal"
+          id={id}
+          role="combobox"
+          type="button"
+          variant="outline"
+        >
+          <span className={cn("truncate", !value.length && "text-muted-foreground")}>
+            {value.length ? `已选择 ${value.length} 个` : "未选择候补字幕组"}
+          </span>
+          <ChevronDown className="text-muted-foreground" data-icon="inline-end" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[var(--radix-popover-trigger-width)] min-w-64 p-1">
+        <Command shouldFilter={false}>
+          <div className="border-b p-2">
+            <InputGroup>
+              <InputGroupInput
+                aria-label="候补字幕组名称"
+                onChange={(event) => setInput(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && canAdd) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    addCandidateFansub();
+                  }
+                }}
+                placeholder="字幕组名称"
+                value={input}
+              />
+              {canAdd && (
+                <InputGroupAddon>
+                  <InputGroupButton
+                    aria-label="添加候补字幕组"
+                    onClick={addCandidateFansub}
+                    title="添加候补字幕组"
+                  >
+                    <Plus />
+                  </InputGroupButton>
+                </InputGroupAddon>
+              )}
+            </InputGroup>
+          </div>
+          <CommandList className="max-h-56">
+            <CommandEmpty>尚未选择候补字幕组</CommandEmpty>
+            {value.length > 0 && (
+              <CommandGroup heading="已选择">
+                {value.map((name) => (
+                  <CommandItem
+                    aria-label={`删除候补字幕组 ${name}`}
+                    key={normalizeFansubMatchName(name)}
+                    onSelect={() => removeCandidateFansub(name)}
+                    title={`删除 ${name}`}
+                    value={name}
+                  >
+                    <span className="min-w-0 flex-1 truncate">{name}</span>
+                    <Minus className="ml-auto" />
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 

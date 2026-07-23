@@ -36,6 +36,7 @@ import type {
   ReportPlaybackProgressInput,
   RemoteGatewayStatus,
   RemotePairingChallenge,
+  ReportAnimeSourceCandidateMismatchInput,
   ReleaseQuery,
   ReleaseSearchResult,
   RssSubscriptionReleaseQuery,
@@ -101,6 +102,7 @@ declare global {
       syncSourcesNow: () => Promise<SourceSyncRunResult>;
       getAnimeSourceBindingState: (animeId: string, discoverCandidates?: boolean) => Promise<AnimeSourceBindingState>;
       confirmAnimeSourceBinding: (input: ConfirmAnimeSourceBindingInput) => Promise<AnimeSourceBindingState>;
+      reportAnimeSourceCandidateMismatch: (input: ReportAnimeSourceCandidateMismatchInput) => Promise<void>;
       removeAnimeSourceBinding: (animeId: string, sourceId: string) => Promise<AnimeSourceBindingState>;
       searchReleases: (query: ReleaseQuery) => Promise<ReleaseSearchResult>;
       searchAnimeReleases: (query: AnimeReleaseQuery) => Promise<ReleaseSearchResult>;

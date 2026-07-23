@@ -109,6 +109,24 @@ test("mergeSettings 保留旧播放器自定义路径并补入新平台选项", 
   assert.equal(merged.players.find((player) => player.id === "potplayer")?.executablePath, "D:\\Players\\PotPlayerMini64.exe");
 });
 
+test("mergeSettings 兼容旧设置并按匹配规则清理候补字幕组", () => {
+  const current = new WindowsDefaultSettingsProvider(paths).getSettings();
+  const oldSettings = mergeSettings(current, {
+    automation: {
+      fallbackWhenDefaultFansubMissing: "candidate"
+    } as Partial<AppSettings["automation"]> as AppSettings["automation"]
+  });
+  const normalized = mergeSettings(current, {
+    automation: {
+      ...current.automation,
+      candidateFansubNames: [" Neko Moe ", "nekomoe", "字幕 组", "字幕组", "  "]
+    }
+  });
+
+  assert.deepEqual(oldSettings.automation.candidateFansubNames, []);
+  assert.deepEqual(normalized.automation.candidateFansubNames, ["Neko Moe", "字幕 组"]);
+});
+
 function assertSharedDefaults(settings: AppSettings): void {
   assert.deepEqual(settings.appearance, {
     themeMode: "system",
@@ -155,7 +173,8 @@ function assertSharedDefaults(settings: AppSettings): void {
     checkIntervalMinutes: 30,
     notifyOnNewEpisode: true,
     autoDownloadEnabledGlobally: true,
-    fallbackWhenDefaultFansubMissing: "wait"
+    fallbackWhenDefaultFansubMissing: "wait",
+    candidateFansubNames: []
   });
   assert.deepEqual(settings.media, {
     ffprobePath: "ffprobe",

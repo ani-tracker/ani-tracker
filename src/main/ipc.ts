@@ -21,6 +21,7 @@ import type {
   AnimeDiscoveryQuery,
   AnimeDiscoverySeasonQuery,
   ConfirmAnimeSourceBindingInput,
+  ReportAnimeSourceCandidateMismatchInput,
   ReportPlaybackProgressInput,
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
@@ -374,6 +375,13 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       repository,
       new MetadataHttpClient(settings.network.metadataProxy)
     ).confirm(input);
+  });
+  ipcMain.handle("animeSourceBindings:reportMismatch", async (_event, input: ReportAnimeSourceCandidateMismatchInput) => {
+    const settings = await repository.getSettings();
+    return new AnimeSourceBindingService(
+      repository,
+      new MetadataHttpClient(settings.network.metadataProxy)
+    ).reportMismatch(input);
   });
   ipcMain.handle("animeSourceBindings:remove", async (_event, animeId: string, sourceId: string) => {
     const settings = await repository.getSettings();

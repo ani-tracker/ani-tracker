@@ -1,4 +1,4 @@
-import { AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, Download, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
+import { AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, CircleOff, Download, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
 import { useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -703,6 +703,34 @@ export function MyAnimePage({
     }
   }
 
+  /** 记录人工确认的不匹配候选，并仅从当前面板隐藏。 */
+  async function reportAnimeSourceCandidateMismatch(candidate: AnimeSourceCandidate) {
+    if (!downloadTarget) return;
+    const candidateKey = `${candidate.sourceId}:${candidate.sourceAnimeId}`;
+    setSourceBindingActionKey(candidateKey);
+    try {
+      await appApi.reportAnimeSourceCandidateMismatch({
+        animeId: downloadTarget.anime.id,
+        sourceId: candidate.sourceId,
+        sourceAnimeId: candidate.sourceAnimeId,
+        sourceAnimeTitle: candidate.title,
+        score: candidate.score,
+        reasons: candidate.reasons
+      });
+      setSourceBindingState((current) => current ? {
+        ...current,
+        candidates: current.candidates.filter(
+          (item) => item.sourceId !== candidate.sourceId || item.sourceAnimeId !== candidate.sourceAnimeId
+        )
+      } : current);
+      toast.success(`已记录不匹配：${candidate.title}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "记录来源不匹配失败");
+    } finally {
+      setSourceBindingActionKey(null);
+    }
+  }
+
   /** 移除来源绑定并重新发现候选。 */
   async function removeAnimeSourceBinding(sourceId: string) {
     if (!downloadTarget) return;
@@ -1084,6 +1112,7 @@ export function MyAnimePage({
             onAddSelected={(releases) => void addAnimeReleaseDownloads(releases)}
             onFansubChange={setAnimeReleaseFansubId}
             onConfirmSourceCandidate={(candidate) => void confirmAnimeSourceCandidate(candidate)}
+            onRejectSourceCandidate={(candidate) => void reportAnimeSourceCandidateMismatch(candidate)}
             onRemoveSourceBinding={(sourceId) => void removeAnimeSourceBinding(sourceId)}
             onRefreshSourceBindings={() => void refreshAnimeSourceBindings(downloadTarget.anime.id)}
             onRefreshRss={() => void searchAnimeRssReleases(downloadTarget)}
@@ -1719,6 +1748,7 @@ function AnimeDownloadPanel({
   sourceBindingActionKey,
   onTabChange,
   onConfirmSourceCandidate,
+  onRejectSourceCandidate,
   onRemoveSourceBinding,
   onRefreshSourceBindings,
   onFansubChange,
@@ -1750,6 +1780,7 @@ function AnimeDownloadPanel({
   sourceBindingActionKey: string | null;
   onTabChange: (tab: DownloadResourceTab) => void;
   onConfirmSourceCandidate: (candidate: AnimeSourceCandidate) => void;
+  onRejectSourceCandidate: (candidate: AnimeSourceCandidate) => void;
   onRemoveSourceBinding: (sourceId: string) => void;
   onRefreshSourceBindings: () => void;
   onFansubChange: (fansubGroupId: string) => void;
@@ -1961,6 +1992,7 @@ function AnimeDownloadPanel({
               loading={sourceBindingLoading}
               state={sourceBindingState}
               onConfirm={onConfirmSourceCandidate}
+              onReject={onRejectSourceCandidate}
               onRefresh={onRefreshSourceBindings}
               onRemove={onRemoveSourceBinding}
             />
@@ -2449,6 +2481,7 @@ function AnimeSourceBindingPanel({
   loading,
   actionKey,
   onConfirm,
+  onReject,
   onRemove,
   onRefresh
 }: {
@@ -2456,6 +2489,7 @@ function AnimeSourceBindingPanel({
   loading: boolean;
   actionKey: string | null;
   onConfirm: (candidate: AnimeSourceCandidate) => void;
+  onReject: (candidate: AnimeSourceCandidate) => void;
   onRemove: (sourceId: string) => void;
   onRefresh: () => void;
 }) {
@@ -2548,14 +2582,27 @@ function AnimeSourceBindingPanel({
                           ID {candidate.sourceAnimeId} · {candidate.reasons.join(" · ")}
                         </div>
                       </div>
-                      <Button
-                        variant="outline"
-                        onClick={() => onConfirm(candidate)}
-                        disabled={actionKey === candidateKey}
-                      >
-                        <Check className="h-4 w-4" />
-                        {candidate.score} 分
-                      </Button>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <Button
+                          aria-label={`确认 ${candidate.title} 不匹配`}
+                          className="px-2"
+                          disabled={actionKey === candidateKey}
+                          onClick={() => onReject(candidate)}
+                          variant="ghost"
+                        >
+                          <CircleOff data-icon="inline-start" />
+                          不匹配
+                        </Button>
+                        <Button
+                          aria-label={`确认匹配 ${candidate.title}`}
+                          disabled={actionKey === candidateKey}
+                          onClick={() => onConfirm(candidate)}
+                          variant="outline"
+                        >
+                          <Check data-icon="inline-start" />
+                          {candidate.score} 分
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}
@@ -2575,14 +2622,27 @@ function AnimeSourceBindingPanel({
                                 ID {candidate.sourceAnimeId} · {candidate.reasons.join(" · ")}
                               </div>
                             </div>
-                            <Button
-                              variant="outline"
-                              onClick={() => onConfirm(candidate)}
-                              disabled={actionKey === candidateKey}
-                            >
-                              <Check className="h-4 w-4" />
-                              {candidate.score} 分
-                            </Button>
+                            <div className="flex shrink-0 items-center gap-1">
+                              <Button
+                                aria-label={`确认 ${candidate.title} 不匹配`}
+                                className="px-2"
+                                disabled={actionKey === candidateKey}
+                                onClick={() => onReject(candidate)}
+                                variant="ghost"
+                              >
+                                <CircleOff data-icon="inline-start" />
+                                不匹配
+                              </Button>
+                              <Button
+                                aria-label={`确认匹配 ${candidate.title}`}
+                                disabled={actionKey === candidateKey}
+                                onClick={() => onConfirm(candidate)}
+                                variant="outline"
+                              >
+                                <Check data-icon="inline-start" />
+                                {candidate.score} 分
+                              </Button>
+                            </div>
                           </div>
                         );
                       })}
