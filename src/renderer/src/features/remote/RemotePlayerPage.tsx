@@ -11,6 +11,7 @@ import {
   desktopPlaybackSessionClient,
   remotePlaybackSessionClient
 } from "./playback-session-client";
+import type { Anime, DownloadTask, Episode } from "@shared/domain";
 
 interface RemotePlayerPageProps {
   taskId: string;
@@ -27,6 +28,9 @@ export function RemotePlayerPage({
   onClose
 }: RemotePlayerPageProps) {
   const [playlist, setPlaylist] = useState<RemotePlaylistItem[]>([]);
+  const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
+  const [anime, setAnime] = useState<Anime>();
+  const [episodes, setEpisodes] = useState<Episode[]>([]);
   const [activeItemId, setActiveItemId] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -39,6 +43,9 @@ export function RemotePlayerPage({
     let active = true;
     setLoading(true);
     setError(null);
+    setAnime(undefined);
+    setEpisodes([]);
+    setDownloadTasks([]);
     appApi.listDownloads()
       .then((tasks) => {
         if (!active) return;
@@ -48,6 +55,9 @@ export function RemotePlayerPage({
           return;
         }
         const items = buildRemotePlaylist(tasks, matchedTask);
+        setDownloadTasks(matchedTask.animeId
+          ? tasks.filter((task) => task.animeId === matchedTask.animeId)
+          : [matchedTask]);
         const initialItem = resolveInitialPlaylistItem(
           items,
           taskId,
@@ -67,6 +77,18 @@ export function RemotePlayerPage({
           itemCount: items.length,
           fileIndex: initialItem.fileIndex
         });
+        if (matchedTask.animeId) {
+          void appApi.getAnimeDetail(matchedTask.animeId).then((detail) => {
+            if (!active) return;
+            setAnime(detail.anime);
+            setEpisodes(detail.episodes);
+          }).catch((caught) => {
+            console.warn("[player] 播放器番剧信息读取失败，继续使用下载任务数据", {
+              animeId: matchedTask.animeId,
+              error: caught
+            });
+          });
+        }
       })
       .catch((caught) => {
         if (active) {
@@ -112,6 +134,10 @@ export function RemotePlayerPage({
     key={activeItem?.id ?? "loading"}
     activeItem={activeItem}
     allowExternalPlayback={environment === "remote"}
+    anime={anime}
+    downloadTasks={downloadTasks}
+    environment={environment}
+    episodes={episodes}
     error={error}
     loading={loading}
     onClose={onClose ?? closePlayerTab}
