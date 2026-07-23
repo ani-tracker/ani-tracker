@@ -41,7 +41,11 @@ export class QbittorrentManagedService {
   async applySettings(settings: AppSettings): Promise<QbittorrentManagedStatus> {
     this.lastSettings = settings;
 
-    if (settings.download.qbittorrent.managed.enabled && settings.download.qbittorrent.autoConnect) {
+    if (
+      settings.download.defaultTorrentEngine === "qbittorrent" &&
+      settings.download.qbittorrent.managed.enabled &&
+      settings.download.qbittorrent.autoConnect
+    ) {
       return this.start(settings);
     }
 
@@ -49,7 +53,10 @@ export class QbittorrentManagedService {
       await this.stop();
     }
 
-    if (!settings.download.qbittorrent.managed.enabled) {
+    if (
+      settings.download.defaultTorrentEngine === "qbittorrent" &&
+      !settings.download.qbittorrent.managed.enabled
+    ) {
       await this.applyConfiguredLimits(settings);
     }
 

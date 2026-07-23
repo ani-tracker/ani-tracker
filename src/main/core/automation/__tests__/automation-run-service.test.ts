@@ -7,6 +7,7 @@ import { GenericDefaultSettingsProvider } from "../../platform/default-settings-
 import type { AppRepository, CachedReleaseQuery } from "../../repositories/app-repository";
 import { AutomationRunService } from "../automation-run-service";
 import { resolveAnimeDownloadPath } from "../../downloads/download-path-resolver";
+import type { EmbeddedTorrentCoreClient } from "../../downloads/embedded-torrent-core-service";
 
 const baseSettings = new GenericDefaultSettingsProvider({
   downloads: "/test/Downloads",
@@ -66,7 +67,7 @@ test("AutomationRunService 使用单集字幕组覆盖选择最佳资源并写�
     }
   ]);
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.equal(result.checkedEpisodes, 1);
   assert.equal(result.errors.length, 0);
@@ -116,7 +117,7 @@ test("AutomationRunService 优先使用追番 RSS 且命中后不请求全局源
     sources: [createRssSource()]
   });
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.deepEqual(requestedUrls, ["https://example.test/personal.xml"]);
   assert.equal(result.downloaded.length, 1);
@@ -158,7 +159,7 @@ test("AutomationRunService 在追番 RSS 无结果时回退普通下载源", asy
     sources: [createRssSource()]
   });
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.deepEqual(requestedUrls, [
     "https://example.test/empty-personal.xml",
@@ -199,7 +200,7 @@ test("AutomationRunService 在追番 RSS 失败时回退普通下载源", async 
     sources: [createRssSource()]
   });
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.deepEqual(requestedUrls, [
     "https://rss-failure.example.test/personal.xml",
@@ -241,10 +242,10 @@ test("AutomationRunService 在 RSS 刷新间隔内复用订阅缓存", async (t)
     sources: []
   });
 
-  const first = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const first = await createAutomationRunService(repository).runOnce();
   repository.downloads = [];
   repository.episodes = [{ ...createEpisode(), status: "aired" }];
-  const second = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const second = await createAutomationRunService(repository).runOnce();
 
   assert.equal(fetchCount, 1);
   assert.equal(first.downloaded.length, 1);
@@ -285,7 +286,7 @@ test("AutomationRunService 为零单集追番按缓存资源补建单集并继�
     }
   ]);
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.equal(result.checkedEpisodes, 1);
   assert.equal(result.downloaded.length, 1);
@@ -326,7 +327,7 @@ test("AutomationRunService 遇到已有下载任务时跳过单集且不搜索�
     sources: [createRssSource()]
   });
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.equal(fetchCount, 0);
   assert.equal(result.checkedEpisodes, 1);
@@ -351,7 +352,7 @@ test("AutomationRunService 全局自动下载关闭时提前跳过", async () =>
     sources: [createRssSource()]
   });
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.equal(result.checkedEpisodes, 0);
   assert.equal(result.downloaded.length, 0);
@@ -372,7 +373,7 @@ test("AutomationRunService 跳过已完成和已弃追番", async () => {
     sources: [createRssSource()]
   });
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.equal(result.checkedEpisodes, 0);
   assert.equal(result.downloaded.length, 0);
@@ -401,7 +402,7 @@ test("AutomationRunService 在 wait 策略下不回退到非默认字幕组候�
     }
   ]);
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.equal(result.checkedEpisodes, 1);
   assert.equal(result.downloaded.length, 0);
@@ -433,7 +434,7 @@ test("AutomationRunService 在 candidate 策略空名单下不回退到任意字
     }
   ]);
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.equal(result.checkedEpisodes, 1);
   assert.equal(result.downloaded.length, 0);
@@ -470,7 +471,7 @@ test("AutomationRunService 在 candidate 策略下只允许名单内字幕组", 
     }
   ]);
 
-  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+  const result = await createAutomationRunService(repository).runOnce();
 
   assert.equal(result.checkedEpisodes, 1);
   assert.equal(result.skipped.length, 0);
@@ -592,6 +593,37 @@ class FakeAutomationRepository {
 
     return this.downloads;
   }
+}
+
+/** 创建使用内置核心假客户端的自动化服务，避免单元测试启动原生进程。 */
+function createAutomationRunService(repository: FakeAutomationRepository): AutomationRunService {
+  const embeddedTorrentClient: EmbeddedTorrentCoreClient = {
+    async execute<T>(
+      method: Parameters<EmbeddedTorrentCoreClient["execute"]>[0],
+      params: Parameters<EmbeddedTorrentCoreClient["execute"]>[1]
+    ): Promise<T> {
+      if (method !== "addMagnet" && method !== "addTorrentFile") {
+        throw new Error(`测试内核不支持命令：${method}`);
+      }
+
+      const taskId = `embedded-test-${repository.downloads.length + 1}`;
+      return {
+        id: taskId,
+        hash: taskId,
+        correlationTag: params.correlationTag,
+        name: String(params.url ?? params.filePath ?? taskId),
+        status: params.paused ? "paused" : "downloading",
+        progress: 0,
+        downloadSpeed: 0,
+        uploadSpeed: 0,
+        savePath: String(params.savePath ?? ""),
+        files: [],
+        createdAt: "2026-07-13T00:00:00.000Z"
+      } as T;
+    }
+  };
+
+  return new AutomationRunService(repository.asAppRepository(), { embeddedTorrentClient });
 }
 
 function createMyAnime(overrides: Partial<MyAnime>): MyAnime {

@@ -135,11 +135,22 @@ function assertSharedDefaults(settings: AppSettings): void {
   });
   assert.equal(settings.download.defaultDownloadDir, join(paths.downloads, "Ani Tracker"));
   assert.equal(settings.download.temporaryDownloadDir, join(paths.userData, "incomplete"));
-  assert.equal(settings.download.defaultTorrentEngine, "qbittorrent");
+  assert.equal(settings.download.defaultTorrentEngine, "embedded");
   assert.deepEqual(settings.download.embedded, {
-    enabled: false,
+    enabled: true,
     listenPort: 51413,
-    maxActiveDownloads: 3
+    dhtEnabled: true,
+    upnpEnabled: true,
+    maxActiveDownloads: 3,
+    maxDownloadSpeed: 0,
+    maxUploadSpeed: 0,
+    seedingLimits: {
+      enabled: false,
+      ratioEnabled: false,
+      ratioLimit: 1,
+      timeEnabled: false,
+      timeLimitMinutes: 120
+    }
   });
   assert.deepEqual(settings.download.qbittorrent, {
     baseUrl: "http://127.0.0.1:18080",

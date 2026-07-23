@@ -196,6 +196,8 @@ function isActiveDownloadStatus(status: DownloadStatus): boolean {
 
 /** 深度合并设置分组，避免局部更新覆盖同组其他字段。 */
 export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>): AppSettings {
+  const embeddedSeedingLimits = current.download.embedded.seedingLimits
+    ?? current.download.qbittorrent.seedingLimits;
   return {
     ...current,
     ...patch,
@@ -209,7 +211,11 @@ export function mergeSettings(current: AppSettings, patch: Partial<AppSettings>)
       ...patch.download,
       embedded: {
         ...current.download.embedded,
-        ...patch.download?.embedded
+        ...patch.download?.embedded,
+        seedingLimits: {
+          ...embeddedSeedingLimits,
+          ...patch.download?.embedded?.seedingLimits
+        }
       },
       qbittorrent: {
         ...current.download.qbittorrent,

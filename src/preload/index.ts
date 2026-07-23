@@ -18,6 +18,7 @@ import type {
   AnimeDiscoveryQuery,
   AnimeDiscoverySeasonQuery,
   ConfirmAnimeSourceBindingInput,
+  EmbeddedTorrentCoreStatus,
   PlayerDetectionResult,
   ReportPlaybackProgressInput,
   RemoteGatewayStatus,
@@ -117,6 +118,14 @@ const api = {
   getQbittorrentManagedStatus: () => ipcRenderer.invoke("downloads:getQbittorrentManagedStatus"),
   startQbittorrentManaged: () => ipcRenderer.invoke("downloads:startQbittorrentManaged"),
   stopQbittorrentManaged: () => ipcRenderer.invoke("downloads:stopQbittorrentManaged"),
+  getEmbeddedTorrentStatus: (): Promise<EmbeddedTorrentCoreStatus> =>
+    ipcRenderer.invoke("downloads:getEmbeddedTorrentStatus"),
+  startEmbeddedTorrent: (): Promise<EmbeddedTorrentCoreStatus> =>
+    ipcRenderer.invoke("downloads:startEmbeddedTorrent"),
+  stopEmbeddedTorrent: (): Promise<EmbeddedTorrentCoreStatus> =>
+    ipcRenderer.invoke("downloads:stopEmbeddedTorrent"),
+  restartEmbeddedTorrent: (): Promise<EmbeddedTorrentCoreStatus> =>
+    ipcRenderer.invoke("downloads:restartEmbeddedTorrent"),
   listMediaFiles: () => ipcRenderer.invoke("media:list"),
   scanDownloadMedia: (taskId: string) => ipcRenderer.invoke("media:scanDownload", taskId),
   playMedia: (filePath: string, profileId?: string) => ipcRenderer.invoke("media:play", filePath, profileId),

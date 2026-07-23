@@ -43,6 +43,10 @@
 
 ### 下载与媒体
 
+- libtorrent-rasterbar 2.1 内置核心、NDJSON sidecar、Session/fastresume 原子恢复和进程托管。
+- 内置核心支持磁链、种子、任务状态、暂停、恢复、移除、文件优先级、限速及做种停止策略。
+- 默认使用内置引擎；切换只影响新任务，旧任务继续按创建时引擎路由。
+- 下载设置提供内置 libtorrent、内置 qBittorrent-nox、外部 qBittorrent WebUI 三种模式。
 - qBittorrent Web API、Enhanced 添加结果、真实 hash 确认和 Ani Tracker 标签关联。
 - 添加、刷新、暂停、继续、移除、进度、速度、ETA 和文件优先级管理。
 - qBittorrent-nox 托管启动、自动连接、动态高位端口、限速和做种停止目标。
@@ -68,7 +72,9 @@
 
 ## 未完成或受限
 
-- `EmbeddedTorrentEngine` 不执行真实 BT 下载。
+- Windows、Linux、macOS arm64 的 `torrent-core` 发布资源和签名验证尚未完成。
+- Android JNI、前台下载服务、ABI 产物和真机恢复尚未实现。
+- 内置核心尚缺公网完整下载、网络切换、磁盘满和损坏 fastresume 的发布级回归。
 - qBittorrent-nox 尚缺 macOS arm64、Linux x64 内置资源。
 - 更多站点镜像和站点专有筛选项尚未实现。
 - 元数据字段冲突解释、来源可见性和更细的增量刷新仍可完善。
@@ -79,8 +85,8 @@
 
 ## 维护优先级
 
-1. 先补齐真实内置下载能力或明确长期只托管 qBittorrent。
-2. 完成缺失平台资源、播放器进度和真机回归。
+1. 完成 torrent-core 缺失平台资源、签名和公网下载回归。
+2. 实现 Android JNI/前台服务，再完成播放器进度和真机回归。
 3. 再扩展站点适配器与元数据冲突解释。
 
 ## 验证入口
@@ -104,3 +110,14 @@ git diff --check
 | `pnpm run test:parsers` | 246/246 通过 |
 | Markdown 本地链接 | 全部可解析 |
 | `git diff --check` | 通过 |
+
+### 2026-07-23 内置 libtorrent 阶段验证
+
+| 检查 | 结果 |
+| --- | --- |
+| `pnpm run typecheck` | 通过 |
+| `pnpm run test:parsers` | 289/289 通过 |
+| `pnpm run build:torrent-core` | 通过；libtorrent 2.1 |
+| `pnpm run verify:torrent-core` | 通过；macOS x64 哈希、依赖、许可证、握手 |
+| `status/configure/shutdown` | 退出码 0，优雅退出 |
+| 设置页 1280/720px | 无横向溢出，只读字段与状态操作正常 |

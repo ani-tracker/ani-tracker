@@ -345,9 +345,12 @@ export interface DownloadSettings {
 export interface EmbeddedTorrentSettings {
   enabled: boolean;
   listenPort?: number;
+  dhtEnabled?: boolean;
+  upnpEnabled?: boolean;
   maxActiveDownloads?: number;
   maxDownloadSpeed?: number;
   maxUploadSpeed?: number;
+  seedingLimits?: QbittorrentSeedingLimits;
 }
 
 export interface QbittorrentSettings {

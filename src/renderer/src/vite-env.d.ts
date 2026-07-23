@@ -29,6 +29,7 @@ import type {
   AutomationRunResult,
   AutomationSchedulerStatus,
   ConfirmAnimeSourceBindingInput,
+  EmbeddedTorrentCoreStatus,
   EpisodeReleasePreview,
   MediaScanResult,
   PlayerDetectionResult,
@@ -116,6 +117,10 @@ declare global {
       getQbittorrentManagedStatus: () => Promise<QbittorrentManagedStatus>;
       startQbittorrentManaged: () => Promise<QbittorrentManagedStatus>;
       stopQbittorrentManaged: () => Promise<QbittorrentManagedStatus>;
+      getEmbeddedTorrentStatus: () => Promise<EmbeddedTorrentCoreStatus>;
+      startEmbeddedTorrent: () => Promise<EmbeddedTorrentCoreStatus>;
+      stopEmbeddedTorrent: () => Promise<EmbeddedTorrentCoreStatus>;
+      restartEmbeddedTorrent: () => Promise<EmbeddedTorrentCoreStatus>;
       listMediaFiles: () => Promise<MediaFile[]>;
       scanDownloadMedia: (taskId: string) => Promise<MediaScanResult>;
       playMedia: (filePath: string, profileId?: string) => Promise<void>;

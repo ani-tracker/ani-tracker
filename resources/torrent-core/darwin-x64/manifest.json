@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "target": "darwin-x64",
+  "coreVersion": "0.1.0",
+  "libtorrentVersion": "2.1.0",
+  "generatedAt": "2026-07-23T03:52:47.398Z",
+  "files": [
+    {
+      "path": "SOURCE.md",
+      "size": 891,
+      "sha256": "82e31a2ed437fee4f7d020b4169a9c3c1c5e8644f2c3ee768cf0b52a15025f1e"
+    },
+    {
+      "path": "libcrypto.3.dylib",
+      "size": 5261600,
+      "sha256": "b9cab85779fb2c1c502906bd8791c95040ff01532e8837098d853e8ddbed1a67"
+    },
+    {
+      "path": "libssl.3.dylib",
+      "size": 912544,
+      "sha256": "128fc0cea1bfeae8e558088030852de9c9f0a9ff6d69ef305ff58745747d35c3"
+    },
+    {
+      "path": "libtorrent-rasterbar.2.1.dylib",
+      "size": 13881824,
+      "sha256": "9bab377a069feb68d2519aa2947d2590d8c62b92947b1c5722e2f3f58480904c"
+    },
+    {
+      "path": "licenses/boost-BSL-1.0.txt",
+      "size": 1338,
+      "sha256": "c9bff75738922193e67fa726fa225535870d2aa1059f91452c411736284ad566"
+    },
+    {
+      "path": "licenses/libtorrent-BSD-3-Clause.txt",
+      "size": 1524,
+      "sha256": "f4b492afbde73d2f4e051050a619622876a13b77e7b8b6ea3ec2868a6929b31b"
+    },
+    {
+      "path": "licenses/openssl-Apache-2.0.txt",
+      "size": 10175,
+      "sha256": "7d5450cb2d142651b8afa315b5f238efc805dad827d91ba367d8516bc9d49e7a"
+    },
+    {
+      "path": "torrent-core",
+      "size": 247568,
+      "sha256": "580c3384f4ed86f6caae6dc6f03a5e3b5197c7d0354e6b4b316c99cdc8433324"
+    }
+  ]
+}

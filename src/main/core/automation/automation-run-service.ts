@@ -15,6 +15,7 @@ import { canAnimeStatusAutoDownload } from "@shared/my-anime-policy";
 import { getSubtitleCoverage, resolveSubtitleLanguages } from "@shared/release-metadata";
 import { matchesCandidateFansub } from "@shared/fansub-name-matcher";
 import { createTorrentEngine } from "../downloads/torrent-engine-factory";
+import type { EmbeddedTorrentCoreClient } from "../downloads/embedded-torrent-core-service";
 import { addReleaseTorrentToEngine } from "../downloads/torrent-resource-adder";
 import { logger } from "../logger";
 import { resolveAnimeDownloadPath } from "../downloads/download-path-resolver";
@@ -35,6 +36,7 @@ const rssSubscriptionReleaseCache = new Map<string, { fetchedAtMs: number; relea
 
 export interface AutomationRunServiceOptions {
   getQbittorrentBaseUrl?: (settings: AppSettings) => string;
+  embeddedTorrentClient?: EmbeddedTorrentCoreClient;
 }
 
 export class AutomationRunService {
@@ -77,6 +79,7 @@ export class AutomationRunService {
     const sourceService = new ReleaseSourceService(sources, fansubs, httpClient, this.repository);
     const engine = createTorrentEngine(settings, {
       qbittorrentBaseUrl: this.options.getQbittorrentBaseUrl?.(settings),
+      embeddedTorrentClient: this.options.embeddedTorrentClient,
       torrentHttpClient: httpClient
     });
     const episodeSyncService = new EpisodeSyncService(this.repository);

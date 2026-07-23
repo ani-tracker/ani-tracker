@@ -8,6 +8,7 @@ import {
   automationScheduler,
   animeDetailService,
   downloadTaskControlService,
+  embeddedTorrentCoreService,
   playbackStatusService,
   qbittorrentManagedService,
   registerIpcHandlers,
@@ -187,6 +188,11 @@ app.whenReady().then(async () => {
       await remoteGateway.applySettings(settings.network.remoteAccess);
       desktopIntegration.applySettings(settings);
       await qbittorrentManagedService.applySettings(settings);
+      await embeddedTorrentCoreService.applySettings(settings).catch((error: unknown) => {
+        logger.error("Embedded torrent core settings apply failed", {
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
     }
   });
   const settings = await repository.getSettings();
@@ -195,6 +201,11 @@ app.whenReady().then(async () => {
   await remoteGateway.applySettings(settings.network.remoteAccess).catch((error: unknown) => remoteGateway.setStartupError(error));
   desktopIntegration.applySettings(settings);
   void qbittorrentManagedService.applySettings(settings);
+  void embeddedTorrentCoreService.applySettings(settings).catch((error: unknown) => {
+    logger.error("Embedded torrent core startup failed", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  });
   createWindow();
   void automationScheduler.start();
   void sourceSyncScheduler.start();
@@ -244,6 +255,13 @@ async function stopManagedQbittorrentThenQuit(): Promise<void> {
     await remoteGateway.stop();
   } catch (error) {
     logger.error("Remote HTTP gateway stop failed before quit", {
+      message: error instanceof Error ? error.message : String(error)
+    });
+  }
+  try {
+    await embeddedTorrentCoreService.stop();
+  } catch (error) {
+    logger.error("Embedded torrent core stop failed before quit", {
       message: error instanceof Error ? error.message : String(error)
     });
   }

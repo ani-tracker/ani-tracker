@@ -13,6 +13,7 @@ import { getSubtitleCoverage, resolveSubtitleLanguages } from "@shared/release-m
 import type { AppRepository } from "./core/repositories/app-repository";
 import { createRepositoryRuntime } from "./core/repositories/repository-runtime";
 import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
+import { embeddedTorrentCoreService } from "./core/downloads/embedded-torrent-core-service";
 import { ReleaseSourceService, resolveAnimeReleaseCacheTtlMs } from "./core/sources/release-source-service";
 import type {
   AddDownloadUrlInput,
@@ -59,11 +60,14 @@ import { SourceSyncScheduler } from "./core/sources/source-sync-scheduler";
 export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
 export const qbittorrentManagedService = new QbittorrentManagedService();
+export { embeddedTorrentCoreService };
 export const automationScheduler = new AutomationScheduler(repository, undefined, {
   getQbittorrentBaseUrl: (settings) => qbittorrentManagedService.getRuntimeBaseUrl(settings)
 });
 export const sourceSyncScheduler = new SourceSyncScheduler(repository);
-export const downloadTaskControlService = new DownloadTaskControlService(repository, qbittorrentManagedService);
+export const downloadTaskControlService = new DownloadTaskControlService(repository, qbittorrentManagedService, {
+  embeddedTorrentClient: embeddedTorrentCoreService
+});
 export const animeDetailService = new AnimeDetailService(repository);
 export const playbackStatusService = new PlaybackStatusService(repository);
 export const animeFollowPreparationService = new AnimeFollowPreparationService(repository);
@@ -161,53 +165,12 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   ipcMain.handle("downloads:refresh", () => downloadTaskControlService.refresh());
   ipcMain.handle("downloads:pause", (_event, taskId: string) => downloadTaskControlService.pause(taskId));
   ipcMain.handle("downloads:resume", (_event, taskId: string) => downloadTaskControlService.resume(taskId));
-  ipcMain.handle("downloads:remove", async (_event, taskId: string, deleteFiles: boolean) => {
-    const task = await repository.getDownloadTask(taskId);
-    if (!task) {
-      return repository.listDownloads();
-    }
-
-    if (task.engine === "qbittorrent") {
-      const settings = await repository.getSettings();
-      const engine = new QbittorrentEngine({
-        baseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
-        username: settings.download.qbittorrent.username,
-        password: settings.download.qbittorrent.password
-      });
-      await engine.remove(task.torrentHash ?? task.id, deleteFiles);
-    }
-
-    return repository.removeDownloadTask(task.id);
-  });
-  ipcMain.handle("downloads:setFilePriority", async (_event, taskId: string, fileIndexes: number[], priority: number) => {
-    const task = await repository.getDownloadTask(taskId);
-    if (!task) {
-      throw new Error("下载任务不存在");
-    }
-
-    if (task.engine === "qbittorrent") {
-      const settings = await repository.getSettings();
-      const engine = new QbittorrentEngine({
-        baseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
-        username: settings.download.qbittorrent.username,
-        password: settings.download.qbittorrent.password
-      });
-      await engine.setFilePriority(task.torrentHash ?? task.id, fileIndexes, priority);
-    }
-
-    return repository.upsertDownloadTask({
-      ...task,
-      files: task.files.map((file) =>
-        fileIndexes.includes(file.index)
-          ? {
-              ...file,
-              priority,
-              selected: priority > 0
-            }
-        : file
-      )
-    });
-  });
+  ipcMain.handle("downloads:remove", (_event, taskId: string, deleteFiles: boolean) =>
+    downloadTaskControlService.remove(taskId, deleteFiles)
+  );
+  ipcMain.handle("downloads:setFilePriority", (_event, taskId: string, fileIndexes: number[], priority: number) =>
+    downloadTaskControlService.setFilePriority(taskId, fileIndexes, priority)
+  );
   ipcMain.handle("downloads:addUrl", async (_event, input: AddDownloadUrlInput) => {
     const settings = await repository.getSettings();
     const url = input.url.trim();
@@ -500,6 +463,19 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     return qbittorrentManagedService.start(settings);
   });
   ipcMain.handle("downloads:stopQbittorrentManaged", () => qbittorrentManagedService.stop());
+  ipcMain.handle("downloads:getEmbeddedTorrentStatus", async () => {
+    const settings = await repository.getSettings();
+    return embeddedTorrentCoreService.refreshStatus(settings);
+  });
+  ipcMain.handle("downloads:startEmbeddedTorrent", async () => {
+    const settings = await repository.getSettings();
+    return embeddedTorrentCoreService.start(settings);
+  });
+  ipcMain.handle("downloads:stopEmbeddedTorrent", () => embeddedTorrentCoreService.stop());
+  ipcMain.handle("downloads:restartEmbeddedTorrent", async () => {
+    const settings = await repository.getSettings();
+    return embeddedTorrentCoreService.restart(settings);
+  });
   ipcMain.handle("media:list", () => repository.listMediaFiles());
   ipcMain.handle("media:scanDownload", async (_event, taskId: string) => {
     const task = await repository.getDownloadTask(taskId);

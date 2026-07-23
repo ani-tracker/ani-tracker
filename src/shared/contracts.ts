@@ -219,6 +219,23 @@ export interface QbittorrentManagedStatus {
   lastError?: string;
 }
 
+/** 内置 libtorrent sidecar 的进程与核心状态。 */
+export interface EmbeddedTorrentCoreStatus {
+  enabled: boolean;
+  running: boolean;
+  platform: string;
+  arch: string;
+  binaryPath?: string;
+  dataDir?: string;
+  pid?: number;
+  version?: string;
+  taskCount?: number;
+  listenPort?: number;
+  lastStartedAt?: string;
+  lastStoppedAt?: string;
+  lastError?: string;
+}
+
 export interface MediaExtractInput {
   release?: Release;
   filePath?: string;

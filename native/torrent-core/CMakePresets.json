@@ -1,0 +1,40 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 24,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "release",
+      "displayName": "Ani Torrent Core Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "portable-release",
+      "displayName": "Ani Torrent Core Portable Release",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/portable-release",
+      "cacheVariables": {
+        "ANI_FETCH_LIBTORRENT": "ON",
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_OSX_DEPLOYMENT_TARGET": "12.0"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "portable-release",
+      "configurePreset": "portable-release"
+    }
+  ]
+}

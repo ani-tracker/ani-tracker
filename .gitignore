@@ -35,6 +35,7 @@ bin-release/
 # should NOT be excluded as they contain compiler settings and other important
 # information for Eclipse / Flash Builder.
 /.build/
+/native/torrent-core/build/
 /.tmp-qbt*/
 /.cache/ffmpeg/
 /.codex/

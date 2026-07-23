@@ -24,11 +24,22 @@ export abstract class DefaultSettingsProvider {
         createAnimeFolder: true,
         animeFolderPattern: "{year}-{month}/{title}",
         temporaryDownloadDir: join(userDataDir, "incomplete"),
-        defaultTorrentEngine: "qbittorrent",
+        defaultTorrentEngine: "embedded",
         embedded: {
-          enabled: false,
+          enabled: true,
           listenPort: 51413,
-          maxActiveDownloads: 3
+          dhtEnabled: true,
+          upnpEnabled: true,
+          maxActiveDownloads: 3,
+          maxDownloadSpeed: 0,
+          maxUploadSpeed: 0,
+          seedingLimits: {
+            enabled: false,
+            ratioEnabled: false,
+            ratioLimit: 1,
+            timeEnabled: false,
+            timeLimitMinutes: 120
+          }
         },
         qbittorrent: {
           baseUrl: "http://127.0.0.1:18080",
