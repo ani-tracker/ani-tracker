@@ -135,7 +135,7 @@ function createWindow(): void {
   }
   desktopIntegration.bindWindow(window);
 
-  /** 向自绘标题栏同步系统最大化状态。 */
+  /** 向渲染进程同步主窗口最大化状态。 */
   const publishWindowState = () => {
     if (!window.isDestroyed()) {
       window.webContents.send("window:stateChanged", { maximized: window.isMaximized() });

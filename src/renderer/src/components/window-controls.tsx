@@ -6,8 +6,8 @@ import { appApi } from "@/lib/api";
 const dragRegionStyle = { WebkitAppRegion: "drag" } as CSSProperties;
 const noDragRegionStyle = { WebkitAppRegion: "no-drag" } as CSSProperties;
 
-/** 渲染 Windows 无边框主窗口的自绘标题栏。 */
-export function WindowTitleBar() {
+/** 为 Windows 无边框主窗口提供顶部拖拽热区和窗口控制按钮。 */
+export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
 
   useEffect(() => {
@@ -29,55 +29,56 @@ export function WindowTitleBar() {
   }
 
   return (
-    <header
-      aria-label="应用窗口标题栏"
-      className="fixed inset-x-0 top-0 z-50 flex h-9 items-center border-b bg-background text-foreground"
-      style={dragRegionStyle}
-    >
+    <>
       <div
-        className="flex min-w-0 flex-1 items-center gap-2 px-3"
+        aria-hidden="true"
+        className="fixed left-0 right-[var(--window-controls-width)] top-0 z-40 hidden h-[var(--app-content-padding)] md:block"
+        data-window-drag-region=""
         onDoubleClick={() => void toggleMaximize()}
+        style={dragRegionStyle}
+      />
+      <div
+        aria-label="窗口控制"
+        className="fixed right-0 top-0 z-50 flex h-[var(--window-control-height)] w-[var(--window-controls-width)] shrink-0 bg-background text-foreground"
+        data-window-controls=""
+        role="group"
+        style={noDragRegionStyle}
       >
-        <img
-          alt=""
-          className="h-4 w-6 shrink-0 object-contain"
-          draggable={false}
-          src="./icons/ani-tracker-mark.png"
-        />
-        <span className="truncate text-xs font-medium">Ani Tracker</span>
-      </div>
-      <div className="flex h-full shrink-0" style={noDragRegionStyle}>
         <Button
           aria-label="最小化窗口"
-          className="h-9 min-h-0 w-11 rounded-none p-0"
+          className="h-[var(--window-control-height)] min-h-0 w-11 rounded-none p-0"
           onClick={() => void appApi.minimizeWindow()}
           title="最小化"
           type="button"
           variant="ghost"
         >
-          <Minus data-icon="inline-start" />
+          <Minus aria-hidden="true" data-icon="inline-start" />
         </Button>
         <Button
           aria-label={maximized ? "还原窗口" : "最大化窗口"}
-          className="h-9 min-h-0 w-11 rounded-none p-0"
+          className="h-[var(--window-control-height)] min-h-0 w-11 rounded-none p-0"
           onClick={() => void toggleMaximize()}
           title={maximized ? "还原" : "最大化"}
           type="button"
           variant="ghost"
         >
-          {maximized ? <Copy data-icon="inline-start" /> : <Square data-icon="inline-start" />}
+          {maximized ? (
+            <Copy aria-hidden="true" data-icon="inline-start" />
+          ) : (
+            <Square aria-hidden="true" data-icon="inline-start" />
+          )}
         </Button>
         <Button
           aria-label="关闭窗口"
-          className="h-9 min-h-0 w-11 rounded-none p-0 hover:bg-destructive hover:text-destructive-foreground"
+          className="h-[var(--window-control-height)] min-h-0 w-11 rounded-none p-0 hover:bg-destructive hover:text-destructive-foreground"
           onClick={() => void appApi.closeWindow()}
           title="关闭"
           type="button"
           variant="ghost"
         >
-          <X data-icon="inline-start" />
+          <X aria-hidden="true" data-icon="inline-start" />
         </Button>
       </div>
-    </header>
+    </>
   );
 }

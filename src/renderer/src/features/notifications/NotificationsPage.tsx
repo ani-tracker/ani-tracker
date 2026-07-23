@@ -115,36 +115,12 @@ export function NotificationsPage() {
   return (
     <Page>
       <section className="flex min-w-0 flex-col gap-4 border-b pb-4">
-        <PageHeader className="sm:items-center">
+        <PageHeader>
           <PageHeading
             breadcrumb="提醒中心"
             description=""
             title=""
           />
-          <PageActions>
-            <div className="min-w-24 text-left sm:text-right">
-              <div className="text-xs text-muted-foreground">最后刷新</div>
-              <div className="text-sm font-semibold tabular-nums">{updatedAt ?? "尚未刷新"}</div>
-            </div>
-            <Button
-              variant="outline"
-              onClick={() => void loadNotifications()}
-              disabled={refreshing}
-            >
-              <RefreshCw data-icon="inline-start" className={cn(refreshing && "animate-spin")} />
-              {refreshing ? "刷新中" : "刷新状态"}
-            </Button>
-            <Button onClick={() => void markAllRead()} disabled={!unreadCount}>
-              <CheckCheck data-icon="inline-start" />
-              全部已读
-            </Button>
-            {electronClient && (
-              <Button variant="outline" onClick={() => setClearDialogOpen(true)} disabled={!items.length}>
-                <Trash2 data-icon="inline-start" />
-                清空
-              </Button>
-            )}
-          </PageActions>
         </PageHeader>
 
         <div className="flex min-w-0 flex-wrap items-center gap-2" aria-label="提醒统计">
@@ -163,7 +139,7 @@ export function NotificationsPage() {
         </Alert>
       )}
 
-      <FilterToolbar className="border-y-0 bg-transparent py-0">
+      <FilterToolbar className="border-y-0 bg-transparent py-0 sm:flex-wrap sm:items-center">
         <Tabs className="min-w-0 flex-1" value={filter} onValueChange={(value) => setFilter(value as NotificationFilter)}>
           <TabsList className="grid w-full grid-cols-5 sm:flex sm:w-fit" variant="line" aria-label="筛选提醒">
             {notificationFilters.map((item) => (
@@ -171,6 +147,36 @@ export function NotificationsPage() {
             ))}
           </TabsList>
         </Tabs>
+        <PageActions className="gap-1.5 sm:w-auto sm:flex-nowrap sm:justify-end">
+          <div className="min-w-20 text-left sm:text-right">
+            <div className="text-[10px] text-muted-foreground">最后刷新</div>
+            <div className="text-xs font-semibold tabular-nums">{updatedAt ?? "尚未刷新"}</div>
+          </div>
+          <Button
+            className="px-2 text-xs md:min-h-8"
+            variant="outline"
+            onClick={() => void loadNotifications()}
+            disabled={refreshing}
+          >
+            <RefreshCw data-icon="inline-start" className={cn(refreshing && "animate-spin")} />
+            {refreshing ? "刷新中" : "刷新状态"}
+          </Button>
+          <Button className="px-2 text-xs md:min-h-8" onClick={() => void markAllRead()} disabled={!unreadCount}>
+            <CheckCheck data-icon="inline-start" />
+            全部已读
+          </Button>
+          {electronClient && (
+            <Button
+              className="px-2 text-xs md:min-h-8"
+              variant="outline"
+              onClick={() => setClearDialogOpen(true)}
+              disabled={!items.length}
+            >
+              <Trash2 data-icon="inline-start" />
+              清空
+            </Button>
+          )}
+        </PageActions>
         <span className="text-xs text-muted-foreground">显示 {visibleItems.length} / {items.length}</span>
       </FilterToolbar>
 
@@ -245,18 +251,23 @@ export function NotificationsPage() {
 function NotificationsPageSkeleton() {
   return (
     <Page aria-busy="true" aria-label="正在加载提醒中心">
-      <div className="flex flex-col gap-2">
-        <Skeleton className="h-7 w-32" />
-        <Skeleton className="h-4 w-72 max-w-full" />
-      </div>
+      <PageHeader><Skeleton className="h-4 w-28" /></PageHeader>
       <div className="flex flex-wrap gap-2">
         {["all", "unread", "success", "error"].map((stat) => (
           <Skeleton className="h-9 w-24" key={stat} />
         ))}
       </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Skeleton className="h-9 w-72 max-w-full" />
+        <div className="flex flex-wrap gap-2">
+          <Skeleton className="h-8 w-24" />
+          <Skeleton className="h-8 w-20" />
+          <Skeleton className="h-8 w-14" />
+        </div>
+      </div>
       <div className="flex flex-col gap-3">
-          <Skeleton className="h-24 w-full" />
-          <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-24 w-full" />
+        <Skeleton className="h-24 w-full" />
       </div>
     </Page>
   );

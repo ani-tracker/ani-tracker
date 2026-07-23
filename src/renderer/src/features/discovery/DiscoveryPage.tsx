@@ -478,7 +478,7 @@ export function DiscoverySchedulePage({ initialTarget, onBack, onOpenAnimeDetail
 
   return (
     <Page>
-      <PageHeader className="items-center sm:items-center">
+      <PageHeader className="items-center sm:items-center" data-window-controls-clearance="">
         <Button className="h-auto w-fit min-h-0 justify-start px-0 text-xs" onClick={onBack} variant="ghost">
           <ArrowLeft data-icon="inline-start" />
           新番发现 / 新番时间表

@@ -36,7 +36,7 @@ import {
   TableHeader,
   TableRow
 } from "@/components/ui/table";
-import { Page, PageActions } from "@/components/page-layout";
+import { Page, PageActions, PageBreadcrumb, PageHeader } from "@/components/page-layout";
 import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
@@ -303,6 +303,10 @@ export function SourcesPage() {
   if (loadingError) {
     return (
       <Page>
+        <PageHeader className="border-b pb-4 sm:items-center">
+          <h1 className="sr-only">下载源</h1>
+          <PageBreadcrumb current="下载源" />
+        </PageHeader>
         <Alert variant="destructive">
           <AlertTitle>下载源加载失败</AlertTitle>
           <AlertDescription>{loadingError.message || "请重新进入下载源页面或重启应用后再试。"}</AlertDescription>
@@ -318,19 +322,23 @@ export function SourcesPage() {
 
   return (
     <Page>
-      <div className="flex justify-end border-b pb-4">
-        <PageActions className="w-full sm:w-auto">
+      <PageHeader className="border-b pb-4 sm:items-center">
+        <h1 className="sr-only">下载源</h1>
+        <PageBreadcrumb current="下载源" />
+      </PageHeader>
+
+      <div className="flex min-w-0 flex-col gap-3 border-y py-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap gap-x-4 gap-y-2 text-xs font-medium text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />已启用 {enabledCount}</span>
+          <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-muted-foreground" />已停用 {sources.length - enabledCount}</span>
+          <span className="flex items-center gap-1.5 text-warning"><span className="size-1.5 rounded-full bg-warning" />需要凭据 {credentialRequiredCount}</span>
+        </div>
+        <PageActions className="sm:w-auto sm:justify-end">
           <Button className="w-full sm:w-auto" onClick={() => setAddSheetOpen(true)}>
             <Plus data-icon="inline-start" />
             添加下载源
           </Button>
         </PageActions>
-      </div>
-
-      <div className="flex flex-wrap gap-x-4 gap-y-2 border-y py-3 text-xs font-medium text-muted-foreground">
-        <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-success" />已启用 {enabledCount}</span>
-        <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-muted-foreground" />已停用 {sources.length - enabledCount}</span>
-        <span className="flex items-center gap-1.5 text-warning"><span className="size-1.5 rounded-full bg-warning" />需要凭据 {credentialRequiredCount}</span>
       </div>
 
       <section className="min-w-0">
@@ -819,7 +827,11 @@ function ResponsiveSummarySeparator() {
 function SourcesPageSkeleton() {
   return (
     <Page aria-busy="true" aria-label="正在加载下载源">
-      <Skeleton className="h-10 w-full" />
+      <PageHeader className="border-b pb-4"><Skeleton className="h-4 w-24" /></PageHeader>
+      <div className="flex flex-wrap items-center justify-between gap-3 border-y py-3">
+        <Skeleton className="h-5 w-64 max-w-full" />
+        <Skeleton className="h-9 w-28" />
+      </div>
       <Skeleton className="h-40 w-full" />
       <Skeleton className="h-56 w-full" />
     </Page>

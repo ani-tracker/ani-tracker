@@ -219,25 +219,6 @@ export function DownloadsPage() {
           description="管理磁力与种子任务，观察实时进度与文件选择。"
           title={<span className="text-primary">下载队列</span>}
         />
-        <PageActions>
-          <div className="min-w-24 text-left sm:text-right">
-            <div className="text-xs text-muted-foreground">最后刷新</div>
-            <div className="text-sm font-semibold tabular-nums">{updatedAt ?? "尚未刷新"}</div>
-          </div>
-          <Button variant="outline" onClick={() => void refresh()} disabled={refreshing}>
-            <RotateCcw data-icon="inline-start" className={cn(refreshing && "animate-spin")} />
-            {refreshing ? "刷新中" : "刷新状态"}
-          </Button>
-          <Button
-            aria-label="定位到添加下载"
-            className="size-11 p-0 md:size-9"
-            onClick={focusDownloadInput}
-            title="添加下载"
-            variant="ghost"
-          >
-            <DownloadIcon />
-          </Button>
-        </PageActions>
       </PageHeader>
 
       {error && (
@@ -278,16 +259,37 @@ export function DownloadsPage() {
       </section>
 
       <Tabs value={view} onValueChange={(value) => setView(value as DownloadView)}>
-        <TabsList className="grid w-full grid-cols-2 sm:flex sm:w-fit" variant="line" aria-label="下载任务视图">
-          <TabsTrigger value="active">
-            正在下载
-            <Badge className="ml-1 h-5 border-0 px-1.5">{activeTasks.length}</Badge>
-          </TabsTrigger>
-          <TabsTrigger value="history">
-            历史任务
-            <Badge className="ml-1 h-5 border-0 px-1.5">{historyTasks.length}</Badge>
-          </TabsTrigger>
-        </TabsList>
+        <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-between">
+          <TabsList className="grid w-full grid-cols-2 sm:flex sm:w-fit" variant="line" aria-label="下载任务视图">
+            <TabsTrigger value="active">
+              正在下载
+              <Badge className="ml-1 h-5 border-0 px-1.5">{activeTasks.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="history">
+              历史任务
+              <Badge className="ml-1 h-5 border-0 px-1.5">{historyTasks.length}</Badge>
+            </TabsTrigger>
+          </TabsList>
+          <PageActions className="sm:w-auto sm:flex-nowrap sm:justify-end">
+            <div className="min-w-24 text-left sm:text-right">
+              <div className="text-xs text-muted-foreground">最后刷新</div>
+              <div className="text-sm font-semibold tabular-nums">{updatedAt ?? "尚未刷新"}</div>
+            </div>
+            <Button variant="outline" onClick={() => void refresh()} disabled={refreshing}>
+              <RotateCcw data-icon="inline-start" className={cn(refreshing && "animate-spin")} />
+              {refreshing ? "刷新中" : "刷新状态"}
+            </Button>
+            <Button
+              aria-label="定位到添加下载"
+              className="size-11 p-0 md:size-9"
+              onClick={focusDownloadInput}
+              title="添加下载"
+              variant="ghost"
+            >
+              <DownloadIcon />
+            </Button>
+          </PageActions>
+        </div>
 
         <TabsContent className="mt-6" forceMount value={view}>
           {animeGroups.length > 0 ? (
@@ -629,14 +631,15 @@ function groupDownloadTasks(tasks: DownloadTask[], myAnime: MyAnime[]): Download
 function DownloadsPageSkeleton() {
   return (
     <Page aria-busy="true" aria-label="正在加载下载队列">
-      <div className="flex items-center justify-between gap-4">
-        <div className="flex flex-col gap-2">
-          <Skeleton className="h-7 w-32" />
-          <Skeleton className="h-4 w-64 max-w-full" />
-        </div>
-        <Skeleton className="h-11 w-28 md:h-9" />
+      <div className="flex flex-col gap-2 border-b pb-4">
+        <Skeleton className="h-7 w-32" />
+        <Skeleton className="h-4 w-64 max-w-full" />
       </div>
       <Skeleton className="h-20 w-full" />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <Skeleton className="h-9 w-64 max-w-full" />
+        <Skeleton className="h-9 w-72 max-w-full" />
+      </div>
       <Skeleton className="h-56 w-full" />
     </Page>
   );

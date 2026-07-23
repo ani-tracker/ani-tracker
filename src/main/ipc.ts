@@ -104,7 +104,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     return getWindowState(window);
   });
   ipcMain.handle("window:close", () => {
-    logger.info("Main window close requested from custom title bar");
+    logger.info("Main window close requested from frameless window controls");
     options.getMainWindow?.()?.close();
   });
   if (options.imageCacheService) {
@@ -564,7 +564,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
   }
 }
 
-/** 返回自绘标题栏可读取的最小窗口状态。 */
+/** 返回无边框主窗口可读取的最小窗口状态。 */
 function getWindowState(window: BrowserWindow | null | undefined) {
   return { maximized: Boolean(window && !window.isDestroyed() && window.isMaximized()) };
 }

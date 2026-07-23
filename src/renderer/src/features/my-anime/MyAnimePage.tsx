@@ -15,8 +15,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
-import { FilterToolbar, Page, PageActions, PageBreadcrumb, PageHeader } from "@/components/page-layout";
+import { FilterToolbar, Page, PageBreadcrumb, PageHeader } from "@/components/page-layout";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { appApi } from "@/lib/api";
@@ -968,16 +969,10 @@ export function MyAnimePage({
   return (
     <>
       {!actionOnly && (
-        <Page className="gap-4">
+        <Page className="gap-4 pb-24">
           <PageHeader className="pb-3 sm:items-center">
             <h1 className="sr-only">我的追番</h1>
             <PageBreadcrumb current="我的追番" />
-            <PageActions>
-              <Button className="w-full sm:w-auto" onClick={openNewAnimeDrawer}>
-                <Plus data-icon="inline-start" />
-                添加追番
-              </Button>
-            </PageActions>
           </PageHeader>
 
           {message && (
@@ -1045,6 +1040,20 @@ export function MyAnimePage({
               </EmptyHeader>
             </Empty>
           )}
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                aria-label="添加追番"
+                className="fixed bottom-[max(1.5rem,var(--safe-area-bottom))] right-[max(1.5rem,var(--safe-area-right))] z-30 size-12 rounded-full p-0 shadow-lg md:size-11"
+                onClick={openNewAnimeDrawer}
+                type="button"
+              >
+                <Plus aria-hidden="true" data-icon="inline-start" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="left">添加追番</TooltipContent>
+          </Tooltip>
         </Page>
       )}
 

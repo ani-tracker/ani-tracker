@@ -24,9 +24,11 @@ import {
 } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
-import { WindowTitleBar } from "@/components/window-title-bar";
+import { WindowControls } from "@/components/window-controls";
 
 const APP_LOGO_SRC = "./icons/ani-tracker-mark.png";
+const dragRegionStyle = { WebkitAppRegion: "drag" } as CSSProperties;
+const noDragRegionStyle = { WebkitAppRegion: "no-drag" } as CSSProperties;
 
 export interface AppNavigationItem {
   id: string;
@@ -52,7 +54,7 @@ interface AppShellProps {
     onBack: () => void;
   };
   contentRef?: MutableRefObject<HTMLElement | null>;
-  customTitleBar?: boolean;
+  framelessWindow?: boolean;
 }
 
 /** 跟踪桌面宽视口，驱动 224px 完整栏和 72px 收缩栏切换。 */
@@ -79,7 +81,7 @@ export function AppShell({
   unreadCount,
   secondaryView,
   contentRef,
-  customTitleBar = false
+  framelessWindow = false
 }: AppShellProps) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const expandedDesktopSidebar = useExpandedDesktopSidebar();
@@ -108,23 +110,17 @@ export function AppShell({
 
   return (
     <TooltipProvider delayDuration={300}>
-      {customTitleBar && <WindowTitleBar />}
+      {framelessWindow && <WindowControls />}
       <SidebarProvider
+        data-frameless-window={framelessWindow ? "" : undefined}
         open={expandedDesktopSidebar}
         style={{
           "--sidebar-width": "14rem",
-          "--sidebar-width-icon": "4.5rem",
-          ...(customTitleBar
-            ? {
-                top: "2.25rem",
-                height: "calc(100dvh - 2.25rem)",
-                maxHeight: "calc(100dvh - 2.25rem)"
-              }
-            : {})
+          "--sidebar-width-icon": "4.5rem"
         } as CSSProperties}
       >
         <Sidebar aria-label="主导航" className="hidden md:flex">
-          <SidebarHeader className="h-20 justify-center border-b-0 px-3 py-4">
+          <SidebarHeader className="h-14 justify-center border-b-0 px-3 py-2">
             <div className="flex items-center gap-2 group-data-[state=collapsed]/sidebar:justify-center">
               <img
                 alt=""
@@ -139,8 +135,8 @@ export function AppShell({
             </div>
           </SidebarHeader>
 
-          <SidebarContent className="px-2 py-3">
-            <SidebarGroup>
+          <SidebarContent className="px-2 py-1">
+            <SidebarGroup className="p-0">
               <SidebarGroupContent>
                 <SidebarMenu>
                   {items.map((item) => {
@@ -218,13 +214,21 @@ export function AppShell({
           className="h-full max-h-full min-h-0 overflow-y-auto outline-none"
           tabIndex={-1}
         >
-          <header className="sticky top-0 z-30 flex min-h-16 items-center border-b bg-background px-[max(1rem,var(--safe-area-left))] pt-[var(--safe-area-top)] md:hidden">
+          <header
+            className={cn(
+              "sticky top-0 z-30 flex min-h-16 items-center border-b bg-background px-[max(1rem,var(--safe-area-left))] pt-[var(--safe-area-top)] md:hidden",
+              framelessWindow && "pr-[calc(var(--window-controls-width)+max(1rem,var(--safe-area-right)))]"
+            )}
+            data-window-drag-region={framelessWindow ? "" : undefined}
+            style={framelessWindow ? dragRegionStyle : undefined}
+          >
             {secondaryView ? (
               <>
                 <Button
                   aria-label="返回上一页"
                   className="size-11 px-0"
                   onClick={secondaryView.onBack}
+                  style={framelessWindow ? noDragRegionStyle : undefined}
                   variant="ghost"
                 >
                   <ArrowLeft aria-hidden="true" data-icon="inline-start" />
@@ -238,6 +242,7 @@ export function AppShell({
                   aria-label="打开主导航"
                   className="size-11 px-0"
                   onClick={() => setMobileNavigationOpen(true)}
+                  style={framelessWindow ? noDragRegionStyle : undefined}
                   variant="ghost"
                 >
                   <Menu aria-hidden="true" data-icon="inline-start" />
@@ -248,6 +253,7 @@ export function AppShell({
                     aria-label={unreadCount > 0 ? `提醒中心，${unreadCount} 条未读` : "提醒中心"}
                     className="relative size-11 px-0"
                     onClick={() => navigate(notificationsItem.id)}
+                    style={framelessWindow ? noDragRegionStyle : undefined}
                     variant="ghost"
                   >
                     <Bell aria-hidden="true" data-icon="inline-start" />
@@ -262,7 +268,7 @@ export function AppShell({
             )}
           </header>
 
-          <div className="mx-auto min-h-full w-full max-w-[1600px] p-4 md:p-5 xl:p-6">{children}</div>
+          <div className="mx-auto min-h-full w-full max-w-[1600px] p-[var(--app-content-padding)]">{children}</div>
         </SidebarInset>
 
         <Sheet onOpenChange={setMobileNavigationOpen} open={mobileNavigationOpen}>

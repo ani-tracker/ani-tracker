@@ -48,7 +48,7 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CachedImage } from "@/components/cached-image";
-import { Page } from "@/components/page-layout";
+import { Page, PageHeader } from "@/components/page-layout";
 import { appApi, isElectronClient } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import type { AnimeDetailResult } from "@shared/contracts";
@@ -367,7 +367,10 @@ export function AnimeDetailPage({
 
   return (
     <Page className="gap-5 pb-8">
-      <div className="hidden min-w-0 items-center justify-between gap-3 border-b pb-3 md:flex">
+      <PageHeader
+        className="hidden gap-3 border-b pb-3 sm:items-center md:flex"
+        data-window-controls-clearance=""
+      >
         <div className="flex min-w-0 items-center gap-2">
           <Button aria-label={`返回${sourceLabel}`} className="size-9 px-0" onClick={onBack} variant="ghost">
             <ArrowLeft />
@@ -397,7 +400,7 @@ export function AnimeDetailPage({
             onRemove={() => setRemoveDialogOpen(true)}
           />
         </div>
-      </div>
+      </PageHeader>
 
       {result.partialErrors.length > 0 && (
         <Alert>
@@ -872,7 +875,13 @@ function formatAliasLanguage(language: Anime["aliases"][number]["language"]): st
 function AnimeDetailSkeleton() {
   return (
     <Page className="gap-5">
-      <div className="hidden items-center justify-between border-b pb-3 md:flex"><Skeleton className="h-9 w-48" /><Skeleton className="h-9 w-28" /></div>
+      <PageHeader
+        className="hidden border-b pb-3 sm:items-center md:flex"
+        data-window-controls-clearance=""
+      >
+        <Skeleton className="h-9 w-48" />
+        <Skeleton className="h-9 w-28" />
+      </PageHeader>
       <section className="border-b pb-6">
         <Skeleton className="mb-4 h-36 w-full sm:h-44 md:h-52" />
         <div className="grid grid-cols-[112px_minmax(0,1fr)] gap-4 md:grid-cols-[176px_minmax(0,1fr)] md:gap-6 lg:grid-cols-[176px_minmax(0,1fr)_192px]">

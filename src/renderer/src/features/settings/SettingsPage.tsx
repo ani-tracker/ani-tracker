@@ -626,7 +626,7 @@ export function SettingsPage() {
   return (
     <div className={cn("flex min-w-0 flex-col gap-6", hasUnsavedChanges && "pb-20")}>
       <div className="sticky top-[calc(4rem+var(--safe-area-top))] z-20 -mx-4 border-b bg-background px-4 md:top-0 md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
-        <header className="flex flex-wrap items-center justify-between gap-3 py-3">
+        <header className="py-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
               <h1 className="text-xl font-semibold">设置</h1>
@@ -639,16 +639,6 @@ export function SettingsPage() {
             </div>
             <p className="mt-1 text-sm text-muted-foreground">目录、下载引擎、播放器和自动化规则集中管理。</p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
-            <Button
-              variant="outline"
-              onClick={() => setResetDialogOpen(true)}
-              disabled={resetState === "resetting" || saveState === "saving"}
-            >
-              <RotateCcw data-icon="inline-start" />
-              {resetState === "resetting" ? "恢复中" : resetState === "reset" ? "已恢复" : "恢复默认"}
-            </Button>
-          </div>
         </header>
         <div className="pb-3 lg:hidden">
           <SettingsCategorySelect activeCategory={activeCategory} onNavigate={navigateToCategory} />
@@ -660,6 +650,17 @@ export function SettingsPage() {
 
         <div className="flex min-w-0 flex-col gap-12">
           <SettingsCategory
+            action={(
+              <Button
+                className="w-full sm:w-auto"
+                variant="outline"
+                onClick={() => setResetDialogOpen(true)}
+                disabled={resetState === "resetting" || saveState === "saving"}
+              >
+                <RotateCcw data-icon="inline-start" />
+                {resetState === "resetting" ? "恢复中" : resetState === "reset" ? "已恢复" : "恢复默认"}
+              </Button>
+            )}
             description="明暗模式、主题预设与导入的用户主题包。"
             id="appearance"
             title="外观"
@@ -1934,18 +1935,23 @@ function SettingsCategory({
   id,
   title,
   description,
+  action,
   children
 }: {
   id: SettingsCategoryId;
   title: string;
   description: string;
+  action?: ReactNode;
   children: ReactNode;
 }) {
   return (
     <section className="scroll-mt-[calc(12rem+var(--safe-area-top))] lg:scroll-mt-24" id={`settings-${id}`}>
-      <header className="border-b pb-3">
-        <h2 className="text-xl font-semibold">{title}</h2>
-        <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+      <header className="flex flex-col gap-3 border-b pb-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-xl font-semibold">{title}</h2>
+          <p className="mt-1 text-sm text-muted-foreground">{description}</p>
+        </div>
+        {action && <div className="w-full shrink-0 sm:w-auto">{action}</div>}
       </header>
       <div className="mt-5">{children}</div>
     </section>

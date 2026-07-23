@@ -7,6 +7,9 @@
   --safe-area-right: env(safe-area-inset-right, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-left: env(safe-area-inset-left, 0px);
+  --app-content-padding: 1rem;
+  --window-control-height: 2.25rem;
+  --window-controls-width: 8.25rem;
   --background: 7 100% 98%;
   --foreground: 4 23% 12%;
   --card: 0 0% 100%;
@@ -89,6 +92,23 @@
   --ring: 6 100% 84%;
 }
 
+@media (min-width: 768px) {
+  :root {
+    --app-content-padding: 1.25rem;
+  }
+
+  /* 紧凑顶栏只补足与窗口按钮重叠的高度，不再长期占用右侧空间。 */
+  [data-frameless-window] [data-window-controls-clearance] {
+    margin-top: max(0px, calc(var(--window-control-height) - var(--app-content-padding)));
+  }
+}
+
+@media (min-width: 1280px) {
+  :root {
+    --app-content-padding: 1.5rem;
+  }
+}
+
 html {
   color-scheme: light;
 }
@@ -126,4 +146,231 @@ select {
 
 ::selection {
   background: hsl(var(--primary) / 0.24);
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
+  background-color: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-color: hsl(var(--muted-foreground) / 0.28);
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: hsl(var(--muted-foreground) / 0.46);
+}
+
+*::-webkit-scrollbar-thumb:active {
+  background-color: hsl(var(--foreground) / 0.52);
+}
+
+*::-webkit-scrollbar-button {
+  display: none;
+}
+
+/* 播放器页面使用稳定的视频表面，ArtPlayer 只负责媒体与字幕渲染。 */
+.player-page {
+  width: 100%;
+  min-width: 0;
+  background: #000;
+  outline: none;
+}
+
+.player-page:focus-visible {
+  box-shadow: inset 0 0 0 2px hsl(var(--ring));
+}
+
+.player-video-stage {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  background: #000;
+}
+
+.player-page-desktop,
+.player-page-remote {
+  height: 100vh;
+  height: 100svh;
+  overflow: hidden;
+}
+
+.player-page-desktop .player-video-stage,
+.player-page-remote .player-video-stage {
+  height: 100%;
+}
+
+.player-mobile-content,
+.player-mobile-settings {
+  display: none;
+}
+
+.player-page-desktop [data-player-drag-region] {
+  -webkit-app-region: drag;
+}
+
+.player-page-desktop [data-player-no-drag],
+.player-page-desktop button,
+.player-page-desktop input,
+.player-page-desktop [role="slider"] {
+  -webkit-app-region: no-drag;
+}
+
+[data-artplayer-surface] .art-video-player,
+[data-artplayer-surface] .art-video {
+  width: 100%;
+  height: 100%;
+  background: #000;
+}
+
+[data-artplayer-surface] .art-video {
+  object-fit: contain;
+}
+
+[data-artplayer-surface] .art-bottom,
+[data-artplayer-surface] .art-mask,
+[data-artplayer-surface] .art-state,
+[data-artplayer-surface] .art-loading,
+[data-artplayer-surface] .art-notice,
+[data-artplayer-surface] .art-info,
+[data-artplayer-surface] .art-contextmenus,
+[data-artplayer-surface] .art-settings {
+  display: none !important;
+}
+
+[data-artplayer-surface] .art-subtitle {
+  bottom: 5.5rem !important;
+  pointer-events: none;
+}
+
+@media (max-width: 900px) and (orientation: landscape) {
+  .player-desktop-controls,
+  .player-desktop-status,
+  .player-volume-slider,
+  .player-wide-control {
+    display: none;
+  }
+
+  .player-video-stage header {
+    min-height: 3.5rem;
+    padding-top: max(0.375rem, var(--safe-area-top));
+    padding-bottom: 0.375rem;
+  }
+
+  .player-video-stage footer {
+    padding-top: 0.375rem;
+    padding-bottom: max(0.375rem, var(--safe-area-bottom));
+  }
+
+  [data-artplayer-surface] .art-subtitle {
+    bottom: 4.75rem !important;
+  }
+}
+
+@media (max-width: 767px) and (orientation: portrait) {
+  .player-page-remote {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100svh;
+    overflow-x: hidden;
+    overflow-y: auto;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+
+  .player-page-remote .player-video-stage {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    min-height: 0 !important;
+    height: 56.25vw !important;
+    max-height: 56.25vw !important;
+    aspect-ratio: auto;
+  }
+
+  .player-page-remote .player-mobile-content,
+  .player-page-remote .player-mobile-settings {
+    display: block;
+  }
+
+  .player-page-remote .player-desktop-controls,
+  .player-page-remote .player-desktop-more,
+  .player-page-remote .player-desktop-status,
+  .player-page-remote .player-wide-control {
+    display: none;
+  }
+
+  .player-page-remote .player-bottom-settings,
+  .player-page-remote .player-center-skip,
+  .player-page-remote .player-top-secondary {
+    display: none;
+  }
+
+  .player-page-remote .player-video-stage header {
+    min-height: 3rem;
+    padding-top: max(0.25rem, var(--safe-area-top));
+    padding-bottom: 0.25rem;
+  }
+
+  .player-page-remote .player-video-stage footer {
+    padding-top: 0.25rem;
+    padding-bottom: max(0.25rem, var(--safe-area-bottom));
+  }
+
+  [data-artplayer-surface] .art-subtitle {
+    bottom: 4.5rem !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 900px) and (orientation: portrait) {
+  .player-page-remote {
+    height: auto;
+    min-height: 100svh;
+    overflow-y: auto;
+    background: hsl(var(--background));
+    color: hsl(var(--foreground));
+  }
+
+  .player-page-remote .player-video-stage {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
+
+  .player-page-remote .player-mobile-content {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    align-items: start;
+  }
+
+  .player-page-remote .player-mobile-content > :last-child {
+    border-left: 1px solid hsl(var(--border));
+  }
+
+  .player-page-remote .player-mobile-settings {
+    display: block;
+  }
+
+  .player-page-remote .player-desktop-controls,
+  .player-page-remote .player-desktop-more,
+  .player-page-remote .player-desktop-status,
+  .player-page-remote .player-wide-control {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-player-controls] {
+    transition-duration: 0ms !important;
+  }
 }

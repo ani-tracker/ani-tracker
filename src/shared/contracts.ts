@@ -18,7 +18,7 @@ export interface ImageCacheResolveResult {
   url: string;
 }
 
-/** 自绘标题栏需要的最小窗口状态。 */
+/** 无边框窗口控制区需要的最小窗口状态。 */
 export interface AppWindowState {
   maximized: boolean;
 }

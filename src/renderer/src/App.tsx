@@ -27,6 +27,7 @@ import { RemoteDownloadsPage } from "@/features/remote/RemoteDownloadsPage";
 import { RemoteMyAnimePage } from "@/features/remote/RemoteMyAnimePage";
 import { RemotePlayerPage, resolveRemotePlayerTaskId } from "@/features/remote/RemotePlayerPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
+import { PlayerDesignPreview } from "@/features/player/PlayerDesignPreview";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { appApi, getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
 import type { Anime } from "@shared/domain";
@@ -130,6 +131,12 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
 
 /** 按当前窗口用途渲染主界面或独立播放器。 */
 export function App() {
+  const playerPreview = import.meta.env.DEV
+    ? new URLSearchParams(window.location.search).get("playerPreview")
+    : null;
+  if (playerPreview) {
+    return <PlayerDesignPreview mode={playerPreview} />;
+  }
   const desktopPlayerTarget = isElectronClient()
     ? resolveDesktopPlayerWindowInput(window.location.search)
     : null;
@@ -174,7 +181,7 @@ function MainApplication() {
   detailViewRef.current = detailView;
   discoveryScheduleRef.current = discoverySchedule;
   const electronClient = isElectronClient();
-  const customTitleBar = electronClient && window.aniBridge?.platform === "win32";
+  const framelessWindow = electronClient && window.aniBridge?.platform === "win32";
   const remotePlayerTaskId = electronClient
     ? undefined
     : resolveRemotePlayerTaskId(window.location.pathname);
@@ -422,7 +429,7 @@ function MainApplication() {
           : undefined}
       status={shellStatus}
       unreadCount={unreadCount}
-      customTitleBar={customTitleBar}
+      framelessWindow={framelessWindow}
     >
       <div className={detailView || discoverySchedule ? "hidden" : undefined}>
         {renderPage(activePage, electronClient, {
