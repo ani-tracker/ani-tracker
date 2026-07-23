@@ -112,7 +112,7 @@ Stitch 项目：`12075319551332625536`
 | P2 Electron | libVLC 生命周期服务、双窗口协调、无边框/全屏、轨道与进度事件 | Windows/macOS/Linux 构建成功；窗口同步；关闭后无 VLC/窗口残留 | 已完成（运行时包验收并入 P7） |
 | P3 远程网页 | 新 UI 接入 ArtPlayer 适配器，保留 HLS/字幕/外部播放器逻辑 | 现有远程 URL 与 API 不变；HLS、字幕、进度和错误恢复回归通过 | 已完成 |
 | P4 Android | Compose 播放页、LibVLC Surface、横竖屏与生命周期 | debug/release 构建通过；旋转不断播；后台/前台和音频焦点行为正确 | 已完成（安装包与真机验收并入 P7/P8） |
-| P5 iOS | SwiftUI 播放页、MobileVLCKit 视图桥接、方向与生命周期 | 模拟器可编译；真机播放/字幕/横竖屏通过；安全区无控件遮挡 | 待开始 |
+| P5 iOS | SwiftUI 播放页、MobileVLCKit 视图桥接、方向与生命周期 | 模拟器可编译；真机播放/字幕/横竖屏通过；安全区无控件遮挡 | 已完成（macOS 实编译与真机验收并入 P7/P8） |
 | P6 业务闭环 | 续播、90% 已看、自动下一集、播放错误到转码回退 | 每 10 秒及暂停/退出保存进度；达到 90% 只标记一次；下一集可取消 | 待开始 |
 | P7 分发 | 各平台运行时、插件、原生绑定、许可证、源码说明和 Actions | 安装包离线启动无缺库；CI 校验必需文件；LGPL 合规材料随包可见 | 待开始 |
 | P8 验收 | 浏览器截图比对、构建测试、桌面与移动真机清单 | 桌面及 `390 x 844`、`844 x 390` 截图通过；原生平台无阻断项 | 待开始 |
@@ -161,6 +161,13 @@ P4 验证记录（2026-07-24）：
 - Android 应用固定 `libvlc-all:3.6.2` 与 `arm64-v8a`，新增原生 VLC Surface、Compose 竖屏详情/列表、横屏叠层和中央错误提示。
 - ViewModel 在旋转时保留播放器与业务会话，Surface 独立重绑；后台暂停、前台恢复、音频焦点、硬解、字幕/音轨、倍速、比例与切集均由原生控制器处理。
 - 本机真实通过 `:app:compileDebugKotlin`，并完成 Manifest、资源、Java、DEX 阶段；完整 APK 仅因现有 torrent-host 未准备 Boost/OpenSSL 而阻断，Actions 已包含对应准备步骤，安装包与真机验证并入 P7/P8。
+
+P5 验证记录（2026-07-24）：
+
+- 新增 XcodeGen SwiftUI 应用工程并固定 `MobileVLCKit 3.7.3`，原生控制器覆盖本地/网络媒体、外部字幕、音轨、倍速、比例、续播位置、音频中断和前后台恢复。
+- 竖屏实现 16:9 视频、摘要、简介和播放列表；横屏实现全屏视频叠层与右侧列表；加载、缓冲、无任务和播放失败均保留视频内可恢复提示。
+- 新增 `anitracker://player` 深链、本地安全作用域文件入口和解析单元测试；Swift 语法树、plist/隐私清单、YAML/Asset JSON、TypeScript、主题及 309 项 Node 测试通过。
+- 新增 macOS 15 / Xcode 16.4 Action，执行 XcodeGen、CocoaPods、iOS 模拟器测试并校验 MobileVLCKit 嵌入；当前 Git 远程仅为 Gitee，Action 真编译需在 GitHub 镜像接入后运行。
 
 ### P6：播放业务
 

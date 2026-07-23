@@ -1,0 +1,7 @@
+Pods/
+AniTracker.xcodeproj/
+AniTracker.xcworkspace/
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/

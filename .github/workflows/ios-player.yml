@@ -1,0 +1,71 @@
+name: iOS VLC Player Build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-player.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/ios-player.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  simulator:
+    name: ios-simulator
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: sudo xcode-select --switch /Applications/Xcode_16.4.app
+
+      - name: Install iOS project tools
+        run: brew install xcodegen cocoapods
+
+      - name: Generate project and install MobileVLCKit
+        working-directory: ios
+        run: |
+          xcodegen generate
+          pod install --repo-update
+
+      - name: Run iOS simulator tests
+        working-directory: ios
+        run: |
+          destination_id="$(xcrun simctl list devices available -j | python3 -c '
+          import json, sys
+          devices = json.load(sys.stdin)["devices"]
+          print(next(device["udid"] for runtime in devices.values() for device in runtime if "iPhone" in device["name"]))
+          ')"
+          xcodebuild \
+            -workspace AniTracker.xcworkspace \
+            -scheme AniTracker \
+            -configuration Debug \
+            -sdk iphonesimulator \
+            -destination "platform=iOS Simulator,id=${destination_id}" \
+            -derivedDataPath "${RUNNER_TEMP}/AniTrackerDerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            test
+
+      - name: Verify MobileVLCKit embedding
+        run: |
+          app="${RUNNER_TEMP}/AniTrackerDerivedData/Build/Products/Debug-iphonesimulator/Ani Tracker.app"
+          test -x "${app}/Ani Tracker"
+          test -f "${app}/Frameworks/MobileVLCKit.framework/MobileVLCKit"
+          file "${app}/Frameworks/MobileVLCKit.framework/MobileVLCKit"
+
+      - name: Package simulator artifact
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "${RUNNER_TEMP}/AniTrackerDerivedData/Build/Products/Debug-iphonesimulator/Ani Tracker.app" \
+            "${RUNNER_TEMP}/AniTracker-iOS-Simulator.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ani-tracker-ios-simulator
+          path: ${{ runner.temp }}/AniTracker-iOS-Simulator.zip
+          if-no-files-found: error
