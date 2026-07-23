@@ -63,6 +63,7 @@ interface AniListMedia {
   };
   nextAiringEpisode?: {
     airingAt?: number;
+    episode?: number;
   };
   season?: string;
   description?: string;
@@ -149,6 +150,7 @@ export class AniListMetadataProvider implements SeasonalAnimeMetadataProvider, A
             }
             nextAiringEpisode {
               airingAt
+              episode
             }
             season
             description(asHtml: false)
@@ -256,7 +258,7 @@ export class AniListMetadataProvider implements SeasonalAnimeMetadataProvider, A
           title { native romaji english }
           startDate { year month day }
           endDate { year month day }
-          nextAiringEpisode { airingAt }
+          nextAiringEpisode { airingAt episode }
           season
           description(asHtml: false)
           synonyms
@@ -317,6 +319,7 @@ function mapAniListMedia(item: AniListMedia, season: Season): Anime {
   const year = item.startDate?.year ?? new Date().getFullYear();
   const month = item.startDate?.month ?? 1;
   const day = item.startDate?.day ?? 1;
+  const nextAiringAt = mapNextAiringAt(item.nextAiringEpisode?.airingAt);
 
   return {
     id: `anilist-${item.id}`,
@@ -340,7 +343,10 @@ function mapAniListMedia(item: AniListMedia, season: Season): Anime {
       episodeCount: normalizePositiveInteger(item.episodes),
       airingStatus: mapAniListStatus(item.status),
       endDate: formatAniListDate(item.endDate),
-      nextAiringAt: mapNextAiringAt(item.nextAiringEpisode?.airingAt),
+      nextAiringAt,
+      nextAiringEpisodeNo: nextAiringAt
+        ? normalizePositiveInteger(item.nextAiringEpisode?.episode)
+        : undefined,
       genres: item.genres,
       studios: item.studios?.nodes?.flatMap((studio) => studio.name ? [studio.name] : []),
       staff: item.staff?.edges?.flatMap((credit) => {

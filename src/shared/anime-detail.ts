@@ -30,6 +30,7 @@ export function normalizeAnimeDetailMetadata(value: unknown): AnimeDetailMetadat
     airingStatus: readEnum(value.airingStatus, airingStatuses),
     endDate: readDateString(value.endDate),
     nextAiringAt: readFutureDateTime(value.nextAiringAt),
+    nextAiringEpisodeNo: readPositiveInteger(value.nextAiringEpisodeNo),
     broadcast: normalizeBroadcast(value.broadcast),
     genres: normalizeStringList(value.genres),
     studios: normalizeStringList(value.studios),
@@ -56,6 +57,8 @@ export function mergeAnimeDetailMetadata(
   if (!left) return right;
   if (!right) return left;
 
+  const nextAiring = pickNextAiring(left, right);
+
   return normalizeAnimeDetailMetadata({
     ...right,
     ...left,
@@ -63,9 +66,26 @@ export function mergeAnimeDetailMetadata(
     studios: mergeStrings(left.studios, right.studios),
     staff: mergeStaff(left.staff, right.staff),
     metadataSources: mergeStrings(left.metadataSources, right.metadataSources),
-    nextAiringAt: left.nextAiringAt ?? right.nextAiringAt,
+    nextAiringAt: nextAiring.at,
+    nextAiringEpisodeNo: nextAiring.episodeNo,
     refreshedAt: pickLatestDateTime(left.refreshedAt, right.refreshedAt)
   });
+}
+
+/** 选择时间更晚且带集数的播出锚点，避免合并后时间与集数来自不同来源。 */
+function pickNextAiring(
+  left: AnimeDetailMetadata,
+  right: AnimeDetailMetadata
+): { at?: string; episodeNo?: number } {
+  const candidates = [left, right]
+    .filter((item) => item.nextAiringAt)
+    .sort((a, b) => Date.parse(b.nextAiringAt!) - Date.parse(a.nextAiringAt!));
+  const complete = candidates.find((item) => item.nextAiringEpisodeNo);
+  const selected = complete ?? candidates[0];
+  return {
+    at: selected?.nextAiringAt,
+    episodeNo: selected?.nextAiringEpisodeNo
+  };
 }
 
 function normalizeBroadcast(value: unknown): AnimeBroadcastSchedule | undefined {

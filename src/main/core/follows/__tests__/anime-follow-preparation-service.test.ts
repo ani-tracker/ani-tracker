@@ -2,6 +2,7 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type {
   AppSettings,
+  Episode,
   FansubGroup,
   MyAnime,
   NotificationRecord,
@@ -91,6 +92,7 @@ test("AnimeFollowPreparationService 复用同一番剧的进行中任务", async
 class FakePreparationRepository {
   readonly notifications: NotificationRecord[] = [];
   readonly observedReleases: Release[] = [];
+  readonly episodes: Episode[] = [];
 
   async getSettings(): Promise<AppSettings> {
     return { network: { metadataProxy: { mode: "off", timeoutMs: 15_000 } } } as AppSettings;
@@ -112,6 +114,19 @@ class FakePreparationRepository {
   async addNotifications(records: NotificationRecord[]): Promise<NotificationRecord[]> {
     this.notifications.push(...records);
     return this.notifications;
+  }
+
+  async listCachedReleases(): Promise<Release[]> {
+    return [];
+  }
+
+  async listEpisodes(): Promise<Episode[]> {
+    return this.episodes;
+  }
+
+  async upsertEpisode(episode: Episode): Promise<Episode[]> {
+    this.episodes.push(episode);
+    return this.episodes;
   }
 }
 

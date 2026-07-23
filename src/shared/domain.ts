@@ -54,6 +54,7 @@ export interface AnimeDetailMetadata {
   airingStatus?: AnimeAiringStatus;
   endDate?: string;
   nextAiringAt?: string;
+  nextAiringEpisodeNo?: number;
   broadcast?: AnimeBroadcastSchedule;
   genres?: string[];
   studios?: string[];

@@ -42,6 +42,40 @@ test("AniList 月度采集每页固定 50 并按 pageInfo 拉取后续页", asyn
   assert.deepEqual(items.map((item) => item.externalIds.anilist), ["1", "2"]);
 });
 
+test("AniList 详情保留下一集编号和时间作为单集同步锚点", async () => {
+  const airingAt = Math.trunc(Date.parse("2030-07-15T12:00:00.000Z") / 1000);
+  const httpClient = {
+    async fetch(_input: string | URL, options?: RequestInit) {
+      const body = JSON.parse(String(options?.body)) as { query: string };
+      assert.match(body.query, /nextAiringEpisode \{ airingAt episode \}/);
+      return Response.json({
+        data: {
+          Media: {
+            id: 100,
+            title: { native: "锚点测试番" },
+            startDate: { year: 2030, month: 7, day: 1 },
+            episodes: 12,
+            nextAiringEpisode: { airingAt, episode: 3 }
+          }
+        }
+      });
+    }
+  };
+  const provider = new AniListMetadataProvider(httpClient, new AniListRequestScheduler());
+
+  const item = await provider.getAnimeDetail("100", {
+    id: "anime-anchor",
+    title: "锚点测试番",
+    aliases: [],
+    premiereYear: 2030,
+    premiereMonth: 7,
+    externalIds: { anilist: "100" }
+  });
+
+  assert.equal(item.detail?.nextAiringAt, "2030-07-15T12:00:00.000Z");
+  assert.equal(item.detail?.nextAiringEpisodeNo, 3);
+});
+
 test("AniList 请求调度器遵循每分钟共享请求预算", async () => {
   let nowMs = Date.parse("2026-07-22T00:00:00.000Z");
   const delays: number[] = [];

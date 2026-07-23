@@ -28,6 +28,7 @@ import { RssReleaseSource } from "../sources/rss-source";
 import { createSourceHttpClient } from "../sources/source-http-client";
 import { MAX_RELEASE_SOURCE_FETCH_LIMIT } from "../sources/source-query";
 import { AnimeSourceBindingService } from "../source-bindings/anime-source-binding-service";
+import { EpisodeSyncService } from "../episodes/episode-sync-service";
 
 const DEFAULT_RSS_REFRESH_INTERVAL_MINUTES = 20;
 const rssSubscriptionReleaseCache = new Map<string, { fetchedAtMs: number; releases: Release[] }>();
@@ -78,6 +79,7 @@ export class AutomationRunService {
       qbittorrentBaseUrl: this.options.getQbittorrentBaseUrl?.(settings),
       torrentHttpClient: httpClient
     });
+    const episodeSyncService = new EpisodeSyncService(this.repository);
     logger.info("自动下载扫描开始", {
       animeCount: myAnimeItems.length,
       fallbackPolicy: settings.automation.fallbackWhenDefaultFansubMissing,
@@ -105,9 +107,14 @@ export class AutomationRunService {
           animeTitle: anime.anime.title,
           reason: "番剧未开启自动下载"
         });
+        logger.info("自动下载跳过未启用追番", {
+          animeId: anime.anime.id,
+          animeTitle: anime.anime.title
+        });
         continue;
       }
 
+      const episodeSync = await episodeSyncService.sync(anime);
       const [episodes, preferences] = await Promise.all([
         this.repository.listEpisodes(anime.anime.id),
         this.repository.listEpisodePreferences(anime.anime.id)
@@ -120,6 +127,14 @@ export class AutomationRunService {
           animeId: anime.anime.id,
           animeTitle: anime.anime.title,
           reason: "没有需要自动处理的单集"
+        });
+        logger.info("自动下载跳过无可处理单集追番", {
+          animeId: anime.anime.id,
+          animeTitle: anime.anime.title,
+          episodeCount: episodes.length,
+          episodeCreatedCount: episodeSync.createdCount,
+          episodeUpdatedCount: episodeSync.updatedCount,
+          episodeStatuses: summarizeEpisodeStatuses(episodes)
         });
         continue;
       }
@@ -634,6 +649,14 @@ function isActionableEpisode(episode: Episode): boolean {
   }
 
   return episode.airTime ? new Date(episode.airTime).getTime() <= Date.now() : false;
+}
+
+/** 汇总单集状态，便于从日志定位番剧被整体跳过的原因。 */
+function summarizeEpisodeStatuses(episodes: readonly Episode[]): Record<string, number> {
+  return episodes.reduce<Record<string, number>>((summary, episode) => {
+    summary[episode.status] = (summary[episode.status] ?? 0) + 1;
+    return summary;
+  }, {});
 }
 
 function dedupeReleases(releases: Release[]): Release[] {

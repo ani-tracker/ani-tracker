@@ -4,7 +4,7 @@ import type { TestContext } from "node:test";
 import type { AnimeSourceBinding, AppSettings, DownloadTask, Episode, EpisodePreference, FansubGroup, MyAnime, Release, ReleaseSourceConfig } from "@shared/domain";
 import { createDefaultMyAnimePreferences } from "@shared/my-anime-policy";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
-import type { AppRepository } from "../../repositories/app-repository";
+import type { AppRepository, CachedReleaseQuery } from "../../repositories/app-repository";
 import { AutomationRunService } from "../automation-run-service";
 import { resolveAnimeDownloadPath } from "../../downloads/download-path-resolver";
 
@@ -251,6 +251,49 @@ test("AutomationRunService 在 RSS 刷新间隔内复用订阅缓存", async (t)
   assert.equal(second.downloaded.length, 1);
 });
 
+test("AutomationRunService 为零单集追番按缓存资源补建单集并继续自动下载", async (t) => {
+  const magnet = "magnet:?xt=urn:btih:AUTOSYNC01&dn=sync";
+  const repository = new FakeAutomationRepository({
+    settings: defaultSettings,
+    myAnime: [createMyAnime({ defaultFansubGroupId: "fansub-default" })],
+    episodes: [],
+    cachedReleases: [
+      {
+        id: "cached-release-1",
+        title: "[默认字幕组] 测试番 - 01 [1080p][HEVC][简体]",
+        animeId: "anime-1",
+        episodeNo: 1,
+        fansubGroupId: "fansub-default",
+        fansubName: "默认字幕组",
+        sourceId: "sync-cache",
+        sourceName: "单集同步缓存",
+        magnetUrl: magnet,
+        resolution: "1080p",
+        normalizedVideoCodec: "H.265/HEVC",
+        subtitleLanguages: ["chs"],
+        publishedAt: "2026-07-22T00:00:00.000Z"
+      }
+    ],
+    fansubs: createFansubs(),
+    sources: [createRssSource()]
+  });
+  mockRssFeed(t, [
+    {
+      title: "[默认字幕组] 测试番 - 01 [1080p][HEVC][简体]",
+      guid: "auto-sync-release",
+      magnet
+    }
+  ]);
+
+  const result = await new AutomationRunService(repository.asAppRepository()).runOnce();
+
+  assert.equal(result.checkedEpisodes, 1);
+  assert.equal(result.downloaded.length, 1);
+  assert.equal(repository.episodes.length, 1);
+  assert.equal(repository.episodes[0].episodeNo, 1);
+  assert.equal(repository.episodes[0].status, "downloading");
+});
+
 test("AutomationRunService 遇到已有下载任务时跳过单集且不搜索来源", async (t) => {
   let fetchCount = 0;
   t.mock.method(globalThis, "fetch", async () => {
@@ -445,6 +488,7 @@ interface FakeAutomationRepositoryData {
   downloads?: DownloadTask[];
   fansubs?: FansubGroup[];
   sources?: ReleaseSourceConfig[];
+  cachedReleases?: Release[];
 }
 
 class FakeAutomationRepository {
@@ -455,6 +499,7 @@ class FakeAutomationRepository {
   downloads: DownloadTask[];
   fansubs: FansubGroup[];
   sources: ReleaseSourceConfig[];
+  cachedReleases: Release[];
 
   constructor(data: FakeAutomationRepositoryData) {
     this.settings = data.settings;
@@ -464,6 +509,7 @@ class FakeAutomationRepository {
     this.downloads = data.downloads ?? [];
     this.fansubs = data.fansubs ?? [];
     this.sources = data.sources ?? [];
+    this.cachedReleases = data.cachedReleases ?? [];
   }
 
   asAppRepository(): AppRepository {
@@ -503,6 +549,14 @@ class FakeAutomationRepository {
 
   async listSources(): Promise<ReleaseSourceConfig[]> {
     return this.sources;
+  }
+
+  async listCachedReleases(query: CachedReleaseQuery = {}): Promise<Release[]> {
+    const sourceIds = query.sourceIds ? new Set(query.sourceIds) : undefined;
+    return this.cachedReleases.filter((release) =>
+      (!query.animeId || release.animeId === query.animeId) &&
+      (!sourceIds || sourceIds.has(release.sourceId))
+    );
   }
 
   async listAnimeSourceBindings(): Promise<AnimeSourceBinding[]> {

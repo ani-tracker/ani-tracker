@@ -4,6 +4,7 @@ import { mergeAnimeMetadataBatches, type AnimeDetailMetadataProvider } from "./m
 import { createAnimeMetadataProviders } from "./metadata-provider-factory";
 import type { AppRepository } from "../repositories/app-repository";
 import { logger } from "../logger";
+import { EpisodeSyncService } from "../episodes/episode-sync-service";
 
 const DETAIL_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
 
@@ -82,6 +83,10 @@ export class AnimeDetailService {
           }
         };
         await this.repository.upsertAnimeCatalog([merged]);
+        const followedItem = (await this.repository.listMyAnime()).find((item) => item.anime.id === animeId);
+        if (followedItem) {
+          await new EpisodeSyncService(this.repository).sync(followedItem);
+        }
       }
     }
 

@@ -15,6 +15,7 @@ import {
   resolveAnimeReleaseCacheTtlMs
 } from "../sources/release-source-service";
 import type { ReleaseHttpClient } from "../sources/mikan-source";
+import { EpisodeSyncService } from "../episodes/episode-sync-service";
 
 type BindingService = Pick<AnimeSourceBindingService, "getState">;
 type ResourceService = Pick<ReleaseSourceService, "searchAnime"> &
@@ -91,6 +92,7 @@ export class AnimeFollowPreparationService {
     };
     const result = await resourceService.searchAnime(item.anime, query, bindingState.bindings);
     const discoveredFansubs = await this.repository.observeAnimeFansubs(item.anime.id, result.releases);
+    const episodeSync = await new EpisodeSyncService(this.repository).sync(item, result.releases);
 
     if (result.errors.length) {
       await this.addSourceFailureNotification(item, result.errors, sources);
@@ -113,6 +115,8 @@ export class AnimeFollowPreparationService {
       releaseCount: result.releases.length,
       fansubCount: discoveredFansubs.length,
       errorCount: result.errors.length,
+      episodeCreatedCount: episodeSync.createdCount,
+      episodeUpdatedCount: episodeSync.updatedCount,
       cacheTtlMs
     });
   }

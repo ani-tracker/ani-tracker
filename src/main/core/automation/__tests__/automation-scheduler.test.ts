@@ -193,6 +193,10 @@ class FakeSchedulerRepository {
     return this.sources;
   }
 
+  async listCachedReleases(): Promise<Release[]> {
+    return [];
+  }
+
   async listAnimeSourceBindings(): Promise<AnimeSourceBinding[]> {
     return [];
   }
