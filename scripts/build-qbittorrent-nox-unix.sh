@@ -51,6 +51,8 @@ fi
 
 target="${platform}-${arch}"
 triplets_root="${repo_root}/native/qbittorrent-nox/triplets"
+manifest_root="${repo_root}/native/torrent-dependencies"
+dependency_include="${repo_root}/native/qbittorrent-nox/cmake/ensure-openssl-targets.cmake"
 case "${target}" in
   darwin-x64) triplet="x64-osx-static"; osx_arch="x86_64" ;;
   darwin-arm64) triplet="arm64-osx-static"; osx_arch="arm64" ;;
@@ -72,9 +74,9 @@ node "${repo_root}/scripts/prepare-qbittorrent-build-sources.mjs" --cache-root "
 
 echo "[qbittorrent-build] 准备静态依赖 triplet=${triplet}"
 "${vcpkg_root}/vcpkg" install \
-  "boost-system:${triplet}" \
-  "openssl:${triplet}" \
-  "zlib:${triplet}" \
+  "--triplet=${triplet}" \
+  "--x-manifest-root=${manifest_root}" \
+  "--x-install-root=${vcpkg_root}/installed" \
   "--overlay-triplets=${triplets_root}"
 
 libtorrent_options=(
@@ -112,6 +114,7 @@ qbittorrent_options=(
   "-DCMAKE_TOOLCHAIN_FILE=${vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
   "-DVCPKG_TARGET_TRIPLET=${triplet}"
   "-DVCPKG_OVERLAY_TRIPLETS=${triplets_root}"
+  "-DCMAKE_PROJECT_INCLUDE=${dependency_include}"
   "-DCMAKE_PREFIX_PATH=${libtorrent_install};${qt_root}"
   "-DLibtorrentRasterbar_DIR=${libtorrent_install}/lib/cmake/LibtorrentRasterbar"
   "-DQt6LinguistTools_DIR=${qt_root}/lib/cmake/Qt6LinguistTools"

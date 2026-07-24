@@ -36,6 +36,8 @@ $qbittorrentBuild = Join-Path $targetRoot "qbittorrent-build"
 $bundleInput = Join-Path $targetRoot "bundle-input"
 $installedRoot = Join-Path $VcpkgRoot "installed/$triplet"
 $toolchain = Join-Path $VcpkgRoot "scripts/buildsystems/vcpkg.cmake"
+$manifestRoot = Join-Path $repoRoot "native/torrent-dependencies"
+$dependencyInclude = Join-Path $repoRoot "native/qbittorrent-nox/cmake/ensure-openssl-targets.cmake"
 $qtPaths = Join-Path $QtRoot "bin/qtpaths.exe"
 if (-not (Test-Path $qtPaths)) {
     $qtPaths = Join-Path $QtRoot "bin/qtpaths6.exe"
@@ -53,9 +55,9 @@ node (Join-Path $repoRoot "scripts/prepare-qbittorrent-build-sources.mjs") --cac
 
 Write-Host "[qbittorrent-build] 准备静态依赖 triplet=$triplet"
 & $vcpkgExecutable install `
-    "boost-system:$triplet" `
-    "openssl:$triplet" `
-    "zlib:$triplet"
+    "--triplet=$triplet" `
+    "--x-manifest-root=$manifestRoot" `
+    "--x-install-root=$(Join-Path $VcpkgRoot 'installed')"
 
 Write-Host "[qbittorrent-build] 编译 libtorrent 2.0.13"
 cmake -S (Join-Path $sourceRoot "libtorrent") -B $libtorrentBuild -G Ninja `
@@ -83,6 +85,7 @@ cmake -S (Join-Path $sourceRoot "qbittorrent") -B $qbittorrentBuild -G Ninja `
     "-DCMAKE_BUILD_TYPE=Release" `
     "-DCMAKE_TOOLCHAIN_FILE=$toolchain" `
     "-DVCPKG_TARGET_TRIPLET=$triplet" `
+    "-DCMAKE_PROJECT_INCLUDE=$dependencyInclude" `
     "-DCMAKE_PREFIX_PATH=$libtorrentInstall;$QtRoot" `
     "-DLibtorrentRasterbar_DIR=$libtorrentConfig" `
     "-DQt6LinguistTools_DIR=$qtLinguistTools" `

@@ -8,14 +8,18 @@ import process from "node:process";
 import { pipeline } from "node:stream/promises";
 import { HttpsProxyAgent } from "https-proxy-agent";
 import {
+  DESKTOP_LIBVLC_SOURCE,
   DESKTOP_LIBVLC_VERSION,
   findDesktopLibVlcAsset
 } from "./libvlc-resource-manifest.mjs";
 
 const options = parseArgs(process.argv.slice(2));
-const asset = findDesktopLibVlcAsset(options.platform, options.arch);
+const asset = options.sourceCode
+  ? DESKTOP_LIBVLC_SOURCE
+  : findDesktopLibVlcAsset(options.platform, options.arch);
 if (!asset?.archiveName || !asset.url || !asset.archiveSha256) {
-  throw new Error(`[libvlc] no downloadable archive for ${options.platform}-${options.arch}`);
+  const target = options.sourceCode ? "source code" : `${options.platform}-${options.arch}`;
+  throw new Error(`[libvlc] no downloadable archive for ${target}`);
 }
 
 const destination = options.output
@@ -119,6 +123,7 @@ function parseArgs(args) {
     timeoutMs: 120_000,
     retries: 3,
     offline: false,
+    sourceCode: false,
     proxyUrl: undefined
   };
   for (let index = 0; index < args.length; index += 1) {
@@ -126,6 +131,10 @@ function parseArgs(args) {
     if (arg === "--") continue;
     if (arg === "--offline") {
       parsed.offline = true;
+      continue;
+    }
+    if (arg === "--source-code") {
+      parsed.sourceCode = true;
       continue;
     }
     if (["--platform", "--arch", "--output", "--proxy", "--timeout-ms", "--retries"].includes(arg)) {

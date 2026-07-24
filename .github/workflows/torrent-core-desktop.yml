@@ -62,7 +62,7 @@ jobs:
             .vcpkg/installed
             .cache/qbittorrent-build/downloads
             .cache/libvlc
-          key: desktop-native-${{ runner.os }}-${{ matrix.arch }}-2025.06.13-vlc-3.0.21-v1
+          key: desktop-native-${{ runner.os }}-${{ matrix.arch }}-2025.06.13-vlc-3.0.21-${{ hashFiles('native/torrent-dependencies/vcpkg.json') }}
 
       - name: Bootstrap qBittorrent vcpkg
         run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
@@ -114,18 +114,24 @@ jobs:
             node scripts/download-libvlc-archive.mjs \
               --platform darwin \
               --arch "${{ matrix.arch }}"
+            node scripts/download-libvlc-archive.mjs --source-code
             archive=".cache/libvlc/3.0.21/vlc-3.0.21-${{ matrix.arch == 'arm64' && 'arm64' || 'intel64' }}.dmg"
+            source_archive=".cache/libvlc/3.0.21/vlc-3.0.21.tar.xz"
             mount_point="${RUNNER_TEMP}/ani-vlc-mount"
-            mkdir -p "${mount_point}"
+            license_root="${RUNNER_TEMP}/ani-vlc-license"
+            mkdir -p "${mount_point}" "${license_root}"
+            tar -xf "${source_archive}" \
+              --strip-components=1 \
+              -C "${license_root}" \
+              vlc-3.0.21/COPYING \
+              vlc-3.0.21/COPYING.LIB
             hdiutil attach "${archive}" -nobrowse -readonly -mountpoint "${mount_point}"
             trap 'hdiutil detach "${mount_point}"' EXIT
-            copying="$(find "${mount_point}" -type f -iname 'COPYING*' -print -quit)"
-            test -n "${copying}"
             node scripts/prepare-libvlc-resources.mjs \
               --platform darwin \
               --arch "${{ matrix.arch }}" \
               --source "${mount_point}/VLC.app/Contents/MacOS" \
-              --license-root "$(dirname "${copying}")" \
+              --license-root "${license_root}" \
               --target out/libvlc \
               --required
             hdiutil detach "${mount_point}"
@@ -302,7 +308,7 @@ jobs:
             .vcpkg/installed
             .cache/qbittorrent-build/downloads
             .cache/libvlc
-          key: desktop-native-${{ runner.os }}-x64-2025.06.13-vlc-3.0.21-v1
+          key: desktop-native-${{ runner.os }}-x64-2025.06.13-vlc-3.0.21-${{ hashFiles('native/torrent-dependencies/vcpkg.json') }}
 
       - name: Bootstrap qBittorrent vcpkg
         shell: pwsh
@@ -344,7 +350,10 @@ jobs:
       - name: Install static dependencies
         shell: pwsh
         run: |
-          & "${{ github.workspace }}\.vcpkg\vcpkg.exe" install boost-system:x64-windows-static openssl:x64-windows-static
+          & "${{ github.workspace }}\.vcpkg\vcpkg.exe" install `
+            --triplet=x64-windows-static `
+            --x-manifest-root="${{ github.workspace }}\native\torrent-dependencies" `
+            --x-install-root="${{ github.workspace }}\.vcpkg\installed"
 
       - name: Configure portable core
         shell: pwsh

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# 使用 vcpkg 交叉编译 Android 版 Boost.System 与 OpenSSL，libtorrent 仍由 CMake 锁定到 2.1.0。
+# 使用共享 vcpkg 清单交叉编译 Android 原生依赖，libtorrent 仍由 CMake 锁定到 2.1.0。
 if [[ -z "${VCPKG_ROOT:-}" || ! -x "${VCPKG_ROOT}/vcpkg" ]]; then
   echo "VCPKG_ROOT 必须指向已 bootstrap 的 vcpkg" >&2
   exit 1
@@ -13,11 +13,12 @@ fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install_root="${repo_root}/.cache/android-torrent/vcpkg_installed"
+manifest_root="${repo_root}/native/torrent-dependencies"
 
 mkdir -p "${install_root}"
 "${VCPKG_ROOT}/vcpkg" install \
-  boost-system:arm64-android \
-  openssl:arm64-android \
+  --triplet=arm64-android \
+  --x-manifest-root="${manifest_root}" \
   --x-install-root="${install_root}"
 
 echo "Android 原生依赖已准备：${install_root}/arm64-android"

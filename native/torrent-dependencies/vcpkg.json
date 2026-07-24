@@ -1,0 +1,24 @@
+{
+  "name": "ani-tracker-torrent-dependencies",
+  "version-string": "0.1.0",
+  "description": "Shared native dependencies for the Ani Tracker torrent cores",
+  "dependencies": [
+    "boost-asio",
+    "boost-chrono",
+    "boost-config",
+    "boost-crc",
+    "boost-date-time",
+    "boost-iterator",
+    "boost-logic",
+    "boost-multi-index",
+    "boost-multiprecision",
+    "boost-pool",
+    "boost-random",
+    "boost-range",
+    "boost-scope-exit",
+    "boost-system",
+    "boost-variant",
+    "openssl",
+    "zlib"
+  ]
+}

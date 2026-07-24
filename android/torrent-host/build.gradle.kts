@@ -27,6 +27,7 @@ android {
                     "-DANI_BUILD_ANDROID_JNI=ON",
                     "-DANI_FETCH_LIBTORRENT=ON",
                     "-DBOOST_ROOT=$nativePrefix",
+                    "-DBoost_INCLUDE_DIR=$nativePrefix/include",
                     "-DOPENSSL_ROOT_DIR=$nativePrefix",
                     "-DOPENSSL_USE_STATIC_LIBS=TRUE"
                 )
