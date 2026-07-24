@@ -1,6 +1,8 @@
 import type { DownloadStatus, DownloadTask } from "./domain";
 
-type DownloadProgressState = Pick<DownloadTask, "status" | "progress">;
+type DownloadProgressState = Pick<DownloadTask, "status" | "progress"> & {
+  files?: Array<Pick<DownloadTask["files"][number], "progress" | "selected">>;
+};
 
 const completedStatuses = new Set<DownloadStatus>(["completed", "seeding"]);
 const activeStatuses = new Set<DownloadStatus>([
@@ -23,10 +25,16 @@ export function isActiveDownloadStatus(status: DownloadStatus): boolean {
   return activeStatuses.has(status);
 }
 
-/** 判断任务是否已完成数据下载，同时兼容进度已满但状态尚未切换的引擎。 */
+/** 判断任务是否已完成数据下载，并兼容暂停做种与引擎状态延迟。 */
 export function isCompletedDownloadTask(task: DownloadProgressState): boolean {
-  if (isCompletedDownloadStatus(task.status)) return true;
   if (task.status === "error" || task.status === "missing_files") return false;
+  if (isCompletedDownloadStatus(task.status)) return true;
+
+  const selectedFiles = task.files?.filter((file) => file.selected) ?? [];
+  if (selectedFiles.length > 0) {
+    return selectedFiles.every((file) => file.progress >= 1);
+  }
+
   return task.progress >= 1;
 }
 

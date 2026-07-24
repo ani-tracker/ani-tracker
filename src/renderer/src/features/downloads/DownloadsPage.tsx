@@ -38,7 +38,7 @@ import {
 } from "@shared/download-status";
 import type { DownloadStatus, DownloadTask, MyAnime } from "@shared/domain";
 
-type DownloadView = "active" | "history";
+type DownloadView = "active" | "completed";
 
 const downloadStatusText: Record<DownloadStatus, string> = {
   queued: "排队中",
@@ -72,9 +72,9 @@ export function DownloadsPage() {
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const downloadUrlInputRef = useRef<HTMLInputElement>(null);
 
-  const activeTasks = useMemo(() => tasks.filter((task) => !isHistoryTask(task)), [tasks]);
-  const historyTasks = useMemo(() => tasks.filter(isHistoryTask), [tasks]);
-  const visibleTasks = view === "active" ? activeTasks : historyTasks;
+  const activeTasks = useMemo(() => tasks.filter((task) => !isCompletedTask(task)), [tasks]);
+  const completedTasks = useMemo(() => tasks.filter(isCompletedTask), [tasks]);
+  const visibleTasks = view === "active" ? activeTasks : completedTasks;
   const animeGroups = useMemo(() => groupDownloadTasks(visibleTasks, myAnime), [visibleTasks, myAnime]);
 
   const refresh = useCallback(async (silent = false) => {
@@ -269,9 +269,9 @@ export function DownloadsPage() {
               正在下载
               <Badge className="ml-1 h-5 border-0 px-1.5">{activeTasks.length}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="history">
-              历史任务
-              <Badge className="ml-1 h-5 border-0 px-1.5">{historyTasks.length}</Badge>
+            <TabsTrigger value="completed">
+              完成任务
+              <Badge className="ml-1 h-5 border-0 px-1.5">{completedTasks.length}</Badge>
             </TabsTrigger>
           </TabsList>
           <PageActions className="sm:w-auto sm:flex-nowrap sm:justify-end">
@@ -363,7 +363,7 @@ export function DownloadsPage() {
             <Empty className="min-h-72">
               <EmptyHeader>
                 <EmptyMedia variant="icon"><DownloadIcon /></EmptyMedia>
-                <EmptyTitle>{view === "active" ? "当前没有下载任务" : "暂无历史任务"}</EmptyTitle>
+                <EmptyTitle>{view === "active" ? "当前没有下载任务" : "暂无完成任务"}</EmptyTitle>
                 <EmptyDescription>
                   {view === "active" ? "添加 magnet 或 torrent 地址后，任务会显示在这里。" : "已完成任务会保留在这里。"}
                 </EmptyDescription>
@@ -673,10 +673,6 @@ function isActiveTask(task: DownloadTask): boolean {
   return isActiveDownloadTask(task);
 }
 
-function isHistoryTask(task: DownloadTask): boolean {
-  return isCompletedDownloadTask(task);
-}
-
 function isErrorTask(task: DownloadTask): boolean {
   return task.status === "error" || task.status === "missing_files";
 }
@@ -698,8 +694,10 @@ function getDownloadStatusTone(task: DownloadTask): "neutral" | "green" | "amber
   return "neutral";
 }
 
-/** 将已完成数据下载的做种或状态延迟任务统一显示为完成。 */
+/** 保留已完成任务的做种状态，暂停做种时明确区分于未完成暂停。 */
 function getDownloadStatusText(task: DownloadTask): string {
+  if (task.status === "seeding") return "做种中";
+  if (task.status === "paused" && isCompletedDownloadTask(task)) return "已暂停做种";
   return isCompletedDownloadTask(task) ? "已完成" : downloadStatusText[task.status];
 }
 
