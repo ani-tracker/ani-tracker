@@ -6,7 +6,7 @@ import { appApi } from "@/lib/api";
 const dragRegionStyle = { WebkitAppRegion: "drag" } as CSSProperties;
 const noDragRegionStyle = { WebkitAppRegion: "no-drag" } as CSSProperties;
 
-/** 为 Windows 无边框主窗口提供顶部拖拽热区和窗口控制按钮。 */
+/** 为桌面端无边框主窗口提供顶部拖拽热区和窗口控制按钮。 */
 export function WindowControls() {
   const [maximized, setMaximized] = useState(false);
 

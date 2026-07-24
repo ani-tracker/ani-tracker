@@ -43,7 +43,7 @@ module.exports = {
     category: "public.app-category.entertainment",
     hardenedRuntime: true,
     minimumSystemVersion: "12.0",
-    icon: "src/renderer/public/icons/ani-tracker-512.png",
+    icon: "src/renderer/public/icons/ani-tracker-1024.png",
     target: ["dmg", "zip"]
   },
   dmg: {

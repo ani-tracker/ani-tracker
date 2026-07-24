@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, Menu, safeStorage, webContents } from "electron";
+import { app, BrowserWindow, dialog, Menu, nativeImage, safeStorage, webContents } from "electron";
 import { join } from "node:path";
 import { DailyReminderService } from "./core/automation/daily-reminder-service";
 import { logger } from "./core/logger";
@@ -35,8 +35,12 @@ import { DesktopLibVlcPlayerService } from "./core/media/desktop-libvlc-player-s
 
 declare const __ANI_TRUSTED_ORIGINS__: string;
 
+const APP_NAME = "Ani Tracker";
 const APP_ID = "dev.ani.tracker";
-const APP_ICON_PATH = join(__dirname, "../renderer/icons/ani-tracker-512.png");
+const APP_ICON_FILE_NAME = "ani-tracker-512.png";
+const APP_DOCK_ICON_FILE_NAME = "ani-tracker-1024.png";
+// 进程标题仅影响系统展示，不改变 userData 和 safeStorage 的历史身份。
+process.title = APP_NAME;
 const trustedOriginsFromEnvFile = typeof __ANI_TRUSTED_ORIGINS__ === "string"
   ? __ANI_TRUSTED_ORIGINS__
   : undefined;
@@ -44,6 +48,17 @@ const trustedOriginsFromEnvFile = typeof __ANI_TRUSTED_ORIGINS__ === "string"
 let mainWindow: BrowserWindow | null = null;
 let quitAfterManagedQbittorrentStops = false;
 const appearanceService = new AppearanceService(() => mainWindow);
+
+/** 在打包产物和开发源码中查找应用图标，避免开发构建清理后图标丢失。 */
+function resolveApplicationIconPath(fileName: string): string {
+  const candidates = [
+    join(__dirname, "../renderer/icons", fileName),
+    join(app.getAppPath(), "out/renderer/icons", fileName),
+    join(app.getAppPath(), "src/renderer/public/icons", fileName)
+  ];
+  return candidates.find((candidate) => !nativeImage.createFromPath(candidate).isEmpty()) ?? candidates[0];
+}
+
 registerImageCacheScheme();
 registerDesktopMediaScheme();
 const imageCacheService = new ImageCacheService({
@@ -132,15 +147,17 @@ const remoteGateway = new RemoteHttpGateway(remoteMethodRegistry, {
 });
 
 function createWindow(): void {
+  const framelessWindow = process.platform === "win32" || process.platform === "darwin";
+  const appIconPath = resolveApplicationIconPath(APP_ICON_FILE_NAME);
   const window = new BrowserWindow({
     width: 1240,
     height: 820,
     minWidth: 720,
     minHeight: 560,
-    title: "Ani Tracker",
-    icon: APP_ICON_PATH,
+    title: APP_NAME,
+    icon: appIconPath,
     autoHideMenuBar: process.platform === "win32",
-    frame: process.platform !== "win32",
+    frame: !framelessWindow,
     backgroundColor: appearanceService.getWindowBackgroundColor(),
     webPreferences: {
       preload: join(__dirname, "../preload/index.mjs"),
@@ -148,6 +165,10 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false
     }
+  });
+  logger.info("Main window created", {
+    platform: process.platform,
+    frameless: framelessWindow
   });
   mainWindow = window;
   if (process.platform === "win32") {
@@ -205,9 +226,24 @@ function showMainWindow(): void {
 }
 
 app.whenReady().then(async () => {
+  logger.info("Application identity configured", {
+    name: APP_NAME,
+    appId: APP_ID,
+    userData: app.getPath("userData")
+  });
   if (process.platform === "win32") {
     app.setAppUserModelId(APP_ID);
     Menu.setApplicationMenu(null);
+  }
+  if (process.platform === "darwin") {
+    const dockIconPath = resolveApplicationIconPath(APP_DOCK_ICON_FILE_NAME);
+    const dockIcon = nativeImage.createFromPath(dockIconPath);
+    if (dockIcon.isEmpty()) {
+      logger.warn("macOS Dock icon could not be loaded", { path: dockIconPath });
+    } else {
+      app.dock.setIcon(dockIcon);
+      logger.info("macOS Dock icon applied", { path: dockIconPath });
+    }
   }
 
   await repositoryRuntime.initialize();

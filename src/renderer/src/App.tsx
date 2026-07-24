@@ -188,7 +188,8 @@ function MainApplication() {
   detailViewRef.current = detailView;
   discoveryScheduleRef.current = discoverySchedule;
   const electronClient = isElectronClient();
-  const framelessWindow = electronClient && window.aniBridge?.platform === "win32";
+  const desktopPlatform = window.aniBridge?.platform;
+  const framelessWindow = electronClient && (desktopPlatform === "win32" || desktopPlatform === "darwin");
   const remotePlayerTaskId = electronClient
     ? undefined
     : resolveRemotePlayerTaskId(window.location.pathname);
