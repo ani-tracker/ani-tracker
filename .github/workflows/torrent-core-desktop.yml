@@ -45,7 +45,6 @@ jobs:
           host: ${{ matrix.platform == 'linux' && 'linux' || 'mac' }}
           target: desktop
           arch: ${{ matrix.platform == 'linux' && 'linux_gcc_64' || 'clang_64' }}
-          modules: qttools
           cache: true
 
       - uses: actions/checkout@v4
@@ -286,7 +285,6 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          modules: qttools
           cache: true
 
       - uses: actions/checkout@v4
