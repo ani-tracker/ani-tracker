@@ -126,6 +126,10 @@ interface PlayerRecord {
   resolvedSource?: string;
   resolvedSubtitles: ResolvedSubtitle[];
   subtitleTrackIds: Map<string, number>;
+  subtitleInstallAttemptedIds: Set<string>;
+  subtitleInstalledIds: Set<string>;
+  subtitleTrackIdsBeforeInstall: Set<number>;
+  pendingDefaultSubtitleId?: string;
   pendingStartPositionSeconds?: number;
   loadGeneration: number;
   sequence: number;
@@ -277,7 +281,7 @@ export class DesktopLibVlcPlayerService {
           if (!record.resolvedSource || !record.activeSource) {
             return rejectCommand(command, createInvalidCommandError("没有可重试的媒体资源"));
           }
-          record.subtitleTrackIds.clear();
+          this.resetSubtitleInstallation(record);
           record.player.setSource(record.resolvedSource, createSetSourceOptions(record.activeSource));
           this.patchSnapshot(record, { status: "loading", error: undefined });
           break;
@@ -331,7 +335,7 @@ export class DesktopLibVlcPlayerService {
     record.activeSource = command.source;
     record.resolvedSource = undefined;
     record.resolvedSubtitles = [];
-    record.subtitleTrackIds.clear();
+    this.resetSubtitleInstallation(record);
     record.pendingStartPositionSeconds = isFiniteRange(
       command.startPositionSeconds,
       0,
@@ -378,6 +382,7 @@ export class DesktopLibVlcPlayerService {
         uri: pathToFileURL(asset.filePath).toString(),
         default: subtitle.default
         }));
+      this.resetSubtitleInstallation(record);
       record.player.setSource(mediaAsset.filePath, createSetSourceOptions(command.source));
       logger.info("桌面 libVLC 已加载受控媒体资源", {
         ownerId: record.ownerId,
@@ -468,25 +473,85 @@ export class DesktopLibVlcPlayerService {
     bind("audioTrackChanged", () => this.patchSnapshot(record, {
       audioTracks: safeReadTracks(player, "audio")
     }));
-    bind("subtitleTrackChanged", () => this.patchSnapshot(record, {
-      subtitleTracks: safeReadTracks(player, "subtitle")
-    }));
+    bind("subtitleTrackChanged", () => {
+      this.reconcileSubtitleTrackIds(record);
+      this.applyPendingDefaultSubtitle(record);
+      this.patchSnapshot(record, {
+        subtitleTracks: safeReadTracks(player, "subtitle")
+      });
+    });
   }
 
-  /** 首次开始播放时安装外挂字幕，并记录来源 ID 到 VLC 轨道 ID 的映射。 */
+  /** 当前媒体会话内每条外挂字幕只尝试安装一次。 */
   private installSubtitles(record: PlayerRecord): void {
     const player = record.player;
-    if (!player || record.resolvedSubtitles.length === 0 || record.subtitleTrackIds.size > 0) return;
-    const existingIds = new Set(safeRead(() => player.getSubtitleTracks(), []).map((track) => track.id));
-    for (const subtitle of record.resolvedSubtitles) {
-      if (!safeRead(() => player.addSubtitleFile(subtitle.uri), false)) continue;
-      const addedTrack = safeRead(() => player.getSubtitleTracks(), [])
-        .find((track) => !existingIds.has(track.id) && ![...record.subtitleTrackIds.values()].includes(track.id));
-      if (addedTrack) record.subtitleTrackIds.set(subtitle.id, addedTrack.id);
+    if (!player || record.resolvedSubtitles.length === 0) return;
+    if (record.subtitleInstallAttemptedIds.size === 0) {
+      record.subtitleTrackIdsBeforeInstall = new Set(
+        safeRead(() => player.getSubtitleTracks(), []).map((track) => track.id)
+      );
     }
-    const defaultSubtitle = record.resolvedSubtitles.find((subtitle) => subtitle.default);
-    const defaultTrackId = defaultSubtitle ? record.subtitleTrackIds.get(defaultSubtitle.id) : undefined;
-    if (defaultTrackId !== undefined) safeRead(() => player.setSubtitleTrack(defaultTrackId), undefined);
+
+    let attemptedCount = 0;
+    let installedCount = 0;
+    for (const subtitle of record.resolvedSubtitles) {
+      if (record.subtitleInstallAttemptedIds.has(subtitle.id)) continue;
+      record.subtitleInstallAttemptedIds.add(subtitle.id);
+      attemptedCount += 1;
+      if (!safeRead(() => player.addSubtitleFile(subtitle.uri), false)) continue;
+      record.subtitleInstalledIds.add(subtitle.id);
+      installedCount += 1;
+    }
+    if (attemptedCount > 0) {
+      logger.info("桌面 libVLC 外挂字幕安装完成", {
+        ownerId: record.ownerId,
+        attemptedCount,
+        installedCount
+      });
+    }
+    this.reconcileSubtitleTrackIds(record);
+    this.applyPendingDefaultSubtitle(record);
+  }
+
+  /** libVLC 异步暴露轨道后，按安装顺序补全来源 ID 映射。 */
+  private reconcileSubtitleTrackIds(record: PlayerRecord): void {
+    const player = record.player;
+    if (!player || record.subtitleInstalledIds.size === 0) return;
+    const mappedTrackIds = new Set(record.subtitleTrackIds.values());
+    const addedTracks = safeRead(() => player.getSubtitleTracks(), [])
+      .filter((track) => (
+        isSelectableSubtitleTrack(track)
+        && !record.subtitleTrackIdsBeforeInstall.has(track.id)
+        && !mappedTrackIds.has(track.id)
+      ));
+    const unresolvedSubtitles = record.resolvedSubtitles.filter((subtitle) => (
+      record.subtitleInstalledIds.has(subtitle.id) && !record.subtitleTrackIds.has(subtitle.id)
+    ));
+    for (const [index, subtitle] of unresolvedSubtitles.entries()) {
+      const track = addedTracks[index];
+      if (!track) break;
+      record.subtitleTrackIds.set(subtitle.id, track.id);
+    }
+  }
+
+  /** 映射就绪后仅应用一次默认外挂字幕，避免覆盖用户后续选择。 */
+  private applyPendingDefaultSubtitle(record: PlayerRecord): void {
+    const player = record.player;
+    const subtitleId = record.pendingDefaultSubtitleId;
+    if (!player || !subtitleId) return;
+    const trackId = record.subtitleTrackIds.get(subtitleId);
+    if (trackId === undefined) return;
+    record.pendingDefaultSubtitleId = undefined;
+    safeRead(() => player.setSubtitleTrack(trackId), undefined);
+  }
+
+  /** 换源或重试时清空外挂字幕安装状态。 */
+  private resetSubtitleInstallation(record: PlayerRecord): void {
+    record.subtitleTrackIds.clear();
+    record.subtitleInstallAttemptedIds.clear();
+    record.subtitleInstalledIds.clear();
+    record.subtitleTrackIdsBeforeInstall.clear();
+    record.pendingDefaultSubtitleId = record.resolvedSubtitles.find((subtitle) => subtitle.default)?.id;
   }
 
   /** 切换音频或字幕轨道，允许用 VLC 数字 ID 或来源字幕 ID。 */
@@ -497,6 +562,7 @@ export class DesktopLibVlcPlayerService {
   ): PlayerCommandResult {
     const player = record.player!;
     const trackIdValue = command.trackId;
+    if (kind === "subtitle") record.pendingDefaultSubtitleId = undefined;
     if (kind === "subtitle" && trackIdValue === undefined) {
       player.setSubtitleTrack(-1);
     } else {
@@ -636,6 +702,9 @@ function createPlayerRecord(ownerId: number): PlayerRecord {
     capabilities: createUnavailablePlayerCapabilities("libvlc", "electron", "libVLC 正在初始化"),
     resolvedSubtitles: [],
     subtitleTrackIds: new Map(),
+    subtitleInstallAttemptedIds: new Set(),
+    subtitleInstalledIds: new Set(),
+    subtitleTrackIdsBeforeInstall: new Set(),
     loadGeneration: 0,
     sequence: 0,
     disposed: false,
@@ -662,12 +731,20 @@ function createSetSourceOptions(source: PlayerMediaSource) {
 }
 
 function readTracks(tracks: NativeTrackInfo[], selectedId: number, kind: "audio" | "subtitle"): PlayerTrack[] {
-  return tracks.map((track) => ({
+  return tracks
+    .filter((track) => kind === "audio" || isSelectableSubtitleTrack(track))
+    .map((track) => ({
     id: String(track.id),
     kind,
     label: track.name || `${kind === "audio" ? "音轨" : "字幕"} ${track.id}`,
     selected: track.id === selectedId
   }));
+}
+
+/** 排除 libVLC 用于关闭字幕的负 ID 和禁用伪轨道。 */
+function isSelectableSubtitleTrack(track: NativeTrackInfo): boolean {
+  if (track.id < 0) return false;
+  return !["disable", "disabled", "off"].includes(track.name.trim().toLowerCase());
 }
 
 function safeReadTracks(player: DesktopNativeVlcPlayer, kind: "audio" | "subtitle"): PlayerTrack[] {

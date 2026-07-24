@@ -26,7 +26,9 @@ class FakeNativePlayer extends EventEmitter implements DesktopNativeVlcPlayer {
   audioTrack = 1;
   subtitleTrack = -1;
   audioTracks = [{ id: 1, name: "日语" }, { id: 2, name: "中文" }];
-  subtitleTracks = [{ id: 3, name: "内嵌字幕" }];
+  subtitleTracks = [{ id: -1, name: "Disable" }, { id: 3, name: "内嵌字幕" }];
+  subtitleInstallCallCount = 0;
+  private pendingSubtitleTracks: Array<{ id: number; name: string }> = [];
 
   async embed(): Promise<void> { this.embedded = true; }
   notifyLayoutChange(): void { this.layoutRefreshCount += 1; }
@@ -57,8 +59,15 @@ class FakeNativePlayer extends EventEmitter implements DesktopNativeVlcPlayer {
   getSubtitleTrack(): number { return this.subtitleTrack; }
   setSubtitleTrack(trackId: number): void { this.subtitleTrack = trackId; }
   addSubtitleFile(): boolean {
-    this.subtitleTracks.push({ id: 4, name: "外挂字幕" });
+    this.subtitleInstallCallCount += 1;
+    this.pendingSubtitleTracks.push({ id: 3 + this.subtitleInstallCallCount, name: "外挂字幕" });
     return true;
+  }
+  /** 模拟 libVLC 延迟暴露刚安装的外挂字幕轨道。 */
+  publishPendingSubtitleTracks(): void {
+    this.subtitleTracks.push(...this.pendingSubtitleTracks);
+    this.pendingSubtitleTracks = [];
+    this.emit("subtitleTrackChanged");
   }
   setAspectRatio(ratio: string): void { this.aspectRatio = ratio; }
   setScale(scale: number): void { this.scale = scale; }
@@ -123,9 +132,30 @@ test("DesktopLibVlcPlayerService 解析受控路径并发布递增快照", async
 
   player.emit("playing");
   assert.equal(player.time, 12_000);
+  assert.equal(player.subtitleInstallCallCount, 1);
+  assert.equal(player.subtitleTrack, -1);
+  assert.equal(snapshots.at(-1)?.subtitleTracks.length, 1);
+  assert.equal(snapshots.at(-1)?.subtitleTracks.some((track) => track.label === "Disable"), false);
+
+  for (let index = 0; index < 10; index += 1) {
+    player.emit("paused");
+    player.emit("playing");
+  }
+  assert.equal(player.subtitleInstallCallCount, 1);
+  assert.equal(snapshots.at(-1)?.subtitleTracks.length, 1);
+
+  player.publishPendingSubtitleTracks();
   assert.equal(player.subtitleTrack, 4);
   assert.equal(snapshots.at(-1)?.status, "playing");
   assert.equal(snapshots.at(-1)?.audioTracks.length, 2);
+  assert.equal(snapshots.at(-1)?.subtitleTracks.length, 2);
+  assert.equal(snapshots.at(-1)?.subtitleTracks.some((track) => track.id === "-1"), false);
+
+  for (let index = 0; index < 10; index += 1) {
+    player.emit("paused");
+    player.emit("playing");
+  }
+  assert.equal(player.subtitleInstallCallCount, 1);
   assert.equal(snapshots.at(-1)?.subtitleTracks.length, 2);
 
   player.emit("buffering");
