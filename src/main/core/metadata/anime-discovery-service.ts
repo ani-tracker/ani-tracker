@@ -1,6 +1,7 @@
 import type {
   AnimeDiscoveryQuery,
   AnimeDiscoveryResult,
+  AnimeDiscoverySearchResult,
   AnimeDiscoverySeasonQuery,
   AnimeDiscoverySeasonResult
 } from "@shared/contracts";
@@ -11,6 +12,7 @@ import { createAnimeMetadataProviders } from "./metadata-provider-factory";
 import {
   mergeAnimeMetadataBatches,
   type MonthlyAnimeMetadataProvider,
+  supportsSearchableAnimeMetadataProvider,
   supportsSeasonalAnimeMetadataProvider,
   uniqueByNormalizedTitle
 } from "./metadata-provider";
@@ -47,8 +49,75 @@ export class AnimeDiscoveryService {
     return this.repository.listAnimeCatalog();
   }
 
-  async searchCatalog(keyword: string) {
-    return this.repository.searchAnimeCatalog(keyword);
+  /** 并发搜索本地全量缓存与所有支持关键词搜索的在线来源。 */
+  async searchCatalog(keyword: string): Promise<AnimeDiscoverySearchResult> {
+    const normalizedKeyword = keyword.trim();
+    if (!normalizedKeyword) {
+      return {
+        keyword: "",
+        items: await this.repository.listAnimeCatalog(),
+        source: "local",
+        errors: []
+      };
+    }
+
+    const [localItems, providers] = await Promise.all([
+      this.repository.searchAnimeCatalog(normalizedKeyword),
+      this.getProviders()
+    ]);
+    const searchableProviders = providers.filter(supportsSearchableAnimeMetadataProvider);
+    const providerResults = await Promise.all(searchableProviders.map(async (provider) => {
+      logger.info("开始在线搜索新番元数据", { source: provider.id, keyword: normalizedKeyword });
+      try {
+        const items = uniqueByNormalizedTitle(await provider.searchAnime(normalizedKeyword));
+        logger.info("在线新番元数据搜索完成", {
+          source: provider.id,
+          keyword: normalizedKeyword,
+          count: items.length
+        });
+        return { source: provider.id, items };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "在线搜索失败";
+        logger.warn("在线新番元数据来源搜索失败", {
+          source: provider.id,
+          keyword: normalizedKeyword,
+          error: message
+        });
+        return { source: provider.id, items: [] as Anime[], error: message };
+      }
+    }));
+    const errors = providerResults.flatMap((result) =>
+      result.error ? [`${result.source}: ${result.error}`] : []
+    );
+    const batches = [
+      { source: "local", items: localItems },
+      ...providerResults.filter((result) => result.items.length > 0)
+    ];
+    const items = batches.some((batch) => batch.items.length > 0)
+      ? mergeAnimeMetadataBatches(batches)
+      : [];
+
+    if (providerResults.some((result) => result.items.length > 0) && items.length > 0) {
+      try {
+        await this.repository.upsertAnimeCatalog(items);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "搜索结果缓存失败";
+        logger.warn("在线新番搜索结果写入缓存失败", { keyword: normalizedKeyword, error: message });
+        errors.push(`local-cache: ${message}`);
+      }
+    }
+
+    const source = ["local", ...providerResults.filter((result) => !result.error).map((result) => result.source)]
+      .join("+");
+    logger.info("新番关键词聚合搜索完成", {
+      keyword: normalizedKeyword,
+      source,
+      localCount: localItems.length,
+      resultCount: items.length,
+      errorCount: errors.length
+    });
+
+    return { keyword: normalizedKeyword, items, source, errors };
   }
 
   async collectMonth(query: AnimeDiscoveryQuery): Promise<AnimeDiscoveryResult> {

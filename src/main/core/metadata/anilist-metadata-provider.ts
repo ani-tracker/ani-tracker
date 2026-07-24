@@ -10,6 +10,7 @@ import { inferAnimeAliasLanguage } from "../../../shared/anime-title";
 import {
   getSeasonInfo,
   type AnimeDetailMetadataProvider,
+  type SearchableAnimeMetadataProvider,
   type SeasonalAnimeMetadataProvider
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpTransport } from "./metadata-http-client";
@@ -22,6 +23,7 @@ import {
 
 const ANILIST_GRAPHQL_ENDPOINT = "https://graphql.anilist.co";
 const ANILIST_MAX_PAGE_COUNT = 20;
+const ANILIST_SEARCH_LIMIT = 30;
 
 interface AniListResponse {
   data?: {
@@ -100,7 +102,10 @@ const anilistSeasonByLocalSeason: Record<Season, "WINTER" | "SPRING" | "SUMMER" 
   fall: "FALL"
 };
 
-export class AniListMetadataProvider implements SeasonalAnimeMetadataProvider, AnimeDetailMetadataProvider {
+export class AniListMetadataProvider implements
+  SeasonalAnimeMetadataProvider,
+  SearchableAnimeMetadataProvider,
+  AnimeDetailMetadataProvider {
   readonly id = "anilist";
 
   constructor(
@@ -238,6 +243,45 @@ export class AniListMetadataProvider implements SeasonalAnimeMetadataProvider, A
       .map((item) => mapAniListMedia(item, season));
   }
 
+  /** 使用 AniList 搜索匹配跨季度番剧。 */
+  async searchAnime(keyword: string): Promise<Anime[]> {
+    const search = keyword.trim();
+    if (!search) {
+      return [];
+    }
+    const query = `
+      query SearchAnime($search: String!, $perPage: Int!) {
+        Page(page: 1, perPage: $perPage) {
+          media(type: ANIME, search: $search, sort: SEARCH_MATCH) {
+            id
+            idMal
+            averageScore
+            bannerImage
+            format
+            episodes
+            status
+            title { native romaji english }
+            startDate { year month day }
+            endDate { year month day }
+            nextAiringEpisode { airingAt episode }
+            season
+            description(asHtml: false)
+            synonyms
+            coverImage { large extraLarge }
+            genres
+            duration
+            source
+            isAdult
+            studios(isMain: true) { nodes { name isAnimationStudio } }
+            rankings { rank type context allTime }
+          }
+        }
+      }
+    `;
+    const json = await this.request(query, { search, perPage: ANILIST_SEARCH_LIMIT });
+    return (json.data?.Page?.media ?? []).map((item) => mapAniListMedia(item, resolveAniListSeason(item)));
+  }
+
   /** 按 AniList external id 读取单部番剧的完整详情。 */
   async getAnimeDetail(externalId: string, fallback: Anime): Promise<Anime> {
     const id = Number(externalId);
@@ -362,6 +406,16 @@ function mapAniListMedia(item: AniListMedia, season: Season): Anime {
       refreshedAt: new Date().toISOString()
     }
   };
+}
+
+/** 从 AniList 季度字段或首播月份推导统一季度。 */
+function resolveAniListSeason(item: AniListMedia): Season {
+  const season = item.season?.toUpperCase();
+  if (season === "WINTER") return "winter";
+  if (season === "SPRING") return "spring";
+  if (season === "SUMMER") return "summer";
+  if (season === "FALL") return "fall";
+  return getSeasonInfo(item.startDate?.month ?? 1).season;
 }
 
 function mapAniListFormat(value: string | undefined): AnimeFormat | undefined {

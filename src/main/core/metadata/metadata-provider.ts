@@ -11,11 +11,23 @@ export interface SeasonalAnimeMetadataProvider extends MonthlyAnimeMetadataProvi
   getAnimeBySeason(year: number, season: Season): Promise<Anime[]>;
 }
 
+export interface SearchableAnimeMetadataProvider {
+  readonly id: string;
+  searchAnime(keyword: string): Promise<Anime[]>;
+}
+
 /** 判断元数据来源是否支持一次采集整个季度。 */
 export function supportsSeasonalAnimeMetadataProvider(
   provider: MonthlyAnimeMetadataProvider
 ): provider is SeasonalAnimeMetadataProvider {
   return typeof (provider as Partial<SeasonalAnimeMetadataProvider>).getAnimeBySeason === "function";
+}
+
+/** 判断元数据来源是否支持在线关键词搜索。 */
+export function supportsSearchableAnimeMetadataProvider(
+  provider: MonthlyAnimeMetadataProvider
+): provider is MonthlyAnimeMetadataProvider & SearchableAnimeMetadataProvider {
+  return typeof (provider as Partial<SearchableAnimeMetadataProvider>).searchAnime === "function";
 }
 
 export interface AnimeDetailMetadataProvider {

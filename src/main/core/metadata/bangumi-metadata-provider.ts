@@ -12,7 +12,8 @@ import {
   getSeasonInfo,
   isDateInMonth,
   type AnimeDetailMetadataProvider,
-  type MonthlyAnimeMetadataProvider
+  type MonthlyAnimeMetadataProvider,
+  type SearchableAnimeMetadataProvider
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpTransport } from "./metadata-http-client";
 import { logger } from "../logger";
@@ -23,6 +24,7 @@ const BANGUMI_ANIME_SUBJECT_TYPE = 2;
 const BANGUMI_PAGE_LIMIT = 50;
 const BANGUMI_MAX_MONTHLY_ITEMS = 300;
 const BANGUMI_DETAIL_CONCURRENCY = 6;
+const BANGUMI_SEARCH_LIMIT = 30;
 
 interface BangumiPagedSubject {
   data?: BangumiSubject[];
@@ -66,7 +68,10 @@ interface BangumiAliasCandidate {
   priority: number;
 }
 
-export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider, AnimeDetailMetadataProvider {
+export class BangumiMetadataProvider implements
+  MonthlyAnimeMetadataProvider,
+  SearchableAnimeMetadataProvider,
+  AnimeDetailMetadataProvider {
   readonly id = "bangumi";
 
   constructor(
@@ -85,6 +90,24 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider, An
     );
 
     return detailedSubjects.map((item) => mapBangumiSubject(item, year, month, seasonInfo.season));
+  }
+
+  /** 使用 Bangumi 关键词接口搜索跨日期动画条目。 */
+  async searchAnime(keyword: string): Promise<Anime[]> {
+    const search = keyword.trim();
+    if (!search) {
+      return [];
+    }
+    const subjects = (await this.fetchSearchSubjects(search))
+      .filter((item) => item.type === BANGUMI_ANIME_SUBJECT_TYPE);
+    const detailedSubjects = await mapWithConcurrency(subjects, BANGUMI_DETAIL_CONCURRENCY, (item) =>
+      this.fetchDetail(item)
+    );
+
+    return detailedSubjects.map((item) => {
+      const { year, month } = resolveBangumiSearchDate(item.date);
+      return mapBangumiSubject(item, year, month, getSeasonInfo(month).season);
+    });
   }
 
   /** 按 Bangumi external id 读取单部番剧详情。 */
@@ -151,6 +174,31 @@ export class BangumiMetadataProvider implements MonthlyAnimeMetadataProvider, An
     });
 
     return subjects;
+  }
+
+  /** 请求 Bangumi 关键词搜索第一页，详情补全由调用方并发控制。 */
+  private async fetchSearchSubjects(keyword: string): Promise<BangumiSubject[]> {
+    const url = new URL("/v0/search/subjects", this.baseUrl);
+    url.searchParams.set("limit", String(BANGUMI_SEARCH_LIMIT));
+    url.searchParams.set("offset", "0");
+    const response = await this.httpClient.fetch(url, {
+      source: this.id,
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+        "User-Agent": BANGUMI_USER_AGENT
+      },
+      body: JSON.stringify({
+        keyword,
+        sort: "match",
+        filter: { type: [BANGUMI_ANIME_SUBJECT_TYPE] }
+      })
+    });
+    if (!response.ok) {
+      throw new Error(`Bangumi 搜索请求失败: ${response.status} ${response.statusText}`);
+    }
+    return ((await response.json()) as BangumiPagedSubject).data ?? [];
   }
 
   /** Reads one Bangumi monthly page; pagination control stays in fetchMonthlySubjects. */
@@ -236,6 +284,18 @@ function mapBangumiSubject(
       ...buildBangumiExternalIds(item)
     },
     detail: buildBangumiDetail(item, date)
+  };
+}
+
+/** 读取搜索条目日期，缺失时使用当前年月作为安全回退。 */
+function resolveBangumiSearchDate(value: string | undefined): { year: number; month: number } {
+  const [parsedYear, parsedMonth] = (value ?? "").split("-").map(Number);
+  const now = new Date();
+  return {
+    year: Number.isSafeInteger(parsedYear) && parsedYear > 0 ? parsedYear : now.getFullYear(),
+    month: Number.isSafeInteger(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12
+      ? parsedMonth
+      : now.getMonth() + 1
   };
 }
 

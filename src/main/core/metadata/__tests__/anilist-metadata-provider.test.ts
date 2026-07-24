@@ -76,6 +76,35 @@ test("AniList 详情保留下一集编号和时间作为单集同步锚点", asy
   assert.equal(item.detail?.nextAiringEpisodeNo, 3);
 });
 
+test("AniList 关键词搜索使用 search 参数并保留真实首播季度", async () => {
+  let requestBody: { query: string; variables: Record<string, unknown> } | undefined;
+  const httpClient = {
+    async fetch(_input: string | URL, options?: RequestInit) {
+      requestBody = JSON.parse(String(options?.body)) as typeof requestBody;
+      return Response.json({
+        data: {
+          Page: {
+            media: [{
+              id: 300,
+              title: { native: "旧番测试", romaji: "Old Anime Test" },
+              startDate: { year: 2012, month: 10, day: 5 },
+              season: "FALL"
+            }]
+          }
+        }
+      });
+    }
+  };
+  const provider = new AniListMetadataProvider(httpClient, new AniListRequestScheduler());
+
+  const [item] = await provider.searchAnime("Old Anime Test");
+
+  assert.match(requestBody?.query ?? "", /search: \$search/);
+  assert.equal(requestBody?.variables.search, "Old Anime Test");
+  assert.equal(item.premiereYear, 2012);
+  assert.equal(item.season, "fall");
+});
+
 test("AniList 请求调度器遵循每分钟共享请求预算", async () => {
   let nowMs = Date.parse("2026-07-22T00:00:00.000Z");
   const delays: number[] = [];

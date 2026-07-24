@@ -58,6 +58,14 @@ export interface AnimeDiscoverySeasonResult {
   errors: string[];
 }
 
+/** 新番关键词搜索返回的本地与在线聚合结果。 */
+export interface AnimeDiscoverySearchResult {
+  keyword: string;
+  items: Anime[];
+  source: string;
+  errors: string[];
+}
+
 export interface ReleaseQuery {
   keyword: string;
   animeId?: string;

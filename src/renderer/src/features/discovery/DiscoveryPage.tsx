@@ -84,19 +84,26 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
   const [appliedKeyword, setAppliedKeyword] = useState("");
   const [sortKey, setSortKey] = useState<DiscoverySortKey>("premiereAsc");
   const [items, setItems] = useState<Anime[]>([]);
+  const [searchItems, setSearchItems] = useState<Anime[]>([]);
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searching, setSearching] = useState(false);
   const [collecting, setCollecting] = useState(false);
   const [addingAnimeId, setAddingAnimeId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const loadRequestId = useRef(0);
+  const searchRequestId = useRef(0);
 
   const activeSeason = getSeasonOption(target.season);
   const followedIds = useMemo(() => new Set(myAnime.map((item) => item.anime.id)), [myAnime]);
   const visibleItems = useMemo(
-    () => sortAnimeItems(filterAnimeItems(items, selectedMonth, appliedKeyword), sortKey),
-    [appliedKeyword, items, selectedMonth, sortKey]
+    () => sortAnimeItems(
+      appliedKeyword ? searchItems : filterAnimeItems(items, selectedMonth, ""),
+      sortKey
+    ),
+    [appliedKeyword, items, searchItems, selectedMonth, sortKey]
   );
+  const visibleLoading = appliedKeyword ? searching : loading;
 
   useEffect(() => {
     void loadSeasonCatalog(target.year, target.season);
@@ -120,7 +127,9 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
 
       setItems(mergeAnimeItems(catalogs.flat()));
       setMyAnime(followed);
-      setMessage(null);
+      if (!appliedKeyword) {
+        setMessage(null);
+      }
     } catch (error) {
       if (requestId !== loadRequestId.current) {
         return;
@@ -168,9 +177,50 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     }
   }
 
-  /** Applies the current keyword to the selected season catalog. */
-  function searchCatalog() {
-    setAppliedKeyword(keyword.trim());
+  /** 搜索本地全量缓存与在线元数据来源。 */
+  async function searchCatalog() {
+    const normalizedKeyword = keyword.trim();
+    if (!normalizedKeyword) {
+      searchRequestId.current += 1;
+      setAppliedKeyword("");
+      setSearchItems([]);
+      setSearching(false);
+      return;
+    }
+
+    const requestId = ++searchRequestId.current;
+    setAppliedKeyword(normalizedKeyword);
+    setSearchItems([]);
+    setSearching(true);
+    setMessage(null);
+    console.info("[discovery] searching local and online catalog", { keyword: normalizedKeyword });
+
+    try {
+      const result = await appApi.searchAnimeCatalog(normalizedKeyword);
+      if (requestId !== searchRequestId.current) return;
+      setSearchItems(result.items);
+      setMessage(result.errors.length ? {
+        tone: "error",
+        text: `部分来源搜索失败，已展示可用结果：${result.errors[0]}`
+      } : null);
+      console.info("[discovery] catalog search completed", {
+        keyword: normalizedKeyword,
+        source: result.source,
+        itemCount: result.items.length,
+        errorCount: result.errors.length
+      });
+    } catch (error) {
+      if (requestId !== searchRequestId.current) return;
+      console.error("[discovery] catalog search failed", { keyword: normalizedKeyword, error });
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "搜索新番失败"
+      });
+    } finally {
+      if (requestId === searchRequestId.current) {
+        setSearching(false);
+      }
+    }
   }
 
   /** Adds one catalog entry to the user's anime library. */
@@ -222,13 +272,19 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     setSelectedMonth(null);
     setKeyword("");
     setAppliedKeyword("");
+    setSearchItems([]);
+    searchRequestId.current += 1;
+    setSearching(false);
     setSortKey("premiereAsc");
   }
 
   const collectingLabel = collecting ? "采集中" : "采集当前季度";
-  const resultLabel = loading
-    ? "正在加载"
-    : `${target.year} ${activeSeason.label} · ${visibleItems.length} 部`;
+  const resultLabel = visibleLoading
+    ? appliedKeyword ? "正在搜索" : "正在加载"
+    : appliedKeyword
+      ? `“${appliedKeyword}” · ${visibleItems.length} 部`
+      : `${target.year} ${activeSeason.label} · ${visibleItems.length} 部`;
+  const emptyCatalog = !appliedKeyword && items.length === 0;
 
   return (
     <Page>
@@ -318,11 +374,16 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
                   onChange={(event) => {
                     const value = event.target.value;
                     setKeyword(value);
-                    if (!value) setAppliedKeyword("");
+                    if (!value) {
+                      searchRequestId.current += 1;
+                      setAppliedKeyword("");
+                      setSearchItems([]);
+                      setSearching(false);
+                    }
                   }}
                 />
                 <InputGroupAddon>
-                  <InputGroupButton aria-label="搜索新番" disabled={loading} title="搜索" type="submit">
+                  <InputGroupButton aria-label="搜索新番" disabled={searching} title="搜索" type="submit">
                     <Search />
                   </InputGroupButton>
                 </InputGroupAddon>
@@ -341,7 +402,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
         )}
       </div>
 
-      {loading ? (
+      {visibleLoading ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5" aria-label="正在加载季度新番目录">
           {Array.from({ length: 10 }, (_, index) => (
             <div className="flex min-w-0 flex-col gap-3" key={index}>
@@ -369,17 +430,17 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
             <Empty className="col-span-full">
               <EmptyHeader>
                 <EmptyMedia variant="icon">
-                  {items.length === 0 ? <CalendarPlus /> : <Search />}
+                  {emptyCatalog ? <CalendarPlus /> : <Search />}
                 </EmptyMedia>
-                <EmptyTitle>{items.length === 0 ? "当前季度暂无本地目录" : "没有匹配的新番"}</EmptyTitle>
+                <EmptyTitle>{emptyCatalog ? "当前季度暂无本地目录" : "没有匹配的新番"}</EmptyTitle>
                 <EmptyDescription>
-                  {items.length === 0
+                  {emptyCatalog
                     ? "采集当前季度后即可浏览新番数据。"
-                    : "请调整月份或关键词后重试。"}
+                    : appliedKeyword ? "请更换关键词后重试。" : "请调整月份后重试。"}
                 </EmptyDescription>
               </EmptyHeader>
               <EmptyContent>
-                {items.length === 0 ? (
+                {emptyCatalog ? (
                   <Button onClick={() => void collectSeason(false)} disabled={collecting}>
                     <CalendarPlus data-icon="inline-start" />
                     {collectingLabel}
@@ -390,7 +451,10 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
                     onClick={() => {
                       setKeyword("");
                       setAppliedKeyword("");
-                      setSelectedMonth(null);
+                      setSearchItems([]);
+                      searchRequestId.current += 1;
+                      setSearching(false);
+                      if (!appliedKeyword) setSelectedMonth(null);
                     }}
                   >
                     <RotateCcw data-icon="inline-start" />

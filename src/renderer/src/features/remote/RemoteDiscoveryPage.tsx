@@ -4,10 +4,9 @@ import { CachedImage } from "@/components/cached-image";
 import { FilterToolbar, Page, PageHeader, PageHeading } from "@/components/page-layout";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldGroup, FieldLabel } from "@/components/ui/field";
-import { Input } from "@/components/ui/input";
+import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
 import {
   Select,
   SelectContent,
@@ -48,10 +47,14 @@ export function RemoteDiscoveryPage({ onOpenAnimeDetail }: RemoteDiscoveryPagePr
   const [keyword, setKeyword] = useState("");
   const [appliedKeyword, setAppliedKeyword] = useState("");
   const [items, setItems] = useState<Anime[]>([]);
+  const [searchItems, setSearchItems] = useState<Anime[]>([]);
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const requestIdRef = useRef(0);
+  const searchRequestIdRef = useRef(0);
 
   const activeSeason = getSeasonOption(season);
   const followedIds = useMemo(() => new Set(myAnime.map((item) => item.anime.id)), [myAnime]);
@@ -60,9 +63,15 @@ export function RemoteDiscoveryPage({ onOpenAnimeDetail }: RemoteDiscoveryPagePr
     return Array.from({ length: 4 }, (_, index) => currentYear + 1 - index);
   }, []);
   const visibleItems = useMemo(
-    () => filterAnimeItems(items, selectedMonth, appliedKeyword),
-    [appliedKeyword, items, selectedMonth]
+    () => filterAnimeItems(
+      appliedKeyword ? searchItems : items,
+      appliedKeyword ? null : selectedMonth,
+      ""
+    ),
+    [appliedKeyword, items, searchItems, selectedMonth]
   );
+  const visibleLoading = appliedKeyword ? searching : loading;
+  const visibleError = appliedKeyword ? searchError : catalogError;
 
   useEffect(() => {
     const requestId = ++requestIdRef.current;
@@ -75,19 +84,59 @@ export function RemoteDiscoveryPage({ onOpenAnimeDetail }: RemoteDiscoveryPagePr
         if (requestId !== requestIdRef.current) return;
         setItems(mergeAnimeItems(catalogs.flat()));
         setMyAnime(followed);
-        setError(null);
+        setCatalogError(null);
         console.info("[remote] 新番目录读取完成", { year, season, itemCount: catalogs.flat().length });
       })
       .catch((caught) => {
         if (requestId === requestIdRef.current) {
           console.error("[remote] 新番目录读取失败", { year, season, error: caught });
-          setError(caught instanceof Error ? caught.message : "加载新番目录失败");
+          setCatalogError(caught instanceof Error ? caught.message : "加载新番目录失败");
         }
       })
       .finally(() => {
         if (requestId === requestIdRef.current) setLoading(false);
       });
   }, [season, year]);
+
+  /** 搜索桌面端全量缓存与在线元数据来源。 */
+  async function searchCatalog() {
+    const normalizedKeyword = keyword.trim();
+    if (!normalizedKeyword) {
+      searchRequestIdRef.current += 1;
+      setAppliedKeyword("");
+      setSearchItems([]);
+      setSearchError(null);
+      setSearching(false);
+      return;
+    }
+
+    const requestId = ++searchRequestIdRef.current;
+    setAppliedKeyword(normalizedKeyword);
+    setSearchItems([]);
+    setSearchError(null);
+    setSearching(true);
+    console.info("[remote] 开始搜索本地与在线新番", { keyword: normalizedKeyword });
+    try {
+      const result = await appApi.searchAnimeCatalog(normalizedKeyword);
+      if (requestId !== searchRequestIdRef.current) return;
+      setSearchItems(result.items);
+      setSearchError(result.errors.length
+        ? `部分来源搜索失败，已展示可用结果：${result.errors[0]}`
+        : null);
+      console.info("[remote] 新番搜索完成", {
+        keyword: normalizedKeyword,
+        source: result.source,
+        itemCount: result.items.length,
+        errorCount: result.errors.length
+      });
+    } catch (caught) {
+      if (requestId !== searchRequestIdRef.current) return;
+      console.error("[remote] 新番搜索失败", { keyword: normalizedKeyword, error: caught });
+      setSearchError(caught instanceof Error ? caught.message : "搜索新番失败");
+    } finally {
+      if (requestId === searchRequestIdRef.current) setSearching(false);
+    }
+  }
 
   return (
     <Page>
@@ -98,16 +147,16 @@ export function RemoteDiscoveryPage({ onOpenAnimeDetail }: RemoteDiscoveryPagePr
         />
       </PageHeader>
 
-      {error && (
+      {visibleError && (
         <Alert variant="destructive">
-          <AlertTitle>新番目录读取失败</AlertTitle>
-          <AlertDescription>{error}</AlertDescription>
+          <AlertTitle>{appliedKeyword ? "新番搜索未完全成功" : "新番目录读取失败"}</AlertTitle>
+          <AlertDescription>{visibleError}</AlertDescription>
         </Alert>
       )}
 
       <FilterToolbar>
         <div className="flex min-w-0 flex-1 flex-col gap-3">
-          <FieldGroup className="gap-3 lg:grid lg:grid-cols-[8rem_minmax(15rem,1fr)_minmax(14rem,1fr)_auto] lg:items-end">
+          <FieldGroup className="gap-3 lg:grid lg:grid-cols-[8rem_minmax(15rem,1fr)_minmax(14rem,1fr)] lg:items-end">
             <Field>
               <FieldLabel className="sr-only" htmlFor="remote-discovery-year">选择年份</FieldLabel>
               <Select value={String(year)} onValueChange={(value) => setYear(Number(value))}>
@@ -140,26 +189,43 @@ export function RemoteDiscoveryPage({ onOpenAnimeDetail }: RemoteDiscoveryPagePr
               </Tabs>
             </Field>
 
-            <Field>
-              <FieldLabel className="sr-only" htmlFor="remote-discovery-keyword">搜索番剧</FieldLabel>
-              <Input
-                id="remote-discovery-keyword"
-                placeholder="搜索标题、原名或别名"
-                value={keyword}
-                onChange={(event) => {
-                  setKeyword(event.target.value);
-                  if (!event.target.value) setAppliedKeyword("");
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") setAppliedKeyword(keyword.trim());
-                }}
-              />
-            </Field>
-
-            <Button className="w-full lg:w-auto" variant="outline" onClick={() => setAppliedKeyword(keyword.trim())}>
-              <Search data-icon="inline-start" />
-              搜索
-            </Button>
+            <form
+              className="min-w-0"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void searchCatalog();
+              }}
+            >
+              <Field>
+                <FieldLabel className="sr-only" htmlFor="remote-discovery-keyword">搜索番剧</FieldLabel>
+                <InputGroup>
+                  <InputGroupAddon className="pl-3 pr-0 text-muted-foreground">
+                    <Search aria-hidden="true" />
+                  </InputGroupAddon>
+                  <InputGroupInput
+                    id="remote-discovery-keyword"
+                    placeholder="搜索中文名、日文名、罗马音或英文名"
+                    value={keyword}
+                    onChange={(event) => {
+                      const value = event.target.value;
+                      setKeyword(value);
+                      if (!value) {
+                        searchRequestIdRef.current += 1;
+                        setAppliedKeyword("");
+                        setSearchItems([]);
+                        setSearchError(null);
+                        setSearching(false);
+                      }
+                    }}
+                  />
+                  <InputGroupAddon>
+                    <InputGroupButton aria-label="搜索新番" disabled={searching} title="搜索" type="submit">
+                      <Search />
+                    </InputGroupButton>
+                  </InputGroupAddon>
+                </InputGroup>
+              </Field>
+            </form>
           </FieldGroup>
 
           <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -175,12 +241,14 @@ export function RemoteDiscoveryPage({ onOpenAnimeDetail }: RemoteDiscoveryPagePr
                 ))}
               </TabsList>
             </Tabs>
-            <span className="text-xs text-muted-foreground">{year} 年 · 显示 {visibleItems.length} 部</span>
+            <span className="text-xs text-muted-foreground">
+              {appliedKeyword ? `“${appliedKeyword}” · ${visibleItems.length} 部` : `${year} 年 · 显示 ${visibleItems.length} 部`}
+            </span>
           </div>
         </div>
       </FilterToolbar>
 
-      {loading ? (
+      {visibleLoading ? (
         <DiscoverySkeleton />
       ) : visibleItems.length > 0 ? (
         <div className="grid min-w-0 grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 2xl:grid-cols-5">
@@ -244,7 +312,11 @@ export function RemoteDiscoveryPage({ onOpenAnimeDetail }: RemoteDiscoveryPagePr
           <EmptyHeader>
             <EmptyMedia variant="icon"><Search /></EmptyMedia>
             <EmptyTitle>没有匹配的新番</EmptyTitle>
-            <EmptyDescription>{items.length === 0 ? "桌面端当前季度尚无目录数据。" : "请调整月份或关键词。"}</EmptyDescription>
+            <EmptyDescription>
+              {appliedKeyword
+                ? "请更换关键词后重试。"
+                : items.length === 0 ? "桌面端当前季度尚无目录数据。" : "请调整月份。"}
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       )}

@@ -739,7 +739,7 @@ function createHandlers(): RemoteRpcHandlers {
     getAnimeDetail: () => {
       throw new Error("测试未使用番剧详情");
     },
-    searchAnimeCatalog: () => [],
+    searchAnimeCatalog: () => ({ keyword: "测试番", items: [], source: "local", errors: [] }),
     listFansubs: () => [],
     listEpisodes: () => [],
     listEpisodePreferences: () => [],

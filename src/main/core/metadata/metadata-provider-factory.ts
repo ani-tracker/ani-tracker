@@ -13,11 +13,15 @@ import {
   MetadataHttpClient,
   type MetadataHttpTransport
 } from "./metadata-http-client";
-import type { AnimeDetailMetadataProvider, MonthlyAnimeMetadataProvider } from "./metadata-provider";
+import type {
+  AnimeDetailMetadataProvider,
+  MonthlyAnimeMetadataProvider,
+  SearchableAnimeMetadataProvider
+} from "./metadata-provider";
 
 const METADATA_CIRCUIT_GROUP = "metadata";
 
-type AnimeMetadataProvider = MonthlyAnimeMetadataProvider & AnimeDetailMetadataProvider;
+type AnimeMetadataProvider = MonthlyAnimeMetadataProvider & AnimeDetailMetadataProvider & SearchableAnimeMetadataProvider;
 type MetadataProviderId = "bangumi" | "anilist" | "mikan";
 
 export interface MetadataProviderFactoryOptions {

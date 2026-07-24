@@ -9,7 +9,12 @@ import type {
   MyAnime,
   NotificationRecord
 } from "@shared/domain";
-import type { AnimeDetailResult, AnimeWatchProgress, PlaybackCheckpoint } from "@shared/contracts";
+import type {
+  AnimeDetailResult,
+  AnimeDiscoverySearchResult,
+  AnimeWatchProgress,
+  PlaybackCheckpoint
+} from "@shared/contracts";
 
 const HIDDEN_LOCAL_PATH = "本机路径已隐藏";
 const WINDOWS_PATH_PATTERN = /(?:[a-zA-Z]:\\|\\\\)[^\s，。；、]+/g;
@@ -99,6 +104,26 @@ export function sanitizeNotificationList(value: unknown): NotificationRecord[] {
 /** 将番剧目录转换为字段白名单 DTO。 */
 export function sanitizeAnimeList(value: unknown): Anime[] {
   return requireArray<Anime>(value, "番剧目录").map(sanitizeAnime);
+}
+
+/** 将关键词聚合搜索结果转换为远程安全 DTO。 */
+export function sanitizeAnimeDiscoverySearchResult(value: unknown): AnimeDiscoverySearchResult {
+  const result = requireRecord<AnimeDiscoverySearchResult>(value, "新番搜索结果");
+  if (typeof result.keyword !== "string" || typeof result.source !== "string") {
+    throw new Error("新番搜索结果返回格式无效");
+  }
+  const errors = requireArray<unknown>(result.errors, "新番搜索来源错误").map((error) => {
+    if (typeof error !== "string") {
+      throw new Error("新番搜索来源错误返回格式无效");
+    }
+    return redactFreeText(error);
+  });
+  return {
+    keyword: redactFreeText(result.keyword),
+    items: sanitizeAnimeList(result.items),
+    source: redactFreeText(result.source),
+    errors
+  };
 }
 
 /** 将观看进度列表转换为固定数值字段 DTO。 */

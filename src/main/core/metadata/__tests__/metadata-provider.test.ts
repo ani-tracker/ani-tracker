@@ -15,7 +15,7 @@ import {
   normalizeTitle,
   uniqueByNormalizedTitle
 } from "../metadata-provider";
-import { parseMikanDetailHtml } from "../mikan-metadata-provider";
+import { MikanMetadataProvider, parseMikanDetailHtml } from "../mikan-metadata-provider";
 import { BANGUMI_USER_AGENT } from "../../http/user-agents";
 
 test("normalizeTitle 忽略常见空白、括号和标点差异", () => {
@@ -252,6 +252,57 @@ test("BangumiMetadataProvider 分页采集第二页番组并补充详情别名",
   assert.equal(skeletonKnight.externalIds.mal, "60522");
   assert.deepEqual(skeletonKnight.rating, { score: 7.3, count: 123, source: "bangumi" });
   assert.ok(skeletonKnight.aliases.some((alias) => alias.alias === "Skeleton Knight in Another World Season 2"));
+});
+
+test("BangumiMetadataProvider 使用关键词搜索接口并限制动画类型", async () => {
+  let searchBody: Record<string, unknown> | undefined;
+  const httpClient = {
+    async fetch(input: string | URL, options?: RequestInit) {
+      const url = new URL(input.toString());
+      if (url.pathname === "/v0/search/subjects") {
+        searchBody = JSON.parse(String(options?.body)) as Record<string, unknown>;
+        return Response.json({
+          data: [{ id: 42, type: 2, name: "旧番原名", name_cn: "旧番中文名", date: "2010-01-08" }]
+        });
+      }
+      return Response.json({ id: 42, type: 2, name: "旧番原名", name_cn: "旧番中文名", date: "2010-01-08" });
+    }
+  };
+  const provider = new BangumiMetadataProvider("https://api.bgm.tv/", httpClient as never);
+
+  const [item] = await provider.searchAnime("旧番中文名");
+
+  assert.equal(searchBody?.keyword, "旧番中文名");
+  assert.deepEqual(searchBody?.filter, { type: [2] });
+  assert.equal(item.externalIds.bangumi, "42");
+  assert.equal(item.premiereYear, 2010);
+  assert.equal(item.season, "winter");
+});
+
+test("MikanMetadataProvider 从搜索页读取番组并补充详情日期", async () => {
+  const requests: URL[] = [];
+  const httpClient = {
+    async fetch(input: string | URL) {
+      const url = new URL(input.toString());
+      requests.push(url);
+      if (url.pathname === "/Home/Search") {
+        return new Response('<a href="/Home/Bangumi/88" title="蜜柑旧番">蜜柑旧番</a>');
+      }
+      return new Response(`
+        <html><head><meta property="og:title" content="蜜柑旧番"></head>
+        <body><div>放送开始：2008-04-03</div><a href="https://bgm.tv/subject/99">Bangumi</a></body></html>
+      `);
+    }
+  };
+  const provider = new MikanMetadataProvider("https://mikanani.me/", httpClient as never);
+
+  const [item] = await provider.searchAnime("蜜柑旧番");
+
+  assert.equal(requests[0].searchParams.get("searchstr"), "蜜柑旧番");
+  assert.equal(item.externalIds.mikan, "88");
+  assert.equal(item.externalIds.bangumi, "99");
+  assert.equal(item.premiereYear, 2008);
+  assert.equal(item.season, "spring");
 });
 
 test("mergeAnimeMetadataBatches 用 Bangumi 详情英文别名桥接 AniList 和 Mikan", () => {

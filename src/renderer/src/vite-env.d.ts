@@ -24,6 +24,7 @@ import type {
   AnimeSourceBindingState,
   AnimeDiscoveryQuery,
   AnimeDiscoveryResult,
+  AnimeDiscoverySearchResult,
   AnimeDiscoverySeasonQuery,
   AnimeDiscoverySeasonResult,
   AutomationRunResult,
@@ -87,7 +88,7 @@ declare global {
       reportPlaybackProgress: (input: ReportPlaybackProgressInput) => Promise<boolean>;
       savePlaybackCheckpoint: (input: SavePlaybackCheckpointInput) => Promise<PlaybackCheckpoint>;
       listAnimeCatalog: (year?: number, month?: number) => Promise<Anime[]>;
-      searchAnimeCatalog: (keyword: string) => Promise<Anime[]>;
+      searchAnimeCatalog: (keyword: string) => Promise<AnimeDiscoverySearchResult>;
       collectAnimeMonth: (query: AnimeDiscoveryQuery) => Promise<AnimeDiscoveryResult>;
       collectAnimeSeason: (query: AnimeDiscoverySeasonQuery) => Promise<AnimeDiscoverySeasonResult>;
       getAnimeDetail: (animeId: string) => Promise<AnimeDetailResult>;

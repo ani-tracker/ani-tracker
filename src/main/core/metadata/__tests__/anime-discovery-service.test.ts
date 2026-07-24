@@ -6,6 +6,7 @@ import { RequestCircuitOpenError } from "../../network/request-circuit-breaker";
 import { AnimeDiscoveryService } from "../anime-discovery-service";
 import type {
   MonthlyAnimeMetadataProvider,
+  SearchableAnimeMetadataProvider,
   SeasonalAnimeMetadataProvider
 } from "../metadata-provider";
 
@@ -85,6 +86,49 @@ test("单个元数据来源熔断时继续合并其他来源结果", async () =>
   assert.deepEqual(result.items, [available]);
   assert.equal(result.source, "available");
   assert.deepEqual(result.errors, ["blocked: Bangumi 正在熔断保护中"]);
+});
+
+test("关键词搜索并发合并本地缓存与可用在线来源并增量缓存", async () => {
+  const local = createAnime("local-anime", "跨季度测试番", 2020, 4);
+  local.externalIds = { bangumi: "100" };
+  const online = createAnime("anilist-anime", "跨季度测试番", 2020, 4);
+  online.externalIds = { anilist: "200" };
+  let searchedKeyword = "";
+  let cachedItems: Anime[] = [];
+  const repository = {
+    searchAnimeCatalog: async (keyword: string) => {
+      searchedKeyword = keyword;
+      return [local];
+    },
+    upsertAnimeCatalog: async (items: Anime[]) => {
+      cachedItems = items;
+      return { items, addedCount: items.length, existingCount: 0 };
+    }
+  } as unknown as AppRepository;
+  const providers: Array<MonthlyAnimeMetadataProvider & SearchableAnimeMetadataProvider> = [
+    {
+      id: "anilist",
+      getAnimeByMonth: async () => [],
+      searchAnime: async () => [online]
+    },
+    {
+      id: "bangumi",
+      getAnimeByMonth: async () => [],
+      searchAnime: async () => {
+        throw new Error("网络不可用");
+      }
+    }
+  ];
+
+  const result = await new AnimeDiscoveryService(repository, providers).searchCatalog("  跨季度测试番  ");
+
+  assert.equal(searchedKeyword, "跨季度测试番");
+  assert.equal(result.items.length, 1);
+  assert.equal(result.items[0].id, local.id);
+  assert.deepEqual(result.items[0].externalIds, { bangumi: "100", anilist: "200" });
+  assert.deepEqual(cachedItems, result.items);
+  assert.equal(result.source, "local+anilist");
+  assert.deepEqual(result.errors, ["bangumi: 网络不可用"]);
 });
 
 test("AnimeDiscoveryService 季度采集仅调用一次季度来源", async () => {

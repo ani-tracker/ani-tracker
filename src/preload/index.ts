@@ -16,6 +16,7 @@ import type {
   AppWindowState,
   AnimeReleaseQuery,
   AnimeDiscoveryQuery,
+  AnimeDiscoverySearchResult,
   AnimeDiscoverySeasonQuery,
   ConfirmAnimeSourceBindingInput,
   DesktopPlayerWindowDragInput,
@@ -78,7 +79,8 @@ const api = {
     ipcRenderer.invoke("playback:saveCheckpoint", input),
   listAnimeCatalog: (year?: number, month?: number): Promise<Anime[]> =>
     ipcRenderer.invoke("animeCatalog:list", year, month),
-  searchAnimeCatalog: (keyword: string): Promise<Anime[]> => ipcRenderer.invoke("animeCatalog:search", keyword),
+  searchAnimeCatalog: (keyword: string): Promise<AnimeDiscoverySearchResult> =>
+    ipcRenderer.invoke("animeCatalog:search", keyword),
   collectAnimeMonth: (query: AnimeDiscoveryQuery) => ipcRenderer.invoke("animeCatalog:collectMonth", query),
   collectAnimeSeason: (query: AnimeDiscoverySeasonQuery) => ipcRenderer.invoke("animeCatalog:collectSeason", query),
   getAnimeDetail: (animeId: string): Promise<AnimeDetailResult> => ipcRenderer.invoke("animeDetail:get", animeId),

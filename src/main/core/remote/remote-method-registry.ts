@@ -1,5 +1,6 @@
 import type {
   AnimeDetailResult,
+  AnimeDiscoverySearchResult,
   AnimeWatchProgress,
   PlaybackCheckpoint,
   ReportPlaybackProgressInput,
@@ -18,6 +19,7 @@ import type {
 } from "@shared/domain";
 import {
   sanitizeAnimeDetailResult,
+  sanitizeAnimeDiscoverySearchResult,
   sanitizeAnimeWatchProgress,
   sanitizeAnimeWatchProgressList,
   sanitizeAnimeList,
@@ -84,7 +86,7 @@ export interface RemoteRpcHandlers {
   savePlaybackCheckpoint(input: SavePlaybackCheckpointInput): MaybePromise<PlaybackCheckpoint>;
   listAnimeCatalog(year?: number, month?: number): MaybePromise<Anime[]>;
   getAnimeDetail(animeId: string): MaybePromise<AnimeDetailResult>;
-  searchAnimeCatalog(keyword: string): MaybePromise<Anime[]>;
+  searchAnimeCatalog(keyword: string): MaybePromise<AnimeDiscoverySearchResult>;
   listFansubs(animeId?: string): MaybePromise<FansubGroup[]>;
   listEpisodes(animeId: string): MaybePromise<Episode[]>;
   listEpisodePreferences(animeId: string): MaybePromise<EpisodePreference[]>;
@@ -219,7 +221,7 @@ export function createRemoteMethodRegistry(handlers: RemoteRpcHandlers): RemoteM
       "catalog.read",
       "read",
       singleKeyword,
-      sanitizeAnimeList,
+      sanitizeAnimeDiscoverySearchResult,
       handlers.searchAnimeCatalog
     ),
     defineMethod("listFansubs", "library.read", "read", optionalId, sanitizeFansubList, handlers.listFansubs),

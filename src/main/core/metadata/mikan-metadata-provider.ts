@@ -4,6 +4,7 @@ import {
   formatMonthStartDate,
   getSeasonInfo,
   type AnimeDetailMetadataProvider,
+  type SearchableAnimeMetadataProvider,
   type SeasonalAnimeMetadataProvider
 } from "./metadata-provider";
 import { defaultMetadataHttpClient, type MetadataHttpTransport } from "./metadata-http-client";
@@ -13,6 +14,7 @@ const DEFAULT_MIKAN_BASE_URL = "https://mikanani.me/";
 const MIKAN_FETCH_TIMEOUT_MS = 10_000;
 const MIKAN_DETAIL_LIMIT = 60;
 const MIKAN_DETAIL_CONCURRENCY = 6;
+const MIKAN_SEARCH_LIMIT = 30;
 
 interface MikanCandidate {
   id: string;
@@ -35,7 +37,10 @@ interface MikanDetail {
   durationMinutes?: number;
 }
 
-export class MikanMetadataProvider implements SeasonalAnimeMetadataProvider, AnimeDetailMetadataProvider {
+export class MikanMetadataProvider implements
+  SeasonalAnimeMetadataProvider,
+  SearchableAnimeMetadataProvider,
+  AnimeDetailMetadataProvider {
   readonly id = "mikan";
 
   constructor(
@@ -68,6 +73,28 @@ export class MikanMetadataProvider implements SeasonalAnimeMetadataProvider, Ani
       // Mikan 只暴露季度列表；没有明确首播日期时归入该季度第一个月。
       mapMikanCandidate(candidate, detail, year, startMonth, seasonInfo.season)
     );
+  }
+
+  /** 使用 Mikan 搜索页查询番组并补充详情信息。 */
+  async searchAnime(keyword: string): Promise<Anime[]> {
+    const search = keyword.trim();
+    if (!search) {
+      return [];
+    }
+    const url = new URL("/Home/Search", this.baseUrl);
+    url.searchParams.set("searchstr", search);
+    const candidates = parseMikanSeasonHtml(await fetchText(url.toString(), this.httpClient), this.baseUrl)
+      .slice(0, MIKAN_SEARCH_LIMIT);
+    const detailedCandidates = await mapWithConcurrency(
+      candidates,
+      MIKAN_DETAIL_CONCURRENCY,
+      async (candidate) => ({ candidate, detail: await this.fetchDetail(candidate.detailUrl) })
+    );
+
+    return detailedCandidates.map(({ candidate, detail }) => {
+      const { year, month } = resolveMikanSearchDate(detail.premiereDate);
+      return mapMikanCandidate(candidate, detail, year, month, getSeasonInfo(month).season);
+    });
   }
 
   /** 按 Mikan external id 读取单部番剧详情。 */
@@ -215,6 +242,18 @@ function mapMikanCandidate(
       metadataSources: ["mikan"],
       refreshedAt: new Date().toISOString()
     }
+  };
+}
+
+/** 读取 Mikan 详情日期，缺失时使用当前年月作为安全回退。 */
+function resolveMikanSearchDate(value: string | undefined): { year: number; month: number } {
+  const [parsedYear, parsedMonth] = (value ?? "").split("-").map(Number);
+  const now = new Date();
+  return {
+    year: Number.isSafeInteger(parsedYear) && parsedYear > 0 ? parsedYear : now.getFullYear(),
+    month: Number.isSafeInteger(parsedMonth) && parsedMonth >= 1 && parsedMonth <= 12
+      ? parsedMonth
+      : now.getMonth() + 1
   };
 }
 

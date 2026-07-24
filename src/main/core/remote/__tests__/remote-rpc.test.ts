@@ -310,7 +310,12 @@ function createHandlers(overrides: Partial<RemoteRpcHandlers> = {}): RemoteRpcHa
       stale: false,
       partialErrors: []
     }),
-    searchAnimeCatalog: () => [myAnime.anime],
+    searchAnimeCatalog: () => ({
+      keyword: "测试番",
+      items: [myAnime.anime],
+      source: "local+anilist",
+      errors: []
+    }),
     listFansubs: () => [],
     listEpisodes: () => [],
     listEpisodePreferences: () => [],
