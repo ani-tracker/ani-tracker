@@ -61,6 +61,7 @@ module.exports = {
   },
   linux: {
     category: "AudioVideo",
+    maintainer: "Ani Tracker contributors <ani-tracker@users.noreply.github.com>",
     executableName: "ani-tracker",
     icon: "src/renderer/public/icons/ani-tracker-512.png",
     target: ["AppImage", "deb"]

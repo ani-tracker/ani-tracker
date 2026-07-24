@@ -203,6 +203,7 @@ jobs:
             --required
 
       - name: Package desktop application
+        shell: bash
         env:
           ANI_PACKAGE_PLATFORM: ${{ matrix.platform }}
           ANI_PACKAGE_ARCH: ${{ matrix.arch }}
@@ -211,7 +212,16 @@ jobs:
           APPLE_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_ID || '' }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.APPLE_APP_SPECIFIC_PASSWORD || '' }}
           APPLE_TEAM_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_TEAM_ID || '' }}
-        run: pnpm exec electron-builder --config electron-builder.config.cjs --${{ matrix.builderTarget }} --${{ matrix.arch }} --publish never
+        run: |
+          if [[ -z "${CSC_LINK:-}" ]]; then
+            unset CSC_LINK CSC_KEY_PASSWORD APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID
+            export CSC_IDENTITY_AUTO_DISCOVERY=false
+          fi
+          pnpm exec electron-builder \
+            --config electron-builder.config.cjs \
+            --${{ matrix.builderTarget }} \
+            --${{ matrix.arch }} \
+            --publish never
 
       - name: Verify packaged native resources
         shell: bash

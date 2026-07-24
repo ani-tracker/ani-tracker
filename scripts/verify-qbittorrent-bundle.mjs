@@ -139,6 +139,7 @@ async function verifyDependencies(bundleDirectory, executablePath, environment, 
       for (const dependency of dependencies) {
         if (
           installNames.has(dependency)
+          || (isAbsolute(dependency) && resolve(dependency) === resolve(path))
           || dependency.startsWith("/System/Library/")
           || dependency.startsWith("/usr/lib/")
           || dependency.startsWith("@executable_path/")
