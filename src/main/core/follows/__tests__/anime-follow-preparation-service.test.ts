@@ -22,7 +22,7 @@ test("AnimeFollowPreparationService 预热资源并写入精确来源通知", as
   const service = new AnimeFollowPreparationService(repository as unknown as AppRepository, {
     createHttpClient: createUnusedHttpClient,
     createBindingService: () => ({
-      getState: async (animeId) => ({ animeId, bindings: [], candidates: [], errors: [] })
+      getState: async (animeId) => ({ animeId, bindings: [], candidates: [], excludedSources: [], errors: [] })
     }),
     createResourceService: () => ({
       searchAnime: async (_anime, query) => {
@@ -58,7 +58,7 @@ test("AnimeFollowPreparationService 复用同一番剧的进行中任务", async
   const service = new AnimeFollowPreparationService(repository as unknown as AppRepository, {
     createHttpClient: createUnusedHttpClient,
     createBindingService: () => ({
-      getState: async (animeId) => ({ animeId, bindings: [], candidates: [], errors: [] })
+      getState: async (animeId) => ({ animeId, bindings: [], candidates: [], excludedSources: [], errors: [] })
     }),
     createResourceService: () => ({
       searchAnime: async (_anime, query) => {

@@ -12,6 +12,7 @@ import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatPercent, formatSpeed } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
+import { isActiveDownloadTask, isCompletedDownloadTask } from "@shared/download-status";
 import type { DownloadTask, MyAnime } from "@shared/domain";
 import type { MediaPlaybackTarget } from "@shared/player-selection";
 
@@ -116,14 +117,12 @@ export function AnimeDownloadTaskSheet({
 
 /** 判断任务是否处于需要持续关注的活动状态。 */
 export function isActiveDownload(task: DownloadTask): boolean {
-  return ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(
-    task.status
-  );
+  return isActiveDownloadTask(task);
 }
 
 /** 判断任务是否拥有已完成内容。 */
 export function isCompletedDownload(task: DownloadTask): boolean {
-  return task.status === "completed" || task.status === "seeding";
+  return isCompletedDownloadTask(task);
 }
 
 /** 渲染单个下载任务的完整进度与文件动作。 */

@@ -29,7 +29,7 @@ export class DesktopPlaybackSessionService {
     const session = await this.mediaSessionService.createExternalSession(
       input.taskId,
       deviceId,
-      input.mode,
+      "direct",
       input.fileIndex
     );
     const mapped = {
@@ -49,7 +49,7 @@ export class DesktopPlaybackSessionService {
     return mapped;
   }
 
-  /** 关闭桌面播放器拥有的会话并回收转码资源。 */
+  /** 关闭桌面播放器拥有的会话并回收媒体资源。 */
   async closeSession(sessionId: string, ownerId: number): Promise<void> {
     if (!/^[A-Za-z0-9_-]{32}$/.test(sessionId)) {
       return;
@@ -94,9 +94,6 @@ export function toDesktopMediaUrl(value: string): string {
 function validateInput(input: DesktopPlaybackSessionInput): void {
   if (!input || !/^[a-zA-Z0-9._:-]{1,160}$/.test(input.taskId)) {
     throw new RemoteMediaSessionError(400, "MEDIA_TASK_INVALID", "下载任务标识无效");
-  }
-  if (input.mode !== "direct" && input.mode !== "transcode") {
-    throw new RemoteMediaSessionError(400, "MEDIA_MODE_INVALID", "播放模式无效");
   }
   if (input.fileIndex !== undefined && (!Number.isSafeInteger(input.fileIndex) || input.fileIndex < 0)) {
     throw new RemoteMediaSessionError(400, "MEDIA_FILE_INVALID", "媒体文件标识无效");

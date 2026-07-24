@@ -21,9 +21,8 @@ export const remotePlaybackSessionClient: PlaybackSessionClient = {
 
 /** 使用 Electron IPC 创建应用内播放器会话。 */
 export const desktopPlaybackSessionClient: PlaybackSessionClient = {
-  create: (taskId, mode, fileIndex) => appApi.createDesktopPlaybackSession({
+  create: (taskId, _mode, fileIndex) => appApi.createDesktopPlaybackSession({
     taskId,
-    mode,
     ...(fileIndex === undefined ? {} : { fileIndex })
   }),
   close: (sessionId) => appApi.closeDesktopPlaybackSession(sessionId)

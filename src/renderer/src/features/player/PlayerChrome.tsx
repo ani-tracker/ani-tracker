@@ -66,11 +66,11 @@ interface PlayerChromeProps {
   externalPlayerLabel?: string;
   externalPlayerOpening?: boolean;
   fullscreen: boolean;
-  mode: RemotePlaybackRequestMode;
+  mode?: RemotePlaybackRequestMode;
   muted: boolean;
   nativeWindowDrag?: boolean;
   onActivity: () => void;
-  onChangeMode: (mode: RemotePlaybackRequestMode) => void;
+  onChangeMode?: (mode: RemotePlaybackRequestMode) => void;
   onChangeRate: (rate: number) => void;
   onChangeSubtitle: (subtitleId?: string) => void;
   onClose: () => void;
@@ -239,7 +239,7 @@ function PlayerBottomBar(
           <SubtitleMenu {...props} />
           <PlaybackRateMenu {...props} />
           <AspectRatioMenu {...props} />
-          <PlaybackModeMenu {...props} />
+          {props.mode && props.onChangeMode && <PlaybackModeMenu {...props} mode={props.mode} onChangeMode={props.onChangeMode} />}
           {props.pictureInPictureAvailable !== false && (
             <PlayerIconButton aria-pressed={props.pictureInPicture} label="画中画" onClick={props.onTogglePictureInPicture}>
               <PictureInPicture2 />
@@ -368,7 +368,12 @@ function AspectRatioMenu(props: PlayerChromeProps) {
 }
 
 /** 提供原文件与实时转码模式切换。 */
-function PlaybackModeMenu(props: PlayerChromeProps) {
+function PlaybackModeMenu(
+  props: PlayerChromeProps & {
+    mode: RemotePlaybackRequestMode;
+    onChangeMode: (mode: RemotePlaybackRequestMode) => void;
+  }
+) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -419,6 +424,7 @@ function PlayerMoreMenu(props: PlayerChromeProps) {
 function PlayerSettingsSheet(
   props: PlayerChromeProps & { open: boolean; onOpenChange: (open: boolean) => void }
 ) {
+  const onChangeMode = props.onChangeMode;
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
       <SheetContent className="max-h-[78svh] overflow-y-auto p-0" data-player-sheet side="bottom">
@@ -427,13 +433,13 @@ function PlayerSettingsSheet(
           <SheetDescription>{props.animeTitle} · {props.episodeLabel}</SheetDescription>
         </SheetHeader>
         <div className="flex flex-col gap-5 p-4">
-          <div className="flex flex-col gap-2">
+          {props.mode && onChangeMode && <div className="flex flex-col gap-2">
             <h3 className="text-sm font-medium">播放模式</h3>
-            <ToggleGroup className="justify-start" onValueChange={(value) => value && props.onChangeMode(value as RemotePlaybackRequestMode)} type="single" value={props.mode} variant="outline">
+            <ToggleGroup className="justify-start" onValueChange={(value) => value && onChangeMode(value as RemotePlaybackRequestMode)} type="single" value={props.mode} variant="outline">
               <ToggleGroupItem value="direct">不转码</ToggleGroupItem>
               <ToggleGroupItem value="transcode">实时转码</ToggleGroupItem>
             </ToggleGroup>
-          </div>
+          </div>}
           <div className="flex flex-col gap-2">
             <h3 className="text-sm font-medium">播放速度</h3>
             <ToggleGroup className="flex-wrap justify-start" onValueChange={(value) => value && props.onChangeRate(Number(value))} type="single" value={String(props.playbackRate)} variant="outline">

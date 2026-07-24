@@ -201,6 +201,10 @@ class FakeSchedulerRepository {
     return [];
   }
 
+  async listAnimeSourceExclusions(): Promise<[]> {
+    return [];
+  }
+
   async listEpisodes(animeId: string): Promise<Episode[]> {
     return this.episodes.filter((episode) => episode.animeId === animeId);
   }

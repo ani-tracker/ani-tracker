@@ -32,6 +32,10 @@ import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format";
+import {
+  isActiveDownloadTask,
+  isCompletedDownloadTask
+} from "@shared/download-status";
 import type { DownloadStatus, DownloadTask, MyAnime } from "@shared/domain";
 
 type DownloadView = "active" | "history";
@@ -421,7 +425,7 @@ function DownloadTaskRow({
             </div>
             <div className="min-w-0 flex-1">
               <div className="flex min-w-0 flex-wrap items-center gap-2">
-                <Badge tone={getDownloadStatusTone(task.status)}>{downloadStatusText[task.status]}</Badge>
+                <Badge tone={getDownloadStatusTone(task)}>{getDownloadStatusText(task)}</Badge>
                 <h3 className="min-w-0 break-words text-sm font-semibold leading-5">{task.name}</h3>
               </div>
               {isErrorTask(task) && (
@@ -511,7 +515,7 @@ function DownloadTaskRow({
             <Progress value={task.progress} />
             <div className="mt-1 flex justify-between gap-3 text-xs text-muted-foreground">
               <span>{formatBytes(downloadedSize)} / {formatBytes(totalSize)}</span>
-              <span className="truncate">{downloadStatusText[task.status]}</span>
+              <span className="truncate">{getDownloadStatusText(task)}</span>
             </div>
           </div>
           <span className="text-right text-sm font-semibold tabular-nums">{formatPercent(task.progress)}</span>
@@ -557,7 +561,7 @@ function DownloadTaskRow({
 
 /** 按任务状态格式化稳定的剩余时间文本。 */
 function formatDownloadEta(task: DownloadTask): string {
-  if (task.status === "completed" || task.status === "seeding") return "已完成";
+  if (isCompletedDownloadTask(task)) return "已完成";
   if (task.status === "paused") return "已暂停";
   const etaSeconds = task.etaSeconds;
   if (etaSeconds === undefined || !Number.isFinite(etaSeconds) || etaSeconds <= 0) return "计算中";
@@ -662,15 +666,15 @@ function formatEpisodeRange(tasks: DownloadTask[]): string {
 }
 
 function isCompletedTask(task: DownloadTask): boolean {
-  return task.status === "completed" || task.status === "seeding";
+  return isCompletedDownloadTask(task);
 }
 
 function isActiveTask(task: DownloadTask): boolean {
-  return !isHistoryTask(task);
+  return isActiveDownloadTask(task);
 }
 
 function isHistoryTask(task: DownloadTask): boolean {
-  return task.status === "completed" || task.status === "seeding";
+  return isCompletedDownloadTask(task);
 }
 
 function isErrorTask(task: DownloadTask): boolean {
@@ -685,16 +689,22 @@ function canResumeTask(task: DownloadTask): boolean {
   return ["paused", "error", "stalled", "missing_files"].includes(task.status);
 }
 
-function getDownloadStatusTone(status: DownloadStatus): "neutral" | "green" | "amber" | "red" | "blue" {
-  if (status === "completed" || status === "seeding") return "green";
+function getDownloadStatusTone(task: DownloadTask): "neutral" | "green" | "amber" | "red" | "blue" {
+  if (isCompletedDownloadTask(task)) return "green";
+  const { status } = task;
   if (status === "error" || status === "missing_files") return "red";
   if (status === "paused" || status === "stalled") return "amber";
   if (status === "downloading") return "blue";
   return "neutral";
 }
 
+/** 将已完成数据下载的做种或状态延迟任务统一显示为完成。 */
+function getDownloadStatusText(task: DownloadTask): string {
+  return isCompletedDownloadTask(task) ? "已完成" : downloadStatusText[task.status];
+}
+
 function canScanTask(task: DownloadTask): boolean {
-  return task.status === "completed" || task.status === "seeding" || task.files.some((file) => file.progress >= 1);
+  return isCompletedDownloadTask(task) || task.files.some((file) => file.progress >= 1);
 }
 
 /** 限制下载地址为应用当前支持的 magnet 与远程 torrent URL。 */

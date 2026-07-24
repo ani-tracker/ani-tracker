@@ -20,6 +20,7 @@ import { appApi } from "@/lib/api";
 import { formatMonth, formatPercent } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import type { AnimeWatchProgress } from "@shared/contracts";
+import { isActiveDownloadTask, isCompletedDownloadTask } from "@shared/download-status";
 import type { DownloadTask, Episode, EpisodePreference, FansubGroup, MyAnime } from "@shared/domain";
 
 const animeStatusText: Record<MyAnime["status"], string> = {
@@ -523,8 +524,8 @@ function mergeFansubGroups(current: FansubGroup[], incoming: FansubGroup[]): Fan
 function summarizeDownloads(tasks: DownloadTask[], animeId: string): RemoteDownloadSummary {
   const animeTasks = tasks.filter((task) => task.animeId === animeId);
   return {
-    completed: countEpisodes(animeTasks.filter((task) => task.status === "completed" || task.status === "seeding")),
-    active: countEpisodes(animeTasks.filter((task) => !["completed", "seeding", "error", "missing_files"].includes(task.status))),
+    completed: countEpisodes(animeTasks.filter(isCompletedDownloadTask)),
+    active: countEpisodes(animeTasks.filter(isActiveDownloadTask)),
     linked: countEpisodes(animeTasks)
   };
 }

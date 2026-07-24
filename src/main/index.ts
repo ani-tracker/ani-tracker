@@ -41,6 +41,10 @@ const APP_ICON_FILE_NAME = "ani-tracker-512.png";
 const APP_DOCK_ICON_FILE_NAME = "ani-tracker-1024.png";
 // 进程标题仅影响系统展示，不改变 userData 和 safeStorage 的历史身份。
 process.title = APP_NAME;
+// Windows 保留 GPU 合成并优先使用低功耗适配器，兼容透明播放器控制层。
+if (process.platform === "win32") {
+  app.commandLine.appendSwitch("force_low_power_gpu");
+}
 const trustedOriginsFromEnvFile = typeof __ANI_TRUSTED_ORIGINS__ === "string"
   ? __ANI_TRUSTED_ORIGINS__
   : undefined;

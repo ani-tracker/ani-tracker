@@ -30,12 +30,14 @@ import type {
   RemoteGatewayStatus,
   RemotePairingChallenge,
   RemotePlaybackSession,
+  RemoveAnimeSourceCandidateMismatchInput,
   ReportAnimeSourceCandidateMismatchInput,
   ReleaseQuery,
   RssSubscriptionReleaseQuery,
   SelectPlayerExecutableInput,
   SavePlaybackCheckpointInput,
   SetAnimeWatchProgressInput,
+  SetAnimeSourceExclusionInput,
   SourceSyncRunResult,
   SourceSyncSchedulerStatus
 } from "@shared/contracts";
@@ -118,6 +120,10 @@ const api = {
     ipcRenderer.invoke("animeSourceBindings:confirm", input),
   reportAnimeSourceCandidateMismatch: (input: ReportAnimeSourceCandidateMismatchInput): Promise<void> =>
     ipcRenderer.invoke("animeSourceBindings:reportMismatch", input),
+  removeAnimeSourceCandidateMismatch: (input: RemoveAnimeSourceCandidateMismatchInput) =>
+    ipcRenderer.invoke("animeSourceBindings:removeMismatch", input),
+  setAnimeSourceExcluded: (input: SetAnimeSourceExclusionInput) =>
+    ipcRenderer.invoke("animeSourceBindings:setSourceExcluded", input),
   removeAnimeSourceBinding: (animeId: string, sourceId: string) =>
     ipcRenderer.invoke("animeSourceBindings:remove", animeId, sourceId),
   searchReleases: (query: ReleaseQuery) => ipcRenderer.invoke("releases:search", query),

@@ -1,4 +1,5 @@
 import type { DownloadTask } from "@shared/domain";
+import { isCompletedDownloadTask } from "@shared/download-status";
 import { logger } from "../logger";
 import type { AppRepository } from "../repositories/app-repository";
 import { DownloadMediaScanner } from "./download-media-scanner";
@@ -12,7 +13,7 @@ export class CompletedDownloadMediaAutoScanner {
 
   async scanCompletedTasks(tasks: DownloadTask[]): Promise<void> {
     try {
-      const completedTasks = tasks.filter((task) => task.status === "completed" || task.status === "seeding");
+      const completedTasks = tasks.filter(isCompletedDownloadTask);
       if (!completedTasks.length) {
         return;
       }

@@ -44,6 +44,7 @@ import type {
   RemoteGatewayStatus,
   RemotePairingChallenge,
   RemotePlaybackSession,
+  RemoveAnimeSourceCandidateMismatchInput,
   ReportAnimeSourceCandidateMismatchInput,
   ReleaseQuery,
   ReleaseSearchResult,
@@ -52,6 +53,7 @@ import type {
   SelectPlayerExecutableInput,
   SavePlaybackCheckpointInput,
   SetAnimeWatchProgressInput,
+  SetAnimeSourceExclusionInput,
   SourceSyncRunResult,
   SourceSyncSchedulerStatus,
   TorrentConnectionTestResult
@@ -119,6 +121,8 @@ declare global {
       getAnimeSourceBindingState: (animeId: string, discoverCandidates?: boolean) => Promise<AnimeSourceBindingState>;
       confirmAnimeSourceBinding: (input: ConfirmAnimeSourceBindingInput) => Promise<AnimeSourceBindingState>;
       reportAnimeSourceCandidateMismatch: (input: ReportAnimeSourceCandidateMismatchInput) => Promise<void>;
+      removeAnimeSourceCandidateMismatch: (input: RemoveAnimeSourceCandidateMismatchInput) => Promise<AnimeSourceBindingState>;
+      setAnimeSourceExcluded: (input: SetAnimeSourceExclusionInput) => Promise<AnimeSourceBindingState>;
       removeAnimeSourceBinding: (animeId: string, sourceId: string) => Promise<AnimeSourceBindingState>;
       searchReleases: (query: ReleaseQuery) => Promise<ReleaseSearchResult>;
       searchAnimeReleases: (query: AnimeReleaseQuery) => Promise<ReleaseSearchResult>;

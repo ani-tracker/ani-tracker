@@ -56,7 +56,6 @@ test("DesktopPlaybackSessionService 将票据会话映射为 ani-media 地址", 
 
   const session = await service.createSession({
     taskId: "task-1",
-    mode: "transcode",
     fileIndex: 2
   }, 17);
   const asset = await service.resolveAsset(session.streamUrl);
@@ -73,7 +72,7 @@ test("DesktopPlaybackSessionService 将票据会话映射为 ani-media 地址", 
   );
   assert.equal(asset.contentType, "application/vnd.apple.mpegurl");
   assert.deepEqual(calls, [
-    { action: "create", taskId: "task-1", deviceId: "desktop-player:17", mode: "transcode", fileIndex: 2 },
+    { action: "create", taskId: "task-1", deviceId: "desktop-player:17", mode: "direct", fileIndex: 2 },
     { action: "asset", id: sessionId, accessToken: token, assetName: "index.m3u8" },
     { action: "close", id: sessionId, deviceId: "desktop-player:17" },
     { action: "close-owner", deviceId: "desktop-player:17" }
@@ -96,8 +95,8 @@ test("DesktopPlaybackSessionService 拒绝无效播放参数和媒体地址", as
     }
   });
 
-  await assert.rejects(service.createSession({ taskId: "", mode: "direct" }, 1));
-  await assert.rejects(service.createSession({ taskId: "task-1", mode: "direct" }, 0));
+  await assert.rejects(service.createSession({ taskId: "" }, 1));
+  await assert.rejects(service.createSession({ taskId: "task-1" }, 0));
   await assert.rejects(service.resolveAsset("ani-media://session/invalid"));
   assert.throws(() => toDesktopMediaUrl("/api/media/sessions/invalid/file"));
 });

@@ -765,6 +765,51 @@ test("SQLite 保存、替换并恢复番剧来源绑定", async () => {
   second.close();
 });
 
+test("SQLite 跨重启保留并分别撤销候选和整来源排除", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const item = createTestMyAnime();
+  await first.repository.upsertMyAnime(item);
+  const timestamp = "2026-07-24T00:00:00.000Z";
+  await first.repository.upsertAnimeSourceExclusion({
+    id: "exclusion-candidate-mikan-4007",
+    animeId: item.anime.id,
+    sourceId: "mikan",
+    scope: "candidate",
+    sourceAnimeId: "4007",
+    sourceAnimeTitle: "错误候选",
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  await first.repository.upsertAnimeSourceExclusion({
+    id: "exclusion-source-mikan",
+    animeId: item.anime.id,
+    sourceId: "mikan",
+    scope: "source",
+    createdAt: timestamp,
+    updatedAt: timestamp
+  });
+  first.close();
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const restored = await second.repository.listAnimeSourceExclusions(item.anime.id);
+  assert.deepEqual(restored.map((entry) => entry.scope).sort(), ["candidate", "source"]);
+  const candidate = restored.find((entry) => entry.scope === "candidate");
+  assert.equal(candidate?.sourceAnimeId, "4007");
+  assert.equal(candidate?.sourceAnimeTitle, "错误候选");
+
+  await second.repository.removeAnimeSourceExclusion(item.anime.id, "mikan");
+  assert.deepEqual(
+    (await second.repository.listAnimeSourceExclusions(item.anime.id)).map((entry) => entry.scope),
+    ["candidate"]
+  );
+  await second.repository.removeAnimeSourceExclusion(item.anime.id, "mikan", "4007");
+  assert.deepEqual(await second.repository.listAnimeSourceExclusions(item.anime.id), []);
+  second.close();
+});
+
 test("SQLite 按番剧保存动态发现的字幕组", async () => {
   const fixture = await createFixture();
   const first = createRepositoryRuntime(fixture.options);

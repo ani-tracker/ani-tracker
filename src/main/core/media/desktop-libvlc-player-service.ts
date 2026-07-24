@@ -101,7 +101,7 @@ interface DesktopNativeVlcPlayerOptions {
   controls: boolean;
   pageFullscreenButton: boolean;
   autoAdvancePlaylist: boolean;
-  hardwareAcceleration: "any";
+  hardwareAcceleration: "any" | "d3d11va" | "videotoolbox";
   locale: string;
 }
 
@@ -145,6 +145,7 @@ export interface DesktopLibVlcPlayerServiceOptions {
   closeWindow: (ownerId: number) => boolean | Promise<boolean>;
   loadModule?: () => Promise<DesktopLibVlcModule>;
   resolveVlcDirectory?: () => string | undefined;
+  platform?: NodeJS.Platform;
 }
 
 /** 将统一播放器契约映射到 Electron 主进程中的 libVLC 实例。 */
@@ -169,6 +170,7 @@ export class DesktopLibVlcPlayerService {
     try {
       const module = await this.loadModule();
       if (record.disposed || this.records.get(ownerId) !== record) return;
+      const hardwareAcceleration = resolveDesktopHardwareAcceleration(this.options.platform);
       const player = new module.VlcPlayer({
         window: hostWindow,
         container: "#vlc-host",
@@ -176,7 +178,7 @@ export class DesktopLibVlcPlayerService {
         controls: false,
         pageFullscreenButton: false,
         autoAdvancePlaylist: false,
-        hardwareAcceleration: "any",
+        hardwareAcceleration,
         locale: "zh-CN"
       });
       record.player = player;
@@ -187,7 +189,7 @@ export class DesktopLibVlcPlayerService {
       }
       this.bindPlayerEvents(record, player);
       record.capabilities = createDesktopLibVlcCapabilities();
-      logger.info("桌面 libVLC 播放表面已就绪", { ownerId });
+      logger.info("桌面 libVLC 播放表面已就绪", { ownerId, hardwareAcceleration });
     } catch (error) {
       this.markRuntimeUnavailable(record, toRuntimeErrorMessage(error));
       await this.destroyNativePlayer(record);
@@ -467,7 +469,7 @@ export class DesktopLibVlcPlayerService {
         code: "decoder",
         message: "libVLC 无法解码或读取当前媒体",
         recoverable: true,
-        recoveryActions: ["retry", "transcode", "close"]
+        recoveryActions: ["retry", "close"]
       }
     }));
     bind("audioTrackChanged", () => this.patchSnapshot(record, {
@@ -691,7 +693,7 @@ export function createDesktopLibVlcCapabilities(): PlayerCapabilities {
     supportsPictureInPicture: false,
     supportsPlaylistNavigation: false,
     supportsDirectPlayback: true,
-    supportsTranscodingFallback: true,
+    supportsTranscodingFallback: false,
     supportsHdr: true
   };
 }
@@ -728,6 +730,13 @@ function createSetSourceOptions(source: PlayerMediaSource) {
     autoplay: true,
     ...(source.mode === "hls" ? { mediaOptions: [":network-caching=1000"] } : {})
   };
+}
+
+/** 返回桌面平台默认硬解后端，Windows 固定使用 D3D11VA。 */
+export function resolveDesktopHardwareAcceleration(platform = process.platform): "any" | "d3d11va" | "videotoolbox" {
+  if (platform === "win32") return "d3d11va";
+  if (platform === "darwin") return "videotoolbox";
+  return "any";
 }
 
 function readTracks(tracks: NativeTrackInfo[], selectedId: number, kind: "audio" | "subtitle"): PlayerTrack[] {
@@ -844,7 +853,7 @@ function toPlayerError(error: unknown): PlayerError {
     code: "resource-unavailable",
     message: error instanceof Error ? error.message : "媒体资源不可用",
     recoverable: true,
-    recoveryActions: ["retry", "transcode", "close"]
+    recoveryActions: ["retry", "close"]
   };
 }
 

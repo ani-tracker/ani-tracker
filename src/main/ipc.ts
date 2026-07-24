@@ -26,6 +26,7 @@ import type {
   DesktopPlayerWindowDragInput,
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
+  RemoveAnimeSourceCandidateMismatchInput,
   ReportAnimeSourceCandidateMismatchInput,
   ReportPlaybackProgressInput,
   ReleaseQuery,
@@ -33,6 +34,7 @@ import type {
   SelectPlayerExecutableInput,
   SavePlaybackCheckpointInput,
   SetAnimeWatchProgressInput,
+  SetAnimeSourceExclusionInput,
   TorrentConnectionTestResult
 } from "@shared/contracts";
 import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
@@ -423,6 +425,20 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       repository,
       new MetadataHttpClient(settings.network.metadataProxy)
     ).reportMismatch(input);
+  });
+  ipcMain.handle("animeSourceBindings:removeMismatch", async (_event, input: RemoveAnimeSourceCandidateMismatchInput) => {
+    const settings = await repository.getSettings();
+    return new AnimeSourceBindingService(
+      repository,
+      new MetadataHttpClient(settings.network.metadataProxy)
+    ).removeCandidateMismatch(input);
+  });
+  ipcMain.handle("animeSourceBindings:setSourceExcluded", async (_event, input: SetAnimeSourceExclusionInput) => {
+    const settings = await repository.getSettings();
+    return new AnimeSourceBindingService(
+      repository,
+      new MetadataHttpClient(settings.network.metadataProxy)
+    ).setSourceExcluded(input);
   });
   ipcMain.handle("animeSourceBindings:remove", async (_event, animeId: string, sourceId: string) => {
     const settings = await repository.getSettings();

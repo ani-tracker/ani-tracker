@@ -1,6 +1,7 @@
 import type {
   Anime,
   AnimeSourceBinding,
+  AnimeSourceExclusion,
   AppSettings,
   DailyReminderItem,
   DashboardData,
@@ -25,6 +26,10 @@ import type {
 } from "@shared/contracts";
 import { normalizeAppearanceSettings } from "@shared/theme";
 import { normalizeCandidateFansubNames } from "@shared/fansub-name-matcher";
+import {
+  isActiveDownloadStatus,
+  isCompletedDownloadTask
+} from "@shared/download-status";
 import type { AppDataFile } from "@shared/persistence/app-data";
 
 export interface ReleaseSearchCacheEntry {
@@ -63,6 +68,9 @@ export interface AppRepository {
   listAnimeSourceBindings(animeId: string): Promise<AnimeSourceBinding[]>;
   upsertAnimeSourceBinding(binding: AnimeSourceBinding): Promise<AnimeSourceBinding[]>;
   removeAnimeSourceBinding(animeId: string, sourceId: string): Promise<AnimeSourceBinding[]>;
+  listAnimeSourceExclusions(animeId: string): Promise<AnimeSourceExclusion[]>;
+  upsertAnimeSourceExclusion(exclusion: AnimeSourceExclusion): Promise<AnimeSourceExclusion[]>;
+  removeAnimeSourceExclusion(animeId: string, sourceId: string, sourceAnimeId?: string): Promise<AnimeSourceExclusion[]>;
   listDownloads(): Promise<DownloadTask[]>;
   listEpisodes(animeId: string): Promise<Episode[]>;
   upsertEpisode(episode: Episode): Promise<Episode[]>;
@@ -177,7 +185,7 @@ export function syncEpisodeStatusesFromDownloads(data: AppDataFile): void {
       }
       continue;
     }
-    if (linkedTasks.some((task) => task.status === "completed" || task.status === "seeding")) {
+    if (linkedTasks.some(isCompletedDownloadTask)) {
       episode.status = "downloaded";
       continue;
     }
@@ -191,10 +199,6 @@ export function syncEpisodeStatusesFromDownloads(data: AppDataFile): void {
       episode.status = "aired";
     }
   }
-}
-
-function isActiveDownloadStatus(status: DownloadStatus): boolean {
-  return ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(status);
 }
 
 /** 深度合并设置分组，避免局部更新覆盖同组其他字段。 */
@@ -377,11 +381,11 @@ function resolveReminderStatus(episode: Episode, download?: DownloadTask): Daily
     return episode.status;
   }
 
-  if (download.status === "completed" || download.status === "seeding") {
+  if (isCompletedDownloadTask(download)) {
     return "downloaded";
   }
 
-  if (["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(download.status)) {
+  if (isActiveDownloadStatus(download.status)) {
     return "downloading";
   }
 

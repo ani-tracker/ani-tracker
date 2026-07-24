@@ -9,11 +9,9 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent
 } from "react";
-import { toast } from "sonner";
 import { appApi } from "@/lib/api";
 import type { Anime, DownloadTask, Episode } from "@shared/domain";
 import type {
-  RemotePlaybackRequestMode,
   RemotePlaybackSession,
   RemotePlaybackSubtitle
 } from "@shared/contracts";
@@ -166,12 +164,10 @@ function DesktopVlcControls({
 }: DesktopVlcControlsProps) {
   const toolbarTimerRef = useRef<number>();
   const activeSessionIdRef = useRef<string>();
-  const automaticFallbackStartedRef = useRef(false);
   const commandSequenceRef = useRef(0);
   const [capabilities, setCapabilities] = useState<PlayerCapabilities>();
   const [session, setSession] = useState<RemotePlaybackSession | null>(null);
   const [snapshot, setSnapshot] = useState<PlayerSnapshot>();
-  const [requestedMode, setRequestedMode] = useState<RemotePlaybackRequestMode>("direct");
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [toolbarVisible, setToolbarVisible] = useState(true);
@@ -259,12 +255,11 @@ function DesktopVlcControls({
       if (!active) return;
       console.info("[player] 正在创建桌面 libVLC 会话", {
         taskId: activeItem.task.id,
-        fileIndex: activeItem.fileIndex,
-        requestedMode
+        fileIndex: activeItem.fileIndex
       });
       void desktopPlaybackSessionClient.create(
         activeItem.task.id,
-        requestedMode,
+        "direct",
         activeItem.fileIndex
       ).then(async (result) => {
         createdSession = result;
@@ -303,7 +298,6 @@ function DesktopVlcControls({
         console.error("[player] 桌面 libVLC 会话加载失败", {
           taskId: activeItem.task.id,
           fileIndex: activeItem.fileIndex,
-          requestedMode,
           error: caught
         });
         setPlaybackError(caught instanceof Error ? caught.message : "播放器会话加载失败");
@@ -316,19 +310,7 @@ function DesktopVlcControls({
       }
       if (createdSession) void desktopPlaybackSessionClient.close(createdSession.id);
     };
-  }, [activeItem, capabilities?.availability, requestedMode, retryNonce]);
-
-  useEffect(() => {
-    if (snapshot?.status !== "error" || requestedMode !== "direct" || automaticFallbackStartedRef.current) return;
-    automaticFallbackStartedRef.current = true;
-    setRequestedMode("transcode");
-    toast.info("原文件无法播放，正在切换实时转码");
-    console.warn("[player] libVLC 直放失败，自动切换实时转码", {
-      taskId: activeItem?.task.id,
-      fileIndex: activeItem?.fileIndex,
-      errorCode: snapshot.error?.code
-    });
-  }, [activeItem, requestedMode, snapshot?.error?.code, snapshot?.status]);
+  }, [activeItem, capabilities?.availability, retryNonce]);
 
   /** 发送带当前媒体会话标识的播放器命令，并统一展示拒绝原因。 */
   const dispatchCommand = useCallback(async (command: PlayerCommand): Promise<boolean> => {
@@ -456,19 +438,13 @@ function DesktopVlcControls({
     if (item.playlistItem && item.playlistItem.id !== activeItem?.id) selectItemAfterFlush(item.playlistItem);
     setPlaylistOpen(false);
   };
-  const changeMode = (mode: RemotePlaybackRequestMode): void => {
-    if (mode === requestedMode) return;
-    automaticFallbackStartedRef.current = mode === "transcode";
-    setRequestedMode(mode);
-    setPlaybackError(null);
-  };
   const retry = (): void => {
     if (snapshot?.error) sendSimpleCommand("retry");
     else setRetryNonce((value) => value + 1);
   };
   const statusBadges = [
     "libVLC",
-    session?.mode === "hls" ? "实时转码" : session ? "原文件直放" : undefined,
+    session ? "原文件直放" : undefined,
     snapshot ? `${snapshot.subtitleTracks.length} 条字幕` : undefined,
     activeItem?.task.resolution?.toUpperCase()
   ].filter((value): value is string => Boolean(value));
@@ -501,9 +477,6 @@ function DesktopVlcControls({
             message={currentError}
             onClose={() => closeAfterFlush(onClose)}
             onRetry={capabilities?.availability === "available" ? retry : undefined}
-            onTranscode={requestedMode === "direct" && capabilities?.supportsTranscodingFallback
-              ? () => changeMode("transcode")
-              : undefined}
             title={runtimeError ? "libVLC 无法启动" : loadError ? "播放器无法打开" : "播放失败"}
           />
         )}
@@ -527,11 +500,9 @@ function DesktopVlcControls({
           durationSeconds={snapshot?.durationSeconds ?? session?.durationSeconds ?? 0}
           episodeLabel={episodeLabel}
           fullscreen={snapshot?.fullscreen ?? false}
-          mode={requestedMode}
           muted={snapshot?.muted ?? false}
           nativeWindowDrag={windowDrag.nativeWindowDrag}
           onActivity={revealToolbar}
-          onChangeMode={changeMode}
           onChangeRate={setRate}
           onChangeSubtitle={changeSubtitle}
           onClose={() => closeAfterFlush(onClose)}

@@ -124,6 +124,21 @@ CREATE TABLE IF NOT EXISTS anime_source_binding (
 CREATE INDEX IF NOT EXISTS idx_anime_source_binding_source
   ON anime_source_binding (source_id, source_anime_id);
 
+CREATE TABLE IF NOT EXISTS anime_source_exclusion (
+  id TEXT PRIMARY KEY,
+  anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
+  source_id TEXT NOT NULL REFERENCES release_source(id) ON DELETE CASCADE,
+  scope TEXT NOT NULL CHECK(scope IN ('candidate', 'source')),
+  source_anime_id TEXT NOT NULL DEFAULT '',
+  source_anime_title TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  UNIQUE(anime_id, source_id, source_anime_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_anime_source_exclusion_lookup
+  ON anime_source_exclusion (anime_id, source_id, scope);
+
 CREATE TABLE IF NOT EXISTS episode (
   id TEXT PRIMARY KEY,
   anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,

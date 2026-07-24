@@ -161,6 +161,20 @@ export interface AnimeSourceBinding {
   updatedAt: string;
 }
 
+export type AnimeSourceExclusionScope = "candidate" | "source";
+
+/** 记录当前番剧对单个候选或整个下载源的人工排除决定。 */
+export interface AnimeSourceExclusion {
+  id: string;
+  animeId: string;
+  sourceId: string;
+  scope: AnimeSourceExclusionScope;
+  sourceAnimeId?: string;
+  sourceAnimeTitle?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface Episode {
   id: string;
   animeId: string;

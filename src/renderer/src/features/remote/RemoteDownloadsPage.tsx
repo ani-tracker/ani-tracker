@@ -18,6 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { appApi } from "@/lib/api";
 import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
+import { isActiveDownloadTask, isCompletedDownloadTask } from "@shared/download-status";
 import type { DownloadStatus, DownloadTask, MyAnime } from "@shared/domain";
 
 const downloadStatusText: Record<DownloadStatus, string> = {
@@ -219,7 +220,7 @@ function RemoteDownloadRow({
   busy: boolean;
   onControl: (action: "pause" | "resume") => void;
 }) {
-  const action = resolveControlAction(task.status);
+  const action = isCompletedDownloadTask(task) ? null : resolveControlAction(task.status);
 
   return (
     <article className="min-w-0 border-b p-3 last:border-b-0 sm:p-4">
@@ -227,7 +228,7 @@ function RemoteDownloadRow({
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             {task.episodeNo !== undefined && <Badge tone="blue">第 {task.episodeNo} 集</Badge>}
-            <Badge tone={getDownloadStatusTone(task.status)}>{downloadStatusText[task.status]}</Badge>
+            <Badge tone={getDownloadStatusTone(task)}>{getDownloadStatusText(task)}</Badge>
             <h3 className="min-w-0 flex-1 truncate text-sm font-medium" title={task.name}>{task.name}</h3>
           </div>
           <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
@@ -283,17 +284,17 @@ function RemoteDownloadsSkeleton() {
 /** 根据筛选项返回当前应展示的下载任务。 */
 function filterDownloads(tasks: DownloadTask[], filter: DownloadFilter): DownloadTask[] {
   if (filter === "all") return tasks;
-  if (filter === "active") return tasks.filter((task) => pausableStatuses.has(task.status));
-  if (filter === "paused") return tasks.filter((task) => task.status === "paused");
-  if (filter === "completed") return tasks.filter((task) => task.status === "completed" || task.status === "seeding");
+  if (filter === "active") return tasks.filter(isRunningDownloadTask);
+  if (filter === "paused") return tasks.filter((task) => task.status === "paused" && !isCompletedDownloadTask(task));
+  if (filter === "completed") return tasks.filter(isCompletedDownloadTask);
   return tasks.filter((task) => task.status === "error" || task.status === "missing_files");
 }
 
 /** 汇总远程下载队列的实时指标。 */
 function summarizeQueue(tasks: DownloadTask[]): { active: number; completed: number; downloadSpeed: number } {
   return {
-    active: tasks.filter((task) => pausableStatuses.has(task.status)).length,
-    completed: tasks.filter((task) => task.status === "completed" || task.status === "seeding").length,
+    active: tasks.filter(isRunningDownloadTask).length,
+    completed: tasks.filter(isCompletedDownloadTask).length,
     downloadSpeed: tasks.reduce((total, task) => total + task.downloadSpeed, 0)
   };
 }
@@ -326,10 +327,21 @@ function resolveControlAction(status: DownloadStatus): "pause" | "resume" | null
 }
 
 /** 将下载状态映射为统一徽标色调。 */
-function getDownloadStatusTone(status: DownloadStatus): "neutral" | "blue" | "green" | "amber" | "red" {
-  if (status === "completed" || status === "seeding") return "green";
+function getDownloadStatusTone(task: DownloadTask): "neutral" | "blue" | "green" | "amber" | "red" {
+  if (isCompletedDownloadTask(task)) return "green";
+  const { status } = task;
   if (status === "downloading" || status === "fetching_metadata") return "blue";
   if (status === "error" || status === "missing_files") return "red";
   if (status === "paused" || status === "stalled") return "amber";
   return "neutral";
+}
+
+/** 判断任务是否仍在产生下载工作，暂停和已满进度不计入进行中。 */
+function isRunningDownloadTask(task: DownloadTask): boolean {
+  return pausableStatuses.has(task.status) && isActiveDownloadTask(task);
+}
+
+/** 将做种和状态延迟的满进度任务统一显示为完成。 */
+function getDownloadStatusText(task: DownloadTask): string {
+  return isCompletedDownloadTask(task) ? "已完成" : downloadStatusText[task.status];
 }

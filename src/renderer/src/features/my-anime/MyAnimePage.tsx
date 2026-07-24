@@ -707,14 +707,15 @@ export function MyAnimePage({
     }
   }
 
-  /** 记录人工确认的不匹配候选，并仅从当前面板隐藏。 */
+  /** 持久化人工确认的不匹配候选，并提供一次撤销入口。 */
   async function reportAnimeSourceCandidateMismatch(candidate: AnimeSourceCandidate) {
     if (!downloadTarget) return;
+    const animeId = downloadTarget.anime.id;
     const candidateKey = `${candidate.sourceId}:${candidate.sourceAnimeId}`;
     setSourceBindingActionKey(candidateKey);
     try {
       await appApi.reportAnimeSourceCandidateMismatch({
-        animeId: downloadTarget.anime.id,
+        animeId,
         sourceId: candidate.sourceId,
         sourceAnimeId: candidate.sourceAnimeId,
         sourceAnimeTitle: candidate.title,
@@ -727,9 +728,45 @@ export function MyAnimePage({
           (item) => item.sourceId !== candidate.sourceId || item.sourceAnimeId !== candidate.sourceAnimeId
         )
       } : current);
-      toast.success(`已记录不匹配：${candidate.title}`);
+      toast.success(`已记录不匹配：${candidate.title}`, {
+        action: {
+          label: "撤销",
+          onClick: () => {
+            void appApi.removeAnimeSourceCandidateMismatch({
+              animeId,
+              sourceId: candidate.sourceId,
+              sourceAnimeId: candidate.sourceAnimeId
+            }).then((state) => {
+              setSourceBindingState(state);
+              toast.success(`已恢复候选：${candidate.title}`);
+            }).catch((error) => {
+              toast.error(error instanceof Error ? error.message : "恢复来源候选失败");
+            });
+          }
+        }
+      });
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "记录来源不匹配失败");
+    } finally {
+      setSourceBindingActionKey(null);
+    }
+  }
+
+  /** 持久化或取消当前番剧对整个来源的候选排除。 */
+  async function setAnimeSourceExcluded(sourceId: string, excluded: boolean) {
+    if (!downloadTarget) return;
+    const actionKey = `source-exclusion:${sourceId}`;
+    setSourceBindingActionKey(actionKey);
+    try {
+      const state = await appApi.setAnimeSourceExcluded({
+        animeId: downloadTarget.anime.id,
+        sourceId,
+        excluded
+      });
+      setSourceBindingState(state);
+      toast.success(excluded ? "已排除该来源的全部候选" : "已恢复该来源的候选匹配");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "更新来源排除状态失败");
     } finally {
       setSourceBindingActionKey(null);
     }
@@ -1125,6 +1162,7 @@ export function MyAnimePage({
             onFansubChange={setAnimeReleaseFansubId}
             onConfirmSourceCandidate={(candidate) => void confirmAnimeSourceCandidate(candidate)}
             onRejectSourceCandidate={(candidate) => void reportAnimeSourceCandidateMismatch(candidate)}
+            onSetSourceExcluded={(sourceId, excluded) => void setAnimeSourceExcluded(sourceId, excluded)}
             onRemoveSourceBinding={(sourceId) => void removeAnimeSourceBinding(sourceId)}
             onRefreshSourceBindings={() => void refreshAnimeSourceBindings(downloadTarget.anime.id)}
             onRefreshRss={() => void searchAnimeRssReleases(downloadTarget)}
@@ -1762,6 +1800,7 @@ function AnimeDownloadPanel({
   onTabChange,
   onConfirmSourceCandidate,
   onRejectSourceCandidate,
+  onSetSourceExcluded,
   onRemoveSourceBinding,
   onRefreshSourceBindings,
   onFansubChange,
@@ -1794,6 +1833,7 @@ function AnimeDownloadPanel({
   onTabChange: (tab: DownloadResourceTab) => void;
   onConfirmSourceCandidate: (candidate: AnimeSourceCandidate) => void;
   onRejectSourceCandidate: (candidate: AnimeSourceCandidate) => void;
+  onSetSourceExcluded: (sourceId: string, excluded: boolean) => void;
   onRemoveSourceBinding: (sourceId: string) => void;
   onRefreshSourceBindings: () => void;
   onFansubChange: (fansubGroupId: string) => void;
@@ -2006,6 +2046,7 @@ function AnimeDownloadPanel({
               state={sourceBindingState}
               onConfirm={onConfirmSourceCandidate}
               onReject={onRejectSourceCandidate}
+              onSetSourceExcluded={onSetSourceExcluded}
               onRefresh={onRefreshSourceBindings}
               onRemove={onRemoveSourceBinding}
             />
@@ -2495,6 +2536,7 @@ function AnimeSourceBindingPanel({
   actionKey,
   onConfirm,
   onReject,
+  onSetSourceExcluded,
   onRemove,
   onRefresh
 }: {
@@ -2503,10 +2545,16 @@ function AnimeSourceBindingPanel({
   actionKey: string | null;
   onConfirm: (candidate: AnimeSourceCandidate) => void;
   onReject: (candidate: AnimeSourceCandidate) => void;
+  onSetSourceExcluded: (sourceId: string, excluded: boolean) => void;
   onRemove: (sourceId: string) => void;
   onRefresh: () => void;
 }) {
-  const groupedCandidates = groupSourceCandidates(state?.candidates ?? []);
+  const groupedCandidates = groupSourceCandidates(
+    state?.candidates ?? [],
+    state?.excludedSources ?? []
+  );
+  const pendingGroupCount = groupedCandidates.filter((group) => !group.excluded).length;
+  const excludedGroupCount = groupedCandidates.filter((group) => group.excluded).length;
   const confirmedBindings = state?.bindings.filter((binding) => binding.confirmed) ?? [];
   const hasContent = Boolean(confirmedBindings.length || groupedCandidates.length || state?.errors.length);
   const [expanded, setExpanded] = useState(false);
@@ -2535,7 +2583,8 @@ function AnimeSourceBindingPanel({
               </Badge>
             ))}
             {confirmedBindings.length > 2 && <Badge className="h-5 px-1.5 text-[10px]" tone="green">+{confirmedBindings.length - 2}</Badge>}
-            {groupedCandidates.length > 0 && <Badge className="h-5 px-1.5 text-[10px]" tone="amber">{groupedCandidates.length} Pending</Badge>}
+            {pendingGroupCount > 0 && <Badge className="h-5 px-1.5 text-[10px]" tone="amber">{pendingGroupCount} Pending</Badge>}
+            {excludedGroupCount > 0 && <Badge className="h-5 px-1.5 text-[10px]">{excludedGroupCount} Excluded</Badge>}
             {!hasContent && !loading && <span className="truncate text-xs font-normal text-muted-foreground">暂无精确匹配</span>}
             {loading && <span className="truncate text-xs font-normal text-muted-foreground">读取中</span>}
           </span>
@@ -2582,9 +2631,31 @@ function AnimeSourceBindingPanel({
             <div key={group.sourceId} className="px-3 py-2.5">
               <div className="mb-2 flex items-center justify-between gap-2">
                 <div className="text-xs font-semibold uppercase tracking-[0.05em]">{group.sourceName}</div>
-                <Badge tone="amber">待确认</Badge>
+                <div className="flex shrink-0 items-center gap-2">
+                  <Field
+                    className="w-auto gap-1.5"
+                    data-disabled={actionKey === `source-exclusion:${group.sourceId}`}
+                    orientation="horizontal"
+                  >
+                    <Checkbox
+                      checked={group.excluded}
+                      disabled={actionKey === `source-exclusion:${group.sourceId}`}
+                      id={`source-exclusion-${group.sourceId}`}
+                      onCheckedChange={(checked) => onSetSourceExcluded(group.sourceId, checked === true)}
+                    />
+                    <FieldLabel
+                      className="cursor-pointer text-xs font-normal"
+                      htmlFor={`source-exclusion-${group.sourceId}`}
+                    >
+                      此来源均不匹配
+                    </FieldLabel>
+                  </Field>
+                  <Badge tone={group.excluded ? "neutral" : "amber"}>
+                    {group.excluded ? "已排除" : "待确认"}
+                  </Badge>
+                </div>
               </div>
-              <div className="flex flex-col gap-2">
+              {!group.excluded && <div className="flex flex-col gap-2">
                 {group.candidates.slice(0, 1).map((candidate) => {
                   const candidateKey = `${candidate.sourceId}:${candidate.sourceAnimeId}`;
                   return (
@@ -2662,7 +2733,7 @@ function AnimeSourceBindingPanel({
                     </div>
                   </details>
                 )}
-              </div>
+              </div>}
             </div>
           ))}
           {state?.errors.map((error) => (
@@ -2681,16 +2752,33 @@ function AnimeSourceBindingPanel({
   );
 }
 
-function groupSourceCandidates(candidates: AnimeSourceCandidate[]) {
-  const groups = new Map<string, { sourceId: string; sourceName: string; candidates: AnimeSourceCandidate[] }>();
+function groupSourceCandidates(
+  candidates: AnimeSourceCandidate[],
+  excludedSources: AnimeSourceBindingState["excludedSources"]
+) {
+  const groups = new Map<string, {
+    sourceId: string;
+    sourceName: string;
+    candidates: AnimeSourceCandidate[];
+    excluded: boolean;
+  }>();
   for (const candidate of candidates) {
     const group = groups.get(candidate.sourceId) ?? {
       sourceId: candidate.sourceId,
       sourceName: candidate.sourceName,
-      candidates: []
+      candidates: [],
+      excluded: false
     };
     group.candidates.push(candidate);
     groups.set(candidate.sourceId, group);
+  }
+  for (const source of excludedSources) {
+    groups.set(source.sourceId, {
+      sourceId: source.sourceId,
+      sourceName: source.sourceName,
+      candidates: [],
+      excluded: true
+    });
   }
   return [...groups.values()];
 }

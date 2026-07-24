@@ -141,6 +141,10 @@ export interface AnimeSourceBindingState {
   animeId: string;
   bindings: AnimeSourceBinding[];
   candidates: AnimeSourceCandidate[];
+  excludedSources: Array<{
+    sourceId: string;
+    sourceName: string;
+  }>;
   errors: Array<{
     sourceId: string;
     message: string;
@@ -163,6 +167,18 @@ export interface ReportAnimeSourceCandidateMismatchInput {
   sourceAnimeTitle: string;
   score: number;
   reasons: string[];
+}
+
+export interface SetAnimeSourceExclusionInput {
+  animeId: string;
+  sourceId: string;
+  excluded: boolean;
+}
+
+export interface RemoveAnimeSourceCandidateMismatchInput {
+  animeId: string;
+  sourceId: string;
+  sourceAnimeId: string;
 }
 
 export interface RssSubscriptionReleaseQuery {
@@ -474,7 +490,6 @@ export type DesktopPlayerWindowDragInput =
 
 export interface DesktopPlaybackSessionInput {
   taskId: string;
-  mode: RemotePlaybackRequestMode;
   fileIndex?: number;
 }
 

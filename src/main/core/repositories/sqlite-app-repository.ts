@@ -3,6 +3,7 @@ import * as BetterSqlite3Module from "better-sqlite3";
 import type {
   Anime,
   AnimeSourceBinding,
+  AnimeSourceExclusion,
   AppSettings,
   DashboardData,
   DownloadStatus,
@@ -27,6 +28,7 @@ import type {
 } from "@shared/contracts";
 import { mergeAnimeDetailMetadata, normalizeAnimeDetailMetadata } from "@shared/anime-detail";
 import { normalizeMyAnimeAutoDownload } from "@shared/my-anime-policy";
+import { isActiveDownloadTask, isCompletedDownloadTask } from "@shared/download-status";
 import type { AppDataFile } from "@shared/persistence/app-data";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import {
@@ -134,7 +136,7 @@ export class SqliteAppRepository implements AppRepository {
       dailyReminder,
       todayEpisodes: dailyReminder.items.map(toEpisodeSummary),
       pendingActions: buildPendingActions(data),
-      activeDownloads: data.downloads,
+      activeDownloads: data.downloads.filter(isActiveDownloadTask),
       recentCompleted: sortMediaFiles(data.mediaFiles).slice(0, 10),
       sourceHealth: data.dashboard.sourceHealth.map((source) => ({
         ...source,
@@ -207,6 +209,59 @@ export class SqliteAppRepository implements AppRepository {
     );
     logger.info("Anime source binding removed", { animeId, sourceId });
     return this.listAnimeSourceBindings(animeId);
+  }
+
+  /** 读取番剧已确认的单候选和整来源排除记录。 */
+  async listAnimeSourceExclusions(animeId: string): Promise<AnimeSourceExclusion[]> {
+    return this.all(
+      "SELECT * FROM anime_source_exclusion WHERE anime_id = @animeId ORDER BY source_id, source_anime_id",
+      { animeId }
+    ).map(mapAnimeSourceExclusion);
+  }
+
+  /** 保存番剧来源排除记录，同一候选或整来源只保留一项。 */
+  async upsertAnimeSourceExclusion(exclusion: AnimeSourceExclusion): Promise<AnimeSourceExclusion[]> {
+    this.run(
+      `INSERT INTO anime_source_exclusion (
+        id, anime_id, source_id, scope, source_anime_id, source_anime_title, created_at, updated_at
+      ) VALUES (
+        @id, @animeId, @sourceId, @scope, @sourceAnimeId, @sourceAnimeTitle, @createdAt, @updatedAt
+      ) ON CONFLICT(anime_id, source_id, source_anime_id) DO UPDATE SET
+        id = excluded.id, scope = excluded.scope, source_anime_title = excluded.source_anime_title,
+        updated_at = excluded.updated_at`,
+      {
+        id: exclusion.id,
+        animeId: exclusion.animeId,
+        sourceId: exclusion.sourceId,
+        scope: exclusion.scope,
+        sourceAnimeId: exclusion.sourceAnimeId ?? "",
+        sourceAnimeTitle: exclusion.sourceAnimeTitle ?? null,
+        createdAt: exclusion.createdAt,
+        updatedAt: exclusion.updatedAt
+      }
+    );
+    logger.info("Anime source exclusion saved", {
+      animeId: exclusion.animeId,
+      sourceId: exclusion.sourceId,
+      scope: exclusion.scope,
+      sourceAnimeId: exclusion.sourceAnimeId
+    });
+    return this.listAnimeSourceExclusions(exclusion.animeId);
+  }
+
+  /** 删除单候选或整来源排除记录，空候选 ID 表示整来源。 */
+  async removeAnimeSourceExclusion(
+    animeId: string,
+    sourceId: string,
+    sourceAnimeId?: string
+  ): Promise<AnimeSourceExclusion[]> {
+    this.run(
+      `DELETE FROM anime_source_exclusion
+       WHERE anime_id = @animeId AND source_id = @sourceId AND source_anime_id = @sourceAnimeId`,
+      { animeId, sourceId, sourceAnimeId: sourceAnimeId ?? "" }
+    );
+    logger.info("Anime source exclusion removed", { animeId, sourceId, sourceAnimeId });
+    return this.listAnimeSourceExclusions(animeId);
   }
 
   async listAnimeCatalog(): Promise<Anime[]> {
@@ -1051,6 +1106,29 @@ export class SqliteAppRepository implements AppRepository {
       });
     }
 
+    if (currentSchemaVersion < 17) {
+      this.database.exec(`
+        CREATE TABLE IF NOT EXISTS anime_source_exclusion (
+          id TEXT PRIMARY KEY,
+          anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
+          source_id TEXT NOT NULL REFERENCES release_source(id) ON DELETE CASCADE,
+          scope TEXT NOT NULL CHECK(scope IN ('candidate', 'source')),
+          source_anime_id TEXT NOT NULL DEFAULT '',
+          source_anime_title TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE(anime_id, source_id, source_anime_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_anime_source_exclusion_lookup
+          ON anime_source_exclusion (anime_id, source_id, scope);
+      `);
+      logger.info("SQLite 来源候选排除记录迁移完成", {
+        fromVersion: currentSchemaVersion,
+        toVersion: SQLITE_SCHEMA_VERSION
+      });
+    }
+
     if (currentSchemaVersion < 8) {
       this.database.exec(`
         UPDATE my_anime
@@ -1217,7 +1295,7 @@ export class SqliteAppRepository implements AppRepository {
   private clearAllData(): void {
     for (const table of [
       "notification", "playback_checkpoint", "media_file", "torrent_file", "download_task", "episode_preference", "episode",
-      "request_circuit_state", "release_search_cache", "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_fansub_group", "anime_alias", "release", "anime_catalog", "fansub_group",
+      "request_circuit_state", "release_search_cache", "anime_source_exclusion", "anime_source_binding", "my_anime_rss_subscription", "my_anime", "anime_fansub_group", "anime_alias", "release", "anime_catalog", "fansub_group",
       "release_source", "app_settings", "app_state", "app_meta"
     ]) {
       this.database.exec(`DELETE FROM ${table}`);
@@ -1832,7 +1910,7 @@ export class SqliteAppRepository implements AppRepository {
       id: episodeId,
       animeId: task.animeId,
       episodeNo: task.episodeNo,
-      status: resolveEpisodeStatusFromDownload(task.status)
+      status: resolveEpisodeStatusFromDownload(task)
     });
     logger.info("Episode created from download task metadata", {
       taskId: task.id,
@@ -1869,15 +1947,18 @@ export class SqliteAppRepository implements AppRepository {
 
   /** 取消已看时根据关联下载和放送时间恢复单集生命周期状态。 */
   private resolveEpisodeStatusAfterUnwatch(episode: Episode): Episode["status"] {
-    const statuses = this.all(
-      `SELECT status FROM download_task
+    const downloads = this.all(
+      `SELECT status, progress FROM download_task
        WHERE anime_id = @animeId AND (episode_id = @episodeId OR episode_no = @episodeNo)`,
       { animeId: episode.animeId, episodeId: episode.id, episodeNo: episode.episodeNo }
-    ).map((row) => asString(row.status) as DownloadStatus);
-    if (statuses.some((status) => status === "completed" || status === "seeding")) {
+    ).map((row) => ({
+      status: asString(row.status) as DownloadStatus,
+      progress: Number(row.progress)
+    }));
+    if (downloads.some(isCompletedDownloadTask)) {
       return "downloaded";
     }
-    if (statuses.some((status) => ["queued", "fetching_metadata", "downloading", "stalled", "paused", "checking", "moving"].includes(status))) {
+    if (downloads.some(isActiveDownloadTask)) {
       return "downloading";
     }
     if (episode.airTime && new Date(episode.airTime).getTime() > Date.now()) {
@@ -2197,6 +2278,19 @@ function mapAnimeSourceBinding(row: SqliteRow): AnimeSourceBinding {
   });
 }
 
+function mapAnimeSourceExclusion(row: SqliteRow): AnimeSourceExclusion {
+  return compact({
+    id: asString(row.id),
+    animeId: asString(row.anime_id),
+    sourceId: asString(row.source_id),
+    scope: asString(row.scope) as AnimeSourceExclusion["scope"],
+    sourceAnimeId: optionalString(row.source_anime_id),
+    sourceAnimeTitle: optionalString(row.source_anime_title),
+    createdAt: asString(row.created_at),
+    updatedAt: asString(row.updated_at)
+  });
+}
+
 function mapAnimeAlias(row: SqliteRow): Anime["aliases"][number] {
   return { id: asString(row.id), animeId: asString(row.anime_id), alias: asString(row.alias),
     language: asString(row.language) as Anime["aliases"][number]["language"], priority: Number(row.priority) };
@@ -2452,9 +2546,9 @@ function createDownloadEpisodeId(animeId: string, episodeNo: number): string {
   return `episode-${animeId}-${String(episodeNo).replace(".", "-")}`;
 }
 
-/** 根据当前下载状态设置新建单集的初始状态。 */
-function resolveEpisodeStatusFromDownload(status: DownloadStatus): Episode["status"] {
-  return status === "completed" || status === "seeding" ? "downloaded" : "downloading";
+/** 根据当前下载状态和进度设置新建单集的初始状态。 */
+function resolveEpisodeStatusFromDownload(task: Pick<DownloadTask, "status" | "progress">): Episode["status"] {
+  return isCompletedDownloadTask(task) ? "downloaded" : "downloading";
 }
 
 function mapMediaFile(row: SqliteRow): MediaFile {

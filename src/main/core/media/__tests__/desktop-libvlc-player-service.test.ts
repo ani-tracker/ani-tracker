@@ -4,6 +4,7 @@ import { test } from "node:test";
 import type { PlayerCommand, PlayerSnapshot } from "@shared/player-contract";
 import {
   DesktopLibVlcPlayerService,
+  resolveDesktopHardwareAcceleration,
   resolveDesktopLibVlcDirectory,
   type DesktopNativeVlcPlayer
 } from "../desktop-libvlc-player-service";
@@ -248,4 +249,10 @@ test("resolveDesktopLibVlcDirectory 优先使用显式配置、随包资源和�
     pathExists: (path) => path.replaceAll("\\", "/") === "/source/out/libvlc/darwin-arm64"
   });
   assert.equal(development?.replaceAll("\\", "/"), "/source/out/libvlc/darwin-arm64");
+});
+
+test("桌面 libVLC 按平台选择硬件解码后端", () => {
+  assert.equal(resolveDesktopHardwareAcceleration("win32"), "d3d11va");
+  assert.equal(resolveDesktopHardwareAcceleration("darwin"), "videotoolbox");
+  assert.equal(resolveDesktopHardwareAcceleration("linux"), "any");
 });
