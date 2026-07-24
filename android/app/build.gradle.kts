@@ -9,11 +9,23 @@ val keystoreAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
 val keystorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
 val keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
 val hasReleaseSigning = listOf(keystorePath, keystoreAlias, keystorePassword, keyPassword).all { !it.isNullOrBlank() }
-val generatedVlcNoticeAssets = layout.buildDirectory.dir("generated/vlcNoticeAssets")
-val prepareVlcNoticeAssets = tasks.register<Sync>("prepareVlcNoticeAssets") {
-    from(rootProject.layout.projectDirectory.dir("../resources/licenses/vlc"))
-    from(rootProject.layout.projectDirectory.file("../resources/ffmpeg/licenses/LGPL-2.1-only.json"))
-    into(generatedVlcNoticeAssets.map { it.dir("licenses/vlc") })
+val generatedLicenseAssets = layout.buildDirectory.dir("generated/licenseAssets")
+val prepareLicenseAssets = tasks.register<Sync>("prepareLicenseAssets") {
+    into(generatedLicenseAssets)
+    from(rootProject.layout.projectDirectory.dir("../resources/licenses/vlc")) {
+        into("licenses/vlc")
+    }
+    from(rootProject.layout.projectDirectory.file("../resources/ffmpeg/licenses/LGPL-2.1-only.json")) {
+        into("licenses/vlc")
+    }
+    from(rootProject.layout.projectDirectory.file("../LICENSE")) {
+        into("licenses/ani-tracker")
+        rename { "LICENSE.txt" }
+    }
+    from(rootProject.layout.projectDirectory.file("../NOTICE")) {
+        into("licenses/ani-tracker")
+        rename { "NOTICE.txt" }
+    }
 }
 
 android {
@@ -64,11 +76,11 @@ android {
         buildConfig = true
     }
 
-    sourceSets.getByName("main").assets.srcDir(generatedVlcNoticeAssets)
+    sourceSets.getByName("main").assets.srcDir(generatedLicenseAssets)
 }
 
 tasks.named("preBuild").configure {
-    dependsOn(prepareVlcNoticeAssets)
+    dependsOn(prepareLicenseAssets)
 }
 
 dependencies {

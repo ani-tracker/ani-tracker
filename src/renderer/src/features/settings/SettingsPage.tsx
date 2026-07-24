@@ -1725,6 +1725,13 @@ export function SettingsPage() {
         </div>
       </div>
 
+      <footer className="flex min-w-0 flex-col gap-2 pb-4 text-center text-xs text-muted-foreground">
+        <Separator />
+        <p>Copyright (c) 2026 Ani Tracker contributors.</p>
+        <p>源码免费公开，仅限个人及非商业用途；商业使用须获得版权所有者书面许可。</p>
+        <p>第三方组件遵循各自许可证。</p>
+      </footer>
+
       {hasUnsavedChanges && (
         <StickyActionBar className="justify-center bg-background/95">
           <span className="text-sm text-muted-foreground">更改尚未保存</span>

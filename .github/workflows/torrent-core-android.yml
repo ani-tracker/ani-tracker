@@ -101,7 +101,7 @@ jobs:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/ani-tracker-release.jks
         run: gradle -p android :app:assembleRelease :app:bundleRelease --stacktrace
 
-      - name: Verify native ABIs and VLC notices
+      - name: Verify native ABIs and license notices
         shell: bash
         run: |
           aar="android/torrent-host/build/outputs/aar/torrent-host-release.aar"
@@ -113,7 +113,7 @@ jobs:
           unzip -l "${apk}" | grep "lib/arm64-v8a/libani_torrent_core.so"
           ! unzip -l "${aar}" | grep -Ei "remote-renderer|ffmpeg|ffprobe|transcod"
           ! unzip -l "${apk}" | grep -Ei "remote-renderer|ffmpeg|ffprobe|transcod"
-          verify_vlc_package() {
+          verify_app_package() {
             local package="$1"
             local entries
             entries="$(unzip -Z1 "${package}")"
@@ -123,14 +123,16 @@ jobs:
             grep -Eq '(^|/)assets/licenses/vlc/README\.md$' <<< "${entries}"
             grep -Eq '(^|/)assets/licenses/vlc/SOURCE\.md$' <<< "${entries}"
             grep -Eq '(^|/)assets/licenses/vlc/LGPL-2\.1-only\.json$' <<< "${entries}"
+            grep -Eq '(^|/)assets/licenses/ani-tracker/LICENSE\.txt$' <<< "${entries}"
+            grep -Eq '(^|/)assets/licenses/ani-tracker/NOTICE\.txt$' <<< "${entries}"
             if grep -Eq '(^|/)lib/(armeabi-v7a|x86|x86_64)/.*vlc' <<< "${entries}"; then
               echo "Unexpected VLC ABI in ${package}" >&2
               return 1
             fi
           }
-          verify_vlc_package "${apk}"
+          verify_app_package "${apk}"
           while IFS= read -r package; do
-            verify_vlc_package "${package}"
+            verify_app_package "${package}"
           done < <(find android/app/build/outputs -type f \( -name '*.apk' -o -name '*.aab' \) ! -path '*debug*')
 
       - uses: actions/upload-artifact@v4

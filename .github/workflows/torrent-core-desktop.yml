@@ -259,6 +259,10 @@ jobs:
           fi
           test -n "${qbittorrent}"
           test -x "${qbittorrent}"
+          license="$(find release -type f -path "*/licenses/ani-tracker-LICENSE.txt" -print -quit)"
+          notice="$(find release -type f -path "*/licenses/ani-tracker-NOTICE.txt" -print -quit)"
+          test -n "${license}"
+          test -n "${notice}"
           qbittorrent_root="$(dirname "${qbittorrent}")"
           if [[ "${{ matrix.platform }}" == "darwin" ]]; then
             qbittorrent_root="$(dirname "$(dirname "$(dirname "${qbittorrent_root}")")")"
@@ -452,6 +456,11 @@ jobs:
           $qbittorrentManifest = Join-Path $qbittorrent.DirectoryName "manifest.json"
           if (-not (Test-Path $qbittorrentManifest -PathType Leaf)) {
             throw "Packaged qBittorrent manifest.json was not found"
+          }
+          $license = Get-ChildItem -Path release -Recurse -Filter ani-tracker-LICENSE.txt | Select-Object -First 1
+          $notice = Get-ChildItem -Path release -Recurse -Filter ani-tracker-NOTICE.txt | Select-Object -First 1
+          if (-not $license -or -not $notice) {
+            throw "Packaged Ani Tracker license notices were not found"
           }
           node scripts/verify-qbittorrent-bundle.mjs `
             --platform win32 `

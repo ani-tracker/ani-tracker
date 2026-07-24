@@ -7,6 +7,7 @@ import type Database from "better-sqlite3";
 import * as BetterSqlite3Module from "better-sqlite3";
 import type { ReleaseSearchResult } from "@shared/contracts";
 import type { MyAnime } from "@shared/domain";
+import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import { validateThemePack } from "@shared/theme";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
 import { enrichReleaseFromTitle } from "../../releases/release-title-parser";
@@ -65,6 +66,69 @@ test("SQLite 二次启动保留增量数据且不重复 seed", async () => {
   assert.equal(notifications.length, fixture.data.notifications.length + 1);
   assert.equal(notifications.some((item) => item.id === "sqlite-only-notification"), true);
   second.close();
+});
+
+test("SQLite v22 删除旧内置 Prowlarr 并保留其他下载源的用户开关", async () => {
+  const fixture = await createFixture();
+  const first = createRepositoryRuntime(fixture.options);
+  await first.initialize();
+  const nyaa = (await first.repository.listSources()).find((source) => source.id === "nyaa");
+  assert.ok(nyaa);
+  await first.repository.upsertSource({ ...nyaa, enabled: true, useProxy: false });
+  await first.repository.upsertSource({
+    id: "prowlarr",
+    name: "Prowlarr Torznab",
+    kind: "torznab",
+    enabled: false,
+    useProxy: false,
+    requestIntervalMs: 250,
+    baseUrl: "http://127.0.0.1:9696",
+    tags: ["torznab"]
+  });
+  await first.repository.upsertSourceSyncState({ sourceId: "prowlarr", requestFailureCount: 0 });
+  await first.repository.upsertRequestCircuitState({
+    key: "release-source:prowlarr",
+    group: "release-source",
+    requestHost: "127.0.0.1",
+    failureCount: 1
+  });
+  first.close();
+
+  const legacyDatabase = new DatabaseConstructor(fixture.databasePath);
+  try {
+    legacyDatabase.prepare("UPDATE app_meta SET value = @version WHERE key = 'app_data_version'").run({
+      version: String(APP_DATA_VERSION - 1)
+    });
+  } finally {
+    legacyDatabase.close();
+  }
+
+  const second = createRepositoryRuntime(fixture.options);
+  await second.initialize();
+  const sources = await second.repository.listSources();
+  const preservedNyaa = sources.find((source) => source.id === "nyaa");
+  const anibt = sources.find((source) => source.id === "anibt");
+  assert.equal(sources.some((source) => source.id === "prowlarr"), false);
+  assert.equal(preservedNyaa?.enabled, true);
+  assert.equal(preservedNyaa?.useProxy, false);
+  assert.equal(anibt?.useProxy, false);
+  assert.equal((await second.repository.listSourceSyncStates()).some((state) => state.sourceId === "prowlarr"), false);
+  assert.equal(
+    (await second.repository.listRequestCircuitStates()).some((state) => state.key === "release-source:prowlarr"),
+    false
+  );
+  second.close();
+
+  const verifiedDatabase = new DatabaseConstructor(fixture.databasePath, { readonly: true });
+  try {
+    const version = verifiedDatabase.prepare("SELECT value FROM app_meta WHERE key = 'app_data_version'").get() as {
+      value: string;
+    };
+    assert.equal(Number(version.value), APP_DATA_VERSION);
+  } finally {
+    verifiedDatabase.close();
+  }
+  assertDatabaseIntegrity(fixture.databasePath);
 });
 
 test("SQLite 按任务文件保存并跨重启恢复续播位置", async () => {

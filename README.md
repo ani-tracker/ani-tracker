@@ -4,6 +4,8 @@ Ani Tracker 是一个本地桌面追番工具，围绕新番发现、追番规�
 
 项目优先面向本地使用场景：业务数据保存在本机 SQLite，下载可连接外部 qBittorrent，也可使用随应用托管的 qBittorrent-nox。局域网设备通过 HTTPS PWA 配对访问，不开放裸 HTTP 或公网接口。
 
+> Copyright (c) 2026 Ani Tracker contributors. 本项目源码免费公开，仅限个人及其他非商业用途；未经版权所有者书面许可，禁止商业使用。
+
 ## 核心能力
 
 - 新番发现：按年份、季度和月份采集番剧，合并 Bangumi、AniList、Mikan 等元数据。
@@ -219,6 +221,15 @@ curl.exe -k -X POST "https://<主机IP>:18083/api/images/resolve" `
 - `docs/startup.md`：启动链路和环境说明。
 - `docs/theme-system-progress.md`：主题系统专项计划。
 - `AGENTS.md`：协作和编码约束。
+
+## 版权与许可
+
+Ani Tracker 原创源码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)：
+
+- 允许个人学习、研究、娱乐及其他非商业用途免费使用、修改和分发。
+- 未经版权所有者事先书面许可，不得销售、收费提供、商业集成、广告变现或用于其他商业目的。
+- 必须保留 [NOTICE](NOTICE) 中的版权声明和本许可证文本。
+- 项目使用或随包分发的第三方组件继续遵循各自许可证，不受本项目非商业许可证重新授权。
 
 ## 尚未完成
 

@@ -71,15 +71,5 @@ export const defaultSourceConfigs: ReleaseSourceConfig[] = [
     requestIntervalMs: 3_000,
     baseUrl: "https://acg.rip/",
     tags: ["anime", "bt", "acg-rip", "rss"]
-  },
-  {
-    id: "prowlarr",
-    name: "Prowlarr Torznab",
-    kind: "torznab",
-    enabled: false,
-    useProxy: false,
-    requestIntervalMs: 250,
-    baseUrl: "http://127.0.0.1:9696",
-    tags: ["torznab"]
   }
 ];

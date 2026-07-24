@@ -94,7 +94,7 @@ test("单个下载源请求数量最多为 50", () => {
   assert.equal(normalizeReleaseSourceFetchLimit(0), 1);
 });
 
-test("默认下载源包含 AniBT、ACGNX、Nyaa 和 ACG.RIP 且可创建站点适配器", () => {
+test("默认仅开启直连 AniBT，其他来源关闭并启用代理，且不再包含 Prowlarr", () => {
   const anibt = defaultSourceConfigs.find((source) => source.id === "anibt");
   const acgnx = defaultSourceConfigs.find((source) => source.id === "acgnx");
   const nyaa = defaultSourceConfigs.find((source) => source.id === "nyaa");
@@ -104,13 +104,13 @@ test("默认下载源包含 AniBT、ACGNX、Nyaa 和 ACG.RIP 且可创建站点�
   assert.ok(acgnx);
   assert.ok(nyaa);
   assert.ok(acgRip);
+  assert.equal(defaultSourceConfigs.some((source) => source.id === "prowlarr"), false);
+  assert.equal(defaultSourceConfigs.filter((source) => source.enabled).map((source) => source.id).join(","), "anibt");
   assert.equal(anibt.enabled, true);
   assert.equal(anibt.useProxy, false);
-  assert.equal(acgnx.enabled, false);
-  assert.equal(nyaa.enabled, false);
-  assert.equal(acgRip.enabled, false);
-  assert.equal(nyaa.useProxy, true);
-  assert.equal(acgRip.useProxy, true);
+  assert.equal(anibt.baseUrl, "https://anibt.net/");
+  assert.equal(defaultSourceConfigs.filter((source) => source.id !== "anibt").every((source) => !source.enabled), true);
+  assert.equal(defaultSourceConfigs.filter((source) => source.id !== "anibt").every((source) => source.useProxy), true);
   assert.equal(createReleaseSource(anibt)?.config.id, "anibt");
   assert.equal(createReleaseSource(acgnx)?.config.id, "acgnx");
   assert.ok(createReleaseSource(nyaa) instanceof NyaaReleaseSource);

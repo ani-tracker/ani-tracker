@@ -793,7 +793,10 @@ export class SqliteAppRepository implements AppRepository {
         throw new Error(`App data version ${currentAppDataVersion} is newer than supported ${APP_DATA_VERSION}`);
       }
       if (currentAppDataVersion < APP_DATA_VERSION) {
-        this.setMeta("app_data_version", String(APP_DATA_VERSION));
+        this.transaction(() => {
+          this.migrateAppData(currentAppDataVersion);
+          this.setMeta("app_data_version", String(APP_DATA_VERSION));
+        });
         logger.info("SQLite app data version migrated", {
           fromVersion: currentAppDataVersion,
           toVersion: APP_DATA_VERSION
@@ -802,6 +805,28 @@ export class SqliteAppRepository implements AppRepository {
       this.maintainStoredData();
     }
     logger.info("SQLite repository initialized", { path: this.databasePath, schemaVersion: SQLITE_SCHEMA_VERSION });
+  }
+
+  /** 按应用数据版本执行一次性业务数据迁移。 */
+  private migrateAppData(currentAppDataVersion: number): void {
+    if (currentAppDataVersion < 22) {
+      const removedSourceCount = this.run("DELETE FROM release_source WHERE id = @sourceId", {
+        sourceId: "prowlarr"
+      }).changes;
+      this.run("DELETE FROM request_circuit_state WHERE circuit_key = @circuitKey", {
+        circuitKey: "release-source:prowlarr"
+      });
+      this.run("DELETE FROM release_search_cache");
+      this.run("UPDATE release_source SET use_proxy = 0, updated_at = @updatedAt WHERE id = @sourceId", {
+        sourceId: "anibt",
+        updatedAt: nowIso()
+      });
+      logger.info("SQLite 默认下载源迁移完成", {
+        fromVersion: currentAppDataVersion,
+        toVersion: 22,
+        removedSourceCount
+      });
+    }
   }
 
   /** 维护历史与首启数据中的字幕组引用及下载集数元数据。 */

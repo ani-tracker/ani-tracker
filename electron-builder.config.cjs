@@ -15,12 +15,16 @@ if (!existsSync(libVlcPath)) {
   throw new Error(`Missing staged libVLC runtime: ${libVlcPath}`);
 }
 extraResources.push({ from: libVlcPath, to: join("libvlc", libVlcTarget) });
+extraResources.push(
+  { from: resolve("LICENSE"), to: join("licenses", "ani-tracker-LICENSE.txt") },
+  { from: resolve("NOTICE"), to: join("licenses", "ani-tracker-NOTICE.txt") }
+);
 
 module.exports = {
   appId: "dev.ani.tracker",
   productName: "Ani Tracker",
   executableName: "Ani Tracker",
-  copyright: "Copyright (c) 2026 Ani Tracker contributors",
+  copyright: "Copyright (c) 2026 Ani Tracker contributors. Non-commercial use only.",
   asar: true,
   asarUnpack: [
     "node_modules/better-sqlite3/**/*",

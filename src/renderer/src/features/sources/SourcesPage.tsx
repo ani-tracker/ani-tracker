@@ -190,7 +190,7 @@ export function SourcesPage() {
       name,
       kind: draft.kind,
       enabled: true,
-      useProxy: false,
+      useProxy: true,
       rssUrl: draft.kind === "rss" ? url : undefined,
       baseUrl: draft.kind !== "rss" ? url : undefined,
       apiKey: draft.kind !== "rss" ? draft.apiKey.trim() || undefined : undefined,
