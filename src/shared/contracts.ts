@@ -448,6 +448,11 @@ export interface DesktopPlayerWindowInput {
   fileIndex?: number;
 }
 
+/** 描述 macOS 独立播放器自定义窗口拖动的指针阶段与屏幕坐标。 */
+export type DesktopPlayerWindowDragInput =
+  | { phase: "start" | "move"; screenX: number; screenY: number }
+  | { phase: "end" };
+
 export interface DesktopPlaybackSessionInput {
   taskId: string;
   mode: RemotePlaybackRequestMode;

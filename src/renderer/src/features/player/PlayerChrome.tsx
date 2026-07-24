@@ -50,6 +50,7 @@ import { cn } from "@/lib/cn";
 import type { RemotePlaybackRequestMode, RemotePlaybackSubtitle } from "@shared/contracts";
 import type { PlayerAspectRatio } from "@shared/player-contract";
 import { formatPlaybackTime } from "./player-ui-model";
+import type { DesktopWindowDragHandlers } from "./use-desktop-window-drag";
 
 const PLAYBACK_RATES = [0.5, 0.75, 1, 1.25, 1.5, 2] as const;
 
@@ -67,6 +68,7 @@ interface PlayerChromeProps {
   fullscreen: boolean;
   mode: RemotePlaybackRequestMode;
   muted: boolean;
+  nativeWindowDrag?: boolean;
   onActivity: () => void;
   onChangeMode: (mode: RemotePlaybackRequestMode) => void;
   onChangeRate: (rate: number) => void;
@@ -93,6 +95,7 @@ interface PlayerChromeProps {
   subtitles: RemotePlaybackSubtitle[];
   visible: boolean;
   volume: number;
+  windowDragHandlers?: DesktopWindowDragHandlers;
 }
 
 /** 渲染适配桌面、横屏和手机竖屏的播放器控制层。 */
@@ -135,7 +138,8 @@ function PlayerTopBar(
   return (
     <header
       className="pointer-events-auto flex min-h-16 items-start gap-2 bg-black/55 pb-3 pl-[max(0.75rem,var(--safe-area-left))] pr-[max(0.75rem,var(--safe-area-right))] pt-[max(0.75rem,var(--safe-area-top))] text-white backdrop-blur-sm sm:pl-[max(1rem,var(--safe-area-left))] sm:pr-[max(1rem,var(--safe-area-right))]"
-      data-player-drag-region
+      data-player-drag-region={props.nativeWindowDrag ? "" : undefined}
+      {...props.windowDragHandlers}
     >
       <PlayerIconButton label="关闭播放器" onClick={props.onClose}>
         <ArrowLeft />

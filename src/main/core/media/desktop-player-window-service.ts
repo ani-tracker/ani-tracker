@@ -1,5 +1,5 @@
 import type { BrowserWindow, BrowserWindowConstructorOptions, Rectangle } from "electron";
-import type { DesktopPlayerWindowInput } from "@shared/contracts";
+import type { DesktopPlayerWindowDragInput, DesktopPlayerWindowInput } from "@shared/contracts";
 import {
   createDesktopPlayerSearchParams,
   createDesktopVlcHostSearchParams
@@ -56,6 +56,12 @@ interface DesktopPlayerWindowPair {
   syncingBounds: boolean;
   syncingState: boolean;
   cleanupStarted: boolean;
+  dragState?: {
+    pointerStartX: number;
+    pointerStartY: number;
+    windowStartX: number;
+    windowStartY: number;
+  };
 }
 
 export interface DesktopPlayerWindowServiceOptions {
@@ -108,6 +114,7 @@ export class DesktopPlayerWindowService {
       hasShadow: false,
       skipTaskbar: true,
       parent: videoWindow as unknown as BrowserWindow,
+      ...(this.platform === "darwin" ? { movable: false } : {}),
       autoHideMenuBar: true,
       webPreferences: {
         preload: this.options.preloadPath,
@@ -135,7 +142,11 @@ export class DesktopPlayerWindowService {
       await this.options.prepareVideoHost?.(ownerId, videoWindow);
       await this.loadRenderer(controlWindow, playerSearchParams);
       if (!videoWindow.isDestroyed() && !controlWindow.isDestroyed()) {
-        this.syncBounds(pair, controlWindow, videoWindow);
+        this.syncBounds(
+          pair,
+          this.platform === "darwin" ? videoWindow : controlWindow,
+          this.platform === "darwin" ? controlWindow : videoWindow
+        );
         videoWindow.show();
         controlWindow.show();
         controlWindow.focus();
@@ -166,10 +177,51 @@ export class DesktopPlayerWindowService {
     return true;
   }
 
+  /** 在 macOS 上移动视频父窗口，透明控制层交由系统原生跟随。 */
+  drag(ownerId: number, input: DesktopPlayerWindowDragInput): boolean {
+    const pair = this.pairs.get(ownerId);
+    if (this.platform !== "darwin" || !pair || pair.cleanupStarted || !isValidDragInput(input)) return false;
+
+    if (input.phase === "end") {
+      const dragged = Boolean(pair.dragState);
+      pair.dragState = undefined;
+      if (dragged) logger.info("macOS 独立播放器窗口拖动结束", { ownerId, taskId: pair.taskId });
+      return dragged;
+    }
+    if (!isFiniteScreenPoint(input) || pair.videoWindow.isDestroyed()) return false;
+
+    if (input.phase === "start") {
+      if (pair.videoWindow.isFullScreen() || pair.videoWindow.isMaximized()) return false;
+      const bounds = pair.videoWindow.getBounds();
+      pair.dragState = {
+        pointerStartX: input.screenX,
+        pointerStartY: input.screenY,
+        windowStartX: bounds.x,
+        windowStartY: bounds.y
+      };
+      logger.info("macOS 独立播放器窗口拖动开始", { ownerId, taskId: pair.taskId });
+      return true;
+    }
+
+    const dragState = pair.dragState;
+    if (!dragState || pair.videoWindow.isFullScreen() || pair.videoWindow.isMaximized()) return false;
+    const bounds = pair.videoWindow.getBounds();
+    const nextBounds = {
+      ...bounds,
+      x: Math.round(dragState.windowStartX + input.screenX - dragState.pointerStartX),
+      y: Math.round(dragState.windowStartY + input.screenY - dragState.pointerStartY)
+    };
+    if (nextBounds.x !== bounds.x || nextBounds.y !== bounds.y) {
+      pair.videoWindow.setBounds(nextBounds, false);
+    }
+    return true;
+  }
+
   /** 同步切换视频宿主与控制层的全屏状态。 */
   setFullscreen(ownerId: number, fullscreen: boolean): boolean {
     const pair = this.pairs.get(ownerId);
     if (!pair || pair.cleanupStarted) return false;
+    pair.dragState = undefined;
     this.withStateSync(pair, () => {
       if (!pair.videoWindow.isDestroyed()) pair.videoWindow.setFullScreen(fullscreen);
       if (!pair.controlWindow.isDestroyed()) pair.controlWindow.setFullScreen(fullscreen);
@@ -196,9 +248,14 @@ export class DesktopPlayerWindowService {
     this.bindWindowDiagnostics(videoWindow, pair, "视频宿主");
     this.bindWindowDiagnostics(controlWindow, pair, "控制层");
 
-    for (const event of ["move", "resize"] as const) {
-      controlWindow.on(event, () => this.syncBounds(pair, controlWindow, videoWindow));
-      videoWindow.on(event, () => this.syncBounds(pair, videoWindow, controlWindow));
+    if (this.platform === "darwin") {
+      controlWindow.on("resize", () => this.syncMacControlResize(pair));
+      videoWindow.on("resize", () => this.syncBounds(pair, videoWindow, controlWindow));
+    } else {
+      for (const event of ["move", "resize"] as const) {
+        controlWindow.on(event, () => this.syncBounds(pair, controlWindow, videoWindow));
+        videoWindow.on(event, () => this.syncBounds(pair, videoWindow, controlWindow));
+      }
     }
     for (const event of ["minimize", "restore", "maximize", "unmaximize"] as const) {
       controlWindow.on(event, () => this.syncWindowState(pair, controlWindow, videoWindow, event));
@@ -249,6 +306,23 @@ export class DesktopPlayerWindowService {
     pair.syncingBounds = true;
     try {
       target.setBounds(sourceBounds, false);
+    } finally {
+      pair.syncingBounds = false;
+    }
+  }
+
+  /** macOS 控制层缩放时更新父窗口，并消除父窗口位移带来的子窗口偏移。 */
+  private syncMacControlResize(pair: DesktopPlayerWindowPair): void {
+    const { controlWindow, videoWindow } = pair;
+    if (pair.syncingBounds || pair.cleanupStarted || controlWindow.isDestroyed() || videoWindow.isDestroyed()) return;
+    const controlBounds = controlWindow.getBounds();
+    if (sameBounds(controlBounds, videoWindow.getBounds())) return;
+    pair.syncingBounds = true;
+    try {
+      videoWindow.setBounds(controlBounds, false);
+      if (!sameBounds(controlBounds, controlWindow.getBounds())) {
+        controlWindow.setBounds(controlBounds, false);
+      }
     } finally {
       pair.syncingBounds = false;
     }
@@ -330,4 +404,23 @@ function sameBounds(left: Rectangle, right: Rectangle): boolean {
     && left.y === right.y
     && left.width === right.width
     && left.height === right.height;
+}
+
+/** 拒绝来自 renderer 的异常坐标，避免无效值污染窗口边界。 */
+function isValidDragInput(input: unknown): input is DesktopPlayerWindowDragInput {
+  if (!input || typeof input !== "object" || !("phase" in input)) return false;
+  const candidate = input as { phase?: unknown; screenX?: unknown; screenY?: unknown };
+  if (candidate.phase === "end") return true;
+  return (candidate.phase === "start" || candidate.phase === "move")
+    && isFiniteScreenPoint(candidate);
+}
+
+/** 限制窗口拖动坐标为合理有限值。 */
+function isFiniteScreenPoint(input: { screenX?: unknown; screenY?: unknown }): input is { screenX: number; screenY: number } {
+  return typeof input.screenX === "number"
+    && typeof input.screenY === "number"
+    && Number.isFinite(input.screenX)
+    && Number.isFinite(input.screenY)
+    && Math.abs(input.screenX) <= 1_000_000
+    && Math.abs(input.screenY) <= 1_000_000;
 }

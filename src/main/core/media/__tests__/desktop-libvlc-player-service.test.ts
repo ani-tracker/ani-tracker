@@ -124,11 +124,19 @@ test("DesktopLibVlcPlayerService 解析受控路径并发布递增快照", async
   assert.equal(snapshots.at(-1)?.audioTracks.length, 2);
   assert.equal(snapshots.at(-1)?.subtitleTracks.length, 2);
 
+  player.emit("buffering");
+  assert.equal(snapshots.at(-1)?.status, "buffering");
   player.emit("timeChanged", { time: 45_000 });
+  assert.equal(snapshots.at(-1)?.status, "playing");
   player.emit("lengthChanged", { length: 150_000 });
   assert.equal(snapshots.at(-1)?.positionSeconds, 45);
   assert.equal(snapshots.at(-1)?.durationSeconds, 150);
   assert.ok(snapshots.every((snapshot, index) => index === 0 || snapshot.sequence > snapshots[index - 1].sequence));
+
+  player.emit("paused");
+  player.emit("buffering");
+  player.emit("timeChanged", { time: 46_000 });
+  assert.equal(snapshots.at(-1)?.status, "paused");
 
   await service.dispatch({
     type: "set-volume",

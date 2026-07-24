@@ -29,6 +29,7 @@ import type {
   AutomationRunResult,
   AutomationSchedulerStatus,
   ConfirmAnimeSourceBindingInput,
+  DesktopPlayerWindowDragInput,
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
   EmbeddedTorrentCoreStatus,
@@ -138,6 +139,7 @@ declare global {
       playMedia: (filePath: string, profileId?: string) => Promise<void>;
       openDesktopPlayerWindow: (input: DesktopPlayerWindowInput) => Promise<void>;
       closeDesktopPlayerWindow: () => void;
+      dragDesktopPlayerWindow: (input: DesktopPlayerWindowDragInput) => void;
       createDesktopPlaybackSession: (input: DesktopPlaybackSessionInput) => Promise<RemotePlaybackSession>;
       closeDesktopPlaybackSession: (sessionId: string) => Promise<void>;
       getDesktopPlayerCapabilities: () => Promise<PlayerCapabilities>;

@@ -419,9 +419,21 @@ export class DesktopLibVlcPlayerService {
       status: "ended",
       positionSeconds: record.snapshot?.durationSeconds ?? record.snapshot?.positionSeconds ?? 0
     }));
-    bind("timeChanged", (event) => this.patchSnapshot(record, {
-      positionSeconds: toSeconds(event?.time ?? safeRead(() => player.getTime(), 0))
-    }));
+    bind("timeChanged", (event) => {
+      const positionSeconds = toSeconds(event?.time ?? safeRead(() => player.getTime(), 0));
+      const status = resolveAdvancingPlaybackStatus(record.snapshot, positionSeconds);
+      if (status) {
+        logger.info("libVLC 播放时间推进，播放器状态已恢复", {
+          ownerId: record.ownerId,
+          previousStatus: record.snapshot?.status,
+          positionSeconds
+        });
+      }
+      this.patchSnapshot(record, {
+        positionSeconds,
+        ...(status ? { status } : {})
+      });
+    });
     bind("positionChanged", (event) => {
       if (event?.position === undefined || !record.snapshot) return;
       this.patchSnapshot(record, {
@@ -431,7 +443,10 @@ export class DesktopLibVlcPlayerService {
     bind("lengthChanged", (event) => this.patchSnapshot(record, {
       durationSeconds: toSeconds(event?.length ?? safeRead(() => player.getLength(), 0))
     }));
-    bind("buffering", () => this.patchSnapshot(record, { status: "buffering" }));
+    bind("buffering", () => {
+      if (["paused", "ended", "error", "closed"].includes(record.snapshot?.status ?? "")) return;
+      this.patchSnapshot(record, { status: "buffering" });
+    });
     bind("error", () => this.patchSnapshot(record, {
       status: "error",
       error: {
@@ -701,6 +716,15 @@ function toSeconds(milliseconds: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
+}
+
+/** 播放时间真实前进时结束无百分比回调的 loading/buffering 状态。 */
+function resolveAdvancingPlaybackStatus(
+  snapshot: PlayerSnapshot | undefined,
+  positionSeconds: number
+): "playing" | undefined {
+  if (!snapshot || positionSeconds <= snapshot.positionSeconds) return undefined;
+  return ["loading", "ready", "buffering"].includes(snapshot.status) ? "playing" : undefined;
 }
 
 function rejectCommand(command: PlayerCommand | undefined, error: PlayerError): PlayerCommandResult {

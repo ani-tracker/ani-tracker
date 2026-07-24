@@ -35,6 +35,7 @@ import { PlayerAutoNextPrompt } from "./PlayerAutoNextPrompt";
 import { PlayerErrorState } from "./PlayerErrorState";
 import { PlayerPlaylistSheet } from "./PlayerPlaylistSheet";
 import { buildPlayerEpisodeItems, type PlayerEpisodeUiItem } from "./player-ui-model";
+import { useDesktopWindowDrag } from "./use-desktop-window-drag";
 import { usePlaybackBusiness } from "./use-playback-business";
 
 const TOOLBAR_HIDE_DELAY_MS = 3_000;
@@ -176,6 +177,7 @@ function DesktopVlcControls({
   const [toolbarVisible, setToolbarVisible] = useState(true);
   const [playlistOpen, setPlaylistOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const windowDrag = useDesktopWindowDrag();
 
   const activeIndex = useMemo(
     () => activeItem ? playlist.findIndex((item) => item.id === activeItem.id) : -1,
@@ -527,6 +529,7 @@ function DesktopVlcControls({
           fullscreen={snapshot?.fullscreen ?? false}
           mode={requestedMode}
           muted={snapshot?.muted ?? false}
+          nativeWindowDrag={windowDrag.nativeWindowDrag}
           onActivity={revealToolbar}
           onChangeMode={changeMode}
           onChangeRate={setRate}
@@ -552,6 +555,7 @@ function DesktopVlcControls({
           subtitles={subtitleOptions}
           visible={toolbarVisible}
           volume={snapshot?.volume ?? 0.7}
+          windowDragHandlers={windowDrag.handlers}
         />
       </section>
       <PlayerPlaylistSheet

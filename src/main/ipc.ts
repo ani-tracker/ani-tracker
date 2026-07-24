@@ -22,6 +22,7 @@ import type {
   AnimeDiscoveryQuery,
   AnimeDiscoverySeasonQuery,
   ConfirmAnimeSourceBindingInput,
+  DesktopPlayerWindowDragInput,
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
   ReportAnimeSourceCandidateMismatchInput,
@@ -97,7 +98,7 @@ interface RegisterIpcHandlersOptions {
   remoteGateway?: RemoteHttpGateway;
   imageCacheService?: ImageCacheService;
   desktopPlaybackSessionService?: Pick<DesktopPlaybackSessionService, "createSession" | "closeSession">;
-  desktopPlayerWindowService?: Pick<DesktopPlayerWindowService, "open" | "close">;
+  desktopPlayerWindowService?: Pick<DesktopPlayerWindowService, "open" | "close" | "drag">;
   desktopPlayerControlService?: DesktopPlayerControlService;
   getMainWindow?: () => BrowserWindow | null;
 }
@@ -570,6 +571,9 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     );
     ipcMain.on("media:closePlayerWindow", (event) => {
       options.desktopPlayerWindowService!.close(event.sender.id);
+    });
+    ipcMain.on("media:dragPlayerWindow", (event, input: DesktopPlayerWindowDragInput) => {
+      options.desktopPlayerWindowService!.drag(event.sender.id, input);
     });
   }
   ipcMain.handle("player:getCapabilities", (event) =>

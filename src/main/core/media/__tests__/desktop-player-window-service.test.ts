@@ -101,6 +101,8 @@ test("DesktopPlayerWindowService 创建无边框视频宿主和透明控制层",
   assert.equal(controlWindow.options.frame, false);
   assert.equal(controlWindow.options.transparent, true);
   assert.equal(controlWindow.options.skipTaskbar, true);
+  assert.equal(controlWindow.options.parent, videoWindow);
+  assert.equal(controlWindow.options.movable, false);
   assert.equal(controlWindow.options.webPreferences?.preload, "/app/preload.mjs");
   assert.match(videoWindow.loadedUrl ?? "", /aniView=desktop-vlc-host/);
   assert.match(controlWindow.loadedUrl ?? "", /aniView=desktop-player/);
@@ -111,8 +113,25 @@ test("DesktopPlayerWindowService 创建无边框视频宿主和透明控制层",
   assert.equal(controlWindow.shown, true);
   assert.equal(controlWindow.focused, true);
 
-  controlWindow.bounds = { x: 240, y: 160, width: 960, height: 540 };
+  const initialVideoBounds = videoWindow.getBounds();
+  controlWindow.bounds = { ...controlWindow.bounds, x: 240, y: 160 };
   controlWindow.emit("move");
+  assert.deepEqual(videoWindow.bounds, initialVideoBounds);
+  controlWindow.bounds = { ...initialVideoBounds };
+
+  assert.equal(service.drag(11, { phase: "start", screenX: 320, screenY: 180 }), true);
+  assert.equal(service.drag(11, { phase: "move", screenX: 410, screenY: 235 }), true);
+  assert.deepEqual(videoWindow.bounds, {
+    ...initialVideoBounds,
+    x: initialVideoBounds.x + 90,
+    y: initialVideoBounds.y + 55
+  });
+  assert.equal(service.drag(11, { phase: "end" }), true);
+  assert.equal(service.drag(11, { phase: "move", screenX: 500, screenY: 300 }), false);
+  assert.equal(service.drag(11, { phase: "start", screenX: Number.NaN, screenY: 300 }), false);
+
+  controlWindow.bounds = { ...videoWindow.bounds, x: 160, y: 110, width: 960, height: 540 };
+  controlWindow.emit("resize");
   assert.deepEqual(videoWindow.bounds, controlWindow.bounds);
 
   assert.equal(service.setFullscreen(11, true), true);
@@ -124,6 +143,30 @@ test("DesktopPlayerWindowService 创建无边框视频宿主和透明控制层",
   assert.equal(controlWindow.closed, true);
   assert.deepEqual(closedIds, [11]);
   assert.equal(service.close(11), false);
+});
+
+test("DesktopPlayerWindowService 非 macOS 平台保留控制层父窗口", async () => {
+  const windows: FakePlayerWindow[] = [];
+  const service = new DesktopPlayerWindowService({
+    createWindow: (options) => {
+      const playerWindow = new FakePlayerWindow(options, windows.length + 20);
+      windows.push(playerWindow);
+      return playerWindow;
+    },
+    preloadPath: "/app/preload.mjs",
+    rendererFilePath: "/app/index.html",
+    rendererUrl: "http://localhost:5173/",
+    platform: "win32"
+  });
+
+  await service.open({ taskId: "task-2" });
+
+  assert.equal(windows[1].options.parent, windows[0]);
+  windows[1].bounds = { x: 260, y: 180, width: 900, height: 600 };
+  windows[1].emit("move");
+  assert.deepEqual(windows[0].bounds, windows[1].bounds);
+  assert.equal(service.drag(21, { phase: "start", screenX: 300, screenY: 200 }), false);
+  assert.equal(service.close(21), true);
 });
 
 test("DesktopPlayerWindowService 生产环境分别加载宿主与控制层查询参数", async () => {

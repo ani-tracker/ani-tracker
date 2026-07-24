@@ -18,6 +18,7 @@ import type {
   AnimeDiscoveryQuery,
   AnimeDiscoverySeasonQuery,
   ConfirmAnimeSourceBindingInput,
+  DesktopPlayerWindowDragInput,
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
   EmbeddedTorrentCoreStatus,
@@ -145,6 +146,8 @@ const api = {
   openDesktopPlayerWindow: (input: DesktopPlayerWindowInput): Promise<void> =>
     ipcRenderer.invoke("media:openPlayerWindow", input),
   closeDesktopPlayerWindow: (): void => ipcRenderer.send("media:closePlayerWindow"),
+  dragDesktopPlayerWindow: (input: DesktopPlayerWindowDragInput): void =>
+    ipcRenderer.send("media:dragPlayerWindow", input),
   createDesktopPlaybackSession: (input: DesktopPlaybackSessionInput): Promise<RemotePlaybackSession> =>
     ipcRenderer.invoke("media:createPlaybackSession", input),
   closeDesktopPlaybackSession: (sessionId: string): Promise<void> =>
