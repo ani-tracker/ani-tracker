@@ -134,7 +134,11 @@ async function verifyDependencies(bundleDirectory, executablePath, environment, 
   if (platform === "darwin") {
     for (const path of await findDynamicLibraries(bundleDirectory, executablePath, platform)) {
       const { stdout } = await execFileAsync("otool", ["-L", path]);
-      const dependencies = stdout.split("\n").slice(1).map((line) => line.trim().split(" ")[0]).filter(Boolean);
+      const dependencies = stdout
+        .split("\n")
+        .slice(1)
+        .map((line) => line.trim().replace(/\s+\(compatibility version .*$/, ""))
+        .filter(Boolean);
       const installNames = await readMacInstallNames(path);
       for (const dependency of dependencies) {
         if (
