@@ -2,6 +2,12 @@ name: Desktop Application Packages
 
 on:
   workflow_dispatch:
+    inputs:
+      release_version:
+        description: Release version (for example v0.1.0)
+        required: true
+        default: "v0.1.0"
+        type: string
   push:
     tags:
       - "v*"
@@ -9,9 +15,26 @@ on:
 permissions:
   contents: write
 
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
+
 jobs:
+  validate-release-version:
+    name: Validate release version
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Validate semantic version
+        shell: bash
+        run: |
+          if [[ ! "${RELEASE_VERSION}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: ${RELEASE_VERSION}" >&2
+            exit 1
+          fi
+          echo "Release version: ${RELEASE_VERSION}"
+
   unix:
     name: ${{ matrix.target }}
+    needs: validate-release-version
     strategy:
       fail-fast: false
       matrix:
@@ -289,6 +312,7 @@ jobs:
 
   windows:
     name: win32-x64
+    needs: validate-release-version
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
@@ -455,10 +479,10 @@ jobs:
             release/*.zip
           if-no-files-found: error
 
-  publish-draft:
-    name: Publish desktop application draft
-    if: ${{ startsWith(github.ref, 'refs/tags/') }}
-    needs: [unix, windows]
+  publish-release:
+    name: Publish desktop application release
+    if: ${{ success() }}
+    needs: [validate-release-version, unix, windows]
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/download-artifact@v4
@@ -467,18 +491,10 @@ jobs:
           path: release-assets
           merge-multiple: true
 
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: qbittorrent-nox-*
-          path: release-assets
-          merge-multiple: true
-
-      - name: Generate desktop SHA-256 checksums
-        working-directory: release-assets
-        run: sha256sum * > SHA256SUMS-desktop.txt
-
       - uses: softprops/action-gh-release@v2
         with:
-          draft: true
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
+          draft: false
           generate_release_notes: true
           files: release-assets/*
