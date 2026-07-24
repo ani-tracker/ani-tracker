@@ -3,7 +3,7 @@
   "target": "darwin-x64",
   "coreVersion": "0.1.0",
   "libtorrentVersion": "2.1.0",
-  "generatedAt": "2026-07-23T03:52:47.398Z",
+  "generatedAt": "2026-07-24T04:05:13.041Z",
   "files": [
     {
       "path": "SOURCE.md",
@@ -32,8 +32,8 @@
     },
     {
       "path": "licenses/libtorrent-BSD-3-Clause.txt",
-      "size": 1524,
-      "sha256": "f4b492afbde73d2f4e051050a619622876a13b77e7b8b6ea3ec2868a6929b31b"
+      "size": 1523,
+      "sha256": "2487bd80f7ea66eb558961de45ecd381bfb15e565e9eb3a12aebe44f58a65c20"
     },
     {
       "path": "licenses/openssl-Apache-2.0.txt",
