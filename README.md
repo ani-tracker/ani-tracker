@@ -1,27 +1,48 @@
 # Ani Tracker
 
-Ani Tracker 是一个本地桌面追番工具，围绕新番发现、追番规则、资源搜索、BT 下载、媒体扫描、播放器调用、远程播放和自动提醒构建完整追番闭环。
+Ani Tracker 是一个本地桌面追番工具，围绕新番发现、追番规则、资源搜索、BT 下载、媒体扫描、内置播放、远程播放和自动提醒构建完整追番闭环。
 
-项目优先面向本地使用场景：业务数据保存在本机 SQLite，下载可连接外部 qBittorrent，也可使用随应用托管的 qBittorrent-nox。局域网设备通过 HTTPS PWA 配对访问，不开放裸 HTTP 或公网接口。
+项目优先面向本地使用场景：业务数据保存在本机 SQLite，下载可使用内置 libtorrent、连接外部 qBittorrent，或使用随应用托管的 qBittorrent-nox。局域网设备通过 HTTPS PWA 配对访问，不开放裸 HTTP 或公网接口。
+
+> **重要功能：本地优先数据、自动追番下载、内置 libtorrent 下载、内置 libVLC 播放、局域网远程播放、图片生成特色主题。**
 
 > Copyright (c) 2026 Ani Tracker contributors. 本项目源码免费公开，仅限个人及其他非商业用途；未经版权所有者书面许可，禁止商业使用。
 
 ## 核心能力
 
-- 新番发现：按年份、季度和月份采集番剧，合并 Bangumi、AniList、Mikan 等元数据。
-- 我的追番：管理状态、集数、字幕组、自动下载、分辨率、编码、位深、字幕语言和目录偏好。
-- 资源搜索：搜索 RSS、Torznab、DMHY、Mikan、AniBT、ACGNX，自动补全集数并关联我的追番。
-- 来源保护：每个下载源可独立选择代理和采集间隔，同域名串行请求并对 403/429 自动熔断。
-- 增量同步：默认每天 09:00 同步启用来源，错过后在当天首次启动时补跑，结果跨重启复用。
-- 候选评分：综合番剧、集数、字幕组、分辨率、编码、位深、字幕语言和 seeders 选择资源。
-- 下载管理：支持 qBittorrent Web API、Enhanced JSON、真实 hash 确认、托管 qBittorrent-nox、进度和文件优先级。
-- 媒体扫描：通过标题、文件名和 ffprobe 提取容器、分辨率、编码、位深、音轨和字幕轨。
-- 播放器集成：Windows 支持 Pure Codec PotPlayer、PotPlayer、mpv 和自动探测；其他系统按平台提供可用播放器。
-- 远程 PWA：通过局域网 HTTPS 配对访问追番和下载，支持浏览器原文件播放、实时转码、字幕和播放列表。
-- 外部远程播放：Windows 可调用 PotPlayer，macOS 可调用 IINA，从桌面主机安全拉取媒体。
-- 图片缓存：桌面端与远程端共用磁盘缓存，默认上限 5GB，应用重启后继续命中。
-- 主题系统：支持浅色、深色和跟随系统，主题变量与窗口外观保持同步。
-- 自动化提醒：定时扫描新集、自动下载、桌面通知、通知中心、托盘和开机启动。
+- **新番发现**：按年份、季度和月份采集番剧，合并 Bangumi、AniList、Mikan 等元数据。
+- **我的追番**：管理状态、集数、字幕组、自动下载、分辨率、编码、位深、字幕语言和目录偏好。
+- **资源搜索**：搜索 RSS、Torznab、DMHY、Mikan、AniBT、ACGNX，自动补全集数并关联我的追番。
+- **来源保护**：每个下载源可独立选择代理和采集间隔，同域名串行请求并对 403/429 自动熔断。
+- **增量同步**：默认每天 09:00 同步启用来源，错过后在当天首次启动时补跑，结果跨重启复用。
+- **候选评分**：综合番剧、集数、字幕组、分辨率、编码、位深、字幕语言和 seeders 选择资源。
+- **内置 BT 下载**：使用 libtorrent 2.1 sidecar，也支持 qBittorrent Web API、托管 qBittorrent-nox、进度和文件优先级。
+- **媒体扫描**：通过标题、文件名和 ffprobe 提取容器、分辨率、编码、位深、音轨和字幕轨。
+- **内置与外部播放器**：内置 libVLC 播放；Windows 支持 Pure Codec PotPlayer、PotPlayer、mpv，macOS 支持 IINA。
+- **远程 PWA**：通过局域网 HTTPS 配对访问追番和下载，支持浏览器原文件播放、实时转码、字幕和播放列表。
+- **外部远程播放**：Windows 可调用 PotPlayer，macOS 可调用 IINA，从桌面主机安全拉取媒体。
+- **图片缓存**：桌面端与远程端共用磁盘缓存，默认上限 5GB，应用重启后继续命中。
+- **特色主题**：提供三套内置主题、自定义编辑、导入导出，并可将参考图片转换为主题包。
+- **自动化提醒**：定时扫描新集、自动下载、桌面通知、通知中心、托盘和开机启动。
+
+## 特色主题
+
+Ani Tracker 内置青岚、珊瑚海岸、莓青三套主题，并将“跟随系统 / 浅色 / 深色”外观模式与主题风格分开保存。内置主题和自定义主题都同时提供浅色、深色配色，切换外观模式时不需要重新选择主题。
+
+### 使用内置或自定义主题
+
+1. 打开“设置 -> 外观”。
+2. 选择外观模式和内置主题；自定义主题可先复制再编辑，并支持导入、导出、重置和删除。
+3. 保存设置后，应用界面、Electron 窗口和系统外观会同步更新。
+
+### 从参考图片生成主题
+
+1. 向支持图片理解的模型上传一张参考图片。
+2. 将[图片取色主题生成提示词](docs/自定义主题提示词/image-to-ani-theme-prompt.md)与图片一起发送；需要固定名称时，额外附上“主题名称：名称”。
+3. 确认模型只返回 JSON，将内容保存为 `<id>.ani-theme.json`。
+4. 在“设置 -> 外观 -> 导入”中选择该文件，预览并保存主题。
+
+生成过程由外部图片理解模型完成，Ani Tracker 本身不连接 AI 服务。主题包仅接受白名单颜色令牌和受控圆角，不允许 JavaScript、任意 CSS 或远程资源；可先使用[可导入示例](docs/自定义主题提示词/image-palette-example.ani-theme.json)检查文件结构。
 
 ## 架构
 
@@ -139,7 +160,9 @@ FFmpeg/FFprobe 版本升级属于显式资源维护：执行 `pnpm run download:
 ## 下载源网络与同步
 
 - “下载源”页面为每个来源提供“使用全局代理”和最小采集间隔设置，范围为 250ms 到 60 秒；AniBT 固定不低于 3000ms。
-- Mikan、DMHY、ACGNX 默认开启来源代理、间隔 1500ms；AniBT 默认开启来源代理、间隔 3000ms；Prowlarr 默认直连、间隔 250ms；自定义来源默认直连、间隔 1500ms。
+- AniBT 是唯一默认启用的下载源，固定直连且采集间隔不低于 3000ms。
+- Mikan、DMHY、蜜柑计划站点、ACGNX、Nyaa 和 ACG.RIP 默认停用，但默认使用全局代理；自定义来源默认使用全局代理、间隔 1500ms。
+- Prowlarr Torznab 不再作为内置默认源；仍可手动添加其他 RSS、Torznab 或站点来源。
 - 来源代理依赖页面顶部的全局代理配置；全局模式为“关闭”时，即使来源开关已开启也会直连。
 - 同一域名最多执行一个请求，实际间隔会增加最多 20% 随机抖动；相同并发请求只访问源站一次。AniBT 适配器与追番 RSS 共用队列，每分钟最多约 20 次。
 - 403 按 10、20、30 分钟逐级熔断；429 按 1、5、15、30 分钟保护并遵守服务端 `Retry-After`。连续失败 3 次后至少暂停 30 分钟，状态保存在 SQLite，重启不会清空。
@@ -183,6 +206,27 @@ curl.exe -k -X POST "https://<主机IP>:18083/api/images/resolve" `
 
 接口返回 `/api/images/<签名令牌>`，该地址才是图片的 `GET` 路径。
 
+## 数据与资源来源致谢
+
+感谢以下网站和社区服务持续提供动漫元数据与资源索引，使 Ani Tracker 能够完成新番发现、信息补全和资源检索。
+
+### 新番与元数据来源
+
+- [Bangumi 番组计划](https://bgm.tv/)：提供番剧条目、别名、播出信息、评分和详情元数据。
+- [AniList](https://anilist.co/)：提供季度番剧、播出状态、演职员、排名和详情元数据。
+- [Mikan Project](https://mikanani.me/)：提供季度番组、番剧详情和资源发布信息。
+
+### 下载资源索引来源
+
+- [AniBT](https://anibt.net/)
+- [Mikan Project](https://mikanani.me/)
+- [动漫花园](https://share.dmhy.org/)
+- [ACGNX](https://share.acgnx.se/)
+- [Nyaa](https://nyaa.si/)
+- [ACG.RIP](https://acg.rip/)
+
+Mikan Project 同时用于新番元数据和下载资源索引。Ani Tracker 与上述网站不存在隶属、授权或背书关系，不托管或重新分发其资源；使用者应遵守所在地法律、网站条款及内容版权要求。
+
 ## 常见问题
 
 ### `PWA_NOT_BUILT`
@@ -220,6 +264,8 @@ curl.exe -k -X POST "https://<主机IP>:18083/api/images/resolve" `
 - `docs/progress.md`：当前实现进度与验证结果。
 - `docs/startup.md`：启动链路和环境说明。
 - `docs/theme-system-progress.md`：主题系统专项计划。
+- `docs/自定义主题提示词/image-to-ani-theme-prompt.md`：参考图片生成主题的完整提示词和导入说明。
+- `docs/自定义主题提示词/image-palette-example.ani-theme.json`：可直接导入的主题包示例。
 - `AGENTS.md`：协作和编码约束。
 
 ## 版权与许可
@@ -233,7 +279,6 @@ Ani Tracker 原创源码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)�
 
 ## 尚未完成
 
-- 真正的内置 BT 核心；`EmbeddedTorrentEngine` 仍是占位实现。
 - 更多站点专用适配器和更完整的元数据冲突消解。
 - qBittorrent-nox 的 macOS arm64 和 Linux x64 内置资源。
 - madVR 播放链路和 Windows 播放进度监控。
