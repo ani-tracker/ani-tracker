@@ -190,7 +190,11 @@ jobs:
             --platform "${{ matrix.platform }}" \
             --arch "${{ matrix.arch }}" \
             --required
-          pnpm run prepare:ffmpeg
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
+            echo "[ffmpeg] linux-x64 使用系统 PATH 中的 ffmpeg/ffprobe"
+          else
+            pnpm run prepare:ffmpeg
+          fi
           node scripts/prepare-qbittorrent-resources.mjs \
             --source artifacts/qbittorrent \
             --target out/qbittorrent \
@@ -339,7 +343,8 @@ jobs:
       - name: Rebuild Electron native modules
         shell: pwsh
         run: |
-          pnpm exec electron-rebuild -f --only better-sqlite3,electron-vlc-player -a x64
+          pnpm exec electron-rebuild -f --only better-sqlite3 -a x64
+          pnpm exec electron-rebuild -f --module-dir node_modules/electron-vlc-player -a x64
           $binding = "node_modules\electron-vlc-player\build\Release\vlc_binding.node"
           if (-not (Test-Path $binding -PathType Leaf) -or (Get-Item $binding).Length -eq 0) {
             throw "electron-vlc-player binding was not rebuilt"

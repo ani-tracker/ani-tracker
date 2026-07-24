@@ -149,6 +149,26 @@ if [[ "${platform}" == "darwin" ]]; then
   cp -R "${app_path}" "${bundle_input}/qbittorrent-nox.app"
   "${qt_root}/bin/macdeployqt" "${bundle_input}/qbittorrent-nox.app" -always-overwrite
 
+  # macdeployqt 会按 GUI 应用复制全量插件；无头进程只保留 SQLite 和 TLS 后端。
+  app_contents="${bundle_input}/qbittorrent-nox.app/Contents"
+  plugins_path="${app_contents}/PlugIns"
+  headless_plugins="${target_root}/headless-plugins"
+  rm -rf "${headless_plugins}"
+  mkdir -p "${headless_plugins}/sqldrivers" "${headless_plugins}/tls"
+  cp "${plugins_path}/sqldrivers/libqsqlite.dylib" "${headless_plugins}/sqldrivers/libqsqlite.dylib"
+  cp "${plugins_path}/tls/libqsecuretransportbackend.dylib" \
+    "${headless_plugins}/tls/libqsecuretransportbackend.dylib"
+  if [[ -f "${plugins_path}/tls/libqcertonlybackend.dylib" ]]; then
+    cp "${plugins_path}/tls/libqcertonlybackend.dylib" \
+      "${headless_plugins}/tls/libqcertonlybackend.dylib"
+  fi
+  rm -rf "${plugins_path}"
+  mv "${headless_plugins}" "${plugins_path}"
+  rm -rf \
+    "${app_contents}/Frameworks/QtGui.framework" \
+    "${app_contents}/Frameworks/QtWidgets.framework"
+  echo "[qbittorrent-build] 已裁剪 macOS GUI 运行库 target=${target}"
+
   codesign --force --deep --sign - "${bundle_input}/qbittorrent-nox.app"
 else
   binary_path="${qbittorrent_build}/qbittorrent-nox"
