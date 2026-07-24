@@ -407,3 +407,30 @@ html.desktop-vlc-host-root #root {
     transition-duration: 0ms !important;
   }
 }
+
+/* 远程网页全屏必须同时容纳视频和自定义控制层。 */
+.player-page-remote[data-remote-fullscreen] {
+  height: 100vh !important;
+  height: 100dvh !important;
+  overflow: hidden !important;
+}
+
+.player-page-remote .player-video-stage[data-remote-fullscreen] {
+  top: 0;
+  width: 100vw !important;
+  height: 100vh !important;
+  height: 100dvh !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  background: #000;
+}
+
+.player-page-remote .player-video-stage[data-remote-fullscreen="native"] {
+  position: relative !important;
+}
+
+.player-page-remote .player-video-stage[data-remote-fullscreen="web"] {
+  position: fixed !important;
+  inset: 0;
+  z-index: 50;
+}

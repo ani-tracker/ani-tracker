@@ -47,6 +47,17 @@ import type { RemotePlaylistItem } from "./remote-player-model";
 
 const TOOLBAR_HIDE_DELAY_MS = 3_000;
 
+type RemoteFullscreenMode = "native" | "web";
+
+interface WebkitFullscreenDocument extends Document {
+  webkitExitFullscreen?: () => Promise<void> | void;
+  webkitFullscreenElement?: Element | null;
+}
+
+interface WebkitFullscreenElement extends HTMLElement {
+  webkitRequestFullscreen?: () => Promise<void> | void;
+}
+
 interface RemoteVideoPlayerProps {
   activeItem: RemotePlaylistItem | null;
   allowExternalPlayback: boolean;
@@ -77,6 +88,7 @@ export function RemoteVideoPlayer({
   playlist,
   sessionClient
 }: RemoteVideoPlayerProps) {
+  const playerStageRef = useRef<HTMLElement>(null);
   const playerContainerRef = useRef<HTMLDivElement>(null);
   const playerAdapterRef = useRef<ArtPlayerAdapter | null>(null);
   const toolbarTimerRef = useRef<number>();
@@ -87,6 +99,7 @@ export function RemoteVideoPlayer({
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
   const [toolbarVisible, setToolbarVisible] = useState(true);
+  const [remoteFullscreenMode, setRemoteFullscreenMode] = useState<RemoteFullscreenMode | null>(null);
   const [playlistOpen, setPlaylistOpen] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [externalPlayerOpening, setExternalPlayerOpening] = useState(false);
@@ -116,7 +129,9 @@ export function RemoteVideoPlayer({
   const muted = playerSnapshot?.muted ?? false;
   const playbackRate = playerSnapshot?.playbackRate ?? 1;
   const selectedSubtitleId = playerSnapshot?.subtitleTracks.find((track) => track.selected)?.id;
-  const fullscreen = playerSnapshot?.fullscreen ?? false;
+  const fullscreen = environment === "remote"
+    ? remoteFullscreenMode !== null
+    : playerSnapshot?.fullscreen ?? false;
   const pictureInPicture = playerSnapshot?.pictureInPicture ?? false;
   const animeTitle = anime?.title ?? activeItem?.task.animeTitle ?? "Ani Tracker";
   const episodeLabel = activeItem?.task.episodeNo === undefined
@@ -169,6 +184,34 @@ export function RemoteVideoPlayer({
     scheduleToolbarHide();
     return () => window.clearTimeout(toolbarTimerRef.current);
   }, [buffering, loadError, panelOpen, playbackError, playing, playlistOpen, scheduleToolbarHide, session]);
+
+  useEffect(() => {
+    if (environment !== "remote") return;
+    const handleFullscreenChange = (): void => {
+      const nativeFullscreen = isRemoteNativeFullscreen(playerStageRef.current);
+      setRemoteFullscreenMode((current) => nativeFullscreen ? "native" : current === "web" ? current : null);
+      revealToolbar();
+      console.info("[remote] 网页播放器全屏状态变化", { nativeFullscreen });
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    document.addEventListener("webkitfullscreenchange", handleFullscreenChange);
+    return () => {
+      document.removeEventListener("fullscreenchange", handleFullscreenChange);
+      document.removeEventListener("webkitfullscreenchange", handleFullscreenChange);
+    };
+  }, [environment, revealToolbar]);
+
+  useEffect(() => {
+    if (!remoteFullscreenMode) return;
+    const previousHtmlOverflow = document.documentElement.style.overflow;
+    const previousBodyOverflow = document.body.style.overflow;
+    document.documentElement.style.overflow = "hidden";
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.documentElement.style.overflow = previousHtmlOverflow;
+      document.body.style.overflow = previousBodyOverflow;
+    };
+  }, [remoteFullscreenMode]);
 
   useEffect(() => {
     if (!activeItem) {
@@ -436,7 +479,45 @@ export function RemoteVideoPlayer({
     if (command) void dispatchPlayerCommand(command);
   };
 
+  /** 远程网页让完整视频舞台进入全屏，保留自定义控制层。 */
+  const toggleRemoteFullscreen = async (): Promise<void> => {
+    const stage = playerStageRef.current;
+    if (!stage) return;
+    if (remoteFullscreenMode === "web") {
+      setRemoteFullscreenMode(null);
+      revealToolbar();
+      console.info("[remote] 已退出网页全屏");
+      return;
+    }
+    if (isRemoteNativeFullscreen(stage)) {
+      try {
+        await exitDocumentFullscreen();
+      } catch (error) {
+        console.warn("[remote] 退出原生全屏失败", { error });
+      }
+      return;
+    }
+
+    try {
+      const enteredNativeFullscreen = await requestElementFullscreen(document.documentElement);
+      setRemoteFullscreenMode(enteredNativeFullscreen ? "native" : "web");
+      revealToolbar();
+      console.info("[remote] 已进入网页播放器全屏", {
+        mode: enteredNativeFullscreen ? "native" : "web"
+      });
+    } catch (error) {
+      setRemoteFullscreenMode("web");
+      revealToolbar();
+      console.warn("[remote] 原生全屏不可用，已切换网页全屏", { error });
+    }
+  };
+
+  /** 根据运行环境切换网页舞台全屏或 ArtPlayer 全屏。 */
   const togglePlayerFullscreen = (): void => {
+    if (environment === "remote") {
+      void toggleRemoteFullscreen();
+      return;
+    }
     const command = createPlayerCommand<Extract<PlayerCommand, { type: "set-fullscreen" }>>({
       type: "set-fullscreen",
       fullscreen: !fullscreen
@@ -474,6 +555,7 @@ export function RemoteVideoPlayer({
   /** 点击空白视频区域切换控制层可见性。 */
   const handleSurfaceClick = (event: ReactMouseEvent<HTMLElement>): void => {
     if ((event.target as Element).closest("[data-player-controls], [role='dialog']")) return;
+    if (environment === "remote" && !(event.target as Element).closest(".player-video-stage")) return;
     setToolbarVisible((visible) => !visible);
   };
 
@@ -504,17 +586,27 @@ export function RemoteVideoPlayer({
     <main
       className={cn("player-page", environment === "desktop" ? "player-page-desktop" : "player-page-remote")}
       data-player-environment={environment}
+      data-remote-fullscreen={environment === "remote" ? remoteFullscreenMode ?? undefined : undefined}
       onClick={handleSurfaceClick}
       onDoubleClick={handleSurfaceDoubleClick}
       onKeyDown={handleKeyDown}
       onPointerDown={(event) => {
         event.currentTarget.focus({ preventScroll: true });
-        revealToolbar();
+        if (environment === "desktop" || (event.target as Element).closest("[data-player-controls]")) {
+          revealToolbar();
+        }
       }}
-      onPointerMove={revealToolbar}
+      onPointerMove={(event) => {
+        if (environment === "desktop" || event.pointerType === "mouse") revealToolbar();
+      }}
       tabIndex={0}
     >
-      <section className="player-video-stage" aria-label={`${animeTitle} ${episodeLabel} 视频播放器`}>
+      <section
+        ref={playerStageRef}
+        className="player-video-stage"
+        aria-label={`${animeTitle} ${episodeLabel} 视频播放器`}
+        data-remote-fullscreen={environment === "remote" ? remoteFullscreenMode ?? undefined : undefined}
+      >
         <div ref={playerContainerRef} className="absolute inset-0" data-artplayer-surface />
         {(loading || (activeItem && !session && !playbackError)) && !loadError && (
           <div className="absolute inset-0 z-10 flex items-center justify-center bg-black text-white">
@@ -615,4 +707,38 @@ export function RemoteVideoPlayer({
 function createRemoteCommandId(sequenceRef: { current: number }): string {
   sequenceRef.current += 1;
   return `remote-${Date.now()}-${sequenceRef.current}`;
+}
+
+/** 读取标准或 WebKit 的当前全屏元素。 */
+function getDocumentFullscreenElement(): Element | null {
+  const webkitDocument = document as WebkitFullscreenDocument;
+  return document.fullscreenElement ?? webkitDocument.webkitFullscreenElement ?? null;
+}
+
+/** 判断远程播放器是否占用当前原生全屏树。 */
+function isRemoteNativeFullscreen(stage: HTMLElement | null): boolean {
+  const fullscreenElement = getDocumentFullscreenElement();
+  return fullscreenElement === document.documentElement || fullscreenElement === stage;
+}
+
+/** 尝试让完整播放器舞台进入原生全屏，不支持时返回网页全屏标记。 */
+async function requestElementFullscreen(element: HTMLElement): Promise<boolean> {
+  if (element.requestFullscreen) {
+    await element.requestFullscreen();
+    return true;
+  }
+  const webkitRequestFullscreen = (element as WebkitFullscreenElement).webkitRequestFullscreen;
+  if (!webkitRequestFullscreen) return false;
+  await webkitRequestFullscreen.call(element);
+  return true;
+}
+
+/** 退出标准或 WebKit 原生全屏。 */
+async function exitDocumentFullscreen(): Promise<void> {
+  if (document.exitFullscreen) {
+    await document.exitFullscreen();
+    return;
+  }
+  const webkitExitFullscreen = (document as WebkitFullscreenDocument).webkitExitFullscreen;
+  if (webkitExitFullscreen) await webkitExitFullscreen.call(document);
 }
