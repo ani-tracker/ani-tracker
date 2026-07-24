@@ -13,7 +13,9 @@ import { execFile } from "node:child_process";
 const execFileAsync = promisify(execFile);
 const CORE_VERSION = "0.1.0";
 const LIBTORRENT_VERSION = "2.1.0";
-const defaultSourceRoot = resolve("resources", "torrent-core");
+const defaultSourceRoot = resolve(
+  process.env.ANI_TORRENT_CORE_SOURCE_ROOT || join("resources", "torrent-core")
+);
 const defaultTargetRoot = resolve("out", "torrent-core");
 const requiredLicenseFiles = [
   "licenses/libtorrent-BSD-3-Clause.txt",

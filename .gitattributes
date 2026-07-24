@@ -1,0 +1,4 @@
+scripts/clean-rebuild.sh text eol=lf
+scripts/incremental-rebuild.sh text eol=lf
+scripts/rebuild-common.sh text eol=lf
+scripts/setup-desktop-build-tools.sh text eol=lf
