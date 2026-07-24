@@ -32,6 +32,7 @@ import type {
   DesktopPlayerWindowDragInput,
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
+  DownloadServiceStatus,
   EmbeddedTorrentCoreStatus,
   EpisodeReleasePreview,
   MediaScanResult,
@@ -127,6 +128,8 @@ declare global {
       detectPlayers: (profiles?: PlayerProfile[]) => Promise<PlayerDetectionResult>;
       selectPlayerExecutable: (input: SelectPlayerExecutableInput) => Promise<string | undefined>;
       testQbittorrent: () => Promise<TorrentConnectionTestResult>;
+      getDownloadServiceStatus: () => Promise<DownloadServiceStatus>;
+      onDownloadServiceStatusChanged: (listener: () => void) => () => void;
       getQbittorrentManagedStatus: () => Promise<QbittorrentManagedStatus>;
       startQbittorrentManaged: () => Promise<QbittorrentManagedStatus>;
       stopQbittorrentManaged: () => Promise<QbittorrentManagedStatus>;

@@ -21,6 +21,7 @@ import type {
   DesktopPlayerWindowDragInput,
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
+  DownloadServiceStatus,
   EmbeddedTorrentCoreStatus,
   PlaybackCheckpoint,
   PlayerDetectionResult,
@@ -129,6 +130,13 @@ const api = {
   selectPlayerExecutable: (input: SelectPlayerExecutableInput): Promise<string | undefined> =>
     ipcRenderer.invoke("players:selectExecutable", input),
   testQbittorrent: () => ipcRenderer.invoke("downloads:testQbittorrent"),
+  getDownloadServiceStatus: (): Promise<DownloadServiceStatus> =>
+    ipcRenderer.invoke("downloads:getServiceStatus"),
+  onDownloadServiceStatusChanged: (listener: () => void): (() => void) => {
+    const handler = () => listener();
+    ipcRenderer.on("downloads:serviceStatusChanged", handler);
+    return () => ipcRenderer.off("downloads:serviceStatusChanged", handler);
+  },
   getQbittorrentManagedStatus: () => ipcRenderer.invoke("downloads:getQbittorrentManagedStatus"),
   startQbittorrentManaged: () => ipcRenderer.invoke("downloads:startQbittorrentManaged"),
   stopQbittorrentManaged: () => ipcRenderer.invoke("downloads:stopQbittorrentManaged"),

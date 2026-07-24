@@ -176,6 +176,7 @@ export class EmbeddedTorrentCoreService implements EmbeddedTorrentCoreClient {
     }
     try {
       this.runtimeStatus = normalizeRuntimeStatus(await this.send("status", {}));
+      this.lastError = undefined;
       return this.getStatus(settings);
     } catch (error) {
       this.lastError = getErrorMessage(error);

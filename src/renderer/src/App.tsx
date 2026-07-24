@@ -32,6 +32,7 @@ import { DesktopPlayerPage } from "@/features/player/DesktopPlayerPage";
 import { DesktopVlcHostPage } from "@/features/player/DesktopVlcHostPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { appApi, getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
+import type { DownloadServiceStatus } from "@shared/contracts";
 import type { Anime } from "@shared/domain";
 import type { MyAnimePageIntent } from "@/features/my-anime/MyAnimePage";
 import {
@@ -92,6 +93,20 @@ interface RenderPageOptions {
   myAnimeIntent: MyAnimePageIntent | null;
   onMyAnimeIntentHandled: () => void;
   releaseSearchIntent: ReleaseSearchIntent | null;
+}
+
+/** 将主进程统一下载状态转换为应用壳展示状态。 */
+function toDownloadShellStatus(status: DownloadServiceStatus): AppShellStatus {
+  const detail = status.taskCount === undefined
+    ? status.message
+    : `${status.message} · ${status.taskCount} 个任务`;
+  if (status.state === "online") {
+    return { state: "online", label: "下载服务正常", detail };
+  }
+  if (status.state === "idle") {
+    return { state: "idle", label: "下载服务待机", detail };
+  }
+  return { state: "error", label: "下载服务异常", detail };
 }
 
 /** 根据导航标识渲染对应业务页面。 */
@@ -376,14 +391,16 @@ function MainApplication() {
       return;
     }
     let active = true;
+    let refreshSequence = 0;
 
     /** 刷新应用壳所需的未读数与下载服务状态。 */
     async function refreshShellState() {
+      const sequence = ++refreshSequence;
       const [unreadResult, serviceResult] = await Promise.allSettled([
         appApi.getUnreadNotificationCount(),
-        electronClient ? appApi.getQbittorrentManagedStatus() : Promise.resolve(null)
+        electronClient ? appApi.getDownloadServiceStatus() : Promise.resolve(null)
       ]);
-      if (!active) {
+      if (!active || sequence !== refreshSequence) {
         return;
       }
       if (unreadResult.status === "fulfilled") {
@@ -395,9 +412,7 @@ function MainApplication() {
       if (!electronClient) {
         setShellStatus({ state: "online", label: "桌面端在线", detail: "远程同步已连接" });
       } else if (serviceResult.status === "fulfilled" && serviceResult.value) {
-        setShellStatus(serviceResult.value.running
-          ? { state: "online", label: "下载服务正常", detail: "qBittorrent 已连接" }
-          : { state: "idle", label: "下载服务待机", detail: serviceResult.value.enabled ? "下载核心未运行" : "托管核心未启用" });
+        setShellStatus(toDownloadShellStatus(serviceResult.value));
       } else {
         setShellStatus({ state: "unknown", label: "服务状态未知", detail: "稍后自动重试" });
         if (serviceResult.status === "rejected") {
@@ -408,10 +423,14 @@ function MainApplication() {
 
     void refreshShellState();
     const refreshTimer = window.setInterval(() => void refreshShellState(), 30_000);
+    const unsubscribeDownloadStatus = electronClient
+      ? appApi.onDownloadServiceStatusChanged(() => void refreshShellState())
+      : undefined;
     window.addEventListener("focus", refreshShellState);
     return () => {
       active = false;
       window.clearInterval(refreshTimer);
+      unsubscribeDownloadStatus?.();
       window.removeEventListener("focus", refreshShellState);
     };
   }, [electronClient, pairingState.needsPairing]);

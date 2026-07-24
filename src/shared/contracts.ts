@@ -204,6 +204,17 @@ export interface TorrentConnectionTestResult {
   taskCount?: number;
 }
 
+export type DownloadServiceMode = "embedded" | "managed" | "external";
+export type DownloadServiceState = "online" | "idle" | "error";
+
+/** 描述当前默认下载引擎的实际运行状态，供应用壳统一展示。 */
+export interface DownloadServiceStatus {
+  mode: DownloadServiceMode;
+  state: DownloadServiceState;
+  message: string;
+  taskCount?: number;
+}
+
 export interface QbittorrentManagedStatus {
   enabled: boolean;
   autoStart: boolean;

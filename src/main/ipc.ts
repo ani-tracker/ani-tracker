@@ -12,8 +12,9 @@ import type {
 import { getSubtitleCoverage, resolveSubtitleLanguages } from "@shared/release-metadata";
 import type { AppRepository } from "./core/repositories/app-repository";
 import { createRepositoryRuntime } from "./core/repositories/repository-runtime";
-import { QbittorrentEngine } from "./core/downloads/qbittorrent-engine";
+import { QbittorrentClient } from "./core/downloads/qbittorrent-client";
 import { embeddedTorrentCoreService } from "./core/downloads/embedded-torrent-core-service";
+import { DownloadServiceStatusService } from "./core/downloads/download-service-status-service";
 import { ReleaseSourceService, resolveAnimeReleaseCacheTtlMs } from "./core/sources/release-source-service";
 import type {
   AddDownloadUrlInput,
@@ -31,7 +32,8 @@ import type {
   RssSubscriptionReleaseQuery,
   SelectPlayerExecutableInput,
   SavePlaybackCheckpointInput,
-  SetAnimeWatchProgressInput
+  SetAnimeWatchProgressInput,
+  TorrentConnectionTestResult
 } from "@shared/contracts";
 import { createTorrentEngine } from "./core/downloads/torrent-engine-factory";
 import { PlayerLauncherService } from "./core/platform/player-launcher";
@@ -81,6 +83,11 @@ export const repositoryRuntime = createRepositoryRuntime();
 export const repository = repositoryRuntime.repository;
 export const qbittorrentManagedService = new QbittorrentManagedService();
 export { embeddedTorrentCoreService };
+const downloadServiceStatusService = new DownloadServiceStatusService({
+  getEmbeddedStatus: (settings) => embeddedTorrentCoreService.refreshStatus(settings),
+  getManagedStatus: (settings) => qbittorrentManagedService.getStatus(settings),
+  testExternalConnection: (settings) => testQbittorrentConnection(settings, 5_000)
+});
 export const automationScheduler = new AutomationScheduler(repository, undefined, {
   getQbittorrentBaseUrl: (settings) => qbittorrentManagedService.getRuntimeBaseUrl(settings)
 });
@@ -103,7 +110,51 @@ interface RegisterIpcHandlersOptions {
   getMainWindow?: () => BrowserWindow | null;
 }
 
+/** 验证当前 qBittorrent WebUI，并仅获取轻量任务列表用于状态展示。 */
+async function testQbittorrentConnection(
+  settings: AppSettings,
+  requestTimeoutMs = 15_000
+): Promise<TorrentConnectionTestResult> {
+  try {
+    const client = new QbittorrentClient({
+      baseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
+      username: settings.download.qbittorrent.username,
+      password: settings.download.qbittorrent.password,
+      requestTimeoutMs
+    });
+    await client.login();
+    const tasks = await client.listTorrents();
+    return {
+      ok: true,
+      message: "qBittorrent 连接正常",
+      taskCount: tasks.length
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "qBittorrent 连接失败"
+    };
+  }
+}
+
 export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): void {
+  /** 通知渲染进程立即重读当前下载服务状态。 */
+  function publishDownloadServiceStatusChanged(): void {
+    const window = options.getMainWindow?.();
+    if (window && !window.isDestroyed()) {
+      window.webContents.send("downloads:serviceStatusChanged");
+    }
+  }
+
+  /** 在下载核心操作结束后发布状态变化，失败时也刷新错误状态。 */
+  async function runDownloadServiceAction<T>(action: () => Promise<T>): Promise<T> {
+    try {
+      return await action();
+    } finally {
+      publishDownloadServiceStatusChanged();
+    }
+  }
+
   ipcMain.handle("window:getState", () => getWindowState(options.getMainWindow?.()));
   ipcMain.handle("window:minimize", () => {
     options.getMainWindow?.()?.minimize();
@@ -444,20 +495,22 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     searchRssSubscriptionReleases(query)
   );
   ipcMain.handle("settings:get", () => repository.getSettings());
-  ipcMain.handle("settings:update", async (_event, patch: Partial<AppSettings>) => {
-    const settings = await repository.updateSettings(patch);
-    await options.onSettingsUpdated?.(settings);
-    await automationScheduler.restart();
-    await sourceSyncScheduler.restart();
-    return settings;
-  });
-  ipcMain.handle("settings:resetDefaults", async () => {
-    const settings = await repository.resetSettingsToDefaults();
-    await options.onSettingsUpdated?.(settings);
-    await automationScheduler.restart();
-    await sourceSyncScheduler.restart();
-    return settings;
-  });
+  ipcMain.handle("settings:update", (_event, patch: Partial<AppSettings>) =>
+    runDownloadServiceAction(async () => {
+      const settings = await repository.updateSettings(patch);
+      await options.onSettingsUpdated?.(settings);
+      await automationScheduler.restart();
+      await sourceSyncScheduler.restart();
+      return settings;
+    }));
+  ipcMain.handle("settings:resetDefaults", () =>
+    runDownloadServiceAction(async () => {
+      const settings = await repository.resetSettingsToDefaults();
+      await options.onSettingsUpdated?.(settings);
+      await automationScheduler.restart();
+      await sourceSyncScheduler.restart();
+      return settings;
+    }));
   ipcMain.handle("players:detect", async (_event, profiles?: PlayerProfile[]) => {
     const settings = await repository.getSettings();
     return new PlayerDetectionService().detect(Array.isArray(profiles) ? profiles : settings.players);
@@ -485,24 +538,33 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     const settings = await repository.getSettings();
     return qbittorrentManagedService.getStatus(settings);
   });
-  ipcMain.handle("downloads:startQbittorrentManaged", async () => {
+  ipcMain.handle("downloads:getServiceStatus", async () => {
     const settings = await repository.getSettings();
-    return qbittorrentManagedService.start(settings);
+    return downloadServiceStatusService.getStatus(settings);
   });
-  ipcMain.handle("downloads:stopQbittorrentManaged", () => qbittorrentManagedService.stop());
+  ipcMain.handle("downloads:startQbittorrentManaged", () =>
+    runDownloadServiceAction(async () => {
+      const settings = await repository.getSettings();
+      return qbittorrentManagedService.start(settings);
+    }));
+  ipcMain.handle("downloads:stopQbittorrentManaged", () =>
+    runDownloadServiceAction(() => qbittorrentManagedService.stop()));
   ipcMain.handle("downloads:getEmbeddedTorrentStatus", async () => {
     const settings = await repository.getSettings();
     return embeddedTorrentCoreService.refreshStatus(settings);
   });
-  ipcMain.handle("downloads:startEmbeddedTorrent", async () => {
-    const settings = await repository.getSettings();
-    return embeddedTorrentCoreService.start(settings);
-  });
-  ipcMain.handle("downloads:stopEmbeddedTorrent", () => embeddedTorrentCoreService.stop());
-  ipcMain.handle("downloads:restartEmbeddedTorrent", async () => {
-    const settings = await repository.getSettings();
-    return embeddedTorrentCoreService.restart(settings);
-  });
+  ipcMain.handle("downloads:startEmbeddedTorrent", () =>
+    runDownloadServiceAction(async () => {
+      const settings = await repository.getSettings();
+      return embeddedTorrentCoreService.start(settings);
+    }));
+  ipcMain.handle("downloads:stopEmbeddedTorrent", () =>
+    runDownloadServiceAction(() => embeddedTorrentCoreService.stop()));
+  ipcMain.handle("downloads:restartEmbeddedTorrent", () =>
+    runDownloadServiceAction(async () => {
+      const settings = await repository.getSettings();
+      return embeddedTorrentCoreService.restart(settings);
+    }));
   ipcMain.handle("media:list", () => repository.listMediaFiles());
   ipcMain.handle("media:scanDownload", async (_event, taskId: string) => {
     const task = await repository.getDownloadTask(taskId);
@@ -527,27 +589,8 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
     return result;
   });
   ipcMain.handle("downloads:testQbittorrent", async () => {
-    try {
-      const settings = await repository.getSettings();
-      const engine = new QbittorrentEngine({
-        baseUrl: qbittorrentManagedService.getRuntimeBaseUrl(settings),
-        username: settings.download.qbittorrent.username,
-        password: settings.download.qbittorrent.password
-      });
-      await engine.connect();
-      const tasks = await engine.listTasks();
-
-      return {
-        ok: true,
-        message: "qBittorrent 连接正常",
-        taskCount: tasks.length
-      };
-    } catch (error) {
-      return {
-        ok: false,
-        message: error instanceof Error ? error.message : "qBittorrent 连接失败"
-      };
-    }
+    const settings = await repository.getSettings();
+    return testQbittorrentConnection(settings);
   });
   ipcMain.handle("media:play", async (_event, filePath: string, profileId?: string) => {
     const settings = await repository.getSettings();

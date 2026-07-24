@@ -37,7 +37,7 @@ export interface AppNavigationItem {
 }
 
 export interface AppShellStatus {
-  state: "online" | "idle" | "unknown";
+  state: "online" | "idle" | "error" | "unknown";
   label: string;
   detail: string;
 }
@@ -212,6 +212,7 @@ export function AppShell({
                   "size-2 rounded-full",
                   status.state === "online" && "bg-success",
                   status.state === "idle" && "bg-warning",
+                  status.state === "error" && "bg-destructive",
                   status.state === "unknown" && "bg-muted-foreground"
                 )}
               />
@@ -382,6 +383,7 @@ export function AppShell({
                       "absolute right-0 top-0 size-2 rounded-full",
                       status.state === "online" && "bg-success",
                       status.state === "idle" && "bg-warning",
+                      status.state === "error" && "bg-destructive",
                       status.state === "unknown" && "bg-muted-foreground"
                     )}
                   />
