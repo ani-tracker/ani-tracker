@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useTheme } from "@/components/theme-provider";
 import { PlayerChrome } from "./PlayerChrome";
 import { PlayerEpisodeList } from "./PlayerEpisodeList";
 import { PlayerErrorState } from "./PlayerErrorState";
@@ -9,12 +10,17 @@ import type { RemotePlaybackRequestMode, RemotePlaybackSession } from "@shared/c
 import type { Anime, DownloadTask, Episode } from "@shared/domain";
 import type { RemotePlaylistItem } from "@/features/remote/remote-player-model";
 
-const PREVIEW_FRAME_URL = "https://lh3.googleusercontent.com/aida-public/AB6AXuD8BzePUI2MmVa32TfyST_TnZ4O2188fprpF8JpHDSGtzjI7mbh2KQm1hYcktxVwwTqkkedkdCobDBczFz4Mhlm1qEIWruz02t2lGRka9ZqdEwjFU_KJHKloj5sR37Ndev9kwU8qE1tcPE9WjI0Ydx7WkPPF-iLuGBNSXZxSB6x-2PLSX85MHIsvsQ9pti4BH989tUvLFPbL269TQKRrmesVoJSNoDxTo8AeVeHyTrtYdJd5JBhfvlKcq053xClbSJSgsUlA5nQW4pk";
+const PREVIEW_DESKTOP_FRAME_URL = "https://lh3.googleusercontent.com/aida-public/AB6AXuAgL2mdTyi1Xs9Yb1id3AmPBIeCFYvY3nrylRUwWUo4ZN0w9MExoBEQiABCj5Up9Wo9PyCbZ2YSrLVvfVANbuBTxvKjqOKEKtzcfpaquZdgnIlHdH9-FLekoQyXY0UgHLYciZh92dSS2hw9zOWX7ocE6pEGW6_ZOxFfPSaBbZDgs9Oa5QrWK8URPx2SazTvrW-Kg-1MDJPsJlc9jSKldT9YMKsgaqCiIXrYQYjOYbZinQxIHWfvR9YPnQn8o4N1znZbRfjKMNlavdoh";
+const PREVIEW_LANDSCAPE_FRAME_URL = "https://lh3.googleusercontent.com/aida-public/AB6AXuD8BzePUI2MmVa32TfyST_TnZ4O2188fprpF8JpHDSGtzjI7mbh2KQm1hYcktxVwwTqkkedkdCobDBczFz4Mhlm1qEIWruz02t2lGRka9ZqdEwjFU_KJHKloj5sR37Ndev9kwU8qE1tcPE9WjI0Ydx7WkPPF-iLuGBNSXZxSB6x-2PLSX85MHIsvsQ9pti4BH989tUvLFPbL269TQKRrmesVoJSNoDxTo8AeVeHyTrtYdJd5JBhfvlKcq053xClbSJSgsUlA5nQW4pk";
+const PREVIEW_POSTER_URL = "https://lh3.googleusercontent.com/aida-public/AB6AXuBmZqrJ5KhyvDDZeq3whiPtscqY-PgxgEx_LqPX36bqDEUSlZdMW4dZKlSf39CtDVDhj8-GyTP0YitWUPKTQqWMuq8dJ1bNndXb3aeJCcMtIWelTg1tFpAyXObLVeBb7j2nG9oWhHd64n4Nz6vMktvXhOgOO4ISvPoL-1cjiSwKwaG4zCiN_mlbjRfwzBmdKXlHMe5D83MoeNEB3VHp2GcOfFcG-3DwKA0A6PWdOwOx8SVP99BRlDVaSY_oWxN327ATo6dbrxhkBAu1";
 
 /** 仅在开发环境提供固定播放器状态，供设计稿截图验收。 */
 export function PlayerDesignPreview({ mode }: { mode: string }) {
   const desktop = mode === "desktop" || mode === "playlist" || mode === "error";
   const error = mode === "error";
+  const previewFrameUrl = desktop ? PREVIEW_DESKTOP_FRAME_URL : PREVIEW_LANDSCAPE_FRAME_URL;
+  const { appearance, clearPreview, previewAppearance } = useTheme();
+  const initialAppearance = useRef(appearance);
   const [playing, setPlaying] = useState(false);
   const [playlistOpen, setPlaylistOpen] = useState(mode === "playlist");
   const [currentTime, setCurrentTime] = useState(18 * 60 + 42);
@@ -26,12 +32,9 @@ export function PlayerDesignPreview({ mode }: { mode: string }) {
   const episodeItems = useMemo(createPreviewEpisodeItems, []);
 
   useEffect(() => {
-    const restoredDarkMode = document.documentElement.classList.contains("dark");
-    document.documentElement.classList.remove("dark");
-    return () => {
-      if (restoredDarkMode) document.documentElement.classList.add("dark");
-    };
-  }, []);
+    previewAppearance({ ...initialAppearance.current, themeMode: "light" });
+    return clearPreview;
+  }, [clearPreview, previewAppearance]);
 
   return (
     <main className={desktop ? "player-page player-page-desktop" : "player-page player-page-remote"}>
@@ -39,7 +42,7 @@ export function PlayerDesignPreview({ mode }: { mode: string }) {
         <div
           aria-hidden="true"
           className="absolute inset-0 bg-contain bg-center bg-no-repeat"
-          style={{ backgroundImage: `url(${PREVIEW_FRAME_URL})` }}
+          style={{ backgroundImage: `url(${previewFrameUrl})` }}
         />
         <PlayerChrome
           animeTitle="星海回声"
@@ -95,12 +98,13 @@ export function PlayerDesignPreview({ mode }: { mode: string }) {
           <PlayerMobileDetails
             activeItem={previewActiveItem}
             anime={previewAnime}
+            coverImageUrl={PREVIEW_POSTER_URL}
             currentTimeSeconds={currentTime}
             episodes={previewEpisodes}
             session={previewSession}
           />
-          <div id="player-inline-playlist" className="pb-4">
-            <PlayerEpisodeList animeTitle="星海回声" items={episodeItems} onSelect={() => undefined} />
+          <div id="player-inline-playlist" className="h-80 min-h-0 pb-4 md:h-[calc(100svh-56.25vw)]">
+            <PlayerEpisodeList animeTitle="星海回声" items={episodeItems} onSelect={() => undefined} scrollable />
           </div>
         </div>
       )}

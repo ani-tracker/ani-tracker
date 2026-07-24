@@ -300,6 +300,14 @@ html.desktop-vlc-host-root #root {
   }
 }
 
+@media (max-width: 900px) {
+  .player-video-stage button,
+  [data-player-sheet] button {
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
+}
+
 @media (max-width: 767px) and (orientation: portrait) {
   .player-page-remote {
     height: auto;

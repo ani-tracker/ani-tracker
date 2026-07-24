@@ -28,7 +28,7 @@ export function PlayerPlaylistSheet({
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent className="flex w-[44vw] min-w-80 max-w-[420px] flex-col gap-0 p-0" side="right">
+      <SheetContent className="flex w-[44vw] min-w-80 max-w-[420px] flex-col gap-0 p-0" data-player-sheet side="right">
         <SheetHeader className="border-b px-4 py-4 pr-14 text-left">
           <SheetTitle>播放列表</SheetTitle>
           <SheetDescription className="truncate">

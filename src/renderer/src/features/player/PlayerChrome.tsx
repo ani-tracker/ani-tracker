@@ -3,7 +3,6 @@ import {
   Captions,
   Check,
   ExternalLink,
-  FastForward,
   ListVideo,
   LoaderCircle,
   Maximize,
@@ -14,8 +13,9 @@ import {
   PictureInPicture2,
   Play,
   Ratio,
-  Rewind,
-  Settings2,
+  RotateCcw,
+  RotateCw,
+  Settings,
   SkipBack,
   SkipForward,
   Volume2,
@@ -160,7 +160,7 @@ function PlayerTopBar(
           <ListVideo />
         </PlayerIconButton>
         <PlayerIconButton className="player-mobile-settings player-top-settings" label="播放设置" onClick={props.onOpenSettings}>
-          <Settings2 />
+          <Settings />
         </PlayerIconButton>
         <PlayerMoreMenu {...props} />
       </div>
@@ -172,8 +172,8 @@ function PlayerTopBar(
 function PlayerCenterControls(props: PlayerChromeProps) {
   return (
     <div className="pointer-events-none flex flex-1 items-center justify-center gap-5 sm:gap-8" data-player-no-drag>
-      <PlayerIconButton className="player-center-skip pointer-events-auto" label="快退 10 秒" onClick={() => props.onSeek(props.currentTimeSeconds - 10)} size="media">
-        <Rewind />
+      <PlayerIconButton className="player-center-skip pointer-events-auto bg-black/40 hover:bg-black/60 md:size-14" label="快退 10 秒" onClick={() => props.onSeek(props.currentTimeSeconds - 10)} size="media">
+        <SeekSecondsIcon direction="backward" />
       </PlayerIconButton>
       <Button
         aria-label={props.buffering ? "正在缓冲" : props.playing ? "暂停" : "播放"}
@@ -187,8 +187,8 @@ function PlayerCenterControls(props: PlayerChromeProps) {
           ? <LoaderCircle className="animate-spin" />
           : props.playing ? <Pause /> : <Play />}
       </Button>
-      <PlayerIconButton className="player-center-skip pointer-events-auto" label="快进 10 秒" onClick={() => props.onSeek(props.currentTimeSeconds + 10)} size="media">
-        <FastForward />
+      <PlayerIconButton className="player-center-skip pointer-events-auto bg-black/40 hover:bg-black/60 md:size-14" label="快进 10 秒" onClick={() => props.onSeek(props.currentTimeSeconds + 10)} size="media">
+        <SeekSecondsIcon direction="forward" />
       </PlayerIconButton>
     </div>
   );
@@ -231,7 +231,7 @@ function PlayerBottomBar(
             value={[props.muted ? 0 : props.volume]}
           />
         </div>
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="ml-auto flex shrink-0 items-center gap-0.5">
           <SubtitleMenu {...props} />
           <PlaybackRateMenu {...props} />
           <AspectRatioMenu {...props} />
@@ -268,14 +268,14 @@ function PlayerTimeline(props: PlayerChromeProps) {
       <span className="player-mobile-time w-10 shrink-0 text-right text-[11px] tabular-nums text-white/80">
         {formatPlaybackTime(displayTime)}
       </span>
-      <div className="relative flex h-6 min-w-0 flex-1 items-center">
+      <div className="relative flex h-11 min-w-0 flex-1 items-center min-[901px]:h-6">
         <div className="pointer-events-none absolute inset-x-0 h-1.5 overflow-hidden rounded-full bg-white/20">
           <div className="h-full bg-white/35" style={{ width: `${bufferedPercent}%` }} />
         </div>
         <Slider
           aria-label="播放进度"
           aria-valuetext={`${formatPlaybackTime(displayTime)}，总时长 ${formatPlaybackTime(props.durationSeconds)}`}
-          className="relative"
+          className="relative h-full"
           max={duration}
           min={0}
           onValueChange={([value]) => setPreviewSeconds(value)}
@@ -417,7 +417,7 @@ function PlayerSettingsSheet(
 ) {
   return (
     <Sheet open={props.open} onOpenChange={props.onOpenChange}>
-      <SheetContent className="max-h-[78svh] overflow-y-auto p-0" side="bottom">
+      <SheetContent className="max-h-[78svh] overflow-y-auto p-0" data-player-sheet side="bottom">
         <SheetHeader className="border-b px-4 py-3 pr-14 text-left">
           <SheetTitle>播放设置</SheetTitle>
           <SheetDescription>{props.animeTitle} · {props.episodeLabel}</SheetDescription>
@@ -463,6 +463,17 @@ function PlayerSettingsSheet(
         </div>
       </SheetContent>
     </Sheet>
+  );
+}
+
+/** 用旋转方向和秒数共同表达十秒快退或快进。 */
+function SeekSecondsIcon({ direction }: { direction: "backward" | "forward" }) {
+  const Icon = direction === "backward" ? RotateCcw : RotateCw;
+  return (
+    <span aria-hidden="true" className="relative flex size-7 items-center justify-center">
+      <Icon />
+      <span className="absolute text-[8px] font-bold leading-none">10</span>
+    </span>
   );
 }
 

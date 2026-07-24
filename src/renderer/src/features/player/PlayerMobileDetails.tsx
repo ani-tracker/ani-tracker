@@ -17,6 +17,7 @@ import { formatPlaybackTime } from "./player-ui-model";
 interface PlayerMobileDetailsProps {
   activeItem: RemotePlaylistItem | null;
   anime?: Anime;
+  coverImageUrl?: string;
   currentTimeSeconds: number;
   episodes: Episode[];
   session: RemotePlaybackSession | null;
@@ -26,6 +27,7 @@ interface PlayerMobileDetailsProps {
 export function PlayerMobileDetails({
   activeItem,
   anime,
+  coverImageUrl,
   currentTimeSeconds,
   episodes,
   session
@@ -39,7 +41,9 @@ export function PlayerMobileDetails({
     <section className="px-4 pb-3 pt-4 sm:px-5" aria-labelledby="player-now-playing-title">
       <div className="flex items-start gap-3">
         <div className="flex aspect-[2/3] w-16 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
-          {anime?.coverUrl ? (
+          {coverImageUrl ? (
+            <img alt={title} className="size-full object-cover" src={coverImageUrl} />
+          ) : anime?.coverUrl ? (
             <CachedImage alt={title} className="size-full object-cover" sourceUrl={anime.coverUrl} />
           ) : (
             <ImageOff className="text-muted-foreground" aria-hidden="true" />
@@ -89,7 +93,7 @@ export function PlayerMobileDetails({
             </p>
           </CollapsibleContent>
           <CollapsibleTrigger asChild>
-            <Button className="mt-1 h-auto min-h-0 px-0 py-1 text-xs" variant="ghost">
+            <Button className="mt-1 min-h-11 px-0 text-xs" variant="ghost">
               {synopsisOpen ? <ChevronUp data-icon="inline-start" /> : <ChevronDown data-icon="inline-start" />}
               {synopsisOpen ? "收起简介" : "展开简介"}
             </Button>

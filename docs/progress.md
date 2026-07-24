@@ -1,6 +1,6 @@
 # Ani Tracker 实现状态
 
-最近核对：2026-07-23
+最近核对：2026-07-24
 
 状态只描述当前代码。已结束的阶段计划见 [历史归档](archive/README.md)。
 
@@ -14,6 +14,7 @@
 | 下载内核 | libtorrent 内置核心与 qBittorrent 均可用 |
 | 托管资源 | 本地已有 macOS x64、Windows x64；CI 源码构建四种桌面 qBittorrent-nox |
 | 媒体资源 | macOS x64/arm64、Windows x64 FFmpeg/ffprobe |
+| 内置播放器 | Electron、Android、iOS 使用 libVLC；远程网页保留 ArtPlayer + HLS |
 | 主题 | 跟随系统、浅色、深色、3 套内置主题、自定义导入导出 |
 
 ## 已实现
@@ -74,6 +75,9 @@
 - 显式远程方法注册表，不转发完整 IPC 或本地危险操作。
 - 浏览器原文件 Range 播放、FFmpeg HLS 回退、字幕和同番播放列表。
 - Windows PotPlayer 与 macOS IINA 外部播放器拉流票据。
+- Electron 内置播放使用 libVLC 3.0.x、无边框双窗口和受控媒体会话；不再复用远程 ArtPlayer 页面。
+- Android 使用 LibVLC 原生 Surface，iOS 使用 MobileVLCKit；横竖屏 UI、续播、已看和自动下一集契约已统一。
+- 播放器桌面、错误态、`390x844` 竖屏和 `844x390` 横屏已完成精确视口截图、触控尺寸和交互验收。
 
 ## 未完成或受限
 
@@ -86,6 +90,7 @@
 - PotPlayer、独立 mpv 和自定义播放器没有观看进度回写。
 - madVR 或其他外部渲染器链路未实现。
 - macOS、Android、iOS、iPadOS 的完整真机回归尚未形成最终签收记录。
+- 当前 Git 远端仅为 Gitee，全平台 VLC GitHub Actions 仍需在 GitHub 镜像接入后首次执行和签收。
 - 远程 PWA 离线缓存不作为当前已完成承诺。
 
 ## 维护优先级

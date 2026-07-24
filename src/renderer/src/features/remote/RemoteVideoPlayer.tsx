@@ -595,8 +595,8 @@ export function RemoteVideoPlayer({
             episodes={episodes}
             session={session}
           />
-          <div id="player-inline-playlist" className="scroll-mt-[calc(56.25vw+0.5rem)] pb-[max(1rem,var(--safe-area-bottom))]">
-            <PlayerEpisodeList animeTitle={animeTitle} items={episodeItems} onSelect={selectEpisode} />
+          <div id="player-inline-playlist" className="h-80 min-h-0 scroll-mt-[calc(56.25vw+0.5rem)] pb-[max(1rem,var(--safe-area-bottom))] md:h-[calc(100svh-56.25vw)]">
+            <PlayerEpisodeList animeTitle={animeTitle} items={episodeItems} onSelect={selectEpisode} scrollable />
           </div>
         </div>
       )}

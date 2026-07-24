@@ -6,6 +6,7 @@ import {
   Radio,
   RotateCw
 } from "lucide-react";
+import { useEffect, useRef } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
@@ -30,11 +31,44 @@ export function PlayerEpisodeList({
   scrollable = false,
   showHeader = true
 }: PlayerEpisodeListProps) {
-  const playableCount = items.filter((item) => Boolean(item.playlistItem)).length;
+  const viewedCount = items.filter((item) => item.status === "watched" || item.status === "playing").length;
+  const activeItemId = items.find((item) => item.status === "playing")?.id;
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const activeRowRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!scrollable || !activeItemId) return;
+    const viewport = scrollAreaRef.current?.querySelector<HTMLElement>("[data-radix-scroll-area-viewport]");
+    if (!viewport) return;
+    let frame: number | undefined;
+    /** 将当前集定位到列表第二项，并在旋转后重新对齐。 */
+    const alignActiveRow = (): void => {
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        frame = undefined;
+        const activeRow = activeRowRef.current;
+        if (!activeRow) return;
+        const viewportRect = viewport.getBoundingClientRect();
+        const rowRect = activeRow.getBoundingClientRect();
+        const rowOffset = rowRect.top - viewportRect.top + viewport.scrollTop;
+        viewport.scrollTop = Math.max(0, rowOffset - rowRect.height);
+      });
+    };
+    const resizeObserver = new ResizeObserver(alignActiveRow);
+    resizeObserver.observe(viewport);
+    window.addEventListener("resize", alignActiveRow);
+    alignActiveRow();
+    return () => {
+      resizeObserver.disconnect();
+      window.removeEventListener("resize", alignActiveRow);
+      if (frame !== undefined) window.cancelAnimationFrame(frame);
+    };
+  }, [activeItemId, scrollable]);
+
   const content = (
     <div className="flex flex-col" role="list" aria-label={`${animeTitle} 播放列表`}>
       {items.map((item, index) => (
-        <div key={item.id} role="listitem">
+        <div key={item.id} ref={item.id === activeItemId ? activeRowRef : undefined} role="listitem">
           <EpisodeRow item={item} onSelect={onSelect} />
           {index < items.length - 1 && <Separator />}
         </div>
@@ -46,15 +80,14 @@ export function PlayerEpisodeList({
     <section
       aria-label={showHeader ? undefined : `${animeTitle} 播放列表`}
       aria-labelledby={showHeader ? "player-playlist-title" : undefined}
-      className="flex min-h-0 flex-col"
+      className={cn("flex min-h-0 flex-col", scrollable && "h-full")}
     >
       {showHeader && (
         <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
           <div className="min-w-0">
             <h2 id="player-playlist-title" className="text-base font-semibold">播放列表</h2>
-            <p className="truncate text-xs text-muted-foreground">{animeTitle}</p>
           </div>
-          <Badge>{playableCount}/{items.length}</Badge>
+          <Badge>{viewedCount}/{items.length}</Badge>
         </div>
       )}
       {items.length === 0 ? (
@@ -64,7 +97,7 @@ export function PlayerEpisodeList({
           <p className="text-xs">当前番剧暂时没有已完成的视频文件</p>
         </div>
       ) : scrollable ? (
-        <ScrollArea className="min-h-0 flex-1 px-2">{content}</ScrollArea>
+        <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1 px-2">{content}</ScrollArea>
       ) : content}
     </section>
   );
@@ -85,10 +118,13 @@ function EpisodeRow({
     <Button
       aria-current={active ? "true" : undefined}
       aria-label={`${item.numberLabel} ${item.title}，${item.statusLabel}`}
-      className="h-auto min-h-14 w-full justify-start rounded-none px-4 py-2 text-left sm:px-3"
+      className={cn(
+        "h-auto min-h-14 w-full justify-start rounded-none border-l-2 border-transparent px-4 py-2 text-left sm:px-3",
+        active && "border-primary bg-primary/10 hover:bg-primary/15"
+      )}
       disabled={disabled}
       onClick={() => onSelect(item)}
-      variant={active ? "secondary" : "ghost"}
+      variant="ghost"
     >
       <span className="w-7 shrink-0 text-center font-mono text-xs font-semibold tabular-nums">
         {item.numberLabel}
