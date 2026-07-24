@@ -28,6 +28,10 @@ class FakeNativePlayer extends EventEmitter implements DesktopNativeVlcPlayer {
   subtitleTracks = [{ id: 3, name: "内嵌字幕" }];
 
   async embed(): Promise<void> { this.embedded = true; }
+  on(eventName: string, listener: Parameters<DesktopNativeVlcPlayer["on"]>[1]): this {
+    assert.equal(this.embedded, true, "播放器事件只能在 embed 完成后绑定");
+    return super.on(eventName, listener as (...args: unknown[]) => void);
+  }
   destroy(): void { this.destroyed = true; }
   setSource(source: string, options?: { autoplay?: boolean; mediaOptions?: string[] }): void {
     this.source = source;
@@ -171,7 +175,7 @@ test("DesktopLibVlcPlayerService 对缺失运行时和过期会话返回结构�
   if (!result.accepted) assert.equal(result.error.code, "runtime-missing");
 });
 
-test("resolveDesktopLibVlcDirectory 优先使用显式配置和随包资源", () => {
+test("resolveDesktopLibVlcDirectory 优先使用显式配置、随包资源和开发输出", () => {
   const explicit = resolveDesktopLibVlcDirectory({
     platform: "win32",
     arch: "x64",
@@ -191,4 +195,14 @@ test("resolveDesktopLibVlcDirectory 优先使用显式配置和随包资源", ()
     pathExists: (path) => path.replaceAll("\\", "/") === "/opt/ani/resources/libvlc/linux-x64"
   });
   assert.equal(bundled?.replaceAll("\\", "/"), "/opt/ani/resources/libvlc/linux-x64");
+
+  const development = resolveDesktopLibVlcDirectory({
+    platform: "darwin",
+    arch: "arm64",
+    resourcesPath: "/Applications/Electron.app/Contents/Resources",
+    appPath: "/source",
+    environmentPath: "",
+    pathExists: (path) => path.replaceAll("\\", "/") === "/source/out/libvlc/darwin-arm64"
+  });
+  assert.equal(development?.replaceAll("\\", "/"), "/source/out/libvlc/darwin-arm64");
 });

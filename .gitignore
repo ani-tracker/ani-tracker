@@ -46,6 +46,7 @@ bin-release/
 /.vcpkg/
 /.tmp-qbt*/
 /.cache/ffmpeg/
+/.cache/libvlc/
 /.codex/
 docs/img_*.png
 other.md

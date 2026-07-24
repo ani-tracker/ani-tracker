@@ -124,6 +124,9 @@ pnpm run typecheck
 step "Building production output"
 pnpm build
 
+step "Preparing macOS libVLC runtime and Electron native modules"
+pnpm run prepare:mac-libvlc-dev
+
 case "$RUN_MODE" in
   preview)
     step "Starting Electron preview"

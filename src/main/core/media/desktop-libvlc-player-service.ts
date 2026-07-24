@@ -175,12 +175,12 @@ export class DesktopLibVlcPlayerService {
         locale: "zh-CN"
       });
       record.player = player;
-      this.bindPlayerEvents(record, player);
       await player.embed();
       if (record.disposed || this.records.get(ownerId) !== record) {
         await Promise.resolve(player.destroy());
         return;
       }
+      this.bindPlayerEvents(record, player);
       record.capabilities = createDesktopLibVlcCapabilities();
       logger.info("桌面 libVLC 播放表面已就绪", { ownerId });
     } catch (error) {
@@ -577,6 +577,7 @@ export function resolveDesktopLibVlcDirectory(options: {
   const candidates = [
     environmentPath,
     join(resourcesPath, "libvlc", `${platform}-${arch}`),
+    join(appPath, "out", "libvlc", `${platform}-${arch}`),
     join(appPath, "resources", "libvlc", `${platform}-${arch}`),
     ...getSystemVlcCandidates(platform)
   ].filter((value): value is string => Boolean(value?.trim()));

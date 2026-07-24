@@ -7,7 +7,7 @@
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
-    "postinstall": "electron-rebuild -f -w better-sqlite3",
+    "postinstall": "electron-rebuild -f --only better-sqlite3",
     "dev": "pnpm run prepare:ffmpeg && pnpm run prepare:remote-renderer && node scripts/run-electron-vite.mjs",
     "dev:desktop": "pnpm run prepare:ffmpeg && node scripts/run-electron-vite.mjs",
     "build": "electron-vite build && npm run prepare:torrent-core && npm run prepare:qbittorrent && npm run prepare:ffmpeg",
@@ -39,6 +39,7 @@
     "download:ffmpeg": "node scripts/download-ffmpeg-resources.mjs --all",
     "download:libvlc": "node scripts/download-libvlc-archive.mjs",
     "prepare:libvlc": "node scripts/prepare-libvlc-resources.mjs",
+    "prepare:mac-libvlc-dev": "node scripts/prepare-mac-libvlc-dev.mjs",
     "verify:libvlc": "node scripts/prepare-libvlc-resources.mjs --required --verify-only",
     "verify:libvlc:package": "node scripts/verify-libvlc-package.mjs",
     "smoke:libvlc": "electron scripts/smoke-libvlc-runtime.cjs",

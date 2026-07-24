@@ -87,6 +87,18 @@ remove_workspace_item() {
   rm -rf -- "$target"
 }
 
+# 清理常规工具缓存，但保留已完成摘要校验的 libVLC 下载归档。
+clean_workspace_cache() {
+  local cache_root="$ROOT/.cache"
+  [[ -d "$cache_root" ]] || return 0
+  while IFS= read -r -d '' target; do
+    [[ "$(basename -- "$target")" == "libvlc" ]] && continue
+    assert_workspace_path "$target"
+    echo "Removing $target"
+    rm -rf -- "$target"
+  done < <(find "$cache_root" -mindepth 1 -maxdepth 1 -print0)
+}
+
 if [[ "$KILL_APP" == "1" ]]; then
   step "Stopping workspace Electron processes"
   pkill -f "$ROOT/.*/electron" 2>/dev/null || true
@@ -104,9 +116,10 @@ for path in out dist release .build; do
 done
 
 step "Cleaning dependency tool caches"
-for path in node_modules/.vite node_modules/.cache .vite .cache; do
+for path in node_modules/.vite node_modules/.cache .vite; do
   remove_workspace_item "$path"
 done
+clean_workspace_cache
 
 step "Cleaning generated TypeScript/Vite files"
 rm -f -- electron.vite.config.js electron.vite.config.d.ts ./*.tsbuildinfo
@@ -122,6 +135,9 @@ pnpm run typecheck
 
 step "Building production output"
 pnpm build
+
+step "Preparing macOS libVLC runtime and Electron native modules"
+pnpm run prepare:mac-libvlc-dev
 
 case "$RUN_MODE" in
   preview)

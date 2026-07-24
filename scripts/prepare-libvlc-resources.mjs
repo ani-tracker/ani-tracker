@@ -88,6 +88,7 @@ async function stageMacRuntime(source, destination) {
     copyRequired(join(source, "lib"), join(destination, "lib")),
     copyRequired(join(source, "plugins"), join(destination, "plugins"))
   ]);
+  await rm(join(destination, "plugins", "plugins.dat"), { force: true });
   await copyOptionalDirectories(source, destination, ["share", "lua"]);
 }
 
