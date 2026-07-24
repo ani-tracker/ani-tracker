@@ -99,9 +99,9 @@ async function loadVisualStudioEnvironment(arch) {
   const vcvars = join(installation, "VC", "Auxiliary", "Build", "vcvarsall.bat");
   if (!(await exists(vcvars))) throw new Error(`[torrent-core] vcvarsall.bat was not found: ${vcvars}`);
   const vcvarsArch = arch === "arm64" ? "amd64_arm64" : "x64";
-  const environmentOutput = captureCommand("cmd.exe", [
-    "/d", "/s", "/c", `"${vcvars}" ${vcvarsArch} >nul && set`
-  ]);
+  const environmentOutput = captureWindowsShellCommand(
+    `call "${vcvars}" ${vcvarsArch} >nul && set`
+  );
   const environment = parseWindowsEnvironment(environmentOutput);
 
   const cmakeRoot = join(
@@ -138,7 +138,7 @@ async function bootstrapVcpkg(vcpkgRoot, environment) {
       "https://github.com/microsoft/vcpkg.git", vcpkgRoot
     ], environment);
   }
-  runCommand("cmd.exe", ["/d", "/s", "/c", `"${bootstrap}" -disableMetrics`], environment);
+  runWindowsShellCommand(`call "${bootstrap}" -disableMetrics`, environment);
 }
 
 /** 校验现有 vcpkg 正好位于项目固定的版本标签。 */
@@ -211,9 +211,27 @@ function ensureWindowsCommand(command, environment, requirement) {
   }
 }
 
+/** 通过 Windows 命令解释器执行命令并返回 UTF-8 标准输出。 */
+function captureWindowsShellCommand(shellCommand, environment = process.env) {
+  const args = createWindowsShellArgs(shellCommand);
+  return captureCommand("cmd.exe", args, environment, { windowsVerbatimArguments: true });
+}
+
+/** 通过 Windows 命令解释器执行命令并透传 UTF-8 日志。 */
+function runWindowsShellCommand(shellCommand, environment = process.env) {
+  const args = createWindowsShellArgs(shellCommand);
+  runCommand("cmd.exe", args, environment, { windowsVerbatimArguments: true });
+}
+
+/** 生成不会被 Node 二次转义的 Windows 命令解释器参数。 */
+function createWindowsShellArgs(shellCommand) {
+  return ["/d", "/s", "/c", `"chcp 65001 >nul && ${shellCommand}"`];
+}
+
 /** 执行命令并返回标准输出，失败时保留诊断信息。 */
-function captureCommand(command, args, environment = process.env) {
+function captureCommand(command, args, environment = process.env, spawnOptions = {}) {
   const result = spawnSync(command, args, {
+    ...spawnOptions,
     cwd: process.cwd(),
     env: environment,
     encoding: "utf8",
@@ -229,8 +247,9 @@ function captureCommand(command, args, environment = process.env) {
 }
 
 /** 执行原生构建命令并透传日志。 */
-function runCommand(command, args, environment = process.env) {
+function runCommand(command, args, environment = process.env, spawnOptions = {}) {
   const result = spawnSync(command, args, {
+    ...spawnOptions,
     cwd: process.cwd(),
     env: environment,
     stdio: "inherit"
