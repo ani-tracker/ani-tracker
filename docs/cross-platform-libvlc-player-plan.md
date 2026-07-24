@@ -47,7 +47,7 @@
 - 桌面采用双窗口：底层原生视频宿主关闭自带控件，上层透明无边框 BrowserWindow 承载 React/shadcn 控制 UI；两者同步位置、尺寸、全屏、焦点和生命周期。
 - `DesktopPlaybackSessionService` 继续负责媒体会话，libVLC 主进程仅消费 `resolveAsset()` 返回的受控本地资源或 HLS 清单。
 - Android 使用 `org.videolan.android:libvlc-all`；iOS 使用 MobileVLCKit，由各平台原生视图承载视频表面。
-- 当前 Windows 开发机未检测到 VLC 与 MSVC C++ Build Tools，本机暂不能完成桌面原生绑定运行验证；对应验证必须在 GitHub Actions 和具备工具链的开发机完成。
+- 当前 Windows 开发机未安装系统 VLC 与 MSVC C++ Build Tools；已用官方 VLC ZIP 完成运行库和目录包验收，原生绑定加载仍由 GitHub Actions 和具备工具链的开发机验证。
 
 ### 2.3 Stitch 设计基线
 
@@ -114,7 +114,7 @@ Stitch 项目：`12075319551332625536`
 | P4 Android | Compose 播放页、LibVLC Surface、横竖屏与生命周期 | debug/release 构建通过；旋转不断播；后台/前台和音频焦点行为正确 | 已完成（安装包与真机验收并入 P7/P8） |
 | P5 iOS | SwiftUI 播放页、MobileVLCKit 视图桥接、方向与生命周期 | 模拟器可编译；真机播放/字幕/横竖屏通过；安全区无控件遮挡 | 已完成（macOS 实编译与真机验收并入 P7/P8） |
 | P6 业务闭环 | 续播、90% 已看、自动下一集、播放错误到转码回退 | 每 10 秒及暂停/退出保存进度；达到 90% 只标记一次；下一集可取消 | 已完成 |
-| P7 分发 | 各平台运行时、插件、原生绑定、许可证、源码说明和 Actions | 安装包离线启动无缺库；CI 校验必需文件；LGPL 合规材料随包可见 | 待开始 |
+| P7 分发 | 各平台运行时、插件、原生绑定、许可证、源码说明和 Actions | 安装包离线启动无缺库；CI 校验必需文件；LGPL 合规材料随包可见 | 已完成（远端 Actions 待 GitHub 镜像触发） |
 | P8 验收 | 浏览器截图比对、构建测试、桌面与移动真机清单 | 桌面及 `390 x 844`、`844 x 390` 截图通过；原生平台无阻断项 | 待开始 |
 
 ## 5. 分阶段实施细节
@@ -191,6 +191,15 @@ P6 验证记录（2026-07-24）：
 - iOS 通过受支持依赖管理方式集成 MobileVLCKit，检查 framework 嵌入、签名和设备架构。
 - 安装包增加第三方许可证清单、libVLC/VLC 版本、LGPL 文本、修改说明及对应源码获取方式。
 - 保留动态链接与可替换库条件；若绑定或分发方式引入更强许可义务，发布前单独审核。
+
+P7 验证记录（2026-07-24）：
+
+- Windows/macOS 固定官方 VLC 3.0.21 归档与 SHA-256；Linux 使用 Ubuntu VLC 3.0.x 并记录精确包版本和 Launchpad 源码页，复制后为 ELF 设置相对 RPATH。
+- Electron 打包缺少目标运行库时直接失败，原生 `vlc_binding.node` 固定解包到 `app.asar.unpacked`；三平台 Actions 显式按 Electron ABI 重编译，并在打包前实际加载 libVLC 断言 3.0.x 版本。
+- 本机通过系统代理校验并整理 Windows 官方 ZIP，生成 365 个插件的 `win32-x64` 运行库；Node 22.19 下 Electron 目录包成功，核心 DLL、插件、来源和六份许可证材料验包通过。
+- Android 构建将 VLC 声明和完整 LGPL 文本放入 `assets/licenses/vlc`，Action 校验 APK/AAB 仅含 `arm64-v8a` 的 `libvlc.so`、`libvlcjni.so`；iOS 同时构建模拟器和无签名 arm64 设备应用，校验 MobileVLCKit 和声明资源。
+- `typecheck`、主题检查、314 项 Node 测试（313 通过、1 跳过）、Android 许可证资源任务与 Kotlin 编译、11 个 Swift 文件语法扫描、YAML 解析及 Electron/Vite 构建通过。
+- 本机完整 Android APK 仍受既有 Boost/OpenSSL Android 前置包缺失阻断；Windows 原生绑定受 MSVC 缺失阻断。Actions 已包含对应依赖准备、绑定冒烟和最终产物检查，但当前远程仅为 Gitee，需接入 GitHub 镜像后执行。
 
 ### P8：验收
 

@@ -37,7 +37,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19.0
 
       - uses: jurplel/install-qt-action@v4
         with:
@@ -62,13 +62,16 @@ jobs:
             .vcpkg/packages
             .vcpkg/installed
             .cache/qbittorrent-build/downloads
-          key: qbittorrent-vcpkg-${{ runner.os }}-${{ matrix.arch }}-2025.06.13-v1
+            .cache/libvlc
+          key: desktop-native-${{ runner.os }}-${{ matrix.arch }}-2025.06.13-vlc-3.0.21-v1
 
       - name: Bootstrap qBittorrent vcpkg
         run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
 
       - name: Install JavaScript dependencies
         shell: bash
+        env:
+          SKIP_EVP_NATIVE_REBUILD: "1"
         run: |
           corepack enable
           pnpm install --frozen-lockfile
@@ -84,11 +87,62 @@ jobs:
         if: matrix.platform == 'linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libboost-system-dev libssl-dev ninja-build patchelf pax-utils
+          sudo apt-get install -y libboost-system-dev libssl-dev libx11-dev ninja-build patchelf pax-utils vlc
 
       - name: Install macOS build dependencies
         if: matrix.platform == 'darwin'
         run: brew install boost openssl@3 ninja
+
+      - name: Prepare libVLC runtime
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
+            raw_version="$(dpkg-query -W -f='${Version}' vlc)"
+            vlc_version="${raw_version#*:}"
+            source_page="https://launchpad.net/ubuntu/+source/vlc/${raw_version}"
+            node scripts/prepare-libvlc-resources.mjs \
+              --platform linux \
+              --arch "${{ matrix.arch }}" \
+              --version "${vlc_version}" \
+              --source /usr/lib/x86_64-linux-gnu \
+              --shared-data /usr/share/vlc \
+              --license-root /usr/share/common-licenses \
+              --source-url "https://packages.ubuntu.com/jammy/vlc" \
+              --source-code-url "${source_page}" \
+              --target out/libvlc \
+              --required
+          else
+            node scripts/download-libvlc-archive.mjs \
+              --platform darwin \
+              --arch "${{ matrix.arch }}"
+            archive=".cache/libvlc/3.0.21/vlc-3.0.21-${{ matrix.arch == 'arm64' && 'arm64' || 'intel64' }}.dmg"
+            mount_point="${RUNNER_TEMP}/ani-vlc-mount"
+            mkdir -p "${mount_point}"
+            hdiutil attach "${archive}" -nobrowse -readonly -mountpoint "${mount_point}"
+            trap 'hdiutil detach "${mount_point}"' EXIT
+            copying="$(find "${mount_point}" -type f -iname 'COPYING*' -print -quit)"
+            test -n "${copying}"
+            node scripts/prepare-libvlc-resources.mjs \
+              --platform darwin \
+              --arch "${{ matrix.arch }}" \
+              --source "${mount_point}/VLC.app/Contents/MacOS" \
+              --license-root "$(dirname "${copying}")" \
+              --target out/libvlc \
+              --required
+            hdiutil detach "${mount_point}"
+            trap - EXIT
+          fi
+
+      - name: Rebuild Electron native modules
+        shell: bash
+        run: |
+          pnpm exec electron-rebuild -f \
+            --only better-sqlite3,electron-vlc-player \
+            -a "${{ matrix.arch }}"
+          test -s node_modules/electron-vlc-player/build/Release/vlc_binding.node
+          ELECTRON_RUN_AS_NODE=1 pnpm exec electron \
+            scripts/smoke-libvlc-runtime.cjs \
+            "out/libvlc/${{ matrix.target }}"
 
       - name: Configure portable core
         shell: bash
@@ -141,6 +195,8 @@ jobs:
 
       - name: Package desktop application
         env:
+          ANI_PACKAGE_PLATFORM: ${{ matrix.platform }}
+          ANI_PACKAGE_ARCH: ${{ matrix.arch }}
           CSC_LINK: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_LINK || '' }}
           CSC_KEY_PASSWORD: ${{ matrix.platform == 'darwin' && secrets.MAC_CSC_KEY_PASSWORD || '' }}
           APPLE_ID: ${{ matrix.platform == 'darwin' && secrets.APPLE_ID || '' }}
@@ -170,6 +226,15 @@ jobs:
             --platform "${{ matrix.platform }}" \
             --arch "${{ matrix.arch }}" \
             --directory "${qbittorrent_root}"
+          verify_args=(
+            --root release
+            --platform "${{ matrix.platform }}"
+            --arch "${{ matrix.arch }}"
+          )
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
+            verify_args+=(--check-dynamic)
+          fi
+          node scripts/verify-libvlc-package.mjs "${verify_args[@]}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -211,7 +276,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 22.19.0
 
       - uses: ilammy/msvc-dev-cmd@v1
 
@@ -238,7 +303,8 @@ jobs:
             .vcpkg/packages
             .vcpkg/installed
             .cache/qbittorrent-build/downloads
-          key: qbittorrent-vcpkg-${{ runner.os }}-x64-2025.06.13-v1
+            .cache/libvlc
+          key: desktop-native-${{ runner.os }}-x64-2025.06.13-vlc-3.0.21-v1
 
       - name: Bootstrap qBittorrent vcpkg
         shell: pwsh
@@ -246,9 +312,36 @@ jobs:
 
       - name: Install JavaScript dependencies
         shell: pwsh
+        env:
+          SKIP_EVP_NATIVE_REBUILD: "1"
         run: |
           corepack enable
           pnpm install --frozen-lockfile
+
+      - name: Prepare libVLC runtime
+        shell: pwsh
+        run: |
+          node scripts/download-libvlc-archive.mjs --platform win32 --arch x64
+          $archive = ".cache\libvlc\3.0.21\vlc-3.0.21-win64.zip"
+          $extractRoot = Join-Path "${{ runner.temp }}" "ani-vlc"
+          Expand-Archive -LiteralPath $archive -DestinationPath $extractRoot
+          node scripts/prepare-libvlc-resources.mjs `
+            --platform win32 `
+            --arch x64 `
+            --source (Join-Path $extractRoot "vlc-3.0.21") `
+            --target out/libvlc `
+            --required
+
+      - name: Rebuild Electron native modules
+        shell: pwsh
+        run: |
+          pnpm exec electron-rebuild -f --only better-sqlite3,electron-vlc-player -a x64
+          $binding = "node_modules\electron-vlc-player\build\Release\vlc_binding.node"
+          if (-not (Test-Path $binding -PathType Leaf) -or (Get-Item $binding).Length -eq 0) {
+            throw "electron-vlc-player binding was not rebuilt"
+          }
+          $env:ELECTRON_RUN_AS_NODE = "1"
+          pnpm exec electron scripts/smoke-libvlc-runtime.cjs out\libvlc\win32-x64
 
       - name: Install static dependencies
         shell: pwsh
@@ -289,6 +382,8 @@ jobs:
       - name: Package desktop application
         shell: pwsh
         env:
+          ANI_PACKAGE_PLATFORM: win32
+          ANI_PACKAGE_ARCH: x64
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: pnpm exec electron-builder --config electron-builder.config.cjs --win --x64 --publish never
@@ -316,6 +411,7 @@ jobs:
             --platform win32 `
             --arch x64 `
             --directory $qbittorrent.DirectoryName
+          node scripts/verify-libvlc-package.mjs --root release --platform win32 --arch x64
 
       - uses: actions/upload-artifact@v4
         with:

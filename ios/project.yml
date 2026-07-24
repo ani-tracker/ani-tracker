@@ -20,6 +20,13 @@ targets:
       - path: AniTracker
         excludes:
           - Info.plist
+      - path: ../resources/licenses/vlc
+        group: Resources/ThirdPartyLicenses
+        type: folder
+        buildPhase: resources
+      - path: ../resources/ffmpeg/licenses/LGPL-2.1-only.json
+        group: Resources/ThirdPartyLicenses/VLC
+        buildPhase: resources
     info:
       path: AniTracker/Info.plist
     settings:

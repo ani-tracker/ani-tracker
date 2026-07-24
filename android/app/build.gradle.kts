@@ -9,6 +9,12 @@ val keystoreAlias = providers.environmentVariable("ANDROID_KEY_ALIAS").orNull
 val keystorePassword = providers.environmentVariable("ANDROID_KEYSTORE_PASSWORD").orNull
 val keyPassword = providers.environmentVariable("ANDROID_KEY_PASSWORD").orNull
 val hasReleaseSigning = listOf(keystorePath, keystoreAlias, keystorePassword, keyPassword).all { !it.isNullOrBlank() }
+val generatedVlcNoticeAssets = layout.buildDirectory.dir("generated/vlcNoticeAssets")
+val prepareVlcNoticeAssets = tasks.register<Sync>("prepareVlcNoticeAssets") {
+    from(rootProject.layout.projectDirectory.dir("../resources/licenses/vlc"))
+    from(rootProject.layout.projectDirectory.file("../resources/ffmpeg/licenses/LGPL-2.1-only.json"))
+    into(generatedVlcNoticeAssets.map { it.dir("licenses/vlc") })
+}
 
 android {
     namespace = "dev.ani.tracker.android"
@@ -57,6 +63,12 @@ android {
         compose = true
         buildConfig = true
     }
+
+    sourceSets.getByName("main").assets.srcDir(generatedVlcNoticeAssets)
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(prepareVlcNoticeAssets)
 }
 
 dependencies {

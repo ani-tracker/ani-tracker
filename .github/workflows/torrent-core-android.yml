@@ -72,14 +72,14 @@ jobs:
         if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
         run: echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/ani-tracker-release.jks"
 
-      - name: Build signed release APK and AAB
-        if: ${{ env.ANDROID_KEYSTORE_BASE64 != '' }}
+      - name: Build release APK and AAB
         env:
           ANI_ANDROID_NATIVE_PREFIX: ${{ github.workspace }}/.cache/android-torrent/vcpkg_installed/arm64-android
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/ani-tracker-release.jks
         run: gradle -p android :app:assembleRelease :app:bundleRelease --stacktrace
 
-      - name: Verify AAR ABI and licenses
+      - name: Verify native ABIs and VLC notices
+        shell: bash
         run: |
           aar="android/torrent-host/build/outputs/aar/torrent-host-release.aar"
           apk="android/app/build/outputs/apk/debug/app-debug.apk"
@@ -90,6 +90,25 @@ jobs:
           unzip -l "${apk}" | grep "lib/arm64-v8a/libani_torrent_core.so"
           ! unzip -l "${aar}" | grep -Ei "remote-renderer|ffmpeg|ffprobe|transcod"
           ! unzip -l "${apk}" | grep -Ei "remote-renderer|ffmpeg|ffprobe|transcod"
+          verify_vlc_package() {
+            local package="$1"
+            local entries
+            entries="$(unzip -Z1 "${package}")"
+            grep -Eq '(^|/)lib/arm64-v8a/libvlc\.so$' <<< "${entries}"
+            grep -Eq '(^|/)lib/arm64-v8a/libvlcjni\.so$' <<< "${entries}"
+            grep -Eq '(^|/)lib/arm64-v8a/libc\+\+_shared\.so$' <<< "${entries}"
+            grep -Eq '(^|/)assets/licenses/vlc/README\.md$' <<< "${entries}"
+            grep -Eq '(^|/)assets/licenses/vlc/SOURCE\.md$' <<< "${entries}"
+            grep -Eq '(^|/)assets/licenses/vlc/LGPL-2\.1-only\.json$' <<< "${entries}"
+            if grep -Eq '(^|/)lib/(armeabi-v7a|x86|x86_64)/.*vlc' <<< "${entries}"; then
+              echo "Unexpected VLC ABI in ${package}" >&2
+              return 1
+            fi
+          }
+          verify_vlc_package "${apk}"
+          while IFS= read -r package; do
+            verify_vlc_package "${package}"
+          done < <(find android/app/build/outputs -type f \( -name '*.apk' -o -name '*.aab' \) ! -path '*debug*')
 
       - uses: actions/upload-artifact@v4
         with:

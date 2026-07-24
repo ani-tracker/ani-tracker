@@ -1,5 +1,5 @@
 const { existsSync } = require("node:fs");
-const { resolve } = require("node:path");
+const { join, resolve } = require("node:path");
 
 /** 仅把当前 runner 已准备好的原生资源加入安装包。 */
 const extraResources = ["torrent-core", "ffmpeg", "qbittorrent"]
@@ -7,13 +7,25 @@ const extraResources = ["torrent-core", "ffmpeg", "qbittorrent"]
   .filter((item) => existsSync(item.path))
   .map((item) => ({ from: item.path, to: item.name }));
 
+const packagePlatform = process.env.ANI_PACKAGE_PLATFORM || process.env.npm_config_platform || process.platform;
+const packageArch = process.env.ANI_PACKAGE_ARCH || process.env.npm_config_arch || process.arch;
+const libVlcTarget = `${packagePlatform}-${packageArch}`;
+const libVlcPath = resolve("out", "libvlc", libVlcTarget);
+if (!existsSync(libVlcPath)) {
+  throw new Error(`Missing staged libVLC runtime: ${libVlcPath}`);
+}
+extraResources.push({ from: libVlcPath, to: join("libvlc", libVlcTarget) });
+
 module.exports = {
   appId: "dev.ani.tracker",
   productName: "Ani Tracker",
   executableName: "Ani Tracker",
   copyright: "Copyright (c) 2026 Ani Tracker contributors",
   asar: true,
-  asarUnpack: ["node_modules/better-sqlite3/**/*"],
+  asarUnpack: [
+    "node_modules/better-sqlite3/**/*",
+    "node_modules/electron-vlc-player/build/Release/*.node"
+  ],
   npmRebuild: false,
   directories: {
     output: "release",
