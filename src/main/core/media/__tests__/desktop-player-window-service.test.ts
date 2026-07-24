@@ -17,6 +17,9 @@ class FakePlayerWindow implements DesktopPlayerBrowserWindow {
   minimized = false;
   maximized = false;
   fullscreen = false;
+  simpleFullscreen = false;
+  readonly fullscreenCalls: boolean[] = [];
+  readonly simpleFullscreenCalls: boolean[] = [];
   bounds: Rectangle;
   private readonly listeners = new Map<string, Array<(...args: unknown[]) => void>>();
 
@@ -37,17 +40,32 @@ class FakePlayerWindow implements DesktopPlayerBrowserWindow {
   async loadFile(filePath: string, options?: { query?: Record<string, string> }): Promise<void> {
     this.loadedFile = { filePath, query: options?.query };
   }
-  on(event: string, listener: () => void): void { this.addListener(event, listener); }
+  on(event: "close", listener: (event: { preventDefault(): void }) => void): void;
+  on(event: string, listener: () => void): void;
+  on(
+    event: string,
+    listener: ((event: { preventDefault(): void }) => void) | (() => void)
+  ): void {
+    this.addListener(event, listener as (...args: unknown[]) => void);
+  }
   isDestroyed(): boolean { return this.destroyed; }
   show(): void { this.shown = true; }
   focus(): void { this.focused = true; this.emit("focus"); }
   close(): void {
     if (this.destroyed) return;
+    let prevented = false;
+    this.emit("close", { preventDefault: () => { prevented = true; } });
+    if (prevented) return;
     this.closed = true;
     this.destroyed = true;
     this.emit("closed");
   }
-  destroy(): void { this.close(); }
+  destroy(): void {
+    if (this.destroyed) return;
+    this.closed = true;
+    this.destroyed = true;
+    this.emit("closed");
+  }
   minimize(): void { this.minimized = true; this.emit("minimize"); }
   restore(): void { this.minimized = false; this.emit("restore"); }
   isMinimized(): boolean { return this.minimized; }
@@ -55,11 +73,17 @@ class FakePlayerWindow implements DesktopPlayerBrowserWindow {
   unmaximize(): void { this.maximized = false; this.emit("unmaximize"); }
   isMaximized(): boolean { return this.maximized; }
   setFullScreen(fullscreen: boolean): void {
+    this.fullscreenCalls.push(fullscreen);
     if (this.fullscreen === fullscreen) return;
     this.fullscreen = fullscreen;
     this.emit(fullscreen ? "enter-full-screen" : "leave-full-screen");
   }
   isFullScreen(): boolean { return this.fullscreen; }
+  setSimpleFullScreen(fullscreen: boolean): void {
+    this.simpleFullscreenCalls.push(fullscreen);
+    this.simpleFullscreen = fullscreen;
+  }
+  isSimpleFullScreen(): boolean { return this.simpleFullscreen; }
   getBounds(): Rectangle { return { ...this.bounds }; }
   setBounds(bounds: Rectangle): void { this.bounds = { ...bounds }; this.emit("move"); this.emit("resize"); }
   setMenuBarVisibility(): void {}
@@ -77,7 +101,8 @@ class FakePlayerWindow implements DesktopPlayerBrowserWindow {
 test("DesktopPlayerWindowService 创建无边框视频宿主和透明控制层", async () => {
   const windows: FakePlayerWindow[] = [];
   const preparedIds: number[] = [];
-  const closedIds: number[] = [];
+  const closingIds: number[] = [];
+  const fullscreenChanges: boolean[] = [];
   const service = new DesktopPlayerWindowService({
     createWindow: (options) => {
       const playerWindow = new FakePlayerWindow(options, windows.length + 10);
@@ -88,8 +113,14 @@ test("DesktopPlayerWindowService 创建无边框视频宿主和透明控制层",
     rendererFilePath: "/app/index.html",
     rendererUrl: "http://localhost:5173/",
     prepareVideoHost: (ownerId) => { preparedIds.push(ownerId); },
-    onWindowClosed: (id) => { closedIds.push(id); },
-    platform: "darwin"
+    onFullscreenChanged: (_id, fullscreen) => { fullscreenChanges.push(fullscreen); },
+    onWindowClosing: (id) => {
+      assert.equal(windows.some((window) => window.destroyed), false);
+      assert.equal(windows[0].simpleFullscreen, false);
+      closingIds.push(id);
+    },
+    platform: "darwin",
+    fullscreenSettleDelayMs: 0
   });
 
   await service.open({ taskId: "task-1", fileIndex: 2 });
@@ -133,20 +164,35 @@ test("DesktopPlayerWindowService 创建无边框视频宿主和透明控制层",
   controlWindow.bounds = { ...videoWindow.bounds, x: 160, y: 110, width: 960, height: 540 };
   controlWindow.emit("resize");
   assert.deepEqual(videoWindow.bounds, controlWindow.bounds);
+  const windowedBounds = videoWindow.getBounds();
 
-  assert.equal(service.setFullscreen(11, true), true);
-  assert.equal(videoWindow.fullscreen, true);
-  assert.equal(controlWindow.fullscreen, true);
+  assert.equal(await service.setFullscreen(11, true), true);
+  assert.deepEqual(videoWindow.simpleFullscreenCalls, [true]);
+  assert.deepEqual(videoWindow.fullscreenCalls, []);
+  assert.deepEqual(controlWindow.simpleFullscreenCalls, []);
+  assert.deepEqual(controlWindow.fullscreenCalls, []);
+  videoWindow.bounds = { x: 0, y: 0, width: 1920, height: 1080 };
+  videoWindow.emit("resize");
+  assert.deepEqual(controlWindow.bounds, videoWindow.bounds);
 
-  assert.equal(service.close(11), true);
+  assert.equal(await service.setFullscreen(11, false), false);
+  assert.deepEqual(videoWindow.simpleFullscreenCalls, [true, false]);
+  assert.deepEqual(videoWindow.bounds, windowedBounds);
+  assert.deepEqual(controlWindow.bounds, windowedBounds);
+  assert.deepEqual(fullscreenChanges, [true, false]);
+
+  assert.equal(await service.setFullscreen(11, true), true);
+  assert.equal(await service.close(11), true);
+  assert.deepEqual(videoWindow.simpleFullscreenCalls, [true, false, true, false]);
   assert.equal(videoWindow.closed, true);
   assert.equal(controlWindow.closed, true);
-  assert.deepEqual(closedIds, [11]);
-  assert.equal(service.close(11), false);
+  assert.deepEqual(closingIds, [11]);
+  assert.equal(await service.close(11), false);
 });
 
-test("DesktopPlayerWindowService 非 macOS 平台保留控制层父窗口", async () => {
+test("DesktopPlayerWindowService Windows 仅让视频宿主进入系统全屏", async () => {
   const windows: FakePlayerWindow[] = [];
+  const fullscreenChanges: boolean[] = [];
   const service = new DesktopPlayerWindowService({
     createWindow: (options) => {
       const playerWindow = new FakePlayerWindow(options, windows.length + 20);
@@ -156,7 +202,13 @@ test("DesktopPlayerWindowService 非 macOS 平台保留控制层父窗口", asyn
     preloadPath: "/app/preload.mjs",
     rendererFilePath: "/app/index.html",
     rendererUrl: "http://localhost:5173/",
-    platform: "win32"
+    onFullscreenChanged: (_id, fullscreen) => { fullscreenChanges.push(fullscreen); },
+    onWindowClosing: () => {
+      assert.equal(windows[0].fullscreen, false);
+      assert.equal(windows.some((window) => window.destroyed), false);
+    },
+    platform: "win32",
+    fullscreenSettleDelayMs: 0
   });
 
   await service.open({ taskId: "task-2" });
@@ -165,8 +217,31 @@ test("DesktopPlayerWindowService 非 macOS 平台保留控制层父窗口", asyn
   windows[1].bounds = { x: 260, y: 180, width: 900, height: 600 };
   windows[1].emit("move");
   assert.deepEqual(windows[0].bounds, windows[1].bounds);
+  const windowedBounds = windows[0].getBounds();
+
+  assert.equal(await service.setFullscreen(21, true), true);
+  assert.deepEqual(windows[0].fullscreenCalls, [true]);
+  assert.deepEqual(windows[1].fullscreenCalls, []);
+  windows[0].bounds = { x: 0, y: 0, width: 2560, height: 1440 };
+  windows[0].emit("resize");
+  assert.deepEqual(windows[1].bounds, windows[0].bounds);
+
+  assert.equal(await service.setFullscreen(21, false), false);
+  assert.deepEqual(windows[0].fullscreenCalls, [true, false]);
+  assert.deepEqual(windows[0].bounds, windowedBounds);
+  assert.deepEqual(windows[1].bounds, windowedBounds);
+  assert.deepEqual(fullscreenChanges, [true, false]);
+
+  const rapidEnter = service.setFullscreen(21, true);
+  const rapidExit = service.setFullscreen(21, false);
+  assert.deepEqual(await Promise.all([rapidEnter, rapidExit]), [false, false]);
+  assert.deepEqual(windows[0].fullscreenCalls, [true, false, true, false]);
+  assert.deepEqual(windows[1].fullscreenCalls, []);
+
   assert.equal(service.drag(21, { phase: "start", screenX: 300, screenY: 200 }), false);
-  assert.equal(service.close(21), true);
+  assert.equal(await service.setFullscreen(21, true), true);
+  assert.equal(await service.close(21), true);
+  assert.deepEqual(windows[0].fullscreenCalls, [true, false, true, false, true, false]);
 });
 
 test("DesktopPlayerWindowService 生产环境分别加载宿主与控制层查询参数", async () => {

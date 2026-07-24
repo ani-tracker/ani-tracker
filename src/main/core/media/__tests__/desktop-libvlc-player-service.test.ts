@@ -11,6 +11,7 @@ import {
 class FakeNativePlayer extends EventEmitter implements DesktopNativeVlcPlayer {
   embedded = false;
   destroyed = false;
+  layoutRefreshCount = 0;
   source?: string;
   sourceOptions?: { autoplay?: boolean; mediaOptions?: string[] };
   played = false;
@@ -28,6 +29,7 @@ class FakeNativePlayer extends EventEmitter implements DesktopNativeVlcPlayer {
   subtitleTracks = [{ id: 3, name: "内嵌字幕" }];
 
   async embed(): Promise<void> { this.embedded = true; }
+  notifyLayoutChange(): void { this.layoutRefreshCount += 1; }
   on(eventName: string, listener: Parameters<DesktopNativeVlcPlayer["on"]>[1]): this {
     assert.equal(this.embedded, true, "播放器事件只能在 embed 完成后绑定");
     return super.on(eventName, listener as (...args: unknown[]) => void);
@@ -109,6 +111,8 @@ test("DesktopLibVlcPlayerService 解析受控路径并发布递增快照", async
   await service.attach(42, {});
   assert.equal(player.embedded, true);
   assert.equal(service.getCapabilities(42).availability, "available");
+  assert.equal(service.refreshLayout(42), true);
+  assert.equal(player.layoutRefreshCount, 1);
 
   const loadResult = await service.dispatch(createLoadCommand(), 42);
   assert.deepEqual(loadResult, { commandId: "command-load", accepted: true });
@@ -157,6 +161,7 @@ test("DesktopLibVlcPlayerService 解析受控路径并发布递增快照", async
   await service.dispose(42);
   await service.dispose(42);
   assert.equal(player.destroyed, true);
+  assert.equal(service.refreshLayout(42), false);
   const snapshotCount = snapshots.length;
   player.emit("timeChanged", { time: 90_000 });
   assert.equal(snapshots.length, snapshotCount);

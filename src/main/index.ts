@@ -118,7 +118,10 @@ desktopPlayerWindowService = new DesktopPlayerWindowService({
   rendererFilePath: join(__dirname, "../renderer/index.html"),
   rendererUrl: process.env.ELECTRON_RENDERER_URL,
   prepareVideoHost: (ownerId, window) => desktopLibVlcPlayerService.attach(ownerId, window),
-  onWindowClosed: async (webContentsId) => {
+  onFullscreenChanged: (webContentsId) => {
+    desktopLibVlcPlayerService.refreshLayout(webContentsId);
+  },
+  onWindowClosing: async (webContentsId) => {
     await Promise.all([
       desktopLibVlcPlayerService.dispose(webContentsId),
       desktopPlaybackSessionService.closeOwnerSessions(webContentsId)

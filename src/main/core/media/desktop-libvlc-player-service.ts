@@ -67,6 +67,7 @@ interface NativePlayerEvent {
 /** electron-vlc-player 中被桌面适配器使用的最小 API。 */
 export interface DesktopNativeVlcPlayer {
   embed(): Promise<void>;
+  notifyLayoutChange(): void;
   destroy(): void | Promise<void>;
   on(event: string, listener: (payload?: NativePlayerEvent) => void): unknown;
   off(event: string, listener: (payload?: NativePlayerEvent) => void): unknown;
@@ -307,6 +308,14 @@ export class DesktopLibVlcPlayerService {
     this.records.delete(ownerId);
     await this.destroyNativePlayer(record);
     logger.info("桌面 libVLC 播放器已释放", { ownerId });
+  }
+
+  /** 窗口全屏切换后通知原生视频表面重新计算宿主边界。 */
+  refreshLayout(ownerId: number): boolean {
+    const record = this.records.get(ownerId);
+    if (!record || record.disposed || !record.player) return false;
+    record.player.notifyLayoutChange();
+    return true;
   }
 
   /** 解析资源后换源，真实本地路径只保留在主进程内。 */

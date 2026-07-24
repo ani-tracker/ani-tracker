@@ -613,7 +613,7 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       options.desktopPlayerWindowService!.open(input)
     );
     ipcMain.on("media:closePlayerWindow", (event) => {
-      options.desktopPlayerWindowService!.close(event.sender.id);
+      void options.desktopPlayerWindowService!.close(event.sender.id);
     });
     ipcMain.on("media:dragPlayerWindow", (event, input: DesktopPlayerWindowDragInput) => {
       options.desktopPlayerWindowService!.drag(event.sender.id, input);
