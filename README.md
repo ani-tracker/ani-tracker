@@ -10,15 +10,15 @@ Ani Tracker 是一个本地桌面追番工具，围绕新番发现、追番规�
 
 ## 核心能力
 
-- **新番发现**：按年份、季度和月份采集番剧，合并 Bangumi、AniList、Mikan 等元数据。
+- **新番发现**：按年份、季度和月份采集番剧，合并 Bangumi、AniList、Mikan 等元数据，并处理跨来源标识与字段冲突。
 - **我的追番**：管理状态、集数、字幕组、自动下载、分辨率、编码、位深、字幕语言和目录偏好。
-- **资源搜索**：搜索 RSS、Torznab、DMHY、Mikan、AniBT、ACGNX，自动补全集数并关联我的追番。
+- **资源搜索**：内置 RSS、Torznab、DMHY、Mikan、AniBT、ACGNX、Nyaa、ACG.RIP 等专用适配器，自动补全集数并关联我的追番。
 - **来源保护**：每个下载源可独立选择代理和采集间隔，同域名串行请求并对 403/429 自动熔断。
 - **增量同步**：默认每天 09:00 同步启用来源，错过后在当天首次启动时补跑，结果跨重启复用。
 - **候选评分**：综合番剧、集数、字幕组、分辨率、编码、位深、字幕语言和 seeders 选择资源。
-- **内置 BT 下载**：使用 libtorrent 2.1 sidecar，也支持 qBittorrent Web API、托管 qBittorrent-nox、进度和文件优先级。
+- **内置 BT 下载**：使用 libtorrent 2.1 sidecar，也支持 qBittorrent Web API、多平台托管 qBittorrent-nox、进度和文件优先级。
 - **媒体扫描**：通过标题、文件名和 ffprobe 提取容器、分辨率、编码、位深、音轨和字幕轨。
-- **内置与外部播放器**：内置 libVLC 播放；Windows 支持 Pure Codec PotPlayer、PotPlayer、mpv，macOS 支持 IINA。
+- **内置与外部播放器**：内置 libVLC 播放；Windows 支持 Pure Codec PotPlayer、PotPlayer、mpv 及播放进度监控，macOS 支持 IINA。
 - **远程 PWA**：通过局域网 HTTPS 配对访问追番和下载，支持浏览器原文件播放、实时转码、字幕和播放列表。
 - **外部远程播放**：Windows 可调用 PotPlayer，macOS 可调用 IINA，从桌面主机安全拉取媒体。
 - **图片缓存**：桌面端与远程端共用磁盘缓存，默认上限 5GB，应用重启后继续命中。
@@ -279,6 +279,4 @@ Ani Tracker 原创源码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)�
 
 ## 尚未完成
 
-- 更多站点专用适配器和更完整的元数据冲突消解。
-- qBittorrent-nox 的 macOS arm64 和 Linux x64 内置资源。
-- madVR 播放链路和 Windows 播放进度监控。
+- madVR 播放链路。

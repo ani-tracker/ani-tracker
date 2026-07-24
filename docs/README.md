@@ -1,6 +1,6 @@
 # Ani Tracker 文档索引
 
-最近核对：2026-07-23
+最近核对：2026-07-24
 
 本目录按“现行文档、参考资料、历史归档”分层。现行文档描述当前代码；历史归档只保存决策过程，不作为实现依据。
 
@@ -11,7 +11,6 @@
 | [架构与设计](design-plan.md) | 当前进程边界、服务职责、数据流和扩展边界 |
 | [实现状态](progress.md) | 已实现能力、明确限制和后续工作 |
 | [iOS 原生完整应用计划](ios-native-app-plan.md) | iOS/iPadOS 原生完整应用的边界、架构、阶段、CI 与验收 |
-| [内置 libtorrent 下载引擎计划](embedded-libtorrent-engine-plan.md) | 跨平台内置 BT 内核的目标、阶段和验收标准 |
 | [跨平台打包与发布](release-build.md) | 桌面安装包、Android APK/AAB、CI 与签名前置数据 |
 | [启动说明](startup.md) | 安装、开发、测试、构建和排障 |
 | [界面设计规范](DESIGN.md) | 当前应用壳、设计令牌、组件和响应式约束 |
@@ -26,6 +25,7 @@
 
 - [归档说明](archive/README.md)
 - [2026-07 UI 改造归档](archive/2026-07-ui-redesign/README.md)
+- [2026-07 原生运行时归档](archive/2026-07-native-runtime/README.md)
 
 ## 事实优先级
 

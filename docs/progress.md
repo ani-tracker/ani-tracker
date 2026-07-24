@@ -8,11 +8,11 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| 持久化 | SQLite-only；应用数据版本 21，Schema 版本 14 |
+| 持久化 | SQLite-only；应用数据版本 22，Schema 版本 16 |
 | 桌面页面 | 8 个一级页面及番剧详情二级页面 |
 | 远程页面 | 首页、我的追番、新番发现、下载队列、提醒中心 |
 | 下载内核 | libtorrent 内置核心与 qBittorrent 均可用 |
-| 托管资源 | 本地已有 macOS x64、Windows x64；CI 源码构建四种桌面 qBittorrent-nox |
+| 托管资源 | 桌面 Actions 源码构建并验证 macOS x64/arm64、Windows x64、Linux x64 qBittorrent-nox |
 | 媒体资源 | macOS x64/arm64、Windows x64 FFmpeg/ffprobe |
 | 内置播放器 | Electron、Android、iOS 使用 libVLC；远程网页保留 ArtPlayer + HLS |
 | 主题 | 跟随系统、浅色、深色、3 套内置主题、自定义导入导出 |
@@ -28,7 +28,7 @@
 
 ### 新番、详情与追番
 
-- Bangumi、AniList、Mikan 月度采集和多来源合并。
+- Bangumi、AniList、Mikan 月度采集、多来源标识桥接和字段冲突消解。
 - 中文优先标题、原名和别名搜索，以及 external id 展示与跳转。
 - 番剧详情聚合、刷新、来源绑定、追番状态和关联操作。
 - 我的追番 CRUD、自动下载偏好、字幕组、分辨率、编码、位深、字幕语言和目录覆盖。
@@ -58,7 +58,7 @@
 - qBittorrent-nox 托管启动、自动连接、动态高位端口、限速和做种停止目标。
 - 下载任务与番剧、单集、字幕组和资源技术属性持久关联。
 - 完成任务后台扫描、文件名回退、ffprobe 探测和 MediaFile 入库。
-- 播放器探测、启动、文件定位；IINA 通过 mpv JSON IPC 回写观看进度。
+- 播放器探测、启动和文件定位；IINA、mpv 通过 JSON IPC，Windows PotPlayer 通过 GSMTC 回写观看进度。
 
 ### 自动化与桌面能力
 
@@ -81,23 +81,17 @@
 
 ## 未完成或受限
 
-- Windows、Linux、macOS arm64 仍需在 GitHub runner 生成并签收最终资源。
-- Android JNI 与前台服务已实现，AAR/APK/AAB 仍需 CI 构建及 arm64 真机恢复验收。
 - 内置核心尚缺公网完整下载、网络切换、磁盘满和损坏 fastresume 的发布级回归。
-- 四个平台 qBittorrent-nox 工作流尚待首次远端构建、最终应用注入与真实下载签收。
-- 更多站点镜像和站点专有筛选项尚未实现。
-- 元数据字段冲突解释、来源可见性和更细的增量刷新仍可完善。
-- PotPlayer、独立 mpv 和自定义播放器没有观看进度回写。
+- 自定义播放器未声明通用进度协议时不提供观看进度回写。
 - madVR 或其他外部渲染器链路未实现。
 - macOS、Android、iOS、iPadOS 的完整真机回归尚未形成最终签收记录。
-- 当前 Git 远端仅为 Gitee，全平台 VLC GitHub Actions 仍需在 GitHub 镜像接入后首次执行和签收。
 - 远程 PWA 离线缓存不作为当前已完成承诺。
 
 ## 维护优先级
 
-1. 完成 torrent-core 与 qBittorrent-nox 缺失平台产物、签名和公网下载回归。
-2. 实现 Android JNI/前台服务，再完成播放器进度和真机回归。
-3. 再扩展站点适配器与元数据冲突解释。
+1. 完成全平台签名、真机播放和移动生命周期回归。
+2. 补充公网 BT、网络切换、磁盘满和损坏 fastresume 的发布级回归。
+3. 评估 madVR 外部渲染链路与远程 PWA 离线缓存。
 
 ## 验证入口
 
