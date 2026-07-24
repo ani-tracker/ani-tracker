@@ -10,6 +10,7 @@
 | --- | --- |
 | [架构与设计](design-plan.md) | 当前进程边界、服务职责、数据流和扩展边界 |
 | [实现状态](progress.md) | 已实现能力、明确限制和后续工作 |
+| [Android 完整应用适配计划](android-application-plan.md) | React 页面复用、Android 平台适配、阶段、测试与验收 |
 | [iOS 原生完整应用计划](ios-native-app-plan.md) | iOS/iPadOS 原生完整应用的边界、架构、阶段、CI 与验收 |
 | [跨平台打包与发布](release-build.md) | 桌面安装包、Android APK/AAB、CI 与签名前置数据 |
 | [启动说明](startup.md) | 安装、开发、测试、构建和排障 |

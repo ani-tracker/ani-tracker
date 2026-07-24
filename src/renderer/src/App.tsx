@@ -32,6 +32,7 @@ import { DesktopPlayerPage } from "@/features/player/DesktopPlayerPage";
 import { DesktopVlcHostPage } from "@/features/player/DesktopVlcHostPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { appApi, getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
+import { getAppCapabilities, getAppRuntime } from "@/lib/runtime";
 import type { DownloadServiceStatus } from "@shared/contracts";
 import type { Anime } from "@shared/domain";
 import type { MyAnimePageIntent } from "@/features/my-anime/MyAnimePage";
@@ -110,7 +111,7 @@ function toDownloadShellStatus(status: DownloadServiceStatus): AppShellStatus {
 }
 
 /** 根据导航标识渲染对应业务页面。 */
-function renderPage(page: PageId, electronClient: boolean, options: RenderPageOptions) {
+function renderPage(page: PageId, localClient: boolean, options: RenderPageOptions) {
   switch (page) {
     case "home":
       return (
@@ -121,7 +122,7 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
         />
       );
     case "myAnime":
-      return electronClient ? (
+      return localClient ? (
         <MyAnimePage
           intent={options.myAnimeIntent}
           onIntentHandled={options.onMyAnimeIntentHandled}
@@ -130,7 +131,7 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
         />
       ) : <RemoteMyAnimePage onOpenAnimeDetail={options.onOpenAnimeDetail} />;
     case "discovery":
-      return electronClient ? (
+      return localClient ? (
         <DiscoveryPage
           onOpenAnimeDetail={options.onOpenAnimeDetail}
           onOpenSchedule={options.onOpenDiscoverySchedule}
@@ -139,7 +140,7 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
     case "releaseSearch":
       return <ReleaseSearchPage initialIntent={options.releaseSearchIntent} />;
     case "downloads":
-      return electronClient ? <DownloadsPage /> : <RemoteDownloadsPage />;
+      return localClient ? <DownloadsPage /> : <RemoteDownloadsPage />;
     case "notifications":
       return <NotificationsPage />;
     case "sources":
@@ -202,13 +203,18 @@ function MainApplication() {
   const discoveryScheduleRef = useRef<DiscoveryScheduleState | null>(null);
   detailViewRef.current = detailView;
   discoveryScheduleRef.current = discoverySchedule;
-  const electronClient = isElectronClient();
+  const runtime = getAppRuntime();
+  const capabilities = getAppCapabilities();
+  const desktopClient = runtime === "desktop";
+  const localClient = capabilities.localData;
   const desktopPlatform = window.aniBridge?.platform;
-  const framelessWindow = electronClient && (desktopPlatform === "win32" || desktopPlatform === "darwin");
-  const remotePlayerTaskId = electronClient
-    ? undefined
-    : resolveRemotePlayerTaskId(window.location.pathname);
-  const availableNavItems = electronClient
+  const framelessWindow = capabilities.windowControls
+    && desktopClient
+    && (desktopPlatform === "win32" || desktopPlatform === "darwin");
+  const remotePlayerTaskId = runtime === "remote"
+    ? resolveRemotePlayerTaskId(window.location.pathname)
+    : undefined;
+  const availableNavItems = localClient
     ? navItems
     : navItems.filter((item) => remotePageIds.includes(item.id));
 
@@ -286,7 +292,7 @@ function MainApplication() {
 
   /** 从详情页打开追番规则、资源或任务面板。 */
   function openLibraryAction(animeId: string, action: AnimeDetailLibraryAction) {
-    if (!electronClient) {
+    if (!localClient) {
       leaveDetailToPage("myAnime");
       return;
     }
@@ -318,6 +324,10 @@ function MainApplication() {
 
   /** 按默认播放器配置打开独立内置窗口或调用外部播放器。 */
   async function playMedia(target: MediaPlaybackTarget): Promise<void> {
+    if (runtime === "android") {
+      await appApi.playMedia(target.filePath);
+      return;
+    }
     const settings = await appApi.getSettings();
     if (!usesBuiltinPlayer(settings)) {
       await appApi.playMedia(target.filePath);
@@ -387,7 +397,7 @@ function MainApplication() {
   }, []);
 
   useEffect(() => {
-    if (!electronClient && pairingState.needsPairing) {
+    if (runtime === "remote" && pairingState.needsPairing) {
       return;
     }
     let active = true;
@@ -398,7 +408,7 @@ function MainApplication() {
       const sequence = ++refreshSequence;
       const [unreadResult, serviceResult] = await Promise.allSettled([
         appApi.getUnreadNotificationCount(),
-        electronClient ? appApi.getDownloadServiceStatus() : Promise.resolve(null)
+        localClient ? appApi.getDownloadServiceStatus() : Promise.resolve(null)
       ]);
       if (!active || sequence !== refreshSequence) {
         return;
@@ -409,7 +419,7 @@ function MainApplication() {
         console.warn("[app-shell] 未读提醒数量刷新失败", unreadResult.reason);
       }
 
-      if (!electronClient) {
+      if (!localClient) {
         setShellStatus({ state: "online", label: "桌面端在线", detail: "远程同步已连接" });
       } else if (serviceResult.status === "fulfilled" && serviceResult.value) {
         setShellStatus(toDownloadShellStatus(serviceResult.value));
@@ -423,7 +433,7 @@ function MainApplication() {
 
     void refreshShellState();
     const refreshTimer = window.setInterval(() => void refreshShellState(), 30_000);
-    const unsubscribeDownloadStatus = electronClient
+    const unsubscribeDownloadStatus = localClient
       ? appApi.onDownloadServiceStatusChanged(() => void refreshShellState())
       : undefined;
     window.addEventListener("focus", refreshShellState);
@@ -433,13 +443,13 @@ function MainApplication() {
       unsubscribeDownloadStatus?.();
       window.removeEventListener("focus", refreshShellState);
     };
-  }, [electronClient, pairingState.needsPairing]);
+  }, [localClient, pairingState.needsPairing, runtime]);
 
   if (remotePlayerTaskId) {
     return <RemotePlayerPage taskId={remotePlayerTaskId} />;
   }
 
-  if (!electronClient && pairingState.needsPairing) {
+  if (runtime === "remote" && pairingState.needsPairing) {
     return <RemotePairingPage onPaired={() => setPairingState(getRemotePairingState())} />;
   }
 
@@ -459,7 +469,7 @@ function MainApplication() {
       framelessWindow={framelessWindow}
     >
       <div className={detailView || discoverySchedule ? "hidden" : undefined}>
-        {renderPage(activePage, electronClient, {
+        {renderPage(activePage, localClient, {
           onOpenAnimeDetail: openAnimeDetail,
           onOpenDownloads: () => navigatePage("downloads"),
           onOpenLibraryAction: openLibraryAction,
@@ -478,7 +488,7 @@ function MainApplication() {
           onOpenAnimeDetail={openAnimeDetail}
         />
       )}
-      {detailView && electronClient && detailActionHostActive && (
+      {detailView && localClient && detailActionHostActive && (
         <MyAnimePage
           actionOnly
           intent={myAnimeIntent}

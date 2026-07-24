@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { AppClient } from "@shared/app-client";
 import type {
   Anime,
   AppSettings,
@@ -182,7 +183,7 @@ const api = {
   getRemoteGatewayStatus: (): Promise<RemoteGatewayStatus> => ipcRenderer.invoke("remote:getStatus"),
   createRemotePairingCode: (): Promise<RemotePairingChallenge> => ipcRenderer.invoke("remote:createPairingCode"),
   revokeRemoteDevice: (deviceId: string): Promise<RemoteGatewayStatus> => ipcRenderer.invoke("remote:revokeDevice", deviceId)
-};
+} satisfies AppClient;
 
 contextBridge.exposeInMainWorld("aniBridge", api);
 
