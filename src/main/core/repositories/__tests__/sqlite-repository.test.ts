@@ -6,7 +6,7 @@ import { test } from "node:test";
 import type Database from "better-sqlite3";
 import * as BetterSqlite3Module from "better-sqlite3";
 import type { ReleaseSearchResult } from "@shared/contracts";
-import type { MyAnime } from "@shared/domain";
+import type { DownloadTask, MyAnime } from "@shared/domain";
 import { APP_DATA_VERSION } from "@shared/persistence/app-data";
 import { validateThemePack } from "@shared/theme";
 import { GenericDefaultSettingsProvider } from "../../platform/default-settings-provider";
@@ -1045,6 +1045,52 @@ test("SQLite 刷新及重启时按文件集数修复同名种子的单集关联"
     ]
   );
   reopened.close();
+});
+
+test("SQLite 合集按文件关联多集并在重启后保留状态", async () => {
+  const fixture = await createFixture();
+  const runtime = createRepositoryRuntime(fixture.options);
+  await runtime.initialize();
+  const item = createTestMyAnime();
+  await runtime.repository.upsertMyAnime(item);
+  const baseTask = createDownloadTask(item.anime.id, "collection-hash", 2);
+  const task: DownloadTask = {
+    ...baseTask,
+    name: "[LoliHouse] 测试番 [01-02 合集][1080p]",
+    status: "downloading",
+    progress: 0.6,
+    files: [
+      { ...baseTask.files[0], id: "collection-hash:0", index: 0, name: "Series/Series - 01.mkv", progress: 1 },
+      { ...baseTask.files[0], id: "collection-hash:1", index: 1, name: "Series/Series - 02.mkv", progress: 0.2 }
+    ]
+  };
+
+  const saved = (await runtime.repository.upsertDownloadTask(task)).find((entry) => entry.id === task.id);
+  assert.equal(saved?.episodeId, undefined);
+  assert.equal(saved?.episodeNo, undefined);
+  assert.deepEqual(
+    saved?.files.map((file) => ({ episodeId: file.episodeId, episodeNo: file.episodeNo })),
+    [
+      { episodeId: `episode-${item.anime.id}-1`, episodeNo: 1 },
+      { episodeId: `episode-${item.anime.id}-2`, episodeNo: 2 }
+    ]
+  );
+  assert.deepEqual(
+    (await runtime.repository.listEpisodes(item.anime.id)).map((episode) => [episode.episodeNo, episode.status]),
+    [[1, "downloaded"], [2, "downloading"]]
+  );
+  runtime.close();
+
+  const reopened = createRepositoryRuntime(fixture.options);
+  await reopened.initialize();
+  const restored = (await reopened.repository.listDownloads()).find((entry) => entry.id === task.id);
+  assert.deepEqual(restored?.files.map((file) => file.episodeNo), [1, 2]);
+  assert.deepEqual(
+    (await reopened.repository.listEpisodes(item.anime.id)).map((episode) => [episode.episodeNo, episode.status]),
+    [[1, "downloaded"], [2, "downloading"]]
+  );
+  reopened.close();
+  assertDatabaseIntegrity(fixture.databasePath);
 });
 
 test("损坏的 SQLite 会阻止启动且不会回退 JSON", async () => {

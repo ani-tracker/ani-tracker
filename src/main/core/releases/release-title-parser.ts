@@ -63,8 +63,8 @@ const fansubVariantCharacters: Record<string, string> = {
 
 const episodeRangePatterns = [
   /(?:^|[\s_-])s\d{1,2}e(\d{1,3}(?:\.\d)?)\s*[-~]\s*(\d{1,3}(?:\.\d)?)(?:[\s_.\-[\]]|$)/i,
-  /\[\s*(\d{1,3}(?:\.\d)?)\s*[-~]\s*(\d{1,3}(?:\.\d)?)\s*]/,
-  /(?:^|[\s_-])(?:ep|episode|第)?\s*(\d{1,3}(?:\.\d)?)\s*[-~]\s*(\d{1,3}(?:\.\d)?)(?:\s*话|\s*集)?(?:[\s_.\-[\]]|$)/i
+  /[\[【(（]\s*(\d{1,3}(?:\.\d)?)\s*[-~]\s*(\d{1,3}(?:\.\d)?)\s*(?:合集|合輯|全集|complete(?:\s+series)?)?\s*[\]】)）]/iu,
+  /(?:^|[\s_-])(?:ep|episode|第)?\s*(\d{1,3}(?:\.\d)?)\s*[-~]\s*(\d{1,3}(?:\.\d)?)(?:\s*话|\s*集)?\s*(?:合集|合輯|全集|complete(?:\s+series)?)?(?:[\s_.\-[\]]|$)/iu
 ];
 
 const episodePatterns = [
@@ -104,6 +104,8 @@ export function parseReleaseTitle(title: string, groups: FansubGroup[] = []): Pa
 
 export function enrichReleaseFromTitle(release: Release, groups: FansubGroup[] = []): Release {
   const parsed = parseReleaseTitle(release.title, groups);
+  const episodeRange = parsed.episodeRange ?? release.episodeRange;
+  const contentKind = episodeRange ? "range" : release.contentKind ?? parsed.contentKind;
   const fansubName = release.fansubName ?? parsed.fansubName;
   const fansubGroup = fansubName
     ? groups.find((group) =>
@@ -128,10 +130,12 @@ export function enrichReleaseFromTitle(release: Release, groups: FansubGroup[] =
 
   return {
     ...release,
-    episodeNo: release.episodeNo ?? parsed.episodeNo,
-    episodeRange: release.episodeRange ?? parsed.episodeRange,
+    episodeNo: contentKind === "range" || contentKind === "batch"
+      ? undefined
+      : release.episodeNo ?? parsed.episodeNo,
+    episodeRange,
     seriesSeasonNo: release.seriesSeasonNo ?? parsed.seriesSeasonNo,
-    contentKind: release.contentKind ?? parsed.contentKind,
+    contentKind,
     fansubGroupId: existingFansubGroupId ?? fansubGroup?.id ?? release.fansubGroupId ?? discoveredFansubGroupId,
     fansubName,
     resolution: release.resolution ?? parsed.resolution,

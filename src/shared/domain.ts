@@ -280,6 +280,8 @@ export interface TorrentFile {
   id: string;
   index: number;
   name: string;
+  episodeId?: string;
+  episodeNo?: number;
   size: number;
   progress: number;
   priority: number;

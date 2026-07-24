@@ -1,4 +1,4 @@
-export const SQLITE_SCHEMA_VERSION = 17;
+export const SQLITE_SCHEMA_VERSION = 18;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -284,6 +284,8 @@ CREATE TABLE IF NOT EXISTS torrent_file (
   download_task_id TEXT NOT NULL REFERENCES download_task(id) ON DELETE CASCADE,
   file_index INTEGER NOT NULL,
   name TEXT NOT NULL,
+  episode_id TEXT REFERENCES episode(id) ON DELETE SET NULL,
+  episode_no REAL,
   size INTEGER NOT NULL,
   progress REAL NOT NULL DEFAULT 0,
   priority INTEGER NOT NULL DEFAULT 0,

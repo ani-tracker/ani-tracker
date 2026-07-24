@@ -39,7 +39,7 @@ export function WindowControls() {
       />
       <div
         aria-label="窗口控制"
-        className="fixed right-0 top-0 z-50 flex h-[var(--window-control-height)] w-[var(--window-controls-width)] shrink-0 bg-background text-foreground"
+        className="fixed right-0 top-0 z-50 flex h-[var(--window-control-height)] w-[var(--window-controls-width)] shrink-0 bg-transparent text-foreground"
         data-window-controls=""
         role="group"
         style={noDragRegionStyle}

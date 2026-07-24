@@ -37,9 +37,13 @@ import {
   toLegacySubtitlePreference
 } from "@shared/release-metadata";
 import { logger } from "../logger";
-import { inferDownloadTaskEpisodeNo } from "../downloads/download-episode-resolver";
+import {
+  inferDownloadTaskEpisodeNo,
+  inferTorrentFileEpisodeNo,
+  isMultiEpisodeDownloadTask
+} from "../downloads/download-episode-resolver";
 import { mergeAnimeMetadataBatches } from "../metadata/metadata-provider";
-import { enrichReleaseFromTitle, normalizeFansubName } from "../releases/release-title-parser";
+import { enrichReleaseFromTitle, normalizeFansubName, parseReleaseTitle } from "../releases/release-title-parser";
 import { defaultSourceConfigs } from "../sources/default-source-configs";
 import { createDefaultSettingsProvider, type DefaultSettingsProvider } from "../platform/default-settings-provider";
 import { createSeedData } from "../storage/seed-data";
@@ -513,7 +517,8 @@ export class SqliteAppRepository implements AppRepository {
   }
 
   async upsertDownloadTask(task: DownloadTask): Promise<DownloadTask[]> {
-    this.transaction(() => this.upsertDownload(task));
+    this.transaction(() => this.upsertDownload(this.normalizeDownloadAssociations(task)));
+    await this.syncEpisodesFromCurrentDownloads();
     return this.listDownloads();
   }
 
@@ -521,7 +526,12 @@ export class SqliteAppRepository implements AppRepository {
     const current = await this.listDownloads();
     const merged = tasks.map((task) => {
       const inferredEpisodeNo = inferDownloadTaskEpisodeNo(task);
-      const engineTask = inferredEpisodeNo === undefined ? task : { ...task, episodeNo: inferredEpisodeNo };
+      const multiEpisode = isMultiEpisodeDownloadTask(task);
+      const engineTask = multiEpisode
+        ? { ...task, episodeId: undefined, episodeNo: undefined }
+        : inferredEpisodeNo === undefined
+          ? task
+          : { ...task, episodeNo: inferredEpisodeNo };
       const existing = findExistingDownloadTask(current, engineTask);
       if (existing && inferredEpisodeNo !== undefined && existing.episodeNo !== inferredEpisodeNo) {
         logger.info("Download task episode corrected from torrent files", {
@@ -536,9 +546,9 @@ export class SqliteAppRepository implements AppRepository {
             ...engineTask,
             releaseId: existing.releaseId,
             animeId: existing.animeId,
-            episodeId: existing.episodeId,
+            episodeId: multiEpisode ? undefined : existing.episodeId,
             animeTitle: existing.animeTitle,
-            episodeNo: inferredEpisodeNo ?? existing.episodeNo,
+            episodeNo: multiEpisode ? undefined : inferredEpisodeNo ?? existing.episodeNo,
             fansubGroupId: existing.fansubGroupId,
             fansubName: existing.fansubName,
             resolution: existing.resolution,
@@ -548,6 +558,7 @@ export class SqliteAppRepository implements AppRepository {
             subtitleLanguages: existing.subtitleLanguages,
             subtitle: existing.subtitle,
             correlationTag: task.correlationTag ?? existing.correlationTag,
+            files: mergeTorrentFileEpisodeLinks(engineTask.files, existing.files),
             createdAt: existing.createdAt,
             completedAt: task.completedAt ?? existing.completedAt
           }
@@ -1124,6 +1135,15 @@ export class SqliteAppRepository implements AppRepository {
           ON anime_source_exclusion (anime_id, source_id, scope);
       `);
       logger.info("SQLite 来源候选排除记录迁移完成", {
+        fromVersion: currentSchemaVersion,
+        toVersion: SQLITE_SCHEMA_VERSION
+      });
+    }
+
+    if (currentSchemaVersion < 18) {
+      this.ensureColumn("torrent_file", "episode_id", "episode_id TEXT");
+      this.ensureColumn("torrent_file", "episode_no", "episode_no REAL");
+      logger.info("SQLite 种子文件单集关联迁移完成", {
         fromVersion: currentSchemaVersion,
         toVersion: SQLITE_SCHEMA_VERSION
       });
@@ -1728,9 +1748,13 @@ export class SqliteAppRepository implements AppRepository {
     this.run("DELETE FROM torrent_file WHERE download_task_id = @taskId", { taskId: task.id });
     for (const file of task.files) {
       this.run(
-        `INSERT INTO torrent_file (id, download_task_id, file_index, name, size, progress, priority, selected)
-         VALUES (@id, @taskId, @fileIndex, @name, @size, @progress, @priority, @selected)`,
-        { id: file.id, taskId: task.id, fileIndex: file.index, name: file.name, size: file.size,
+        `INSERT INTO torrent_file (
+          id, download_task_id, file_index, name, episode_id, episode_no, size, progress, priority, selected
+        ) VALUES (
+          @id, @taskId, @fileIndex, @name, @episodeId, @episodeNo, @size, @progress, @priority, @selected
+        )`,
+        { id: file.id, taskId: task.id, fileIndex: file.index, name: file.name,
+          episodeId: file.episodeId ?? null, episodeNo: file.episodeNo ?? null, size: file.size,
           progress: file.progress, priority: file.priority, selected: toInteger(file.selected) }
       );
     }
@@ -1789,7 +1813,7 @@ export class SqliteAppRepository implements AppRepository {
 
   private async replaceDownloadsAndSyncEpisodes(downloads: DownloadTask[]): Promise<void> {
     this.transaction(() => {
-      const normalizedDownloads = downloads.map((task) => this.normalizeDownloadEpisodeLink(task));
+      const normalizedDownloads = downloads.map((task) => this.normalizeDownloadAssociations(task));
       normalizedDownloads.forEach((task) => this.upsertDownload(task));
       const keepIds = new Set(normalizedDownloads.map((task) => task.id));
       for (const row of this.all("SELECT id FROM download_task")) {
@@ -1810,12 +1834,10 @@ export class SqliteAppRepository implements AppRepository {
     this.transaction(() => {
       for (const task of current) {
         const inferredEpisodeNo = inferDownloadTaskEpisodeNo(task);
-        if (!task.animeId || inferredEpisodeNo === undefined) {
-          continue;
-        }
-
-        const normalized = this.normalizeDownloadEpisodeLink({ ...task, episodeNo: inferredEpisodeNo });
-        if (task.episodeNo === normalized.episodeNo && task.episodeId === normalized.episodeId) {
+        const normalized = this.normalizeDownloadAssociations(
+          inferredEpisodeNo === undefined ? task : { ...task, episodeNo: inferredEpisodeNo }
+        );
+        if (downloadAssociationSignature(task) === downloadAssociationSignature(normalized)) {
           continue;
         }
 
@@ -1879,6 +1901,72 @@ export class SqliteAppRepository implements AppRepository {
     if (repairedCount > 0) {
       logger.info("Stored download release metadata repaired", { repairedCount });
     }
+  }
+
+  /** 规范单集任务和合集文件关联，合集任务本身不绑定某一集。 */
+  private normalizeDownloadAssociations(task: DownloadTask): DownloadTask {
+    const animeId = task.animeId;
+    if (!animeId) {
+      return task;
+    }
+
+    const multiEpisode = isMultiEpisodeDownloadTask(task);
+    const normalizedTask = multiEpisode
+      ? { ...task, episodeId: undefined, episodeNo: undefined }
+      : this.normalizeDownloadEpisodeLink(task);
+    if (!multiEpisode || task.files.length === 0) {
+      return normalizedTask;
+    }
+
+    const parsedTask = parseReleaseTitle(task.name);
+    const inferredEpisodeNumbers = task.files
+      .map((file) => inferTorrentFileEpisodeNo(task, file))
+      .filter((episodeNo): episodeNo is number => episodeNo !== undefined);
+    const canCreateMissingEpisodes = Boolean(parsedTask.episodeRange) ||
+      isContiguousEpisodeSequence(inferredEpisodeNumbers);
+    let linkedFileCount = 0;
+    const files = task.files.map((file) => {
+      const inferredEpisodeNo = inferTorrentFileEpisodeNo(task, file);
+      const storedEpisodeNo = file.episodeNo;
+      const storedEpisodeInRange = storedEpisodeNo !== undefined && (!parsedTask.episodeRange || (
+        storedEpisodeNo >= parsedTask.episodeRange.start && storedEpisodeNo <= parsedTask.episodeRange.end
+      ));
+      const episodeNo = inferredEpisodeNo ?? (storedEpisodeInRange ? storedEpisodeNo : undefined);
+      if (episodeNo === undefined) {
+        return { ...file, episodeId: undefined, episodeNo: undefined };
+      }
+
+      let episodeByNumber = this.get(
+        "SELECT id FROM episode WHERE anime_id = @animeId AND episode_no = @episodeNo",
+        { animeId, episodeNo }
+      );
+      if (!episodeByNumber && canCreateMissingEpisodes) {
+        const episodeId = createDownloadEpisodeId(animeId, episodeNo);
+        this.upsertEpisodeRow({
+          id: episodeId,
+          animeId,
+          episodeNo,
+          status: resolveEpisodeStatusFromDownload(task)
+        });
+        episodeByNumber = { id: episodeId };
+      }
+      if (!episodeByNumber) {
+        return { ...file, episodeId: undefined, episodeNo: undefined };
+      }
+
+      linkedFileCount += 1;
+      return { ...file, episodeId: asString(episodeByNumber.id), episodeNo };
+    });
+
+    if (downloadAssociationSignature(task) !== downloadAssociationSignature({ ...normalizedTask, files })) {
+      logger.info("Download collection files linked to episodes", {
+        taskId: task.id,
+        animeId: task.animeId,
+        linkedFileCount,
+        totalFileCount: task.files.length
+      });
+    }
+    return { ...normalizedTask, files };
   }
 
   /** 根据番剧和集数修正下载任务的单集关联，缺失单集时自动补建。 */
@@ -1948,12 +2036,22 @@ export class SqliteAppRepository implements AppRepository {
   /** 取消已看时根据关联下载和放送时间恢复单集生命周期状态。 */
   private resolveEpisodeStatusAfterUnwatch(episode: Episode): Episode["status"] {
     const downloads = this.all(
-      `SELECT status, progress FROM download_task
-       WHERE anime_id = @animeId AND (episode_id = @episodeId OR episode_no = @episodeNo)`,
+      `SELECT download_task.status, download_task.progress, torrent_file.progress AS file_progress
+       FROM download_task
+       LEFT JOIN torrent_file
+         ON torrent_file.download_task_id = download_task.id
+        AND torrent_file.selected = 1
+        AND (torrent_file.episode_id = @episodeId OR torrent_file.episode_no = @episodeNo)
+       WHERE download_task.anime_id = @animeId
+         AND (
+           download_task.episode_id = @episodeId
+           OR download_task.episode_no = @episodeNo
+           OR torrent_file.id IS NOT NULL
+         )`,
       { animeId: episode.animeId, episodeId: episode.id, episodeNo: episode.episodeNo }
     ).map((row) => ({
       status: asString(row.status) as DownloadStatus,
-      progress: Number(row.progress)
+      progress: Math.max(Number(row.progress), optionalNumber(row.file_progress) ?? 0)
     }));
     if (downloads.some(isCompletedDownloadTask)) {
       return "downloaded";
@@ -2529,8 +2627,8 @@ function mapDownload(row: SqliteRow, files: TorrentFile[]): DownloadTask {
 
 function mapTorrentFile(row: SqliteRow): { downloadTaskId: string; file: TorrentFile } {
   return { downloadTaskId: asString(row.download_task_id), file: { id: asString(row.id), index: Number(row.file_index),
-    name: asString(row.name), size: Number(row.size), progress: Number(row.progress), priority: Number(row.priority),
-    selected: toBoolean(row.selected) } };
+    name: asString(row.name), episodeId: optionalString(row.episode_id), episodeNo: optionalNumber(row.episode_no),
+    size: Number(row.size), progress: Number(row.progress), priority: Number(row.priority), selected: toBoolean(row.selected) } };
 }
 
 /** 将来源采集间隔限制在 250 毫秒到 60 秒之间。 */
@@ -2544,6 +2642,36 @@ function normalizeSourceRequestInterval(value?: number): number {
 /** 为下载任务自动补建的单集生成稳定 ID。 */
 function createDownloadEpisodeId(animeId: string, episodeNo: number): string {
   return `episode-${animeId}-${String(episodeNo).replace(".", "-")}`;
+}
+
+/** 在下载引擎刷新文件进度时保留已建立的文件级单集关联。 */
+function mergeTorrentFileEpisodeLinks(engineFiles: TorrentFile[], existingFiles: TorrentFile[]): TorrentFile[] {
+  const existingByIdentity = new Map(
+    existingFiles.map((file) => [`${file.index}:${file.name}`, file])
+  );
+  return engineFiles.map((file) => {
+    const existing = existingByIdentity.get(`${file.index}:${file.name}`);
+    return existing
+      ? { ...file, episodeId: existing.episodeId, episodeNo: existing.episodeNo }
+      : file;
+  });
+}
+
+/** 生成下载任务关联快照，用于避免无变化时重复写库和打印日志。 */
+function downloadAssociationSignature(task: Pick<DownloadTask, "episodeId" | "episodeNo" | "files">): string {
+  return JSON.stringify({
+    episodeId: task.episodeId,
+    episodeNo: task.episodeNo,
+    files: task.files.map((file) => [file.index, file.name, file.episodeId, file.episodeNo])
+  });
+}
+
+/** 仅允许连续的正整数集数自动补建，避免特殊文件中的数字污染单集。 */
+function isContiguousEpisodeSequence(values: number[]): boolean {
+  const unique = [...new Set(values)].sort((left, right) => left - right);
+  return unique.length > 1 && unique.every((value, index) =>
+    Number.isSafeInteger(value) && value > 0 && (index === 0 || value === unique[index - 1] + 1)
+  );
 }
 
 /** 根据当前下载状态和进度设置新建单集的初始状态。 */

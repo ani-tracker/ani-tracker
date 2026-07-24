@@ -36,6 +36,7 @@ import {
   getReleaseVersionLabel,
   groupReleaseFamilyEpisodes,
   groupReleaseVersions,
+  isCollectionRelease,
   isReleaseSelectable,
   releaseKey,
   type ReleaseEpisodeFamilyGroup,
@@ -1862,7 +1863,13 @@ function AnimeDownloadPanel({
   const visibleOtherReleases = activeTab === "rss"
     ? otherTabReleases
     : filterReleasesByFansub(otherTabReleases, selectedFansubId);
-  const releaseGroups = groupReleasesByFansub(visibleReleases, fansubNames);
+  const visibleCollectionReleases = [
+    ...visibleReleases.filter(isCollectionRelease),
+    ...visibleOtherReleases.filter(isCollectionRelease)
+  ];
+  const visibleEpisodeReleases = visibleReleases.filter((release) => !isCollectionRelease(release));
+  const visibleOtherEpisodeReleases = visibleOtherReleases.filter((release) => !isCollectionRelease(release));
+  const releaseGroups = groupReleasesByFansub(visibleEpisodeReleases, fansubNames);
   const visibleErrors = activeTab === "rss"
     ? dedupeReleaseErrors(activeRssGroup?.errors ?? [])
     : dedupeReleaseErrors(errors);
@@ -1874,7 +1881,19 @@ function AnimeDownloadPanel({
   const releaseSignature = tabReleases.map(releaseKey).join("|");
   const tabFamilies = groupReleaseVersions(currentTabReleases, target, releaseVersionSelections, releaseGroupingOptions);
   const visibleFamilies = groupReleaseVersions(visibleReleases, target, releaseVersionSelections, releaseGroupingOptions);
-  const visibleOtherFamilies = groupReleaseVersions(visibleOtherReleases, target, releaseVersionSelections, releaseGroupingOptions);
+  const visibleCollectionFamilies = groupReleaseVersions(
+    visibleCollectionReleases,
+    target,
+    releaseVersionSelections,
+    releaseGroupingOptions
+  );
+  const visibleEpisodeFamilies = groupReleaseVersions(
+    visibleEpisodeReleases,
+    target,
+    releaseVersionSelections,
+    releaseGroupingOptions
+  );
+  const visibleOtherFamilies = groupReleaseVersions(visibleOtherEpisodeReleases, target, releaseVersionSelections, releaseGroupingOptions);
   const selectedReleases = visibleFamilies
     .filter((family) => selectedFamilyKeys.has(family.key))
     .map((family) => family.selectedRelease);
@@ -2018,6 +2037,39 @@ function AnimeDownloadPanel({
     ));
   }
 
+  /** 在普通单集资源之前渲染合集资源。 */
+  function renderCollectionResources() {
+    if (visibleCollectionFamilies.length === 0) {
+      return null;
+    }
+
+    return (
+      <section className="shrink-0 overflow-hidden border border-primary/20 bg-background">
+        <div className="flex min-h-11 items-center justify-between gap-3 bg-primary/5 px-3 py-2">
+          <span className="font-semibold">合集资源</span>
+          <Badge tone="primary-soft">{visibleCollectionFamilies.length} 个资源</Badge>
+        </div>
+        <div className="divide-y border-t border-primary/10">
+          {visibleCollectionFamilies.map((family) => (
+            <ReleaseDownloadRow
+              key={family.key}
+              addingReleaseId={addingReleaseId}
+              batchSelectable={classifyAnimeRelease(family.selectedRelease, target.anime) === "current"}
+              fansubNames={fansubNames}
+              family={family}
+              linkedTask={findReleaseDownloadTask(linkedTasks, family.selectedRelease)}
+              preferences={target}
+              selected={selectedFamilyKeys.has(family.key)}
+              onAddRelease={onAddRelease}
+              onToggleSelected={toggleFamilySelection}
+              onVersionChange={selectReleaseVersion}
+            />
+          ))}
+        </div>
+      </section>
+    );
+  }
+
   return (
       <div className="flex min-h-0 flex-1 flex-col gap-2 [@media(max-height:760px)]:gap-1">
         <div className="shrink-0 border-b pb-1">
@@ -2144,14 +2196,16 @@ function AnimeDownloadPanel({
           </div>
         ) : (
           <div className="grid min-h-0 flex-1 auto-rows-max content-start gap-3 overflow-y-auto pr-1">
+            {renderCollectionResources()}
+
             {activeTab === "rss"
-              ? visibleFamilies.length > 0 && (
+              ? visibleEpisodeFamilies.length > 0 && (
                   <section className="shrink-0">
                     <h3 className="flex items-center gap-2 border-b pb-3 text-sm font-semibold">
                       <CalendarDays />历史发布
                     </h3>
                     <div className="mt-3 divide-y border-y bg-background">
-                      {visibleFamilies.map((family) => (
+                      {visibleEpisodeFamilies.map((family) => (
                         <ReleaseDownloadRow
                           key={family.key}
                           addingReleaseId={addingReleaseId}
@@ -2241,7 +2295,7 @@ function AnimeDownloadPanel({
                   <span className="text-xs text-muted-foreground">季度待确认</span>
                 </Button>
                 {!otherResourcesCollapsed && (
-                  <div className="divide-y border-t">{renderEpisodeGroups(visibleOtherReleases, false)}</div>
+                  <div className="divide-y border-t">{renderEpisodeGroups(visibleOtherEpisodeReleases, false)}</div>
                 )}
               </section>
             )}

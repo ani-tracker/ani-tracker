@@ -359,7 +359,8 @@ export class ReleaseSourceService {
     if (typeof this.repository?.listCachedReleases !== "function") {
       return [];
     }
-    return this.repository.listCachedReleases({ sourceIds, animeId, limit: 2_000 });
+    const releases = await this.repository.listCachedReleases({ sourceIds, animeId, limit: 2_000 });
+    return releases.map((release) => enrichReleaseFromTitle(release, this.fansubs));
   }
 
   /** 将网络结果写入持久化缓存，同时兼容尚未扩展的仓库实现。 */
@@ -619,9 +620,10 @@ function cloneSearchResult(result: ReleaseSearchResult, queryOverride?: ReleaseQ
 
 /** 深拷贝资源中的可变来源元数据。 */
 function cloneRelease(release: Release): Release {
+  const normalized = enrichReleaseFromTitle(release);
   return {
-    ...release,
-    sourceMeta: release.sourceMeta ? { ...release.sourceMeta } : undefined
+    ...normalized,
+    sourceMeta: normalized.sourceMeta ? { ...normalized.sourceMeta } : undefined
   };
 }
 

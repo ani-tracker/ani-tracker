@@ -303,7 +303,7 @@ export function SourcesPage() {
   if (loadingError) {
     return (
       <Page>
-        <PageHeader className="border-b pb-4 sm:items-center">
+        <PageHeader className="sm:items-center">
           <h1 className="sr-only">下载源</h1>
           <PageBreadcrumb current="下载源" />
         </PageHeader>
@@ -322,7 +322,7 @@ export function SourcesPage() {
 
   return (
     <Page>
-      <PageHeader className="border-b pb-4 sm:items-center">
+      <PageHeader className="sm:items-center">
         <h1 className="sr-only">下载源</h1>
         <PageBreadcrumb current="下载源" />
       </PageHeader>
@@ -827,7 +827,7 @@ function ResponsiveSummarySeparator() {
 function SourcesPageSkeleton() {
   return (
     <Page aria-busy="true" aria-label="正在加载下载源">
-      <PageHeader className="border-b pb-4"><Skeleton className="h-4 w-24" /></PageHeader>
+      <PageHeader><Skeleton className="h-4 w-24" /></PageHeader>
       <div className="flex flex-wrap items-center justify-between gap-3 border-y py-3">
         <Skeleton className="h-5 w-64 max-w-full" />
         <Skeleton className="h-9 w-28" />

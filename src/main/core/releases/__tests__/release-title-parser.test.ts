@@ -57,10 +57,11 @@ test("parseReleaseTitle 解析中文第 N 话和小数集数", () => {
 });
 
 test("parseReleaseTitle 不把合集范围解析成单集", () => {
-  const parsed = parseReleaseTitle("[字幕组] 测试番 [01-12][1080p][HEVC][繁体]");
+  const parsed = parseReleaseTitle("[字幕组] 测试番 [01-12 合集][1080p][HEVC][繁体]");
 
   assert.equal(parsed.episodeNo, undefined);
   assert.deepEqual(parsed.episodeRange, { start: 1, end: 12 });
+  assert.equal(parsed.contentKind, "range");
   assert.equal(parsed.resolution, "1080p");
   assert.equal(parsed.normalizedVideoCodec, "H.265/HEVC");
   assert.equal(parsed.subtitle, "cht");
@@ -84,6 +85,22 @@ test("parseReleaseTitle 不把总集篇和 10bit 误判为集数", () => {
   assert.equal(parsed.normalizedVideoCodec, "H.265/HEVC");
   assert.equal(parsed.subtitle, "chs");
   assert.equal(parsed.bitDepth, 10);
+});
+
+test("enrichReleaseFromTitle 清理旧缓存中把合集误判成末集的字段", () => {
+  const enriched = enrichReleaseFromTitle({
+    id: "legacy-range-release",
+    title: "[字幕组] 测试番 [01-12 合集][1080p]",
+    sourceId: "rss",
+    sourceName: "RSS",
+    publishedAt: "2026-07-25T00:00:00.000Z",
+    episodeNo: 12,
+    contentKind: "episode"
+  });
+
+  assert.equal(enriched.episodeNo, undefined);
+  assert.deepEqual(enriched.episodeRange, { start: 1, end: 12 });
+  assert.equal(enriched.contentKind, "range");
 });
 
 test("parseReleaseTitle 独立识别编码和位深且不做互相推断", () => {

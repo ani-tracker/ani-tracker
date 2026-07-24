@@ -178,19 +178,19 @@ export function syncEpisodeStatusesFromDownloads(data: AppDataFile): void {
       continue;
     }
 
-    const linkedTasks = data.downloads.filter((task) => task.episodeId === episode.id);
-    if (linkedTasks.length === 0) {
+    const linkedDownloads = findEpisodeDownloadLinks(data.downloads, episode);
+    if (linkedDownloads.length === 0) {
       if (episode.status === "downloading") {
         episode.status = "aired";
       }
       continue;
     }
-    if (linkedTasks.some(isCompletedDownloadTask)) {
+    if (linkedDownloads.some(isCompletedEpisodeDownloadLink)) {
       episode.status = "downloaded";
       continue;
     }
 
-    if (linkedTasks.some((task) => isActiveDownloadStatus(task.status))) {
+    if (linkedDownloads.some(({ task }) => isActiveDownloadStatus(task.status))) {
       episode.status = "downloading";
       continue;
     }
@@ -311,7 +311,8 @@ export function buildDailyReminderSummary(data: AppDataFile): DashboardData["dai
       continue;
     }
 
-    const download = data.downloads.find((task) => task.animeId === episode.animeId && task.episodeId === episode.id);
+    const downloadLink = findEpisodeDownloadLinks(data.downloads, episode)[0];
+    const download = downloadLink?.task;
     const fansub = followed.defaultFansubGroupId ? fansubById.get(followed.defaultFansubGroupId) : undefined;
 
     items.push({
@@ -321,7 +322,7 @@ export function buildDailyReminderSummary(data: AppDataFile): DashboardData["dai
       episodeId: episode.id,
       episodeNo: episode.episodeNo,
       airTime: episode.airTime,
-      status: resolveReminderStatus(episode, download),
+      status: resolveReminderStatus(episode, downloadLink),
       fansubName: fansub?.name,
       downloadTaskId: download?.id
     });
@@ -376,20 +377,45 @@ export function buildPendingActions(data: AppDataFile): DashboardData["pendingAc
     });
 }
 
-function resolveReminderStatus(episode: Episode, download?: DownloadTask): DailyReminderItem["status"] {
+function resolveReminderStatus(episode: Episode, download?: EpisodeDownloadLink): DailyReminderItem["status"] {
   if (!download) {
     return episode.status;
   }
 
-  if (isCompletedDownloadTask(download)) {
+  if (isCompletedEpisodeDownloadLink(download)) {
     return "downloaded";
   }
 
-  if (isActiveDownloadStatus(download.status)) {
+  if (isActiveDownloadStatus(download.task.status)) {
     return "downloading";
   }
 
   return episode.status;
+}
+
+interface EpisodeDownloadLink {
+  task: DownloadTask;
+  file?: DownloadTask["files"][number];
+}
+
+/** 查找任务级或合集文件级的单集下载关联。 */
+function findEpisodeDownloadLinks(downloads: DownloadTask[], episode: Episode): EpisodeDownloadLink[] {
+  return downloads.flatMap((task) => {
+    if (task.animeId !== episode.animeId) {
+      return [];
+    }
+    if (task.episodeId === episode.id || task.episodeNo === episode.episodeNo) {
+      return [{ task }];
+    }
+    return task.files
+      .filter((file) => file.selected && (file.episodeId === episode.id || file.episodeNo === episode.episodeNo))
+      .map((file) => ({ task, file }));
+  });
+}
+
+/** 合集中的单个文件完成后即可将对应单集标记为已下载。 */
+function isCompletedEpisodeDownloadLink(link: EpisodeDownloadLink): boolean {
+  return isCompletedDownloadTask(link.task) || (link.file?.progress ?? 0) >= 1;
 }
 
 /** 将每日提醒条目转换为首页单集摘要。 */

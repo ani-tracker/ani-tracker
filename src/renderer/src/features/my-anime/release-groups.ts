@@ -40,6 +40,11 @@ export function countReleaseFamilyEpisodes(families: ReleaseVersionFamily[]): nu
   return new Set(families.map((family) => family.episodeKey)).size;
 }
 
+/** 判断资源是否为需要独立展示和文件级关联的合集。 */
+export function isCollectionRelease(release: Release): boolean {
+  return Boolean(release.episodeRange) || release.contentKind === "range" || release.contentKind === "batch";
+}
+
 /** 将同一资源的字幕、编码、位深和分辨率版本合并为一个资源族。 */
 export function groupReleaseVersions(
   releases: Release[],

@@ -1,7 +1,11 @@
 import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import type { DownloadTask } from "@shared/domain";
-import { inferDownloadTaskEpisodeNo } from "../../downloads/download-episode-resolver";
+import {
+  inferDownloadTaskEpisodeNo,
+  inferTorrentFileEpisodeNo,
+  isMultiEpisodeDownloadTask
+} from "../../downloads/download-episode-resolver";
 import { findExistingDownloadTask, isEngineTaskCovered } from "../app-repository";
 
 test("同名种子按哈希匹配各自任务", () => {
@@ -67,6 +71,28 @@ test("批量种子包含多个集数时不推断单集", () => {
   ];
 
   assert.equal(inferDownloadTaskEpisodeNo(task), undefined);
+});
+
+test("合集标题阻止旧末集字段继续作为单集推断", () => {
+  const task = createTask("batch-range-hash", 12);
+  task.name = "[LoliHouse] 测试番 [01-12 合集][1080p]";
+  task.files = [
+    createFile(0, "Series/Series - 01 [1080p].mkv"),
+    createFile(1, "Series/Series - 12 [1080p].mkv")
+  ];
+
+  assert.equal(isMultiEpisodeDownloadTask(task), true);
+  assert.equal(inferDownloadTaskEpisodeNo(task), undefined);
+  assert.equal(inferTorrentFileEpisodeNo(task, task.files[0]), 1);
+  assert.equal(inferTorrentFileEpisodeNo(task, task.files[1]), 12);
+});
+
+test("合集文件集数超出标题范围时不自动关联", () => {
+  const task = createTask("batch-extra-hash");
+  task.name = "[LoliHouse] 测试番 [01-12 合集][1080p]";
+  const extra = createFile(12, "Series/Series - 13 [1080p].mkv");
+
+  assert.equal(inferTorrentFileEpisodeNo(task, extra), undefined);
 });
 
 /** 创建用于验证下载任务匹配的最小任务。 */

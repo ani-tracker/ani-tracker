@@ -40,7 +40,7 @@ export class DownloadMediaScanner {
       try {
         const mediaFile = await this.probeService.probe(filePath, {
           animeId: task.animeId,
-          episodeId: task.episodeId,
+          episodeId: file.episodeId ?? task.episodeId,
           downloadTaskId: task.id,
           size: file.size,
           downloadedAt: task.completedAt ?? new Date().toISOString()
