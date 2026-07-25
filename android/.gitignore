@@ -1,0 +1,7 @@
+/capacitor.settings.gradle
+/capacitor-cordova-android-plugins/
+/app/capacitor.build.gradle
+/app/src/main/assets/capacitor.config.json
+/app/src/main/assets/capacitor.plugins.json
+/app/src/main/assets/public/
+/app/src/main/res/xml/config.xml

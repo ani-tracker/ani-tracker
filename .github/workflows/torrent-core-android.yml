@@ -46,6 +46,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify shared TypeScript and build Android WebView assets
+        run: |
+          pnpm run typecheck
+          pnpm run test:parsers
+          pnpm run sync:android
+
       - name: Detect release signing
         id: signing
         shell: bash
@@ -59,7 +77,7 @@ jobs:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: 17
+          java-version: 21
 
       - uses: android-actions/setup-android@v3
 
@@ -111,6 +129,8 @@ jobs:
           unzip -l "${aar}" | grep "assets/openssl-Apache-2.0.txt"
           unzip -l "${aar}" | grep "assets/boost-BSL-1.0.txt"
           unzip -l "${apk}" | grep "lib/arm64-v8a/libani_torrent_core.so"
+          unzip -l "${apk}" | grep "assets/public/index.html"
+          unzip -l "${apk}" | grep "assets/capacitor.config.json"
           ! unzip -l "${aar}" | grep -Ei "remote-renderer|ffmpeg|ffprobe|transcod"
           ! unzip -l "${apk}" | grep -Ei "remote-renderer|ffmpeg|ffprobe|transcod"
           verify_app_package() {

@@ -3,6 +3,8 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { ErrorBoundary } from "./components/error-boundary";
 import { ThemeProvider, ThemeToaster } from "./components/theme-provider";
+import { appApi, isElectronClient } from "./lib/api";
+import type { AppearanceSettings } from "@shared/theme";
 import "./styles/globals.css";
 
 /** 仅在 Web/PWA 生产环境注册离线缓存，避免干扰 Electron 调试。 */
@@ -21,10 +23,18 @@ async function registerWebServiceWorker(): Promise<void> {
 
 void registerWebServiceWorker();
 
+/** Electron 桌面入口按需读取持久化外观，远程网页继续使用本地缓存。 */
+async function loadRuntimeAppearance(): Promise<AppearanceSettings | undefined> {
+  if (!isElectronClient()) {
+    return undefined;
+  }
+  return (await appApi.getSettings()).appearance;
+}
+
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <ThemeProvider>
+      <ThemeProvider loadAppearance={loadRuntimeAppearance}>
         <App />
         <ThemeToaster />
       </ThemeProvider>

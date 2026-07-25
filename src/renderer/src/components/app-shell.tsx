@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
-import { WindowControls } from "@/components/window-controls";
 
 const APP_LOGO_SRC = "./icons/ani-tracker-mark.png";
 const dragRegionStyle = { WebkitAppRegion: "drag" } as CSSProperties;
@@ -55,6 +54,7 @@ interface AppShellProps {
   };
   contentRef?: MutableRefObject<HTMLElement | null>;
   framelessWindow?: boolean;
+  windowControls?: ReactNode;
 }
 
 /** 跟踪桌面宽视口，驱动 224px 完整栏和 72px 收缩栏切换。 */
@@ -81,7 +81,8 @@ export function AppShell({
   unreadCount,
   secondaryView,
   contentRef,
-  framelessWindow = false
+  framelessWindow = false,
+  windowControls
 }: AppShellProps) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [showDiscoveryScrollTop, setShowDiscoveryScrollTop] = useState(false);
@@ -135,7 +136,7 @@ export function AppShell({
 
   return (
     <TooltipProvider delayDuration={300}>
-      {framelessWindow && <WindowControls />}
+      {framelessWindow && windowControls}
       <SidebarProvider
         data-frameless-window={framelessWindow ? "" : undefined}
         open={expandedDesktopSidebar}

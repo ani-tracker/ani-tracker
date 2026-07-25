@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, type AppShellStatus } from "@/components/app-shell";
+import { WindowControls } from "@/components/window-controls";
 import { AnimeDetailPage, type AnimeDetailLibraryAction } from "@/features/anime-detail/AnimeDetailPage";
 import {
   DiscoveryPage,
@@ -467,6 +468,7 @@ function MainApplication() {
       status={shellStatus}
       unreadCount={unreadCount}
       framelessWindow={framelessWindow}
+      windowControls={framelessWindow ? <WindowControls /> : undefined}
     >
       <div className={detailView || discoverySchedule ? "hidden" : undefined}>
         {renderPage(activePage, localClient, {

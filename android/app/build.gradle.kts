@@ -63,12 +63,12 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 
     kotlinOptions {
-        jvmTarget = "17"
+        jvmTarget = "21"
     }
 
     buildFeatures {
@@ -85,7 +85,9 @@ tasks.named("preBuild").configure {
 
 dependencies {
     implementation(project(":torrent-host"))
+    implementation(project(":capacitor-android"))
     implementation(platform("androidx.compose:compose-bom:2024.12.01"))
+    implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("androidx.activity:activity-compose:1.10.0")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.compose.material3:material3")
@@ -97,3 +99,5 @@ dependencies {
 
     debugImplementation("androidx.compose.ui:ui-tooling")
 }
+
+apply(from = "capacitor.build.gradle")

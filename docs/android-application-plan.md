@@ -2,7 +2,7 @@
 
 最近更新：2026-07-25
 
-状态：已批准，P0 已完成，P1 待实施
+状态：已批准，P0-P1 已完成，P2 待实施
 
 ## 1. 目标
 
@@ -194,6 +194,8 @@ desktop sidecar          Binder / JNI / libVLC
 - 实现启动错误、加载、空数据和数据库恢复状态。
 
 验收：Android 可显示完整导航；首次启动和升级后数据库正确；杀进程重启数据不丢失；移动包不含远程网页资源。
+
+实施结果（2026-07-25）：已接入独立 Capacitor WebView 构建、共享 SQLite schema/版本引导、Android Keystore 安全存储、应用与图片缓存目录、数据库 JSON 导出基础及启动错误状态。`MainActivity` 已切换为 Capacitor 宿主并保留原生 `PlayerActivity`；移动依赖图已排除远程 RPC 和桌面托管进程代码。数据库首次启动、重启和高版本拒绝测试通过，JDK 21 下 `:app:compileDebugKotlin` 通过。
 
 ### P2：业务服务与网络来源，10-14 人日
 

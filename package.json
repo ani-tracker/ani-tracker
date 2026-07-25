@@ -5,6 +5,7 @@
   "author": "Ani Tracker contributors",
   "license": "PolyForm-Noncommercial-1.0.0",
   "private": true,
+  "packageManager": "pnpm@10.34.5",
   "type": "module",
   "main": "./out/main/index.js",
   "scripts": {
@@ -23,8 +24,10 @@
     "prepare:desktop-torrent-core-dev": "node scripts/prepare-desktop-torrent-core-dev.mjs",
     "prepare:torrent-core:android": "bash scripts/prepare-android-torrent-dependencies.sh",
     "build:torrent-core:android": "gradle -p android :torrent-host:assembleRelease",
-    "package:android:debug": "gradle -p android :app:assembleDebug :torrent-host:assembleRelease",
-    "package:android:release": "gradle -p android :app:assembleRelease :app:bundleRelease :torrent-host:assembleRelease",
+    "build:android:web": "vite build --config vite.mobile.config.ts",
+    "sync:android": "pnpm run build:android:web && cap sync android",
+    "package:android:debug": "pnpm run sync:android && gradle -p android :app:assembleDebug :torrent-host:assembleRelease",
+    "package:android:release": "pnpm run sync:android && gradle -p android :app:assembleRelease :app:bundleRelease :torrent-host:assembleRelease",
     "manifest:torrent-core": "node scripts/create-torrent-core-manifest.mjs",
     "prepare:torrent-core": "node scripts/prepare-torrent-core-resources.mjs",
     "verify:torrent-core": "node scripts/prepare-torrent-core-resources.mjs --required --verify-only",
@@ -52,6 +55,9 @@
     "test:theme": "node scripts/verify-theme-contrast.mjs"
   },
   "dependencies": {
+    "@capacitor-community/sqlite": "7.0.3",
+    "@capacitor/android": "7.6.8",
+    "@capacitor/core": "7.6.8",
     "@radix-ui/react-alert-dialog": "^1.1.19",
     "@radix-ui/react-checkbox": "^1.3.7",
     "@radix-ui/react-collapsible": "^1.1.18",
@@ -88,6 +94,7 @@
     "zustand": "^5.0.1"
   },
   "devDependencies": {
+    "@capacitor/cli": "7.6.8",
     "@electron/rebuild": "4.0.1",
     "@types/better-sqlite3": "7.6.13",
     "@types/node": "^22.7.5",
