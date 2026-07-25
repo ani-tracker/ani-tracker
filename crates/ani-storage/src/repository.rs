@@ -165,6 +165,39 @@ impl<'connection> SqliteRepository<'connection> {
         self.list_notifications()
     }
 
+    /// 将指定提醒标记为已读，重复调用保持原已读时间。
+    pub(crate) fn mark_notification_read(
+        &self,
+        notification_id: &str,
+    ) -> Result<Vec<NotificationRecord>, StorageError> {
+        validate_identifier("notification.id", notification_id)?;
+        self.connection.execute(
+            "UPDATE notification SET read_at = COALESCE(read_at, ?1) WHERE id = ?2",
+            params![now_iso(), notification_id],
+        )?;
+        info!("Rust 通知已标记已读：id={notification_id}");
+        self.list_notifications()
+    }
+
+    /// 将全部提醒标记为已读，重复调用保持原已读时间。
+    pub(crate) fn mark_all_notifications_read(
+        &self,
+    ) -> Result<Vec<NotificationRecord>, StorageError> {
+        self.connection.execute(
+            "UPDATE notification SET read_at = COALESCE(read_at, ?1)",
+            params![now_iso()],
+        )?;
+        info!("Rust 全部通知已标记已读");
+        self.list_notifications()
+    }
+
+    /// 清空提醒中心全部记录。
+    pub(crate) fn clear_notifications(&self) -> Result<Vec<NotificationRecord>, StorageError> {
+        let removed = self.connection.execute("DELETE FROM notification", [])?;
+        info!("Rust 通知已清空：removed={removed}");
+        Ok(Vec::new())
+    }
+
     /// 按可选年月读取并排序本地番剧目录。
     pub(crate) fn list_anime_catalog(
         &self,
@@ -1801,6 +1834,25 @@ impl NotificationRepository for SqliteRepository<'_> {
         records: &[NotificationRecord],
     ) -> RepositoryResult<Vec<NotificationRecord>> {
         SqliteRepository::add_notifications(self, records).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器标记单条通知已读。
+    fn mark_notification_read(
+        &self,
+        notification_id: &str,
+    ) -> RepositoryResult<Vec<NotificationRecord>> {
+        SqliteRepository::mark_notification_read(self, notification_id)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器标记全部通知已读。
+    fn mark_all_notifications_read(&self) -> RepositoryResult<Vec<NotificationRecord>> {
+        SqliteRepository::mark_all_notifications_read(self).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器清空通知。
+    fn clear_notifications(&self) -> RepositoryResult<Vec<NotificationRecord>> {
+        SqliteRepository::clear_notifications(self).map_err(RepositoryError::from)
     }
 }
 

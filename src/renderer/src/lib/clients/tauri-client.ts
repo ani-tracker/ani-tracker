@@ -184,6 +184,27 @@ class TauriClientCore {
     });
   }
 
+  /** 将一条提醒中心通知标记为已读。 */
+  async markNotificationRead(notificationId: string): Promise<NotificationRecord[]> {
+    return invoke<NotificationRecord[]>("mark_notification_read", { notificationId }).catch((error) => {
+      throw normalizeTauriError("mark_notification_read", error);
+    });
+  }
+
+  /** 将提醒中心全部通知标记为已读。 */
+  async markAllNotificationsRead(): Promise<NotificationRecord[]> {
+    return invoke<NotificationRecord[]>("mark_all_notifications_read").catch((error) => {
+      throw normalizeTauriError("mark_all_notifications_read", error);
+    });
+  }
+
+  /** 清空提醒中心全部通知。 */
+  async clearNotifications(): Promise<NotificationRecord[]> {
+    return invoke<NotificationRecord[]>("clear_notifications").catch((error) => {
+      throw normalizeTauriError("clear_notifications", error);
+    });
+  }
+
   /** 从 Rust SQLite Repository 读取我的追番。 */
   async listMyAnime(): Promise<MyAnime[]> {
     return invoke<MyAnime[]>("list_my_anime").catch((error) => {

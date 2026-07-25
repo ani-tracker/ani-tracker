@@ -15,6 +15,7 @@ use ani_repository::prelude::*;
 use ani_storage::Storage;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
+use tauri::AppHandle;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 use crate::downloads::{release_download_context, AppDownloadState};
@@ -30,6 +31,7 @@ pub(crate) struct AppAutomationState {
 }
 
 struct AutomationRuntime {
+    app: AppHandle,
     storage: Arc<Mutex<Storage>>,
     platform_defaults: AppSettings,
     source_state: AppSourceState,
@@ -43,6 +45,7 @@ struct AutomationRuntime {
 impl AppAutomationState {
     /// 创建尚未启动的自动扫描状态。
     pub(crate) fn new(
+        app: AppHandle,
         storage: Arc<Mutex<Storage>>,
         platform_defaults: AppSettings,
         source_state: AppSourceState,
@@ -50,6 +53,7 @@ impl AppAutomationState {
     ) -> Self {
         Self {
             inner: Arc::new(AutomationRuntime {
+                app,
                 storage,
                 platform_defaults,
                 source_state,
@@ -179,6 +183,26 @@ impl AppAutomationState {
         }
         self.inner.in_flight.store(false, Ordering::Release);
         self.inner.wake.notify_one();
+        match &outcome {
+            Ok(result) => {
+                if let Ok(settings) = self.load_settings().await {
+                    crate::system_integration::notify_automation_result(
+                        &self.inner.app,
+                        &settings,
+                        result,
+                    );
+                }
+            }
+            Err(error) => {
+                if let Ok(settings) = self.load_settings().await {
+                    crate::system_integration::notify_scheduler_error(
+                        &self.inner.app,
+                        &settings,
+                        error,
+                    );
+                }
+            }
+        }
         outcome
     }
 

@@ -75,6 +75,18 @@ pub trait NotificationRepository {
         &self,
         records: &[NotificationRecord],
     ) -> RepositoryResult<Vec<NotificationRecord>>;
+
+    /// 将指定通知标记为已读，并返回完整通知列表。
+    fn mark_notification_read(
+        &self,
+        notification_id: &str,
+    ) -> RepositoryResult<Vec<NotificationRecord>>;
+
+    /// 将全部通知标记为已读，并返回完整通知列表。
+    fn mark_all_notifications_read(&self) -> RepositoryResult<Vec<NotificationRecord>>;
+
+    /// 清空全部通知，并返回空列表。
+    fn clear_notifications(&self) -> RepositoryResult<Vec<NotificationRecord>>;
 }
 
 /// 番剧目录与详情存储端口。

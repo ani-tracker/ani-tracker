@@ -104,6 +104,7 @@ pub(crate) async fn update_settings(
     if let Err(error) = download_state.refresh_from_settings(&settings).await {
         log::error!("Tauri 下载设置应用失败 error={error}");
     }
+    crate::system_integration::apply_settings(&app, &settings);
     crate::commands::downloads::emit_download_service_status_changed(&app);
     Ok(settings)
 }
@@ -129,6 +130,7 @@ pub(crate) async fn reset_settings_to_defaults(
     if let Err(error) = download_state.refresh_from_settings(&settings).await {
         log::error!("Tauri 默认下载设置应用失败 error={error}");
     }
+    crate::system_integration::apply_settings(&app, &settings);
     crate::commands::downloads::emit_download_service_status_changed(&app);
     Ok(settings)
 }
@@ -154,6 +156,48 @@ pub(crate) async fn get_unread_notification_count(
         Arc::clone(state.storage()),
         |storage| storage.repository().get_unread_notification_count(),
     )
+    .await
+}
+
+/// 将指定通知标记为已读。
+#[tauri::command]
+pub(crate) async fn mark_notification_read(
+    notification_id: String,
+    state: State<'_, AppStorageState>,
+) -> Result<Vec<NotificationRecord>, AppCommandError> {
+    run_query(
+        "标记通知已读",
+        Arc::clone(state.storage()),
+        move |storage| {
+            storage
+                .repository()
+                .mark_notification_read(&notification_id)
+        },
+    )
+    .await
+}
+
+/// 将全部通知标记为已读。
+#[tauri::command]
+pub(crate) async fn mark_all_notifications_read(
+    state: State<'_, AppStorageState>,
+) -> Result<Vec<NotificationRecord>, AppCommandError> {
+    run_query(
+        "标记全部通知已读",
+        Arc::clone(state.storage()),
+        |storage| storage.repository().mark_all_notifications_read(),
+    )
+    .await
+}
+
+/// 清空提醒中心全部通知。
+#[tauri::command]
+pub(crate) async fn clear_notifications(
+    state: State<'_, AppStorageState>,
+) -> Result<Vec<NotificationRecord>, AppCommandError> {
+    run_query("清空通知", Arc::clone(state.storage()), |storage| {
+        storage.repository().clear_notifications()
+    })
     .await
 }
 

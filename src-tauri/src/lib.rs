@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use ani_repository::prelude::*;
 use log::LevelFilter;
 use tauri::Manager;
 
@@ -12,6 +13,7 @@ mod qbittorrent_managed;
 mod source_sync;
 mod sources;
 mod storage;
+mod system_integration;
 
 /// 装配并启动 Tauri 应用宿主。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -22,10 +24,29 @@ pub fn run() {
                 .level(LevelFilter::Info)
                 .build(),
         )
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_ani_player::init())
-        .plugin(tauri_plugin_ani_torrent::init())
+        .plugin(tauri_plugin_ani_torrent::init());
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_autostart::init(
+        tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+        None,
+    ));
+    let builder = builder
         .setup(|app| {
             let storage_state = storage::initialize(app.handle())?;
+            let startup_settings = storage_state
+                .storage()
+                .lock()
+                .map_err(|error| std::io::Error::other(format!("读取启动设置锁失败：{error}")))?
+                .repository()
+                .get_settings(storage_state.platform_defaults())
+                .map_err(|error| std::io::Error::other(format!("读取启动设置失败：{error}")))?;
+            let system_integration_state =
+                system_integration::AppSystemIntegrationState::initialize(
+                    app.handle(),
+                    &startup_settings,
+                );
             let source_state = sources::AppSourceState::new();
             let source_sync_state = source_sync::AppSourceSyncState::new(
                 Arc::clone(storage_state.storage()),
@@ -47,6 +68,7 @@ pub fn run() {
             let player_state =
                 player::AppPlayerState::new(app.handle(), Arc::clone(storage_state.storage()));
             let automation_state = automation::AppAutomationState::new(
+                app.handle().clone(),
                 Arc::clone(storage_state.storage()),
                 storage_state.platform_defaults().clone(),
                 source_state.clone(),
@@ -56,22 +78,30 @@ pub fn run() {
             );
             automation_state.start();
             let reminder_storage = Arc::clone(storage_state.storage());
+            let reminder_defaults = storage_state.platform_defaults().clone();
+            let reminder_app = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
                 let result = reminder_storage
                     .lock()
                     .map_err(|error| error.to_string())
                     .and_then(|storage| {
-                        ani_automation::DailyReminderService::run_once(
+                        let settings = storage
+                            .repository()
+                            .get_settings(&reminder_defaults)
+                            .map_err(|error| error.to_string())?;
+                        let record = ani_automation::DailyReminderService::run_once(
                             &storage.repository(),
                             chrono::Utc::now(),
                         )
-                        .map_err(|error| error.to_string())
+                        .map_err(|error| error.to_string())?;
+                        Ok((record, settings))
                     });
                 match result {
-                    Ok(Some(record)) => {
+                    Ok((Some(record), settings)) => {
                         log::info!("Tauri 每日追番提醒已写入 id={}", record.id);
+                        system_integration::notify_reminder(&reminder_app, &settings, &record);
                     }
-                    Ok(None) => {}
+                    Ok((None, _)) => {}
                     Err(error) => {
                         log::error!("Tauri 每日追番提醒执行失败 error={error}");
                     }
@@ -84,6 +114,7 @@ pub fn run() {
             app.manage(media_state);
             app.manage(player_state);
             app.manage(automation_state);
+            app.manage(system_integration_state);
             log::info!(
                 "Tauri 宿主初始化完成 platform={} arch={}",
                 std::env::consts::OS,
@@ -98,6 +129,9 @@ pub fn run() {
             commands::data::reset_settings_to_defaults,
             commands::data::list_notifications,
             commands::data::get_unread_notification_count,
+            commands::data::mark_notification_read,
+            commands::data::mark_all_notifications_read,
+            commands::data::clear_notifications,
             commands::data::list_my_anime,
             commands::data::upsert_my_anime,
             commands::data::remove_my_anime,
@@ -167,6 +201,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             commands::handle_window_event(window, event);
             player::AppPlayerState::handle_window_event(window, event);
+            system_integration::handle_window_event(window, event);
         });
 
     let app = match builder.build(tauri::generate_context!()) {
@@ -177,7 +212,16 @@ pub fn run() {
         }
     };
     app.run(|app_handle, event| {
+        #[cfg(target_os = "macos")]
+        if matches!(event, tauri::RunEvent::Reopen { .. }) {
+            system_integration::show_main_window(app_handle);
+        }
         if matches!(event, tauri::RunEvent::Exit) {
+            if let Some(state) =
+                app_handle.try_state::<system_integration::AppSystemIntegrationState>()
+            {
+                state.prepare_to_quit();
+            }
             log::info!("Tauri 宿主退出，开始关闭播放器和下载引擎");
             let player_state = app_handle.state::<player::AppPlayerState>();
             let download_state = app_handle.state::<downloads::AppDownloadState>();

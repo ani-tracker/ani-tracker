@@ -1065,6 +1065,54 @@ fn persists_notifications_through_repository_port() {
     );
 }
 
+/// 验证公共通知端口支持单条已读、全部已读和清空操作。
+#[test]
+fn mutates_notifications_through_repository_port() {
+    let directory = TestDirectory::new("notification-mutations");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("open notification database");
+    let repository = storage.repository();
+    let records = ["notification-a", "notification-b"].map(|id| NotificationRecord {
+        id: id.to_owned(),
+        kind: NotificationKind::System,
+        title: "系统提醒".to_owned(),
+        body: "测试通知状态".to_owned(),
+        severity: NotificationSeverity::Info,
+        anime_id: None,
+        episode_id: None,
+        download_task_id: None,
+        created_at: format!(
+            "2026-07-25T01:00:0{}.000Z",
+            if id.ends_with('a') { 1 } else { 2 }
+        ),
+        read_at: None,
+    });
+    NotificationRepository::add_notifications(&repository, &records).expect("save notifications");
+
+    let marked = NotificationRepository::mark_notification_read(&repository, "notification-a")
+        .expect("mark notification read");
+    assert!(marked
+        .iter()
+        .find(|record| record.id == "notification-a")
+        .and_then(|record| record.read_at.as_ref())
+        .is_some());
+    assert_eq!(
+        NotificationRepository::get_unread_notification_count(&repository)
+            .expect("count one unread notification"),
+        1
+    );
+
+    let all_read = NotificationRepository::mark_all_notifications_read(&repository)
+        .expect("mark all notifications read");
+    assert!(all_read.iter().all(|record| record.read_at.is_some()));
+    assert!(NotificationRepository::clear_notifications(&repository)
+        .expect("clear notifications")
+        .is_empty());
+    assert!(NotificationRepository::list_notifications(&repository)
+        .expect("list cleared notifications")
+        .is_empty());
+}
+
 /// 创建包含固定设置和下载源的测试启动参数。
 fn test_options(directory: &TestDirectory, database_name: &str) -> StorageOptions {
     StorageOptions {
