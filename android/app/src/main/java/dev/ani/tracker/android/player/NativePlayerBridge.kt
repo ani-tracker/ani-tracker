@@ -41,11 +41,13 @@ object NativePlayerBridge {
         Unit
     }
 
+    /** 返回仍存活的播放器 Activity。 */
     private fun requireActivity(): PlayerActivity {
         return activityReference.get()?.get()
             ?: throw IllegalStateException("Android 原生播放器尚未就绪")
     }
 
+    /** 在主线程执行操作并向插件线程返回确定结果。 */
     private fun <T> onMainThread(block: () -> T): Result<T> {
         if (Looper.myLooper() == Looper.getMainLooper()) return runCatching(block)
         val result = AtomicReference<Result<T>>()
