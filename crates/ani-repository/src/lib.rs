@@ -288,6 +288,12 @@ pub trait PlaybackRepository {
 pub trait DownloadRepository {
     /// 读取全部持久化下载任务及文件快照。
     fn list_downloads(&self) -> RepositoryResult<Vec<DownloadTask>>;
+
+    /// 幂等保存下载任务及其文件快照。
+    fn upsert_download_task(&self, task: &DownloadTask) -> RepositoryResult<Vec<DownloadTask>>;
+
+    /// 删除一条下载任务记录，不直接操作引擎或下载文件。
+    fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>>;
 }
 
 /// 首页聚合查询存储端口。

@@ -5,13 +5,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_domain::{
     AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
-    AnimeSourceExclusionScope, AnimeStatus, Episode, EpisodePreference, MyAnime, NotificationKind,
-    NotificationRecord, NotificationSeverity, PlaybackCheckpoint, ReleaseSearchResult,
-    ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
-    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    AnimeSourceExclusionScope, AnimeStatus, DownloadStatus, DownloadTask, Episode,
+    EpisodePreference, EpisodeStatus, MyAnime, NotificationKind, NotificationRecord,
+    NotificationSeverity, PlaybackCheckpoint, ReleaseSearchResult, ReleaseSourceConfig,
+    ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
+    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput, TorrentEngineKind, TorrentFile,
 };
 use ani_repository::{
-    AnimeCatalogRepository, AnimeSourceBindingRepository, CachedReleaseQuery,
+    AnimeCatalogRepository, AnimeSourceBindingRepository, CachedReleaseQuery, DownloadRepository,
     NotificationRepository, ReleaseCacheRepository, ReleaseSearchCacheEntry,
     ReleaseSourceRepository, RepositoryError, UnitOfWork, UnitOfWorkFactory,
 };
@@ -495,6 +496,118 @@ fn rolls_back_failed_p3_following_write() {
             .expect("my anime rollback count"),
         0
     );
+}
+
+/// 验证下载任务和文件快照完整往返，并按文件进度同步关联单集。
+#[test]
+fn writes_download_snapshot_and_syncs_episode_statuses() {
+    let directory = TestDirectory::new("p4-download-write");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create p4 download database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode p3 following fixture");
+    let repository = storage.repository();
+    repository
+        .upsert_my_anime(fixture.payload.my_anime.clone())
+        .expect("save p4 anime");
+    repository
+        .upsert_episode(&fixture.payload.episode)
+        .expect("save p4 episode one");
+    let episode_two = Episode {
+        id: "episode-anime-p3-1-2".to_owned(),
+        episode_no: 2.0,
+        title: Some("第二集".to_owned()),
+        ..fixture.payload.episode
+    };
+    repository
+        .upsert_episode(&episode_two)
+        .expect("save p4 episode two");
+
+    let task = p4_download_task();
+    let saved = DownloadRepository::upsert_download_task(&repository, &task)
+        .expect("save p4 download snapshot");
+    assert_eq!(saved, vec![task.clone()]);
+    assert_eq!(
+        repository
+            .list_episodes("anime-p3-1")
+            .expect("list synced episodes")
+            .into_iter()
+            .map(|episode| episode.status)
+            .collect::<Vec<_>>(),
+        vec![EpisodeStatus::Downloading, EpisodeStatus::Downloaded]
+    );
+
+    let mut completed = task.clone();
+    completed.status = DownloadStatus::Completed;
+    completed.progress = 1.0;
+    completed.created_at = "2099-01-01T00:00:00.000Z".to_owned();
+    completed.completed_at = Some("2026-07-25T01:00:00.000Z".to_owned());
+    for file in &mut completed.files {
+        file.progress = 1.0;
+    }
+    let completed_snapshot = DownloadRepository::upsert_download_task(&repository, &completed)
+        .expect("complete p4 download snapshot");
+    assert_eq!(completed_snapshot[0].created_at, task.created_at);
+    assert_eq!(completed_snapshot[0].completed_at, completed.completed_at);
+    assert!(repository
+        .list_episodes("anime-p3-1")
+        .expect("list completed episodes")
+        .iter()
+        .all(|episode| episode.status == EpisodeStatus::Downloaded));
+}
+
+/// 验证删除下载任务会恢复单集状态，且外键失败不会留下半条任务。
+#[test]
+fn removes_download_snapshot_and_rolls_back_invalid_files() {
+    let directory = TestDirectory::new("p4-download-remove");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create p4 download removal database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode p3 following fixture");
+    let repository = storage.repository();
+    repository
+        .upsert_my_anime(fixture.payload.my_anime.clone())
+        .expect("save removal anime");
+    repository
+        .upsert_episode(&fixture.payload.episode)
+        .expect("save removal episode one");
+    repository
+        .upsert_episode(&Episode {
+            id: "episode-anime-p3-1-2".to_owned(),
+            episode_no: 2.0,
+            ..fixture.payload.episode
+        })
+        .expect("save removal episode two");
+    let task = p4_download_task();
+    DownloadRepository::upsert_download_task(&repository, &task).expect("save removable task");
+
+    let remaining = DownloadRepository::remove_download_task(
+        &repository,
+        task.torrent_hash.as_deref().expect("task hash"),
+    )
+    .expect("remove task by hash");
+    assert!(remaining.is_empty());
+    assert!(repository
+        .list_episodes("anime-p3-1")
+        .expect("list restored episodes")
+        .iter()
+        .all(|episode| episode.status == EpisodeStatus::Aired));
+
+    let mut invalid = p4_download_task();
+    invalid.id = "p4-invalid-task".to_owned();
+    invalid.files[0].episode_id = Some("missing-episode".to_owned());
+    assert!(DownloadRepository::upsert_download_task(&repository, &invalid).is_err());
+    assert!(DownloadRepository::list_downloads(&repository)
+        .expect("list downloads after rollback")
+        .is_empty());
 }
 
 /// 验证番剧目录合并、搜索、月份替换和详情聚合保持业务引用。
@@ -1055,6 +1168,62 @@ fn insert_p2_read_model_fixture(connection: &Connection) {
             [],
         )
         .expect("insert unread notification");
+}
+
+/// 创建覆盖任务元数据和文件级单集关联的 P4 下载快照。
+fn p4_download_task() -> DownloadTask {
+    DownloadTask {
+        id: "p4-download-task".to_owned(),
+        release_id: None,
+        anime_id: Some("anime-p3-1".to_owned()),
+        episode_id: None,
+        anime_title: Some("P3 契约番剧".to_owned()),
+        episode_no: None,
+        fansub_group_id: None,
+        fansub_name: None,
+        resolution: Some("1080p".to_owned()),
+        declared_video_codec: Some("HEVC".to_owned()),
+        normalized_video_codec: Some("H.265/HEVC".to_owned()),
+        bit_depth: Some(10),
+        subtitle_languages: vec!["chs".to_owned(), "cht".to_owned()],
+        subtitle: Some("multi".to_owned()),
+        correlation_tag: Some("p4-contract".to_owned()),
+        engine: TorrentEngineKind::Embedded,
+        torrent_hash: Some("p4-hash".to_owned()),
+        name: "P4 batch".to_owned(),
+        status: DownloadStatus::Downloading,
+        progress: 0.5,
+        download_speed: 1024,
+        upload_speed: 128,
+        eta_seconds: Some(60),
+        save_path: "C:/video".to_owned(),
+        files: vec![
+            TorrentFile {
+                id: "p4-hash:0".to_owned(),
+                index: 0,
+                name: "episode-1.mkv".to_owned(),
+                episode_id: Some("episode-anime-p3-1-1".to_owned()),
+                episode_no: Some(1.0),
+                size: 1024,
+                progress: 0.5,
+                priority: 1,
+                selected: true,
+            },
+            TorrentFile {
+                id: "p4-hash:1".to_owned(),
+                index: 1,
+                name: "episode-2.mkv".to_owned(),
+                episode_id: Some("episode-anime-p3-1-2".to_owned()),
+                episode_no: Some(2.0),
+                size: 2048,
+                progress: 1.0,
+                priority: 7,
+                selected: true,
+            },
+        ],
+        created_at: "2026-07-25T00:00:00.000Z".to_owned(),
+        completed_at: None,
+    }
 }
 
 /// 写入使用文件级单集关联的 P3 播放任务。

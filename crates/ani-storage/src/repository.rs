@@ -1472,6 +1472,40 @@ impl<'connection> SqliteRepository<'connection> {
         .collect()
     }
 
+    /// 原子保存下载任务和完整文件快照，并同步关联单集状态。
+    fn upsert_download_task(&self, task: &DownloadTask) -> Result<Vec<DownloadTask>, StorageError> {
+        validate_download_task(task)?;
+        self.with_transaction(|connection| {
+            let previous_episode_ids = linked_episode_ids_for_task(connection, &task.id)?;
+            upsert_download_task_row(connection, task, &now_iso())?;
+            sync_linked_episode_from_download(connection, task, &previous_episode_ids)?;
+            Ok(())
+        })?;
+        info!("Rust 下载任务快照已保存：task_id={}", task.id);
+        self.list_downloads()
+    }
+
+    /// 删除下载任务，并根据剩余任务恢复关联单集状态。
+    fn remove_download_task(&self, task_id: &str) -> Result<Vec<DownloadTask>, StorageError> {
+        let existing = self
+            .list_downloads()?
+            .into_iter()
+            .find(|task| task.id == task_id || task.torrent_hash.as_deref() == Some(task_id));
+        let Some(existing) = existing else {
+            return self.list_downloads();
+        };
+        self.with_transaction(|connection| {
+            connection.execute(
+                "DELETE FROM download_task WHERE id = ?1 OR torrent_hash = ?1",
+                [task_id],
+            )?;
+            restore_linked_episode_after_download_removal(connection, &existing)?;
+            Ok(())
+        })?;
+        info!("Rust 下载任务记录已删除：task_id={}", existing.id);
+        self.list_downloads()
+    }
+
     /// 读取并排序全部媒体文件。
     fn list_media_files(&self) -> Result<Vec<MediaFile>, StorageError> {
         query_all(
@@ -1976,6 +2010,16 @@ impl DownloadRepository for SqliteRepository<'_> {
     fn list_downloads(&self) -> RepositoryResult<Vec<DownloadTask>> {
         SqliteRepository::list_downloads(self).map_err(RepositoryError::from)
     }
+
+    /// 通过 SQLite 适配器原子保存下载任务。
+    fn upsert_download_task(&self, task: &DownloadTask) -> RepositoryResult<Vec<DownloadTask>> {
+        SqliteRepository::upsert_download_task(self, task).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器删除下载任务。
+    fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>> {
+        SqliteRepository::remove_download_task(self, task_id).map_err(RepositoryError::from)
+    }
 }
 
 impl DashboardRepository for SqliteRepository<'_> {
@@ -2341,6 +2385,280 @@ fn upsert_my_anime_row(
     Ok(())
 }
 
+/// 覆盖保存下载任务及完整文件快照，保留任务首次创建时间。
+fn upsert_download_task_row(
+    connection: &Connection,
+    task: &DownloadTask,
+    timestamp: &str,
+) -> Result<(), StorageError> {
+    let subtitle_languages_json =
+        serde_json::to_string(&task.subtitle_languages).map_err(|source| {
+            StorageError::JsonData {
+                context: "下载任务字幕语言",
+                source,
+            }
+        })?;
+    connection.execute(
+        "INSERT INTO download_task (
+           id, release_id, anime_id, episode_id, anime_title, episode_no,
+           fansub_group_id, fansub_name, resolution, declared_video_codec,
+           normalized_video_codec, bit_depth, subtitle_languages_json, subtitle,
+           correlation_tag, engine, torrent_hash, name, status, progress,
+           download_speed, upload_speed, eta_seconds, save_path, created_at,
+           completed_at, updated_at
+         ) VALUES (
+           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+           ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
+         )
+         ON CONFLICT(id) DO UPDATE SET
+           release_id = excluded.release_id,
+           anime_id = excluded.anime_id,
+           episode_id = excluded.episode_id,
+           anime_title = excluded.anime_title,
+           episode_no = excluded.episode_no,
+           fansub_group_id = excluded.fansub_group_id,
+           fansub_name = excluded.fansub_name,
+           resolution = excluded.resolution,
+           declared_video_codec = excluded.declared_video_codec,
+           normalized_video_codec = excluded.normalized_video_codec,
+           bit_depth = excluded.bit_depth,
+           subtitle_languages_json = excluded.subtitle_languages_json,
+           subtitle = excluded.subtitle,
+           correlation_tag = excluded.correlation_tag,
+           engine = excluded.engine,
+           torrent_hash = excluded.torrent_hash,
+           name = excluded.name,
+           status = excluded.status,
+           progress = excluded.progress,
+           download_speed = excluded.download_speed,
+           upload_speed = excluded.upload_speed,
+           eta_seconds = excluded.eta_seconds,
+           save_path = excluded.save_path,
+           completed_at = excluded.completed_at,
+           updated_at = excluded.updated_at",
+        params![
+            &task.id,
+            task.release_id.as_deref(),
+            task.anime_id.as_deref(),
+            task.episode_id.as_deref(),
+            task.anime_title.as_deref(),
+            task.episode_no,
+            task.fansub_group_id.as_deref(),
+            task.fansub_name.as_deref(),
+            task.resolution.as_deref(),
+            task.declared_video_codec.as_deref(),
+            task.normalized_video_codec.as_deref(),
+            task.bit_depth,
+            subtitle_languages_json,
+            task.subtitle.as_deref(),
+            task.correlation_tag.as_deref(),
+            torrent_engine_value(&task.engine),
+            task.torrent_hash.as_deref(),
+            task.name.trim(),
+            download_status_value(&task.status),
+            task.progress,
+            task.download_speed,
+            task.upload_speed,
+            task.eta_seconds,
+            &task.save_path,
+            &task.created_at,
+            task.completed_at.as_deref(),
+            timestamp,
+        ],
+    )?;
+
+    connection.execute(
+        "DELETE FROM torrent_file WHERE download_task_id = ?1",
+        [&task.id],
+    )?;
+    for file in &task.files {
+        connection.execute(
+            "INSERT INTO torrent_file (
+               id, download_task_id, file_index, name, episode_id, episode_no,
+               size, progress, priority, selected
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                &file.id,
+                &task.id,
+                file.index,
+                file.name.trim(),
+                file.episode_id.as_deref(),
+                file.episode_no,
+                file.size,
+                file.progress,
+                file.priority,
+                i64::from(file.selected),
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// 读取一条已持久化下载任务当前关联的全部单集。
+fn linked_episode_ids_for_task(
+    connection: &Connection,
+    task_id: &str,
+) -> Result<Vec<String>, StorageError> {
+    query_all_with_params(
+        connection,
+        "SELECT episode.id
+           FROM download_task
+           JOIN episode ON episode.id = download_task.episode_id
+          WHERE download_task.id = ?1
+         UNION
+         SELECT episode.id
+           FROM download_task
+           JOIN episode
+             ON episode.anime_id = download_task.anime_id
+            AND episode.episode_no = download_task.episode_no
+          WHERE download_task.id = ?1
+         UNION
+         SELECT episode.id
+           FROM torrent_file
+           JOIN episode ON episode.id = torrent_file.episode_id
+          WHERE torrent_file.download_task_id = ?1
+         UNION
+         SELECT episode.id
+           FROM torrent_file
+           JOIN download_task ON download_task.id = torrent_file.download_task_id
+           JOIN episode
+             ON episode.anime_id = download_task.anime_id
+            AND episode.episode_no = torrent_file.episode_no
+          WHERE torrent_file.download_task_id = ?1",
+        [task_id],
+        |row| row.get(0),
+    )
+}
+
+/// 从已加载任务快照解析删除后仍需重新计算的单集标识。
+fn linked_episode_ids_from_download(
+    connection: &Connection,
+    task: &DownloadTask,
+) -> Result<Vec<String>, StorageError> {
+    let mut episode_ids = HashSet::new();
+    if let Some(episode_id) = task.episode_id.as_deref() {
+        episode_ids.insert(episode_id.to_owned());
+    }
+    if let (Some(anime_id), Some(episode_no)) = (task.anime_id.as_deref(), task.episode_no) {
+        if let Some(episode_id) = find_episode_id(connection, anime_id, episode_no)? {
+            episode_ids.insert(episode_id);
+        }
+    }
+    for file in &task.files {
+        if let Some(episode_id) = file.episode_id.as_deref() {
+            episode_ids.insert(episode_id.to_owned());
+        }
+        if let (Some(anime_id), Some(episode_no)) = (task.anime_id.as_deref(), file.episode_no) {
+            if let Some(episode_id) = find_episode_id(connection, anime_id, episode_no)? {
+                episode_ids.insert(episode_id);
+            }
+        }
+    }
+    let mut episode_ids = episode_ids.into_iter().collect::<Vec<_>>();
+    episode_ids.sort();
+    Ok(episode_ids)
+}
+
+/// 根据当前任务集合更新新旧关联单集，避免任务换绑后遗留下载状态。
+fn sync_linked_episode_from_download(
+    connection: &Connection,
+    task: &DownloadTask,
+    previous_episode_ids: &[String],
+) -> Result<(), StorageError> {
+    let mut episode_ids = previous_episode_ids.iter().cloned().collect::<HashSet<_>>();
+    episode_ids.extend(linked_episode_ids_for_task(connection, &task.id)?);
+    sync_episode_statuses_from_downloads(connection, episode_ids)
+}
+
+/// 删除任务后按剩余任务恢复其原有关联单集状态。
+fn restore_linked_episode_after_download_removal(
+    connection: &Connection,
+    task: &DownloadTask,
+) -> Result<(), StorageError> {
+    sync_episode_statuses_from_downloads(
+        connection,
+        linked_episode_ids_from_download(connection, task)?,
+    )
+}
+
+/// 以数据库中的任务和文件进度为准重算指定单集状态。
+fn sync_episode_statuses_from_downloads(
+    connection: &Connection,
+    episode_ids: impl IntoIterator<Item = String>,
+) -> Result<(), StorageError> {
+    let timestamp = now_iso();
+    for episode_id in episode_ids {
+        let Some(row) = connection
+            .query_row(
+                "SELECT * FROM episode WHERE id = ?1",
+                [&episode_id],
+                map_episode_row,
+            )
+            .optional()?
+        else {
+            continue;
+        };
+        let episode = row.into_domain()?;
+        if episode.status == EpisodeStatus::Watched {
+            continue;
+        }
+        let status = resolve_episode_status_from_downloads(connection, &episode)?;
+        if status == episode.status {
+            continue;
+        }
+        connection.execute(
+            "UPDATE episode SET status = ?1, updated_at = ?2 WHERE id = ?3",
+            params![episode_status_value(&status), &timestamp, &episode.id],
+        )?;
+        debug!(
+            "下载任务同步单集状态：episode_id={}, status={}",
+            episode.id,
+            episode_status_value(&status)
+        );
+    }
+    Ok(())
+}
+
+/// 根据剩余下载、资源缓存和放送时间解析单集生命周期状态。
+fn resolve_episode_status_from_downloads(
+    connection: &Connection,
+    episode: &Episode,
+) -> Result<EpisodeStatus, StorageError> {
+    let status = resolve_episode_status_after_unwatch(connection, episode)?;
+    if status != EpisodeStatus::Aired {
+        return Ok(status);
+    }
+    let matched = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM release
+            WHERE anime_id = ?1 AND episode_no = ?2
+         )",
+        params![&episode.anime_id, episode.episode_no],
+        |row| row.get::<_, i64>(0),
+    )? != 0;
+    Ok(if matched {
+        EpisodeStatus::Matched
+    } else {
+        EpisodeStatus::Aired
+    })
+}
+
+/// 按番剧和集数查找稳定的单集标识。
+fn find_episode_id(
+    connection: &Connection,
+    anime_id: &str,
+    episode_no: f64,
+) -> Result<Option<String>, StorageError> {
+    connection
+        .query_row(
+            "SELECT id FROM episode WHERE anime_id = ?1 AND episode_no = ?2",
+            params![anime_id, episode_no],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(StorageError::from)
+}
+
 /// 写入一条单集记录并保留首次创建时间。
 fn upsert_episode_row(
     connection: &Connection,
@@ -2637,6 +2955,87 @@ fn validate_episode(episode: &Episode) -> Result<(), StorageError> {
     Ok(())
 }
 
+/// 校验下载任务及其完整文件快照可安全写入 SQLite。
+fn validate_download_task(task: &DownloadTask) -> Result<(), StorageError> {
+    validate_identifier("downloadTask.id", &task.id)?;
+    if task.name.trim().is_empty() {
+        return invalid_input("downloadTask.name", "下载任务名称不能为空");
+    }
+    if task.created_at.trim().is_empty() {
+        return invalid_input("downloadTask.createdAt", "下载任务创建时间不能为空");
+    }
+    if !is_unit_progress(task.progress) {
+        return invalid_input("downloadTask.progress", "下载任务进度必须在 0 到 1 之间");
+    }
+    if task.download_speed < 0 || task.upload_speed < 0 {
+        return invalid_input("downloadTask.speed", "下载和上传速度不能为负数");
+    }
+    if task.eta_seconds.is_some_and(|value| value < 0) {
+        return invalid_input("downloadTask.etaSeconds", "剩余时间不能为负数");
+    }
+    if task.bit_depth.is_some_and(|value| value <= 0) {
+        return invalid_input("downloadTask.bitDepth", "视频位深必须为正整数");
+    }
+    if task
+        .episode_no
+        .is_some_and(|value| !value.is_finite() || value <= 0.0)
+    {
+        return invalid_input("downloadTask.episodeNo", "下载任务集数必须是正数");
+    }
+    for (field, value) in [
+        ("downloadTask.releaseId", task.release_id.as_deref()),
+        ("downloadTask.animeId", task.anime_id.as_deref()),
+        ("downloadTask.episodeId", task.episode_id.as_deref()),
+        (
+            "downloadTask.fansubGroupId",
+            task.fansub_group_id.as_deref(),
+        ),
+    ] {
+        if let Some(value) = value {
+            validate_identifier(field, value)?;
+        }
+    }
+
+    let mut file_ids = HashSet::new();
+    let mut file_indexes = HashSet::new();
+    for file in &task.files {
+        validate_identifier("torrentFile.id", &file.id)?;
+        if !file_ids.insert(file.id.as_str()) {
+            return invalid_input("torrentFile.id", "同一任务内文件标识不能重复");
+        }
+        if file.index < 0 || !file_indexes.insert(file.index) {
+            return invalid_input("torrentFile.index", "文件索引必须非负且不能重复");
+        }
+        if file.name.trim().is_empty() {
+            return invalid_input("torrentFile.name", "种子文件名称不能为空");
+        }
+        if file.size < 0 {
+            return invalid_input("torrentFile.size", "种子文件大小不能为负数");
+        }
+        if !is_unit_progress(file.progress) {
+            return invalid_input("torrentFile.progress", "种子文件进度必须在 0 到 1 之间");
+        }
+        if !(0..=7).contains(&file.priority) {
+            return invalid_input("torrentFile.priority", "种子文件优先级必须在 0 到 7 之间");
+        }
+        if file
+            .episode_no
+            .is_some_and(|value| !value.is_finite() || value <= 0.0)
+        {
+            return invalid_input("torrentFile.episodeNo", "种子文件集数必须是正数");
+        }
+        if let Some(episode_id) = file.episode_id.as_deref() {
+            validate_identifier("torrentFile.episodeId", episode_id)?;
+        }
+    }
+    Ok(())
+}
+
+/// 判断下载进度是否为有限的单位区间数值。
+fn is_unit_progress(value: f64) -> bool {
+    value.is_finite() && (0.0..=1.0).contains(&value)
+}
+
 /// 创建统一的业务输入错误。
 fn invalid_input<T>(field: &'static str, message: &str) -> Result<T, StorageError> {
     Err(StorageError::InvalidInput {
@@ -2675,6 +3074,31 @@ fn episode_status_value(status: &EpisodeStatus) -> &'static str {
         EpisodeStatus::Downloading => "downloading",
         EpisodeStatus::Downloaded => "downloaded",
         EpisodeStatus::Watched => "watched",
+    }
+}
+
+/// 返回下载任务状态的 SQLite 字面量。
+fn download_status_value(status: &DownloadStatus) -> &'static str {
+    match status {
+        DownloadStatus::Queued => "queued",
+        DownloadStatus::FetchingMetadata => "fetching_metadata",
+        DownloadStatus::Downloading => "downloading",
+        DownloadStatus::Stalled => "stalled",
+        DownloadStatus::Paused => "paused",
+        DownloadStatus::Checking => "checking",
+        DownloadStatus::Moving => "moving",
+        DownloadStatus::Completed => "completed",
+        DownloadStatus::Seeding => "seeding",
+        DownloadStatus::Error => "error",
+        DownloadStatus::MissingFiles => "missing_files",
+    }
+}
+
+/// 返回下载引擎类型的 SQLite 字面量。
+fn torrent_engine_value(engine: &TorrentEngineKind) -> &'static str {
+    match engine {
+        TorrentEngineKind::Embedded => "embedded",
+        TorrentEngineKind::Qbittorrent => "qbittorrent",
     }
 }
 
