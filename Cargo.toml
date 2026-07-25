@@ -8,6 +8,7 @@ members = [
   "crates/ani-automation",
   "crates/ani-downloads",
   "crates/ani-media",
+  "crates/ani-remote",
   "crates/tauri-plugin-ani-player",
   "crates/tauri-plugin-ani-torrent",
   "src-tauri"
@@ -17,7 +18,7 @@ resolver = "2"
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.88"
 license = "PolyForm-Noncommercial-1.0.0"
 
 [workspace.dependencies]

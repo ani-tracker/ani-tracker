@@ -19,10 +19,13 @@ import type {
   DesktopMediaToolsStatus,
   DownloadServiceStatus,
   EmbeddedTorrentCoreStatus,
+  ImageCacheResolveResult,
   MediaScanResult,
   PlaybackCheckpoint,
   PlayerDetectionResult,
   QbittorrentManagedStatus,
+  RemoteGatewayStatus,
+  RemotePairingChallenge,
   RemotePlaybackSession,
   ReleaseQuery,
   ReleaseSearchResult,
@@ -141,6 +144,34 @@ class TauriClientCore {
   async openExternal(url: string): Promise<void> {
     return invoke<void>("open_external", { url }).catch((error) => {
       throw normalizeTauriError("open_external", error);
+    });
+  }
+
+  /** 将桌面图片地址解析为 Rust 网关签名缓存地址。 */
+  async resolveCachedImageUrl(sourceUrl: string): Promise<ImageCacheResolveResult> {
+    return invoke<ImageCacheResolveResult>("resolve_cached_image_url", { sourceUrl }).catch((error) => {
+      throw normalizeTauriError("resolve_cached_image_url", error);
+    });
+  }
+
+  /** 读取桌面远程网关、证书和设备状态。 */
+  async getRemoteGatewayStatus(): Promise<RemoteGatewayStatus> {
+    return invoke<RemoteGatewayStatus>("get_remote_gateway_status").catch((error) => {
+      throw normalizeTauriError("get_remote_gateway_status", error);
+    });
+  }
+
+  /** 创建桌面远程网关的一次性配对码。 */
+  async createRemotePairingCode(): Promise<RemotePairingChallenge> {
+    return invoke<RemotePairingChallenge>("create_remote_pairing_code").catch((error) => {
+      throw normalizeTauriError("create_remote_pairing_code", error);
+    });
+  }
+
+  /** 吊销一个桌面远程设备及其令牌。 */
+  async revokeRemoteDevice(deviceId: string): Promise<RemoteGatewayStatus> {
+    return invoke<RemoteGatewayStatus>("revoke_remote_device", { deviceId }).catch((error) => {
+      throw normalizeTauriError("revoke_remote_device", error);
     });
   }
 

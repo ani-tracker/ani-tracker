@@ -1,5 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "pnpm run build:tauri:desktop-renderers"
+  },
   "bundle": {
     "resources": {
       "../out/libvlc/darwin-x64/": "libvlc/darwin-x64/"

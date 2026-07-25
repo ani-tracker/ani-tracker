@@ -61,7 +61,7 @@ export function getRemotePairingState(): RemotePairingState {
 export async function pairRemoteDevice(code: string, deviceName: string): Promise<void> {
   const baseUrl = getRemoteBaseUrl();
   if (!baseUrl) {
-    throw new Error("Electron 桌面端不需要远程配对");
+    throw new Error("本地桌面端不需要远程配对");
   }
   const response = await fetch(`${baseUrl}/api/pair`, {
     method: "POST",

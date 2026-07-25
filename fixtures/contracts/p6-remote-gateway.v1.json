@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "kind": "p6-remote-gateway",
+  "payload": {
+    "gatewayStatus": {
+      "running": true,
+      "host": "0.0.0.0",
+      "port": 18083,
+      "protocol": "https",
+      "lanEnabled": true,
+      "baseUrl": "https://192.168.1.20:18083",
+      "addresses": ["192.168.1.20"],
+      "devices": [
+        {
+          "id": "0123456789abcdef0123456789abcdef",
+          "name": "客厅平板",
+          "scopes": ["dashboard.read", "downloads.read"],
+          "createdAt": "2026-07-25T12:00:00.000Z",
+          "lastAccessedAt": null
+        }
+      ],
+      "certificate": {
+        "fingerprint": "AA:BB:CC:DD",
+        "expiresAt": "2027-07-25T12:00:00.000Z",
+        "authorityCertificatePath": "C:\\AniTracker\\remote-tls\\ani-tracker-ca.crt"
+      }
+    },
+    "pairingChallenge": {
+      "code": "123456",
+      "expiresAt": "2026-07-25T12:02:00.000Z"
+    },
+    "imageCache": {
+      "url": "https://192.168.1.20:18083/api/images/cache/token"
+    },
+    "playbackSession": {
+      "id": "0123456789abcdef0123456789abcdef",
+      "taskId": "task-1",
+      "fileIndex": 0,
+      "fileName": "episode-01.mkv",
+      "mode": "direct",
+      "streamUrl": "/api/media/sessions/0123456789abcdef0123456789abcdef/file",
+      "expiresAt": "2026-07-25T12:30:00.000Z",
+      "durationSeconds": 1440,
+      "startPositionSeconds": 120,
+      "subtitles": [
+        {
+          "id": "subtitle-1",
+          "label": "简体中文",
+          "language": "zh-CN",
+          "type": "ass",
+          "url": "/api/media/sessions/0123456789abcdef0123456789abcdef/subtitles/subtitle-1.ass",
+          "default": true
+        }
+      ]
+    }
+  }
+}

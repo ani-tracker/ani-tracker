@@ -105,6 +105,8 @@ pub(crate) async fn update_settings(
         log::error!("Tauri 下载设置应用失败 error={error}");
     }
     crate::system_integration::apply_settings(&app, &settings);
+    #[cfg(desktop)]
+    crate::remote::apply_settings(&app, &settings).await;
     crate::commands::downloads::emit_download_service_status_changed(&app);
     Ok(settings)
 }
@@ -131,6 +133,8 @@ pub(crate) async fn reset_settings_to_defaults(
         log::error!("Tauri 默认下载设置应用失败 error={error}");
     }
     crate::system_integration::apply_settings(&app, &settings);
+    #[cfg(desktop)]
+    crate::remote::apply_settings(&app, &settings).await;
     crate::commands::downloads::emit_download_service_status_changed(&app);
     Ok(settings)
 }

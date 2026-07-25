@@ -16,10 +16,13 @@ import type {
   DownloadServiceStatus,
   DesktopMediaToolsStatus,
   EmbeddedTorrentCoreStatus,
+  ImageCacheResolveResult,
   MediaScanResult,
   PlaybackCheckpoint,
   PlayerDetectionResult,
   QbittorrentManagedStatus,
+  RemoteGatewayStatus,
+  RemotePairingChallenge,
   ReleaseSearchResult,
   RemoveAnimeSourceCandidateMismatchInput,
   ReportAnimeSourceCandidateMismatchInput,
@@ -62,6 +65,24 @@ test("Tauri P6 外部播放器契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.platform, "windows");
   assert.equal(fixture.payload.candidates[0].available, true);
   assert.equal(fixture.payload.candidates[1].resolvedPath, undefined);
+});
+
+/** 读取 P6 远程网关金样，验证状态、配对、图片和媒体会话字段。 */
+test("Tauri P6 远程网关契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p6-remote-gateway.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    gatewayStatus: RemoteGatewayStatus;
+    pairingChallenge: RemotePairingChallenge;
+    imageCache: ImageCacheResolveResult;
+    playbackSession: RemotePlaybackSession;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p6-remote-gateway");
+  assert.equal(fixture.payload.gatewayStatus.protocol, "https");
+  assert.equal(fixture.payload.gatewayStatus.devices[0]?.lastAccessedAt, null);
+  assert.equal(fixture.payload.pairingChallenge.code, "123456");
+  assert.equal(fixture.payload.playbackSession.mode, "direct");
 });
 
 /** 读取版本化播放器快照金样，验证 TypeScript 与 Rust 共用契约。 */

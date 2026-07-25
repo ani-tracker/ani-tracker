@@ -12,6 +12,8 @@ mod external_player;
 mod media;
 mod player;
 mod qbittorrent_managed;
+#[cfg(desktop)]
+mod remote;
 mod source_sync;
 mod sources;
 mod storage;
@@ -70,6 +72,19 @@ pub fn run() {
             );
             let player_state =
                 player::AppPlayerState::new(app.handle(), Arc::clone(storage_state.storage()));
+            #[cfg(desktop)]
+            let remote_state =
+                tauri::async_runtime::block_on(remote::AppRemoteGatewayState::initialize(
+                    app.handle(),
+                    Arc::clone(storage_state.storage()),
+                    storage_state.platform_defaults().clone(),
+                    download_state.clone(),
+                    media_state.clone(),
+                ))
+                .unwrap_or_else(|error| {
+                    log::error!("Tauri 远程网关初始化失败，应用继续启动 error={error}");
+                    remote::AppRemoteGatewayState::unavailable(error)
+                });
             let automation_state = automation::AppAutomationState::new(
                 app.handle().clone(),
                 Arc::clone(storage_state.storage()),
@@ -118,6 +133,8 @@ pub fn run() {
             app.manage(player_state);
             app.manage(automation_state);
             app.manage(system_integration_state);
+            #[cfg(desktop)]
+            app.manage(remote_state);
             log::info!(
                 "Tauri 宿主初始化完成 platform={} arch={}",
                 std::env::consts::OS,
@@ -195,6 +212,10 @@ pub fn run() {
             commands::player::close_desktop_playback_session,
             commands::player::get_desktop_player_capabilities,
             commands::player::dispatch_desktop_player_command,
+            commands::remote::get_remote_gateway_status,
+            commands::remote::create_remote_pairing_code,
+            commands::remote::revoke_remote_device,
+            commands::remote::resolve_cached_image_url,
             commands::window::get_window_state,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,
@@ -233,6 +254,11 @@ pub fn run() {
             let player_state = app_handle.state::<player::AppPlayerState>();
             let download_state = app_handle.state::<downloads::AppDownloadState>();
             tauri::async_runtime::block_on(async {
+                #[cfg(desktop)]
+                if let Some(remote_state) = app_handle.try_state::<remote::AppRemoteGatewayState>()
+                {
+                    remote_state.shutdown().await;
+                }
                 player_state.shutdown().await;
                 download_state.shutdown().await;
             });

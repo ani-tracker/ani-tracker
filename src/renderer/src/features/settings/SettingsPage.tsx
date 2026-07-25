@@ -56,6 +56,7 @@ import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { getAppCapabilities } from "@/lib/runtime";
 import { useAsyncData } from "@/lib/use-async-data";
 import { useTheme } from "@/components/theme-provider";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
@@ -97,6 +98,10 @@ const settingsCategories: Array<{
 ];
 
 export function SettingsPage() {
+  const capabilities = getAppCapabilities();
+  const visibleSettingsCategories = capabilities.remoteGateway
+    ? settingsCategories
+    : settingsCategories.filter((category) => category.id !== "remote");
   const { commitAppearance } = useTheme();
   const { data, loading } = useAsyncData(appApi.getSettings, []);
   const [draft, setDraft] = useState<AppSettings | null>(null);
@@ -136,7 +141,7 @@ export function SettingsPage() {
     if (!settingsReady) {
       return;
     }
-    const sections = settingsCategories
+    const sections = visibleSettingsCategories
       .map((category) => document.getElementById(`settings-${category.id}`))
       .filter((section): section is HTMLElement => Boolean(section));
     if (sections.length === 0) {
@@ -156,13 +161,15 @@ export function SettingsPage() {
     );
     sections.forEach((section) => observer.observe(section));
     return () => observer.disconnect();
-  }, [settingsReady]);
+  }, [settingsReady, capabilities.remoteGateway]);
 
   useEffect(() => {
     void refreshSchedulerStatus();
     void refreshQbittorrentManagedStatus();
     void refreshEmbeddedTorrentStatus();
-    void refreshRemoteStatus();
+    if (capabilities.remoteGateway) {
+      void refreshRemoteStatus();
+    }
   }, []);
 
   async function refreshSchedulerStatus() {
@@ -288,7 +295,7 @@ export function SettingsPage() {
         refreshSchedulerStatus(),
         refreshQbittorrentManagedStatus(),
         refreshEmbeddedTorrentStatus(),
-        refreshRemoteStatus(),
+        capabilities.remoteGateway ? refreshRemoteStatus() : Promise.resolve(null),
         refreshPlayerDetection(saved.players)
       ]);
       setSaveState("saved");
@@ -641,12 +648,20 @@ export function SettingsPage() {
           </div>
         </header>
         <div className="pb-3 lg:hidden">
-          <SettingsCategorySelect activeCategory={activeCategory} onNavigate={navigateToCategory} />
+          <SettingsCategorySelect
+            activeCategory={activeCategory}
+            categories={visibleSettingsCategories}
+            onNavigate={navigateToCategory}
+          />
         </div>
       </div>
 
       <div className="grid min-w-0 items-start gap-6 lg:grid-cols-[15rem_minmax(0,1fr)]">
-        <SettingsCategoryNavigation activeCategory={activeCategory} onNavigate={navigateToCategory} />
+        <SettingsCategoryNavigation
+          activeCategory={activeCategory}
+          categories={visibleSettingsCategories}
+          onNavigate={navigateToCategory}
+        />
 
         <div className="flex min-w-0 flex-col gap-12">
           <SettingsCategory
@@ -811,6 +826,7 @@ export function SettingsPage() {
             </div>
           </SettingsCategory>
 
+          {capabilities.remoteGateway && (
           <SettingsCategory
             description="局域网 HTTPS、一次性配对码和已配对设备的访问范围。"
             id="remote"
@@ -862,8 +878,8 @@ export function SettingsPage() {
             <AlertTitle>{remoteStatus?.lanEnabled ? "局域网 HTTPS 已开启" : "当前仅开放本机回环访问"}</AlertTitle>
             <AlertDescription>
               {remoteStatus?.lanEnabled
-                ? "首次连接前需在移动设备中信任 Ani Tracker 本地 CA；设备令牌仅保存在内存中，应用重启后需重新配对。"
-                : "启用局域网 HTTPS 并保存后，移动设备才能通过同一私有网络访问。设备令牌仅保存在内存中。"}
+                ? "首次连接前需在移动设备中信任 Ani Tracker 本地 CA；桌面端仅持久化令牌摘要，可随时吊销设备。"
+                : "启用局域网 HTTPS 并保存后，移动设备才能通过同一私有网络访问；已配对设备会在重启后保留。"}
             </AlertDescription>
           </Alert>
 
@@ -984,6 +1000,7 @@ export function SettingsPage() {
       </SettingsSection>
 
           </SettingsCategory>
+          )}
 
           <SettingsCategory
             description="默认播放器、可执行文件路径与媒体文件扫描参数。"
@@ -1879,15 +1896,17 @@ function areSettingsEqual(left: AppSettings, right: AppSettings): boolean {
 /** 渲染随主内容滚动吸顶的桌面设置分区导航。 */
 function SettingsCategoryNavigation({
   activeCategory,
+  categories,
   onNavigate
 }: {
   activeCategory: SettingsCategoryId;
+  categories: typeof settingsCategories;
   onNavigate: (categoryId: SettingsCategoryId) => void;
 }) {
   return (
     <aside className="sticky top-24 hidden max-h-[calc(100dvh-7rem)] min-w-0 self-start overflow-y-auto pr-4 lg:block">
       <nav aria-label="设置分区" className="flex flex-col gap-1 border-r">
-        {settingsCategories.map((category) => {
+        {categories.map((category) => {
           const Icon = category.icon;
           return (
             <Button
@@ -1911,9 +1930,11 @@ function SettingsCategoryNavigation({
 /** 渲染固定在页面标题下方的小屏幕设置分区选择器。 */
 function SettingsCategorySelect({
   activeCategory,
+  categories,
   onNavigate
 }: {
   activeCategory: SettingsCategoryId;
+  categories: typeof settingsCategories;
   onNavigate: (categoryId: SettingsCategoryId) => void;
 }) {
   const selectId = useId();
@@ -1927,7 +1948,7 @@ function SettingsCategorySelect({
         </SelectTrigger>
         <SelectContent>
           <SelectGroup>
-            {settingsCategories.map((category) => (
+            {categories.map((category) => (
               <SelectItem key={category.id} value={category.id}>{category.label}</SelectItem>
             ))}
           </SelectGroup>

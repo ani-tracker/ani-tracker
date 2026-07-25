@@ -6,6 +6,8 @@ use std::time::Duration;
 use ani_contracts::{DesktopMediaToolsStatus, MediaToolStatus};
 use ani_domain::{AppSettings, DownloadTask, MediaFile, ReportPlaybackProgressInput};
 use ani_media::{DownloadMediaScanner, FfprobeMediaProbe, MediaScanResult};
+#[cfg(desktop)]
+use ani_remote::RemoteMediaTools;
 use ani_repository::{
     DownloadRepository, MediaRepository, PlaybackRepository, RepositoryError, RepositoryResult,
     SettingsRepository,
@@ -277,6 +279,24 @@ impl AppMediaState {
             );
             DesktopMediaToolsStatus { ffprobe, ffmpeg }
         }
+    }
+
+    /// 返回远程媒体会话使用的 FFprobe/FFmpeg 受控路径。
+    #[cfg(desktop)]
+    pub(crate) fn remote_media_tools(&self) -> Result<RemoteMediaTools, String> {
+        let settings = self.settings()?;
+        let timeout = setting_u64(&settings, "/media/ffprobeTimeoutSeconds", 20).clamp(1, 60);
+        let ffprobe_paths = self.ffprobe_commands(&settings);
+        let ffmpeg_path = self
+            .ffmpeg_commands(&settings)
+            .into_iter()
+            .next()
+            .ok_or_else(|| "没有可用的 FFmpeg 命令".to_owned())?;
+        Ok(RemoteMediaTools {
+            ffprobe_paths,
+            ffmpeg_path,
+            timeout: Duration::from_secs(timeout),
+        })
     }
 
     fn scanner(&self) -> Result<DownloadMediaScanner, String> {

@@ -568,15 +568,103 @@ pub struct PlaybackSession {
     pub subtitles: Vec<PlaybackSubtitle>,
 }
 
+/// 已配对远程设备的公开信息，不包含令牌摘要。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteDeviceInfo {
+    pub id: String,
+    pub name: String,
+    pub scopes: Vec<String>,
+    pub created_at: String,
+    pub last_accessed_at: Option<String>,
+}
+
+/// 桌面远程 HTTPS 网关和证书的当前状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteGatewayStatus {
+    pub running: bool,
+    pub host: String,
+    pub port: u16,
+    pub protocol: String,
+    pub lan_enabled: bool,
+    pub base_url: String,
+    pub addresses: Vec<String>,
+    pub devices: Vec<RemoteDeviceInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certificate: Option<RemoteCertificateInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+/// 远程 HTTPS 服务端证书的可公开元数据。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCertificateInfo {
+    pub fingerprint: String,
+    pub expires_at: String,
+    pub authority_certificate_path: String,
+}
+
+/// 桌面端生成的短期一次性远程配对挑战。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePairingChallenge {
+    pub code: String,
+    pub expires_at: String,
+}
+
+/// 本地 Renderer 获取的签名图片缓存地址。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageCacheResolveResult {
+    pub url: String,
+}
+
+/// 远程浏览器可加载的文本字幕。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePlaybackSubtitle {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(rename = "type")]
+    pub subtitle_type: String,
+    pub url: String,
+    pub default: bool,
+}
+
+/// 远程设备的短期受控播放会话，不暴露本地路径。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemotePlaybackSession {
+    pub id: String,
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_index: Option<i64>,
+    pub file_name: String,
+    pub mode: String,
+    pub stream_url: String,
+    pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_position_seconds: Option<f64>,
+    pub subtitles: Vec<RemotePlaybackSubtitle>,
+}
+
 #[cfg(test)]
 mod tests {
     use serde::Deserialize;
 
     use super::{
         ContractFixture, DesktopMediaToolsStatus, DownloadServiceMode, DownloadServiceState,
-        DownloadServiceStatus, EmbeddedTorrentCoreStatus, PlaybackSession, PlayerCommand,
-        PlayerCommandAction, PlayerCommandResult, PlayerDetectionResult, PlayerHostPlatform,
-        PlayerSnapshot, PlayerStatus, QbittorrentManagedStatus, TorrentConnectionTestResult,
+        DownloadServiceStatus, EmbeddedTorrentCoreStatus, ImageCacheResolveResult, PlaybackSession,
+        PlayerCommand, PlayerCommandAction, PlayerCommandResult, PlayerDetectionResult,
+        PlayerHostPlatform, PlayerSnapshot, PlayerStatus, QbittorrentManagedStatus,
+        RemoteGatewayStatus, RemotePairingChallenge, RemotePlaybackSession,
+        TorrentConnectionTestResult,
     };
 
     #[derive(Deserialize)]
@@ -613,6 +701,15 @@ mod tests {
         playback_session: PlaybackSession,
     }
 
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct RemoteGatewayFixture {
+        gateway_status: RemoteGatewayStatus,
+        pairing_challenge: RemotePairingChallenge,
+        image_cache: ImageCacheResolveResult,
+        playback_session: RemotePlaybackSession,
+    }
+
     /// 验证 Rust 可读取 P6 外部播放器探测金样。
     #[test]
     fn decodes_external_player_fixture() {
@@ -623,6 +720,21 @@ mod tests {
         assert_eq!(fixture.kind, "p6-external-player");
         assert_eq!(fixture.payload.candidates.len(), 2);
         assert_eq!(fixture.payload.detected_profile_id.as_deref(), Some("mpv"));
+    }
+
+    /// 验证 Rust 与 TypeScript 共用远程状态、配对、图片和媒体会话字段。
+    #[test]
+    fn decodes_remote_gateway_fixture() {
+        let fixture: ContractFixture<RemoteGatewayFixture> = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/p6-remote-gateway.v1.json"
+        ))
+        .expect("remote gateway fixture");
+        assert_eq!(fixture.kind, "p6-remote-gateway");
+        assert!(fixture.payload.gateway_status.running);
+        assert_eq!(fixture.payload.gateway_status.protocol, "https");
+        assert_eq!(fixture.payload.pairing_challenge.code, "123456");
+        assert!(fixture.payload.image_cache.url.starts_with("https://"));
+        assert_eq!(fixture.payload.playback_session.mode, "direct");
     }
 
     /// 验证 Rust 能严格解码前端共用的播放器快照金样。
