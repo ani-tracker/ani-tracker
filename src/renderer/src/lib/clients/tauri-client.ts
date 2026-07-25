@@ -13,8 +13,10 @@ import type {
   AutomationSchedulerStatus,
   AppWindowState,
   ConfirmAnimeSourceBindingInput,
+  DesktopMediaToolsStatus,
   DownloadServiceStatus,
   EmbeddedTorrentCoreStatus,
+  MediaScanResult,
   PlaybackCheckpoint,
   QbittorrentManagedStatus,
   ReleaseQuery,
@@ -40,6 +42,7 @@ import type {
   EpisodePreference,
   FansubGroup,
   MyAnime,
+  MediaFile,
   NotificationRecord,
   ReleaseSourceConfig
 } from "@shared/domain";
@@ -415,6 +418,27 @@ class TauriClientCore {
   async restartEmbeddedTorrent(): Promise<EmbeddedTorrentCoreStatus> {
     return invoke<EmbeddedTorrentCoreStatus>("restart_embedded_torrent").catch((error) => {
       throw normalizeTauriError("restart_embedded_torrent", error);
+    });
+  }
+
+  /** 读取全部已登记媒体文件。 */
+  async listMediaFiles(): Promise<MediaFile[]> {
+    return invoke<MediaFile[]>("list_media_files").catch((error) => {
+      throw normalizeTauriError("list_media_files", error);
+    });
+  }
+
+  /** 扫描一个下载任务中的已完成媒体。 */
+  async scanDownloadMedia(taskId: string): Promise<MediaScanResult> {
+    return invoke<MediaScanResult>("scan_download_media", { taskId }).catch((error) => {
+      throw normalizeTauriError("scan_download_media", error);
+    });
+  }
+
+  /** 读取桌面 FFprobe 与 FFmpeg 状态。 */
+  async getDesktopMediaToolsStatus(): Promise<DesktopMediaToolsStatus> {
+    return invoke<DesktopMediaToolsStatus>("get_desktop_media_tools_status").catch((error) => {
+      throw normalizeTauriError("get_desktop_media_tools_status", error);
     });
   }
 

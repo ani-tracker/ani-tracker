@@ -23,6 +23,7 @@ import type {
   DesktopPlayerWindowDragInput,
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
+  DesktopMediaToolsStatus,
   DownloadServiceStatus,
   EmbeddedTorrentCoreStatus,
   PlaybackCheckpoint,
@@ -159,6 +160,8 @@ const api = {
     ipcRenderer.invoke("downloads:restartEmbeddedTorrent"),
   listMediaFiles: () => ipcRenderer.invoke("media:list"),
   scanDownloadMedia: (taskId: string) => ipcRenderer.invoke("media:scanDownload", taskId),
+  getDesktopMediaToolsStatus: (): Promise<DesktopMediaToolsStatus> =>
+    ipcRenderer.invoke("media:getToolsStatus"),
   playMedia: (filePath: string, profileId?: string) => ipcRenderer.invoke("media:play", filePath, profileId),
   openDesktopPlayerWindow: (input: DesktopPlayerWindowInput): Promise<void> =>
     ipcRenderer.invoke("media:openPlayerWindow", input),

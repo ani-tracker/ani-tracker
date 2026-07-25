@@ -115,6 +115,27 @@ pub struct EmbeddedTorrentCoreStatus {
     pub last_error: Option<String>,
 }
 
+/// 单个桌面媒体工具的解析和版本状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MediaToolStatus {
+    pub available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// 桌面 FFprobe 与 FFmpeg 的统一可用状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopMediaToolsStatus {
+    pub ffprobe: MediaToolStatus,
+    pub ffmpeg: MediaToolStatus,
+}
+
 /// 播放器后端类型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -319,9 +340,9 @@ mod tests {
     use serde::Deserialize;
 
     use super::{
-        ContractFixture, DownloadServiceMode, DownloadServiceState, DownloadServiceStatus,
-        EmbeddedTorrentCoreStatus, PlayerHostPlatform, PlayerSnapshot, PlayerStatus,
-        QbittorrentManagedStatus, TorrentConnectionTestResult,
+        ContractFixture, DesktopMediaToolsStatus, DownloadServiceMode, DownloadServiceState,
+        DownloadServiceStatus, EmbeddedTorrentCoreStatus, PlayerHostPlatform, PlayerSnapshot,
+        PlayerStatus, QbittorrentManagedStatus, TorrentConnectionTestResult,
     };
 
     #[derive(Deserialize)]
@@ -331,6 +352,12 @@ mod tests {
         connection_test: TorrentConnectionTestResult,
         managed_status: QbittorrentManagedStatus,
         embedded_status: EmbeddedTorrentCoreStatus,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct MediaFixture {
+        media_tools_status: DesktopMediaToolsStatus,
     }
 
     /// 验证 Rust 能严格解码前端共用的播放器快照金样。
@@ -375,5 +402,21 @@ mod tests {
         assert!(decoded.payload.connection_test.ok);
         assert!(decoded.payload.managed_status.running);
         assert_eq!(decoded.payload.embedded_status.listen_port, Some(6881));
+    }
+
+    /// 验证 Rust 能解码桌面 FFprobe 与 FFmpeg 状态金样。
+    #[test]
+    fn decodes_media_tools_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p4-media-model.v1.json"
+        ));
+        let decoded: ContractFixture<MediaFixture> =
+            serde_json::from_str(fixture).expect("media tools fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p4-media-model");
+        assert!(decoded.payload.media_tools_status.ffprobe.available);
+        assert!(decoded.payload.media_tools_status.ffmpeg.available);
     }
 }

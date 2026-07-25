@@ -1,8 +1,8 @@
 use ani_domain::{
     Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeSourceBinding, AnimeSourceExclusion,
     AnimeWatchProgress, AppSettings, DashboardData, DownloadTask, Episode, EpisodePreference,
-    FansubGroup, MyAnime, NotificationRecord, PlaybackCheckpoint, Release, ReleaseSourceConfig,
-    ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
+    FansubGroup, MediaFile, MyAnime, NotificationRecord, PlaybackCheckpoint, Release,
+    ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
     SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use serde_json::Value;
@@ -296,6 +296,15 @@ pub trait DownloadRepository {
     fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>>;
 }
 
+/// 媒体文件关联与探测结果存储端口。
+pub trait MediaRepository {
+    /// 读取全部已登记媒体文件。
+    fn list_media_files(&self) -> RepositoryResult<Vec<MediaFile>>;
+
+    /// 原子新增或更新一批媒体探测记录。
+    fn upsert_media_files(&self, media_files: &[MediaFile]) -> RepositoryResult<Vec<MediaFile>>;
+}
+
 /// 首页聚合查询存储端口。
 pub trait DashboardRepository {
     /// 从业务数据生成首页实时聚合结果。
@@ -312,6 +321,7 @@ pub trait ApplicationRepository:
     + AnimeSourceBindingRepository
     + AnimeTrackingRepository
     + DownloadRepository
+    + MediaRepository
     + PlaybackRepository
     + DashboardRepository
 {
@@ -326,6 +336,7 @@ impl<T> ApplicationRepository for T where
         + AnimeSourceBindingRepository
         + AnimeTrackingRepository
         + DownloadRepository
+        + MediaRepository
         + PlaybackRepository
         + DashboardRepository
 {
@@ -362,7 +373,7 @@ pub mod prelude {
     pub use super::{
         AnimeCatalogRepository, AnimeSourceBindingRepository, AnimeTrackingRepository,
         ApplicationRepository, CachedReleaseQuery, DashboardRepository, DownloadRepository,
-        NotificationRepository, PlaybackRepository, ReleaseCacheRepository,
+        MediaRepository, NotificationRepository, PlaybackRepository, ReleaseCacheRepository,
         ReleaseSourceRepository, SettingsRepository, UnitOfWork, UnitOfWorkFactory,
     };
 }

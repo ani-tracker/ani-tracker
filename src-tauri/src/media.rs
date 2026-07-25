@@ -1,0 +1,476 @@
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use ani_contracts::{DesktopMediaToolsStatus, MediaToolStatus};
+use ani_domain::{AppSettings, DownloadTask, MediaFile};
+use ani_media::{DownloadMediaScanner, FfprobeMediaProbe, MediaScanResult};
+use ani_repository::{
+    DownloadRepository, MediaRepository, RepositoryError, RepositoryResult, SettingsRepository,
+};
+use ani_storage::Storage;
+use serde_json::Value;
+use tauri::{AppHandle, Manager};
+use tokio::process::Command;
+use tokio::sync::Mutex as AsyncMutex;
+
+/// 将应用 SQLite 单写者适配为媒体 Repository 端口。
+struct SharedMediaRepository {
+    storage: Arc<Mutex<Storage>>,
+}
+
+impl SharedMediaRepository {
+    /// 在短临界区内执行媒体 Repository 操作。
+    fn with_repository<T>(
+        &self,
+        operation: impl FnOnce(&dyn MediaRepository) -> RepositoryResult<T>,
+    ) -> RepositoryResult<T> {
+        let storage = self
+            .storage
+            .lock()
+            .map_err(|error| RepositoryError::BackendUnavailable {
+                backend: "sqlite".to_owned(),
+                message: error.to_string(),
+            })?;
+        operation(&storage.repository())
+    }
+}
+
+impl MediaRepository for SharedMediaRepository {
+    fn list_media_files(&self) -> RepositoryResult<Vec<MediaFile>> {
+        self.with_repository(|repository| repository.list_media_files())
+    }
+
+    fn upsert_media_files(&self, media_files: &[MediaFile]) -> RepositoryResult<Vec<MediaFile>> {
+        self.with_repository(|repository| repository.upsert_media_files(media_files))
+    }
+}
+
+/// Tauri 生命周期内共享的媒体扫描、工具解析和自动关联状态。
+#[derive(Clone)]
+pub(crate) struct AppMediaState {
+    storage: Arc<Mutex<Storage>>,
+    repository: Arc<SharedMediaRepository>,
+    platform_defaults: AppSettings,
+    resource_roots: Arc<Vec<PathBuf>>,
+    in_flight_task_ids: Arc<AsyncMutex<HashSet<String>>>,
+}
+
+impl AppMediaState {
+    /// 从应用资源目录、构建输出和源码资源创建媒体服务。
+    pub(crate) fn new(
+        app: &AppHandle,
+        storage: Arc<Mutex<Storage>>,
+        platform_defaults: AppSettings,
+    ) -> Self {
+        let current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let mut roots = Vec::new();
+        if let Ok(resource_directory) = app.path().resource_dir() {
+            roots.push(resource_directory.join("ffmpeg"));
+        }
+        roots.extend([current.join("out/ffmpeg"), current.join("resources/ffmpeg")]);
+        roots.dedup();
+        Self {
+            repository: Arc::new(SharedMediaRepository {
+                storage: Arc::clone(&storage),
+            }),
+            storage,
+            platform_defaults,
+            resource_roots: Arc::new(roots),
+            in_flight_task_ids: Arc::new(AsyncMutex::new(HashSet::new())),
+        }
+    }
+
+    /// 读取全部已登记媒体文件。
+    pub(crate) fn list_media_files(&self) -> Result<Vec<MediaFile>, String> {
+        self.repository
+            .list_media_files()
+            .map_err(|error| error.to_string())
+    }
+
+    /// 手动扫描指定下载任务并原子写入成功结果。
+    pub(crate) async fn scan_download_task(
+        &self,
+        task_id: &str,
+    ) -> Result<MediaScanResult, String> {
+        let task = self
+            .with_download_repository(|repository| {
+                repository
+                    .list_downloads()?
+                    .into_iter()
+                    .find(|task| {
+                        task.id == task_id || task.torrent_hash.as_deref() == Some(task_id)
+                    })
+                    .ok_or_else(|| RepositoryError::RecordNotFound {
+                        entity: "downloadTask".to_owned(),
+                        id: task_id.to_owned(),
+                    })
+            })
+            .map_err(|error| error.to_string())?;
+        let scanner = self.scanner()?;
+        let result = scanner.scan_task(&task).await;
+        if !result.media_files.is_empty() {
+            self.repository
+                .upsert_media_files(&result.media_files)
+                .map_err(|error| error.to_string())?;
+        }
+        log_scan_result(&result, "manual");
+        Ok(result)
+    }
+
+    /// 异步触发下载完成媒体关联，不阻塞下载列表刷新。
+    pub(crate) fn schedule_completed_scan(&self, tasks: Vec<DownloadTask>) {
+        let state = self.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = state.scan_completed_tasks(tasks).await {
+                log::warn!("Tauri 下载完成媒体自动关联失败 error={error}");
+            }
+        });
+    }
+
+    /// 扫描尚未完整入库的已完成任务，并隔离单任务错误。
+    async fn scan_completed_tasks(&self, tasks: Vec<DownloadTask>) -> Result<(), String> {
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        {
+            let _ = tasks;
+            return Ok(());
+        }
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+        {
+            let scanner = self.scanner()?;
+            let existing = self
+                .repository
+                .list_media_files()
+                .map_err(|error| error.to_string())?;
+            let existing_paths = existing
+                .iter()
+                .map(|media| path_key(Path::new(&media.file_path)))
+                .collect::<HashSet<_>>();
+            for task in tasks.into_iter().filter(DownloadTask::is_completed) {
+                let candidates = scanner.candidate_paths(&task);
+                if candidates.is_empty()
+                    || candidates
+                        .iter()
+                        .all(|candidate| existing_paths.contains(&path_key(candidate)))
+                    || !self.claim_task(&task.id).await
+                {
+                    continue;
+                }
+                let result = scanner.scan_task(&task).await;
+                if !result.media_files.is_empty() {
+                    if let Err(error) = self.repository.upsert_media_files(&result.media_files) {
+                        log::warn!(
+                            "Tauri 下载完成媒体写入失败 task_id={} error={error}",
+                            task.id
+                        );
+                    }
+                }
+                log_scan_result(&result, "automatic");
+                self.release_task(&task.id).await;
+            }
+            Ok(())
+        }
+    }
+
+    /// 检查 FFprobe 与 FFmpeg 的当前解析路径和版本。
+    pub(crate) async fn media_tools_status(&self) -> DesktopMediaToolsStatus {
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        {
+            return DesktopMediaToolsStatus {
+                ffprobe: unavailable_mobile_tool(),
+                ffmpeg: unavailable_mobile_tool(),
+            };
+        }
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+        {
+            let settings = match self.settings() {
+                Ok(settings) => settings,
+                Err(error) => {
+                    return DesktopMediaToolsStatus {
+                        ffprobe: unavailable_tool(error.clone()),
+                        ffmpeg: unavailable_tool(error),
+                    }
+                }
+            };
+            let ffprobe_commands = self.ffprobe_commands(&settings);
+            let ffmpeg_commands = self.ffmpeg_commands(&settings);
+            let (ffprobe, ffmpeg) = tokio::join!(
+                inspect_media_tool(ffprobe_commands),
+                inspect_media_tool(ffmpeg_commands)
+            );
+            DesktopMediaToolsStatus { ffprobe, ffmpeg }
+        }
+    }
+
+    fn scanner(&self) -> Result<DownloadMediaScanner, String> {
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        {
+            return Err("移动端媒体解析将在 libVLC 插件阶段装配".to_owned());
+        }
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+        {
+            let settings = self.settings()?;
+            let timeout = setting_u64(&settings, "/media/ffprobeTimeoutSeconds", 20).clamp(1, 60);
+            let extensions = settings
+                .pointer("/media/videoExtensions")
+                .and_then(Value::as_array)
+                .map(|values| {
+                    values
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let probe = FfprobeMediaProbe::new(
+                self.ffprobe_commands(&settings),
+                Duration::from_secs(timeout),
+            )
+            .map_err(|error| error.to_string())?;
+            Ok(DownloadMediaScanner::new(Arc::new(probe), &extensions))
+        }
+    }
+
+    fn settings(&self) -> Result<AppSettings, String> {
+        let storage = self
+            .storage
+            .lock()
+            .map_err(|error| format!("读取媒体设置失败：{error}"))?;
+        storage
+            .repository()
+            .get_settings(&self.platform_defaults)
+            .map_err(|error| format!("读取媒体设置失败：{error}"))
+    }
+
+    fn with_download_repository<T>(
+        &self,
+        operation: impl FnOnce(&dyn DownloadRepository) -> RepositoryResult<T>,
+    ) -> RepositoryResult<T> {
+        let storage = self
+            .storage
+            .lock()
+            .map_err(|error| RepositoryError::BackendUnavailable {
+                backend: "sqlite".to_owned(),
+                message: error.to_string(),
+            })?;
+        operation(&storage.repository())
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    fn ffprobe_commands(&self, settings: &AppSettings) -> Vec<PathBuf> {
+        let configured = settings
+            .pointer("/media/ffprobePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("ffprobe");
+        let bundled = resolve_bundled_media_binary("ffprobe", &self.resource_roots);
+        let default = is_default_tool_command(configured, "ffprobe");
+        unique_paths(if default {
+            vec![bundled, Some(PathBuf::from(configured))]
+        } else {
+            vec![Some(PathBuf::from(configured)), bundled]
+        })
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    fn ffmpeg_commands(&self, settings: &AppSettings) -> Vec<PathBuf> {
+        let bundled = resolve_bundled_media_binary("ffmpeg", &self.resource_roots);
+        let configured_probe = settings
+            .pointer("/media/ffprobePath")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .unwrap_or("ffprobe");
+        let sibling = Path::new(configured_probe).parent().map(|directory| {
+            directory.join(if cfg!(target_os = "windows") {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            })
+        });
+        unique_paths(vec![
+            bundled,
+            sibling,
+            Some(PathBuf::from(if cfg!(target_os = "windows") {
+                "ffmpeg.exe"
+            } else {
+                "ffmpeg"
+            })),
+        ])
+    }
+
+    async fn claim_task(&self, task_id: &str) -> bool {
+        self.in_flight_task_ids
+            .lock()
+            .await
+            .insert(task_id.to_owned())
+    }
+
+    async fn release_task(&self, task_id: &str) {
+        self.in_flight_task_ids.lock().await.remove(task_id);
+    }
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+async fn inspect_media_tool(commands: Vec<PathBuf>) -> MediaToolStatus {
+    let mut last_error = None;
+    for command_path in commands {
+        let mut command = Command::new(&command_path);
+        command.arg("-version").kill_on_drop(true);
+        #[cfg(target_os = "windows")]
+        {
+            use std::os::windows::process::CommandExt;
+            command.as_std_mut().creation_flags(0x0800_0000);
+        }
+        match tokio::time::timeout(Duration::from_secs(5), command.output()).await {
+            Ok(Ok(output)) if output.status.success() => {
+                let text = if output.stdout.is_empty() {
+                    String::from_utf8_lossy(&output.stderr)
+                } else {
+                    String::from_utf8_lossy(&output.stdout)
+                };
+                return MediaToolStatus {
+                    available: true,
+                    command: Some(command_path.to_string_lossy().into_owned()),
+                    version: text.lines().next().map(str::trim).map(str::to_owned),
+                    error: None,
+                };
+            }
+            Ok(Ok(output)) => {
+                last_error = Some(format!("退出状态 {}", output.status));
+            }
+            Ok(Err(error)) => last_error = Some(error.to_string()),
+            Err(_) => last_error = Some("版本检查超时".to_owned()),
+        }
+    }
+    unavailable_tool(last_error.unwrap_or_else(|| "没有可用命令".to_owned()))
+}
+
+fn unavailable_tool(error: String) -> MediaToolStatus {
+    MediaToolStatus {
+        available: false,
+        command: None,
+        version: None,
+        error: Some(error),
+    }
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+fn unavailable_mobile_tool() -> MediaToolStatus {
+    unavailable_tool("移动端不包含 FFmpeg/FFprobe".to_owned())
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+fn resolve_bundled_media_binary(tool: &str, roots: &[PathBuf]) -> Option<PathBuf> {
+    let platform = if cfg!(target_os = "windows") {
+        "win32"
+    } else if cfg!(target_os = "macos") {
+        "darwin"
+    } else {
+        "linux"
+    };
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        value => value,
+    };
+    let binary_name = if cfg!(target_os = "windows") {
+        format!("{tool}.exe")
+    } else {
+        tool.to_owned()
+    };
+    for root in roots {
+        for directory in [format!("{platform}-{arch}"), platform.to_owned()] {
+            let candidate = root.join(directory).join(&binary_name);
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+fn is_default_tool_command(command: &str, tool: &str) -> bool {
+    command.eq_ignore_ascii_case(tool)
+        || (cfg!(target_os = "windows") && command.eq_ignore_ascii_case(&format!("{tool}.exe")))
+}
+
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+fn unique_paths(groups: Vec<Option<PathBuf>>) -> Vec<PathBuf> {
+    let mut seen = HashSet::new();
+    groups
+        .into_iter()
+        .flatten()
+        .filter(|path| seen.insert(path.clone()))
+        .collect()
+}
+
+fn path_key(path: &Path) -> String {
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let value = path.to_string_lossy().into_owned();
+    if cfg!(target_os = "windows") {
+        value.to_lowercase()
+    } else {
+        value
+    }
+}
+
+fn setting_u64(settings: &AppSettings, pointer: &str, fallback: u64) -> u64 {
+    settings
+        .pointer(pointer)
+        .and_then(Value::as_u64)
+        .unwrap_or(fallback)
+}
+
+fn log_scan_result(result: &MediaScanResult, mode: &str) {
+    log::info!(
+        "Tauri 媒体扫描完成 mode={mode} task_id={} media_files={} skipped_files={} errors={}",
+        result.task_id,
+        result.media_files.len(),
+        result.skipped_files.len(),
+        result.errors.len()
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证媒体资源路径优先解析当前平台架构目录。
+    #[test]
+    fn resolves_platform_media_binary() {
+        let root = std::env::temp_dir().join(format!("ani-media-resolver-{}", std::process::id()));
+        let platform = if cfg!(target_os = "windows") {
+            "win32"
+        } else if cfg!(target_os = "macos") {
+            "darwin"
+        } else {
+            "linux"
+        };
+        let arch = match std::env::consts::ARCH {
+            "x86_64" => "x64",
+            "aarch64" => "arm64",
+            value => value,
+        };
+        let binary = root
+            .join(format!("{platform}-{arch}"))
+            .join(if cfg!(target_os = "windows") {
+                "ffprobe.exe"
+            } else {
+                "ffprobe"
+            });
+        std::fs::create_dir_all(binary.parent().expect("binary parent"))
+            .expect("create media resolver directory");
+        std::fs::write(&binary, b"test").expect("write media resolver binary");
+
+        assert_eq!(
+            resolve_bundled_media_binary("ffprobe", std::slice::from_ref(&root)),
+            Some(binary)
+        );
+
+        std::fs::remove_dir_all(root).expect("remove media resolver directory");
+    }
+}

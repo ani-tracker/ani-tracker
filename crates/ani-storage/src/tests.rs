@@ -6,14 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ani_domain::{
     AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
     AnimeSourceExclusionScope, AnimeStatus, DownloadStatus, DownloadTask, Episode,
-    EpisodePreference, EpisodeStatus, MyAnime, NotificationKind, NotificationRecord,
+    EpisodePreference, EpisodeStatus, MediaFile, MyAnime, NotificationKind, NotificationRecord,
     NotificationSeverity, PlaybackCheckpoint, ReleaseSearchResult, ReleaseSourceConfig,
     ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
     SavePlaybackCheckpointInput, SetAnimeWatchProgressInput, TorrentEngineKind, TorrentFile,
 };
 use ani_repository::{
     AnimeCatalogRepository, AnimeSourceBindingRepository, CachedReleaseQuery, DownloadRepository,
-    NotificationRepository, ReleaseCacheRepository, ReleaseSearchCacheEntry,
+    MediaRepository, NotificationRepository, ReleaseCacheRepository, ReleaseSearchCacheEntry,
     ReleaseSourceRepository, RepositoryError, UnitOfWork, UnitOfWorkFactory,
 };
 use rusqlite::{params, Connection, OpenFlags};
@@ -608,6 +608,48 @@ fn removes_download_snapshot_and_rolls_back_invalid_files() {
     assert!(DownloadRepository::list_downloads(&repository)
         .expect("list downloads after rollback")
         .is_empty());
+}
+
+/// 验证媒体记录完整往返，并按文件路径移除旧标识。
+#[test]
+fn upserts_media_files_and_deduplicates_paths() {
+    let directory = TestDirectory::new("p4-media-write");
+    let storage =
+        Storage::open(test_options(&directory, "active.sqlite")).expect("create media database");
+    let repository = storage.repository();
+    let mut media = MediaFile {
+        id: "media-old".to_owned(),
+        anime_id: "anime-1".to_owned(),
+        episode_id: Some("episode-1".to_owned()),
+        download_task_id: Some("download-1".to_owned()),
+        file_path: "C:/Anime/episode-1.mkv".to_owned(),
+        file_name: "episode-1.mkv".to_owned(),
+        size: 1024,
+        container: Some("mkv".to_owned()),
+        declared_video_codec: Some("HEVC".to_owned()),
+        detected_video_codec: Some("hevc".to_owned()),
+        normalized_video_codec: "H.265/HEVC".to_owned(),
+        resolution: Some("1920x1080".to_owned()),
+        bit_depth: Some(10),
+        audio_codecs: vec!["AAC".to_owned()],
+        subtitle_tracks: vec!["chi / ASS".to_owned()],
+        duration_seconds: Some(1440),
+        downloaded_at: Some("2026-07-25T00:00:00.000Z".to_owned()),
+        probed_at: Some("2026-07-25T00:01:00.000Z".to_owned()),
+    };
+    let first = MediaRepository::upsert_media_files(&repository, &[media.clone()])
+        .expect("write first media");
+    assert_eq!(first.len(), 1);
+    assert_eq!(first[0].audio_codecs, ["AAC"]);
+
+    media.id = "media-new".to_owned();
+    media.duration_seconds = Some(1500);
+    let replaced =
+        MediaRepository::upsert_media_files(&repository, &[media]).expect("replace media by path");
+
+    assert_eq!(replaced.len(), 1);
+    assert_eq!(replaced[0].id, "media-new");
+    assert_eq!(replaced[0].duration_seconds, Some(1500));
 }
 
 /// 验证番剧目录合并、搜索、月份替换和详情聚合保持业务引用。

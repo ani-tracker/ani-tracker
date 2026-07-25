@@ -14,7 +14,9 @@ import type {
   AutomationSchedulerStatus,
   ConfirmAnimeSourceBindingInput,
   DownloadServiceStatus,
+  DesktopMediaToolsStatus,
   EmbeddedTorrentCoreStatus,
+  MediaScanResult,
   PlaybackCheckpoint,
   QbittorrentManagedStatus,
   ReleaseSearchResult,
@@ -231,4 +233,19 @@ test("Tauri P4 下载服务契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.connectionTest.taskCount, 2);
   assert.equal(fixture.payload.managedStatus.webUiUrl, "http://127.0.0.1:18080/");
   assert.equal(fixture.payload.embeddedStatus.listenPort, 6881);
+});
+
+/** 读取 P4 媒体金样，验证工具状态、媒体记录和扫描结果字段一致。 */
+test("Tauri P4 媒体扫描契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p4-media-model.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    mediaToolsStatus: DesktopMediaToolsStatus;
+    scanResult: MediaScanResult;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p4-media-model");
+  assert.equal(fixture.payload.mediaToolsStatus.ffprobe.available, true);
+  assert.equal(fixture.payload.scanResult.mediaFiles[0].normalizedVideoCodec, "H.265/HEVC");
+  assert.equal(fixture.payload.scanResult.skippedFiles[0].reason, "非视频文件");
 });

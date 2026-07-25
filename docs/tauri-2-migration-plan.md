@@ -2,7 +2,7 @@
 
 最近更新：2026-07-25
 
-状态：P0-P3 已完成；P4 下载引擎、torrent-core 与媒体闭环进行中；跨平台构建待后续统一验证
+状态：P0-P3 已完成；P4 桌面下载与媒体闭环已完成，移动 torrent-core 生命周期进行中；跨平台构建待后续统一验证
 
 ## 1. 迁移目标
 
@@ -299,6 +299,8 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查及 358 项 Node 回归通过，其中 357 项通过、1 项跳过；Windows `torrent-core` 状态、配置、空任务列表和优雅关闭协议冒烟通过，平台完整构建按当前安排后续统一验证。
 - 已接入托管 qBittorrent-nox 的跨平台二进制解析、随机端口回退、启动输出脱敏、临时凭据同步、回环 WebUI 约束、优雅关闭和超时回收；统一下载服务、托管进程与内置核心状态可通过 Tauri commands/events 查询和控制。
 - 新增 P4 下载服务跨语言金样与真实 Windows 托管 qBittorrent 冒烟，验证临时登录、固定凭据更新、任务读取和 API 优雅退出；Rust、Clippy、TypeScript 与 359 项 Node 回归通过，其中 358 项通过、1 项跳过。
+- 已建立数据库无关的 `MediaRepository` 与 `ani-media` 核心，接通媒体列表、手动扫描、下载完成自动关联、路径逃逸防护、SQLite 路径去重写入及桌面 FFprobe/FFmpeg 状态；移动端探测入口保留给 P5 libVLC 插件。
+- 新增 P4 媒体跨语言金样，Rust 工作区测试、Clippy、格式检查、TypeScript 与 360 项 Node 回归通过，其中 359 项通过、1 项跳过；Windows 真实 FFprobe 媒体流探测通过，平台完整构建按当前安排后续统一验证。
 
 ### P5：全平台 libVLC
 

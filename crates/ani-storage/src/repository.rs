@@ -16,8 +16,9 @@ use ani_domain::{
 use ani_repository::{
     AnimeCatalogRepository, AnimeCatalogWriteResult, AnimeSourceBindingRepository,
     AnimeTrackingRepository, CachedReleaseQuery, DashboardRepository, DownloadRepository,
-    NotificationRepository, PlaybackRepository, ReleaseCacheRepository, ReleaseSearchCacheEntry,
-    ReleaseSourceRepository, RepositoryError, RepositoryResult, SettingsRepository,
+    MediaRepository, NotificationRepository, PlaybackRepository, ReleaseCacheRepository,
+    ReleaseSearchCacheEntry, ReleaseSourceRepository, RepositoryError, RepositoryResult,
+    SettingsRepository,
 };
 use chrono::{DateTime, Duration, Local, Utc};
 use log::{debug, info, warn};
@@ -1507,7 +1508,7 @@ impl<'connection> SqliteRepository<'connection> {
     }
 
     /// 读取并排序全部媒体文件。
-    fn list_media_files(&self) -> Result<Vec<MediaFile>, StorageError> {
+    pub(crate) fn list_media_files(&self) -> Result<Vec<MediaFile>, StorageError> {
         query_all(
             self.connection,
             "SELECT * FROM media_file",
@@ -1516,6 +1517,97 @@ impl<'connection> SqliteRepository<'connection> {
         .into_iter()
         .map(MediaFileRow::into_domain)
         .collect()
+    }
+
+    /// 原子新增或更新媒体文件，文件路径冲突时保留最新记录。
+    pub(crate) fn upsert_media_files(
+        &self,
+        media_files: &[MediaFile],
+    ) -> Result<Vec<MediaFile>, StorageError> {
+        self.with_transaction(|connection| {
+            for media in media_files {
+                validate_identifier("mediaFile.id", &media.id)?;
+                validate_identifier("mediaFile.animeId", &media.anime_id)?;
+                if media.file_path.trim().is_empty() {
+                    return invalid_input("mediaFile.filePath", "媒体文件路径不能为空");
+                }
+                if media.file_name.trim().is_empty() {
+                    return invalid_input("mediaFile.fileName", "媒体文件名不能为空");
+                }
+                if media.size < 0 {
+                    return invalid_input("mediaFile.size", "媒体文件大小不能为负数");
+                }
+                let audio_codecs_json =
+                    serde_json::to_string(&media.audio_codecs).map_err(|source| {
+                        StorageError::JsonData {
+                            context: "媒体音轨",
+                            source,
+                        }
+                    })?;
+                let subtitle_tracks_json =
+                    serde_json::to_string(&media.subtitle_tracks).map_err(|source| {
+                        StorageError::JsonData {
+                            context: "媒体字幕轨",
+                            source,
+                        }
+                    })?;
+                connection.execute(
+                    "DELETE FROM media_file WHERE file_path = ?1 AND id <> ?2",
+                    params![&media.file_path, &media.id],
+                )?;
+                connection.execute(
+                    "INSERT INTO media_file (
+                       id, anime_id, episode_id, download_task_id, file_path, file_name, size,
+                       container, declared_video_codec, detected_video_codec,
+                       normalized_video_codec, resolution, bit_depth, audio_codecs_json,
+                       subtitle_tracks_json, duration_seconds, downloaded_at, probed_at
+                     ) VALUES (
+                       ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
+                       ?15, ?16, ?17, ?18
+                     ) ON CONFLICT(id) DO UPDATE SET
+                       anime_id = excluded.anime_id,
+                       episode_id = excluded.episode_id,
+                       download_task_id = excluded.download_task_id,
+                       file_path = excluded.file_path,
+                       file_name = excluded.file_name,
+                       size = excluded.size,
+                       container = excluded.container,
+                       declared_video_codec = excluded.declared_video_codec,
+                       detected_video_codec = excluded.detected_video_codec,
+                       normalized_video_codec = excluded.normalized_video_codec,
+                       resolution = excluded.resolution,
+                       bit_depth = excluded.bit_depth,
+                       audio_codecs_json = excluded.audio_codecs_json,
+                       subtitle_tracks_json = excluded.subtitle_tracks_json,
+                       duration_seconds = excluded.duration_seconds,
+                       downloaded_at = excluded.downloaded_at,
+                       probed_at = excluded.probed_at",
+                    params![
+                        &media.id,
+                        &media.anime_id,
+                        media.episode_id.as_deref(),
+                        media.download_task_id.as_deref(),
+                        &media.file_path,
+                        &media.file_name,
+                        media.size,
+                        media.container.as_deref(),
+                        media.declared_video_codec.as_deref(),
+                        media.detected_video_codec.as_deref(),
+                        &media.normalized_video_codec,
+                        media.resolution.as_deref(),
+                        media.bit_depth,
+                        audio_codecs_json,
+                        subtitle_tracks_json,
+                        media.duration_seconds,
+                        media.downloaded_at.as_deref(),
+                        media.probed_at.as_deref(),
+                    ],
+                )?;
+            }
+            Ok(())
+        })?;
+        info!("Rust 媒体文件批量写入完成：count={}", media_files.len());
+        self.list_media_files()
     }
 
     /// 读取字幕组名称映射。
@@ -2019,6 +2111,18 @@ impl DownloadRepository for SqliteRepository<'_> {
     /// 通过 SQLite 适配器删除下载任务。
     fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>> {
         SqliteRepository::remove_download_task(self, task_id).map_err(RepositoryError::from)
+    }
+}
+
+impl MediaRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取媒体文件。
+    fn list_media_files(&self) -> RepositoryResult<Vec<MediaFile>> {
+        SqliteRepository::list_media_files(self).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器原子写入媒体文件。
+    fn upsert_media_files(&self, media_files: &[MediaFile]) -> RepositoryResult<Vec<MediaFile>> {
+        SqliteRepository::upsert_media_files(self, media_files).map_err(RepositoryError::from)
     }
 }
 

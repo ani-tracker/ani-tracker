@@ -493,6 +493,18 @@ export interface DesktopPlaybackSessionInput {
   fileIndex?: number;
 }
 
+export interface MediaToolStatus {
+  available: boolean;
+  command?: string;
+  version?: string;
+  error?: string;
+}
+
+export interface DesktopMediaToolsStatus {
+  ffprobe: MediaToolStatus;
+  ffmpeg: MediaToolStatus;
+}
+
 export type RemotePlaybackSubtitleType = "ass" | "vtt";
 
 export interface RemotePlaybackSubtitle {

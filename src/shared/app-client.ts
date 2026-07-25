@@ -32,6 +32,7 @@ import type {
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
   DownloadServiceStatus,
+  DesktopMediaToolsStatus,
   EmbeddedTorrentCoreStatus,
   EpisodeReleasePreview,
   ImageCacheResolveResult,
@@ -230,6 +231,8 @@ export interface AppClient {
   listMediaFiles(): Promise<MediaFile[]>;
   /** 扫描下载任务媒体文件。 */
   scanDownloadMedia(taskId: string): Promise<MediaScanResult>;
+  /** 读取桌面 FFprobe 与 FFmpeg 状态。 */
+  getDesktopMediaToolsStatus(): Promise<DesktopMediaToolsStatus>;
   /** 使用当前平台播放器播放媒体。 */
   playMedia(filePath: string, profileId?: string): Promise<void>;
   /** 打开桌面内置播放器窗口。 */

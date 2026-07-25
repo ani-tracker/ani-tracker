@@ -26,6 +26,7 @@ import type {
   DesktopPlayerWindowDragInput,
   DesktopPlayerWindowInput,
   DesktopPlaybackSessionInput,
+  DesktopMediaToolsStatus,
   RemoveAnimeSourceCandidateMismatchInput,
   ReportAnimeSourceCandidateMismatchInput,
   ReportPlaybackProgressInput,
@@ -42,6 +43,7 @@ import { PlayerLauncherService } from "./core/platform/player-launcher";
 import { DownloadMediaScanner } from "./core/media/download-media-scanner";
 import { FfprobeMediaProbeService } from "./core/media/ffprobe-media-probe-service";
 import { resolveFfprobeCommands } from "./core/media/ffmpeg-binary-resolver";
+import { getDesktopMediaToolsStatus } from "./core/media/desktop-media-tools-status-service";
 import { EpisodeReleasePreviewService } from "./core/automation/episode-release-preview-service";
 import { AutomationScheduler } from "./core/automation/automation-scheduler";
 import { AnimeDiscoveryService } from "./core/metadata/anime-discovery-service";
@@ -582,6 +584,10 @@ export function registerIpcHandlers(options: RegisterIpcHandlersOptions = {}): v
       return embeddedTorrentCoreService.restart(settings);
     }));
   ipcMain.handle("media:list", () => repository.listMediaFiles());
+  ipcMain.handle("media:getToolsStatus", async (): Promise<DesktopMediaToolsStatus> => {
+    const settings = await repository.getSettings();
+    return getDesktopMediaToolsStatus(settings.media.ffprobePath);
+  });
   ipcMain.handle("media:scanDownload", async (_event, taskId: string) => {
     const task = await repository.getDownloadTask(taskId);
     if (!task) {

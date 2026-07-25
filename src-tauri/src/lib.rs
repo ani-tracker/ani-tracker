@@ -6,6 +6,7 @@ use tauri::Manager;
 mod automation;
 mod commands;
 mod downloads;
+mod media;
 mod qbittorrent_managed;
 mod source_sync;
 mod sources;
@@ -35,6 +36,11 @@ pub fn run() {
                 storage_state.platform_defaults().clone(),
             )?;
             download_state.start();
+            let media_state = media::AppMediaState::new(
+                app.handle(),
+                Arc::clone(storage_state.storage()),
+                storage_state.platform_defaults().clone(),
+            );
             let automation_state = automation::AppAutomationState::new(
                 Arc::clone(storage_state.storage()),
                 storage_state.platform_defaults().clone(),
@@ -70,6 +76,7 @@ pub fn run() {
             app.manage(source_state);
             app.manage(source_sync_state);
             app.manage(download_state);
+            app.manage(media_state);
             app.manage(automation_state);
             log::info!(
                 "Tauri 宿主初始化完成 platform={} arch={}",
@@ -135,6 +142,9 @@ pub fn run() {
             commands::downloads::set_download_file_priority,
             commands::downloads::add_download_url,
             commands::downloads::add_release_download,
+            commands::media::list_media_files,
+            commands::media::scan_download_media,
+            commands::media::get_desktop_media_tools_status,
             commands::window::get_window_state,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,

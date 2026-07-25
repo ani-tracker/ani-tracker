@@ -11,6 +11,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
 
 use crate::downloads::{release_download_context, AppDownloadState};
+use crate::media::AppMediaState;
 
 const DOWNLOAD_SERVICE_STATUS_CHANGED_EVENT: &str = "download-service-status-changed";
 
@@ -218,6 +219,7 @@ pub(crate) async fn list_downloads(
 #[tauri::command]
 pub(crate) async fn refresh_downloads(
     state: State<'_, AppDownloadState>,
+    media_state: State<'_, AppMediaState>,
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
     let settings = state
         .settings()
@@ -237,6 +239,7 @@ pub(crate) async fn refresh_downloads(
             failure.message
         );
     }
+    media_state.schedule_completed_scan(result.tasks.clone());
     Ok(result.tasks)
 }
 

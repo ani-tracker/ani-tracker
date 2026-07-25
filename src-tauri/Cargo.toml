@@ -18,6 +18,7 @@ ani-automation = { path = "../crates/ani-automation" }
 ani-contracts = { path = "../crates/ani-contracts" }
 ani-domain = { path = "../crates/ani-domain" }
 ani-downloads = { path = "../crates/ani-downloads" }
+ani-media = { path = "../crates/ani-media" }
 ani-repository = { path = "../crates/ani-repository" }
 ani-sources = { path = "../crates/ani-sources" }
 ani-storage = { path = "../crates/ani-storage" }
@@ -29,7 +30,7 @@ serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
-tokio = { version = "1", features = ["fs", "macros", "net", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "macros", "net", "process", "sync", "time"] }
 url = "2"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
