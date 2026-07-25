@@ -2,7 +2,7 @@
 
 最近更新：2026-07-25
 
-状态：P0-P4 实现已完成；P5 桌面三平台 libVLC 已完成代码门禁，Android/iOS 待执行；跨平台构建与真机门禁待后续统一验证
+状态：P0-P4 实现已完成；P5 桌面三平台与 Android libVLC 已完成代码接入，iOS 待执行；跨平台构建与真机门禁待后续统一验证
 
 ## 1. 迁移目标
 
@@ -337,6 +337,8 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - macOS 运行库准备入口已移除 Electron 原生模块依赖，并复用 Rust FFI 冒烟；Windows 上的共享 Rust、Clippy、TypeScript 和坐标测试通过，macOS 实际编译、签名、运行库装包与播放按当前安排后续统一验证。
 - Linux 已接通 Xlib/XCB 视频目标和 X11/XWayland 窗口，原生 Wayland 返回明确的平台不支持错误；运行库按系统 VLC 3.0.x 实际版本整理并设置相对 RPATH。
 - Deb/RPM 已声明 VLC 运行依赖，桌面 CI 会在 Windows、macOS、Linux 分别准备并真实加载本平台运行库；Windows 共享门禁通过，Linux 实际编译、装包和播放按当前安排后续统一验证。
+- Android 已将 `libvlc-all:3.6.2`、Compose 播放页和 `PlayerActivity` 接入 Tauri Kotlin 插件，Rust `PlayerTransport` 统一转发能力、命令、快照和幂等关闭；移动 Renderer 只提交任务与文件索引，真实媒体和字幕路径由 Rust 受控会话解析后直接交给原生插件。
+- Android 原生页已接通播放、暂停、跳转、音量、静音、倍速、音轨、字幕、比例、横屏全屏、续播、90% 已看和自动下一集原有能力；旧 Capacitor 启动链保持可用，Kotlin/Tauri Android 实编译、APK 内容和真机媒体矩阵按当前安排后续统一验证。
 
 ### P6：桌面完整能力与远程网关
 

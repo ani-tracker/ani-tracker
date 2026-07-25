@@ -10,19 +10,23 @@ use ani_contracts::{
     PlayerCommand, PlayerCommandAction, PlayerCommandResult, PlayerHostPlatform, PlayerMediaMode,
     PlayerSubtitleType,
 };
+#[cfg(mobile)]
+use ani_contracts::{PlayerMediaSource, PlayerSubtitleSource};
 use ani_domain::{DownloadTask, TorrentFile};
 use ani_media::player::PlayerService;
 use ani_repository::{DownloadRepository, MediaRepository, PlaybackRepository};
 use ani_storage::Storage;
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
+#[cfg(desktop)]
 use tauri::window::{Color, WindowBuilder};
 #[cfg(target_os = "macos")]
 use tauri::LogicalPosition;
-use tauri::{
-    AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewUrl,
-    WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
-};
-use tauri_plugin_ani_player::{AniPlayerExt, DesktopVideoTarget, DesktopWindowController};
+use tauri::{AppHandle, Emitter, Manager, Runtime, Window, WindowEvent};
+#[cfg(desktop)]
+use tauri::{PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri_plugin_ani_player::AniPlayerExt;
+#[cfg(desktop)]
+use tauri_plugin_ani_player::{DesktopVideoTarget, DesktopWindowController};
 use tokio::sync::RwLock;
 
 pub(crate) const PLAYER_CONTROL_WINDOW_LABEL: &str = "ani-player-controls";
@@ -65,16 +69,77 @@ pub(crate) struct AppPlayerState {
 impl AppPlayerState {
     /// 创建尚未打开媒体窗口的播放器状态。
     pub(crate) fn new(app: &AppHandle, storage: Arc<Mutex<Storage>>) -> Self {
+        #[cfg(mobile)]
+        let service = Some(Arc::new(PlayerService::new(app.ani_player().transport())));
+        #[cfg(desktop)]
+        let service = None;
         Self {
             app: app.clone(),
             storage,
-            service: Arc::new(RwLock::new(None)),
+            service: Arc::new(RwLock::new(service)),
             sessions: Arc::new(Mutex::new(HashMap::new())),
             id_sequence: Arc::new(AtomicU64::new(0)),
             poll_generation: Arc::new(AtomicU64::new(0)),
             #[cfg(target_os = "macos")]
             drag_state: Arc::new(Mutex::new(None)),
         }
+    }
+
+    /// 在移动端创建受控会话并启动平台原生 libVLC 页面。
+    #[cfg(mobile)]
+    pub(crate) async fn open_desktop_window(
+        &self,
+        input: DesktopPlayerWindowInput,
+    ) -> Result<(), String> {
+        let session = self.create_session(input)?;
+        let command_id = format!(
+            "load-{}",
+            self.id_sequence.fetch_add(1, Ordering::Relaxed) + 1
+        );
+        let command = PlayerCommand {
+            command_id,
+            session_id: session.id.clone(),
+            action: PlayerCommandAction::Load {
+                source: PlayerMediaSource {
+                    task_id: session.task_id.clone(),
+                    file_index: session.file_index,
+                    title: session.file_name.clone(),
+                    uri: session.stream_url.clone(),
+                    mode: session.mode,
+                    duration_seconds: session.duration_seconds,
+                    subtitles: session
+                        .subtitles
+                        .iter()
+                        .map(|subtitle| PlayerSubtitleSource {
+                            id: subtitle.id.clone(),
+                            label: subtitle.label.clone(),
+                            language: subtitle.language.clone(),
+                            subtitle_type: subtitle.subtitle_type.clone(),
+                            uri: subtitle.url.clone(),
+                            default: subtitle.default,
+                        })
+                        .collect(),
+                },
+                start_position_seconds: session.start_position_seconds,
+            },
+        };
+        let result = self.dispatch(command).await;
+        if !result.accepted {
+            let message = result
+                .error
+                .map(|error| error.message)
+                .unwrap_or_else(|| "移动播放器拒绝加载媒体".to_owned());
+            let _ = self.close_session(&session.id);
+            return Err(message);
+        }
+        self.start_snapshot_polling();
+        log::info!(
+            "Tauri 移动原生播放器已打开 session_id={} task_id={} file_index={:?}",
+            session.id,
+            session.task_id,
+            session.file_index
+        );
+        Ok(())
     }
 
     /// 创建视频原生窗口与透明控制层，并装配当前平台 libVLC transport。
@@ -158,17 +223,27 @@ impl AppPlayerState {
         if let Ok(mut drag_state) = self.drag_state.lock() {
             *drag_state = None;
         }
+        #[cfg(desktop)]
         if let Some(service) = self.service.write().await.take() {
             service
                 .shutdown()
                 .await
                 .map_err(|error| error.to_string())?;
         }
+        #[cfg(mobile)]
+        if let Some(service) = self.service.read().await.clone() {
+            service
+                .shutdown()
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        #[cfg(desktop)]
         if let Some(window) = self.app.get_webview_window(PLAYER_CONTROL_WINDOW_LABEL) {
             window
                 .close()
                 .map_err(|error| format!("关闭播放器控制层失败：{error}"))?;
         }
+        #[cfg(desktop)]
         if let Some(window) = self.app.get_window(PLAYER_VIDEO_WINDOW_LABEL) {
             window
                 .close()
@@ -188,15 +263,20 @@ impl AppPlayerState {
         }
         #[cfg(not(target_os = "macos"))]
         {
-            if !matches!(input, DesktopPlayerWindowDragInput::Start { .. }) {
-                return Ok(());
+            #[cfg(mobile)]
+            return Err("移动原生播放器不支持桌面窗口拖动".to_owned());
+            #[cfg(desktop)]
+            {
+                if !matches!(input, DesktopPlayerWindowDragInput::Start { .. }) {
+                    return Ok(());
+                }
+                self.start_native_dragging()
             }
-            self.start_native_dragging()
         }
     }
 
     /// 将非 macOS 播放器控制层拖动委托给 Tauri 原生窗口。
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(desktop, not(target_os = "macos")))]
     fn start_native_dragging(&self) -> Result<(), String> {
         let window = self
             .app
@@ -284,10 +364,12 @@ impl AppPlayerState {
     }
 }
 
+#[cfg(desktop)]
 struct TauriPlayerWindowController {
     app: AppHandle,
 }
 
+#[cfg(desktop)]
 impl DesktopWindowController for TauriPlayerWindowController {
     fn set_fullscreen(&self, fullscreen: bool) -> Result<bool, String> {
         let video = self
@@ -341,6 +423,7 @@ fn validate_identifier(value: &str, allow_colon: bool) -> Result<(), String> {
     }
 }
 
+#[cfg(any(desktop, test))]
 fn player_route(input: &DesktopPlayerWindowInput) -> String {
     let mut route = format!("index.html?aniView=desktop-player&taskId={}", input.task_id);
     if let Some(file_index) = input.file_index {
@@ -480,6 +563,7 @@ fn next_drag_position(state: DesktopWindowDragState, screen_x: f64, screen_y: f6
     )
 }
 
+#[cfg(desktop)]
 fn sync_window_bounds<R: Runtime>(
     video: &Window<R>,
     controls: &WebviewWindow<R>,
@@ -688,48 +772,56 @@ impl AppPlayerState {
 
     /// 同步控制层移动与缩放，并在窗口销毁后回收播放器。
     pub(crate) fn handle_window_event<R: Runtime>(window: &Window<R>, event: &WindowEvent) {
-        if window.label() != PLAYER_CONTROL_WINDOW_LABEL {
+        #[cfg(mobile)]
+        {
+            let _ = (window, event);
             return;
         }
-        match event {
-            WindowEvent::Moved(position) => {
-                if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
-                    if let Err(error) = video.set_position(*position) {
-                        log::warn!("同步 libVLC 视频窗口位置失败 error={error}");
-                    }
-                }
+        #[cfg(desktop)]
+        {
+            if window.label() != PLAYER_CONTROL_WINDOW_LABEL {
+                return;
             }
-            WindowEvent::Resized(size) => {
-                if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
-                    if let Err(error) = video.set_size(*size) {
-                        log::warn!("同步 libVLC 视频窗口尺寸失败 error={error}");
-                    }
-                }
-            }
-            WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
-                    if let Err(error) = video.set_size(*new_inner_size) {
-                        log::warn!("同步 libVLC 视频窗口 DPI 尺寸失败 error={error}");
-                    }
-                }
-            }
-            WindowEvent::Destroyed => {
-                let app = window.app_handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    if let Some(state) = app.try_state::<AppPlayerState>() {
-                        state.poll_generation.fetch_add(1, Ordering::SeqCst);
-                        if let Some(service) = state.service.write().await.take() {
-                            if let Err(error) = service.shutdown().await {
-                                log::warn!("播放器窗口销毁后释放 libVLC 失败 error={error}");
-                            }
+            match event {
+                WindowEvent::Moved(position) => {
+                    if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
+                        if let Err(error) = video.set_position(*position) {
+                            log::warn!("同步 libVLC 视频窗口位置失败 error={error}");
                         }
                     }
-                    if let Some(video) = app.get_window(PLAYER_VIDEO_WINDOW_LABEL) {
-                        let _ = video.close();
+                }
+                WindowEvent::Resized(size) => {
+                    if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
+                        if let Err(error) = video.set_size(*size) {
+                            log::warn!("同步 libVLC 视频窗口尺寸失败 error={error}");
+                        }
                     }
-                });
+                }
+                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                    if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
+                        if let Err(error) = video.set_size(*new_inner_size) {
+                            log::warn!("同步 libVLC 视频窗口 DPI 尺寸失败 error={error}");
+                        }
+                    }
+                }
+                WindowEvent::Destroyed => {
+                    let app = window.app_handle().clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Some(state) = app.try_state::<AppPlayerState>() {
+                            state.poll_generation.fetch_add(1, Ordering::SeqCst);
+                            if let Some(service) = state.service.write().await.take() {
+                                if let Err(error) = service.shutdown().await {
+                                    log::warn!("播放器窗口销毁后释放 libVLC 失败 error={error}");
+                                }
+                            }
+                        }
+                        if let Some(video) = app.get_window(PLAYER_VIDEO_WINDOW_LABEL) {
+                            let _ = video.close();
+                        }
+                    });
+                }
+                _ => {}
             }
-            _ => {}
         }
     }
 
@@ -804,11 +896,7 @@ impl AppPlayerState {
                 };
                 match service.snapshot().await {
                     Ok(Some(snapshot)) => {
-                        if let Err(error) = state.app.emit_to(
-                            PLAYER_CONTROL_WINDOW_LABEL,
-                            PLAYER_SNAPSHOT_EVENT,
-                            snapshot,
-                        ) {
+                        if let Err(error) = state.app.emit(PLAYER_SNAPSHOT_EVENT, snapshot) {
                             log::warn!("发布 libVLC 播放快照失败 error={error}");
                         }
                     }

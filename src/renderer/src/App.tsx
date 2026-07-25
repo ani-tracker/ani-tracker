@@ -331,8 +331,20 @@ function MainApplication() {
 
   /** 按默认播放器配置打开独立内置窗口或调用外部播放器。 */
   async function playMedia(target: MediaPlaybackTarget): Promise<void> {
-    if (runtime === "android") {
-      await appApi.playMedia(target.filePath);
+    if (runtime === "android" || runtime === "ios") {
+      if (!isTauriClient()) {
+        await appApi.playMedia(target.filePath);
+        return;
+      }
+      if (!target.taskId) {
+        throw new Error("当前媒体缺少下载任务关联，无法使用移动内置播放器");
+      }
+      const mobileTarget = {
+        taskId: target.taskId,
+        ...(target.fileIndex === undefined ? {} : { fileIndex: target.fileIndex })
+      };
+      await appApi.openDesktopPlayerWindow(mobileTarget);
+      console.info("[player] 已打开移动原生播放器", mobileTarget);
       return;
     }
     const settings = await appApi.getSettings();

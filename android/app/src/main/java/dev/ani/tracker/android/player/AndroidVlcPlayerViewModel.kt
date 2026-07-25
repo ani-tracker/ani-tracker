@@ -193,9 +193,13 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
 
     /** 切换静音并保留用户原音量。 */
     fun toggleMuted() {
-        val nextMuted = !stateFlow.value.muted
-        mediaPlayer?.setVolume(if (nextMuted) 0 else stateFlow.value.volume)
-        stateFlow.value = stateFlow.value.copy(muted = nextMuted)
+        setMuted(!stateFlow.value.muted)
+    }
+
+    /** 显式设置静音状态，供 Tauri 统一命令调用。 */
+    fun setMuted(muted: Boolean) {
+        mediaPlayer?.setVolume(if (muted) 0 else stateFlow.value.volume)
+        stateFlow.value = stateFlow.value.copy(muted = muted)
     }
 
     /** 设置播放器支持的离散倍速。 */
@@ -212,6 +216,12 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             "16:9" -> "4:3"
             else -> null
         }
+        setAspectRatio(next)
+    }
+
+    /** 应用统一播放器契约中的画面比例。 */
+    fun setAspectRatio(aspectRatio: String?) {
+        val next = aspectRatio?.takeUnless { it == "default" || it == "fit" }
         mediaPlayer?.setScale(0f)
         mediaPlayer?.setAspectRatio(next)
         stateFlow.value = stateFlow.value.copy(aspectRatio = next)
