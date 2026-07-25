@@ -1,6 +1,10 @@
 import Foundation
 import XCTest
+#if SWIFT_PACKAGE
+@testable import tauri_plugin_ani_player
+#else
 @testable import AniTracker
+#endif
 
 /** 验证外部任务只能生成结构完整的原生播放请求。 */
 final class PlayerLaunchParserTests: XCTestCase {

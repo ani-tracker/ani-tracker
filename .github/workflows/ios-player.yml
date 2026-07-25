@@ -7,12 +7,16 @@ on:
       - "v*"
     paths:
       - "ios/**"
+      - "crates/tauri-plugin-ani-player/ios/**"
+      - "scripts/prepare-ios-libvlc.sh"
       - "resources/licenses/vlc/**"
       - "resources/ffmpeg/licenses/LGPL-2.1-only.json"
       - ".github/workflows/ios-player.yml"
   pull_request:
     paths:
       - "ios/**"
+      - "crates/tauri-plugin-ani-player/ios/**"
+      - "scripts/prepare-ios-libvlc.sh"
       - "resources/licenses/vlc/**"
       - "resources/ffmpeg/licenses/LGPL-2.1-only.json"
       - ".github/workflows/ios-player.yml"

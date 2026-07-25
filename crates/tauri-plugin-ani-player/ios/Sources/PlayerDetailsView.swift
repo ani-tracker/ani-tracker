@@ -1,7 +1,7 @@
 import Foundation
 import SwiftUI
 
-/** 竖屏下展示番剧摘要、简介和完整播放列表。 */
+/** 在 iOS Tauri 竖屏下展示番剧摘要、简介和完整播放列表。 */
 struct PlayerDetailsView: View {
     let snapshot: PlayerSnapshot
     let onSelectEpisode: (Int) -> Void

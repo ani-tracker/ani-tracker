@@ -1,7 +1,7 @@
 import CryptoKit
 import Foundation
 
-/** iOS 原生播放器的一条本地续播记录。 */
+/** iOS Tauri 原生播放器的一条本地续播记录。 */
 struct MobilePlaybackCheckpoint: Codable, Equatable {
     let positionMilliseconds: Int64
     let durationMilliseconds: Int64

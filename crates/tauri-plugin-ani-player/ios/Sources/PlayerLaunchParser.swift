@@ -1,6 +1,6 @@
 import Foundation
 
-/** 将外部深链或调试启动参数转换为播放器业务模型。 */
+/** 将旧宿主深链或调试启动参数转换为播放器业务模型。 */
 enum PlayerLaunchParser {
     /** 解析 anitracker://player 深链，缺少合法媒体 URL 时返回空。 */
     static func parse(_ deepLink: URL) -> PlayerLaunchRequest? {

@@ -1,7 +1,7 @@
 import SwiftUI
 import UIKit
 
-/** 将 MobileVLCKit 的原生视频输出表面嵌入 SwiftUI。 */
+/** 将 MobileVLCKit 的原生视频输出表面嵌入 Tauri SwiftUI 页面。 */
 struct VLCVideoSurface: UIViewRepresentable {
     let controller: MobileVLCPlayerController
 

@@ -5,7 +5,7 @@ import MobileVLCKit
 import OSLog
 import UIKit
 
-/** 将 MobileVLCKit 映射为 SwiftUI 可观察的单一播放器状态。 */
+/** 将 MobileVLCKit 映射为 Tauri 原生页可观察的单一播放器状态。 */
 final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     static let supportedRates: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
 
@@ -154,9 +154,13 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
 
     /** 切换 MobileVLCKit 音频静音状态。 */
     func toggleMuted() {
-        let nextMuted = !snapshot.muted
-        mediaPlayer.audio.isMuted = nextMuted
-        snapshot.muted = nextMuted
+        setMuted(!snapshot.muted)
+    }
+
+    /** 显式设置静音状态，供 Tauri 统一命令调用。 */
+    func setMuted(_ muted: Bool) {
+        mediaPlayer.audio.isMuted = muted
+        snapshot.muted = muted
     }
 
     /** 设置最接近的受支持播放倍速。 */

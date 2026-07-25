@@ -30,6 +30,12 @@
   "bundle": {
     "active": false,
     "targets": "all",
+    "android": {
+      "minSdkVersion": 26
+    },
+    "iOS": {
+      "minimumSystemVersion": "16.0"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

@@ -56,7 +56,7 @@ struct PlayerEpisode: Identifiable, Hashable {
     let subtitles: [PlayerSubtitle]
 }
 
-/** 业务页面打开原生播放器时传递的完整参数。 */
+/** Tauri 或旧业务页面打开原生播放器时传递的完整参数。 */
 struct PlayerLaunchRequest: Equatable {
     let sessionID: String
     let animeTitle: String

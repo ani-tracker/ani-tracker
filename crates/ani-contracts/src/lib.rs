@@ -565,6 +565,8 @@ mod tests {
     struct PlayerCommandFixture {
         load_command: PlayerCommand,
         rejected_result: PlayerCommandResult,
+        android_capabilities: super::PlayerCapabilities,
+        ios_capabilities: super::PlayerCapabilities,
         playback_session: PlaybackSession,
     }
 
@@ -667,6 +669,20 @@ mod tests {
         ));
         assert_eq!(decoded.payload.load_command.action_name(), "load");
         assert!(!decoded.payload.rejected_result.accepted);
+        assert_eq!(
+            decoded.payload.android_capabilities.platform,
+            PlayerHostPlatform::Android
+        );
+        assert_eq!(
+            decoded.payload.ios_capabilities.platform,
+            PlayerHostPlatform::Ios
+        );
+        assert!(
+            !decoded
+                .payload
+                .ios_capabilities
+                .supports_transcoding_fallback
+        );
         assert_eq!(decoded.payload.playback_session.file_index, Some(0));
     }
 }

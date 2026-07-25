@@ -1,6 +1,6 @@
 import SwiftUI
 
-/** 渲染视频上方的顶部、中央和底部控制层。 */
+/** 渲染 Tauri 原生视频上方的顶部、中央和底部控制层。 */
 struct PlayerControlsView: View {
     @ObservedObject var controller: MobileVLCPlayerController
 

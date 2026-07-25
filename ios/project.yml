@@ -20,6 +20,10 @@ targets:
       - path: AniTracker
         excludes:
           - Info.plist
+      - path: ../crates/tauri-plugin-ani-player/ios/Sources
+        group: Player
+        excludes:
+          - AniPlayerPlugin.swift
       - path: ../resources/licenses/vlc
         group: Resources/ThirdPartyLicenses
         type: folder
@@ -49,7 +53,8 @@ targets:
     type: bundle.unit-test
     platform: iOS
     sources:
-      - path: AniTrackerTests
+      - path: ../crates/tauri-plugin-ani-player/ios/Tests
+        group: PlayerTests
     dependencies:
       - target: AniTracker
     settings:

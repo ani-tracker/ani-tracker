@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import type { PlayerCommand, PlayerCommandResult, PlayerSnapshot } from "../player-contract";
+import type { PlayerCapabilities, PlayerCommand, PlayerCommandResult, PlayerSnapshot } from "../player-contract";
 import { acceptPlayerSnapshot } from "../player-contract";
 import type {
   AnimeDetailResult,
@@ -275,6 +275,8 @@ test("Tauri P5 播放器命令契约金样可被 TypeScript 接受", () => {
   const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
     loadCommand: PlayerCommand;
     rejectedResult: PlayerCommandResult;
+    androidCapabilities: PlayerCapabilities;
+    iosCapabilities: PlayerCapabilities;
     playbackSession: RemotePlaybackSession;
   }>;
 
@@ -286,5 +288,8 @@ test("Tauri P5 播放器命令契约金样可被 TypeScript 接受", () => {
   }
   assert.equal(fixture.payload.loadCommand.source.subtitles[0].type, "ass");
   assert.equal(fixture.payload.rejectedResult.accepted, false);
+  assert.equal(fixture.payload.androidCapabilities.platform, "android");
+  assert.equal(fixture.payload.iosCapabilities.platform, "ios");
+  assert.equal(fixture.payload.iosCapabilities.supportsTranscodingFallback, false);
   assert.equal(fixture.payload.playbackSession.mode, "direct");
 });

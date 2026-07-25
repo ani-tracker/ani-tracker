@@ -5,7 +5,7 @@ import UIKit
 
 private let playerScreenLogger = Logger(subsystem: "dev.ani.tracker", category: "PlayerScreen")
 
-/** 组合方向自适应布局、控制层显隐和文件选择。 */
+/** 组合 Tauri 原生页的方向自适应布局、控制层显隐和文件选择。 */
 struct PlayerScreen: View {
     @ObservedObject var controller: MobileVLCPlayerController
 

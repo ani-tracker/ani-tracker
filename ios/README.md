@@ -1,6 +1,6 @@
 # iOS 内置播放器
 
-iOS 应用使用 SwiftUI 承载播放器 UI，视频表面由 `MobileVLCKit 3.7.3` 原生渲染。工程文件由 XcodeGen 生成，依赖通过 CocoaPods 固定版本安装。
+iOS 应用使用 SwiftUI 承载播放器 UI，视频表面由 `MobileVLCKit 3.7.3` 原生渲染。播放器共享源码已迁至 `crates/tauri-plugin-ani-player/ios/Sources`；旧工程由 XcodeGen 引用该目录并继续通过 CocoaPods 构建，直到 P8 退役。
 
 ## 构建
 

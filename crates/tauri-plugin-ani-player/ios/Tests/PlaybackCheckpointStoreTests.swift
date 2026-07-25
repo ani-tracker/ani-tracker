@@ -1,6 +1,10 @@
 import Foundation
 import XCTest
+#if SWIFT_PACKAGE
+@testable import tauri_plugin_ani_player
+#else
 @testable import AniTracker
+#endif
 
 /** 验证 iOS 原生播放器续播记录的恢复和幂等观看策略。 */
 final class PlaybackCheckpointStoreTests: XCTestCase {
