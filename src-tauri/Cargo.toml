@@ -17,11 +17,13 @@ tauri-build = { version = "2", features = [] }
 ani-contracts = { path = "../crates/ani-contracts" }
 ani-domain = { path = "../crates/ani-domain" }
 ani-repository = { path = "../crates/ani-repository" }
+ani-sources = { path = "../crates/ani-sources" }
 ani-storage = { path = "../crates/ani-storage" }
 log = "0.4"
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
+tokio = { version = "1", features = ["sync"] }
 url = "2"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]

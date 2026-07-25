@@ -8,6 +8,30 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, Proxy};
 
+mod parsers;
+mod release;
+mod search;
+
+pub use parsers::{
+    parse_acgnx_api_response, parse_acgnx_html, parse_anibt_rss, parse_dmhy_list,
+    parse_mikan_release_list, parse_mikan_subgroups, parse_rss_releases, parse_torznab_releases,
+    MikanSubgroup, TorznabPage,
+};
+pub use release::{
+    build_anime_release_search_terms, classify_anime_release, create_discovered_fansub_id,
+    detect_series_season_no, enrich_release_from_title, evaluate_automatic_download,
+    is_meaningful_fansub_name, matches_anime_release_title, normalize_fansub_name,
+    normalize_release_search_text, parse_release_title, rank_releases, release_matches_episode,
+    score_release, sort_releases_by_rules, AnimeReleaseCompatibility, ParsedReleaseTitle,
+    AUTOMATIC_DOWNLOAD_MIN_LEAD, AUTOMATIC_DOWNLOAD_MIN_MATCH_SCORE, AUTOMATIC_DOWNLOAD_MIN_SCORE,
+};
+pub use search::{
+    build_acgrip_rss_url, build_anibt_anime_rss_url, build_dmhy_list_url, build_mikan_search_url,
+    build_nyaa_rss_url, create_anibt_headers, ReleaseSearchService, ReleaseSearchStore,
+    COMPLETED_ANIME_RELEASE_CACHE_TTL_MS, MAX_RELEASE_SOURCE_FETCH_LIMIT,
+    MAX_RELEASE_SOURCE_RESULT_LIMIT,
+};
+
 pub const DEFAULT_SOURCE_REQUEST_INTERVAL_MS: u64 = 1_500;
 pub const MIN_SOURCE_REQUEST_INTERVAL_MS: u64 = 250;
 pub const MAX_SOURCE_REQUEST_INTERVAL_MS: u64 = 60_000;
@@ -107,6 +131,8 @@ pub enum SourceError {
     HttpStatus { status: u16 },
     #[error("HTTP 响应超过 {limit} 字节限制")]
     ResponseTooLarge { limit: usize },
+    #[error("来源响应解析失败：{0}")]
+    Parse(String),
     #[error("来源请求正在熔断保护中，恢复时间：{backoff_until}")]
     CircuitOpen { backoff_until: String },
     #[error("来源状态持久化失败：{0}")]

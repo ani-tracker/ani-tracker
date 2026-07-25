@@ -1,0 +1,1583 @@
+use std::collections::{BTreeMap, HashSet};
+use std::sync::Arc;
+
+use ani_domain::{
+    Anime, AnimeReleaseQuery, FansubGroup, MyAnime, Release, ReleaseQuery, ReleaseSearchError,
+    ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSearchResult,
+    RssSubscriptionReleaseQuery, RssSubscriptionReleaseResult, SourceKind, SubtitleLanguage,
+    SubtitlePreference,
+};
+use ani_repository::{ReleaseSearchCacheEntry, ReleaseSourceRepository, RepositoryResult};
+use chrono::{Duration, SecondsFormat, Utc};
+use futures_util::future::join_all;
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use url::Url;
+
+use crate::parsers::{
+    parse_acgnx_api_response, parse_acgnx_html, parse_anibt_rss, parse_dmhy_list,
+    parse_mikan_release_list, parse_rss_releases, parse_torznab_releases,
+};
+use crate::release::{
+    build_anime_release_search_terms, classify_anime_release, enrich_release_from_title,
+    matches_anime_release_title, normalize_release_search_text, release_matches_episode,
+    AnimeReleaseCompatibility,
+};
+use crate::{CircuitStateStore, HttpMethod, NativeHttpRequest, SourceError, SourceNetworkService};
+
+pub const MAX_RELEASE_SOURCE_FETCH_LIMIT: usize = 50;
+pub const MAX_RELEASE_SOURCE_RESULT_LIMIT: usize = 200;
+pub const COMPLETED_ANIME_RELEASE_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+const RELEASE_SEARCH_CACHE_VERSION: u32 = 3;
+const MAX_ANIBT_BGM_FEEDS_PER_SEARCH: usize = 3;
+const DESKTOP_BROWSER_USER_AGENT: &str =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138.0 Safari/537.36";
+const DESKTOP_BROWSER_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,ja;q=0.8,en;q=0.7";
+
+/// 资源搜索需要的最小缓存与熔断状态端口。
+pub trait ReleaseSearchStore: CircuitStateStore {
+    /// 读取尚未过期的搜索结果缓存。
+    fn get_search_cache(
+        &self,
+        cache_key: &str,
+        current_time: &str,
+    ) -> RepositoryResult<Option<ReleaseSearchCacheEntry>>;
+
+    /// 保存搜索结果缓存。
+    fn save_search_cache(
+        &self,
+        cache_key: &str,
+        entry: &ReleaseSearchCacheEntry,
+    ) -> RepositoryResult<()>;
+}
+
+impl<T> ReleaseSearchStore for T
+where
+    T: ReleaseSourceRepository,
+{
+    /// 将完整来源 Repository 适配为搜索缓存端口。
+    fn get_search_cache(
+        &self,
+        cache_key: &str,
+        current_time: &str,
+    ) -> RepositoryResult<Option<ReleaseSearchCacheEntry>> {
+        ReleaseSourceRepository::get_release_search_cache(self, cache_key, current_time)
+    }
+
+    /// 将完整来源 Repository 适配为搜索缓存端口。
+    fn save_search_cache(
+        &self,
+        cache_key: &str,
+        entry: &ReleaseSearchCacheEntry,
+    ) -> RepositoryResult<()> {
+        ReleaseSourceRepository::upsert_release_search_cache(self, cache_key, entry)
+    }
+}
+
+/// 组合来源网络、站点适配器、标题匹配和持久化缓存的搜索服务。
+pub struct ReleaseSearchService {
+    network: Arc<SourceNetworkService>,
+}
+
+impl ReleaseSearchService {
+    /// 创建复用同一连接池、限流和熔断策略的搜索服务。
+    pub fn new(network: Arc<SourceNetworkService>) -> Self {
+        Self { network }
+    }
+
+    /// 按任意关键词并行搜索全部启用来源，单源失败不会清空成功结果。
+    pub async fn search<S>(
+        &self,
+        store: &S,
+        configs: &[ReleaseSourceConfig],
+        fansubs: &[FansubGroup],
+        query: ReleaseQuery,
+    ) -> Result<ReleaseSearchResult, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let cache_key = build_search_cache_key(&query, configs, fansubs, None);
+        if !query.force_refresh {
+            if let Some(result) = load_cached_result(store, cache_key.as_deref(), &query)? {
+                log::info!(
+                    "Rust 资源搜索命中持久化缓存 anime_id={:?} keyword={} count={}",
+                    query.anime_id,
+                    query.keyword,
+                    result.releases.len()
+                );
+                return Ok(result);
+            }
+        }
+
+        let sources = enabled_supported_sources(configs);
+        let fetched = join_all(
+            sources
+                .iter()
+                .map(|config| self.fetch_source(store, config, &query)),
+        )
+        .await;
+        let mut source_results = Vec::with_capacity(sources.len());
+        let mut errors = Vec::new();
+        for (config, fetched) in sources.iter().zip(fetched) {
+            match fetched {
+                Ok(releases) => source_results.push(SourceFetchResult {
+                    source: config.clone(),
+                    releases: releases
+                        .into_iter()
+                        .map(|release| enrich_release_from_title(release, fansubs))
+                        .collect(),
+                }),
+                Err(error) => {
+                    log::warn!(
+                        "Rust 下载源搜索失败 source_id={} error={}",
+                        config.id,
+                        error
+                    );
+                    errors.push(ReleaseSearchError {
+                        source_id: config.id.clone(),
+                        message: format_source_error(&error),
+                    });
+                    source_results.push(SourceFetchResult {
+                        source: config.clone(),
+                        releases: Vec::new(),
+                    });
+                }
+            }
+        }
+
+        let matches_query = |release: &Release| {
+            release_matches_episode(release, query.episode_no)
+                && matches_keyword(release, &query.keyword)
+        };
+        let limit = normalize_result_limit(query.limit);
+        let releases = sort_releases(dedupe_releases(
+            source_results
+                .iter()
+                .flat_map(|result| result.releases.iter().cloned())
+                .filter(matches_query)
+                .collect(),
+        ))
+        .into_iter()
+        .take(limit)
+        .collect::<Vec<_>>();
+        let result = ReleaseSearchResult {
+            query: query.clone(),
+            releases,
+            source_results: source_results
+                .into_iter()
+                .map(|result| ReleaseSourceSearchResult {
+                    source_id: result.source.id,
+                    source_name: result.source.name,
+                    releases: sort_releases(dedupe_releases(
+                        result.releases.into_iter().filter(matches_query).collect(),
+                    ))
+                    .into_iter()
+                    .take(limit)
+                    .collect(),
+                })
+                .collect(),
+            searched_source_ids: sources.iter().map(|source| source.id.clone()).collect(),
+            errors,
+        };
+        save_cached_result(store, cache_key.as_deref(), query.cache_ttl_ms, &result);
+        log::info!(
+            "Rust 资源搜索完成 keyword={} source_count={} release_count={} error_count={}",
+            query.keyword,
+            result.searched_source_ids.len(),
+            result.releases.len(),
+            result.errors.len()
+        );
+        Ok(result)
+    }
+
+    /// 按本地番剧标题、原名和别名搜索并过滤季度与目标集数。
+    pub async fn search_anime<S>(
+        &self,
+        store: &S,
+        configs: &[ReleaseSourceConfig],
+        fansubs: &[FansubGroup],
+        anime: &Anime,
+        query: AnimeReleaseQuery,
+    ) -> Result<ReleaseSearchResult, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let release_query = ReleaseQuery {
+            keyword: anime.title.clone(),
+            anime_id: Some(query.anime_id.clone()),
+            episode_no: query.episode_no,
+            fansub_group_id: query.fansub_group_id.clone(),
+            preferred_resolution: query.preferred_resolution.clone(),
+            limit: query.limit,
+            cache_ttl_ms: query.cache_ttl_ms,
+            force_refresh: query.force_refresh,
+        };
+        let terms = build_anime_release_search_terms(anime, &[], 8);
+        let cache_key = build_search_cache_key(
+            &release_query,
+            configs,
+            fansubs,
+            Some(json!({
+                "kind": "anime",
+                "anime": anime,
+                "terms": terms,
+            })),
+        );
+        if !query.force_refresh {
+            if let Some(result) = load_cached_result(store, cache_key.as_deref(), &release_query)? {
+                return Ok(result);
+            }
+        }
+
+        let sources = enabled_supported_sources(configs)
+            .into_iter()
+            .filter(|source| !is_mikan_site_config(source))
+            .collect::<Vec<_>>();
+        let fetched = join_all(sources.iter().map(|config| async {
+            let result = if config.kind == SourceKind::Rss {
+                self.fetch_source(
+                    store,
+                    config,
+                    &ReleaseQuery {
+                        keyword: String::new(),
+                        ..release_query.clone()
+                    },
+                )
+                .await
+            } else {
+                let mut releases = Vec::new();
+                for term in &terms {
+                    releases.extend(
+                        self.fetch_source(
+                            store,
+                            config,
+                            &ReleaseQuery {
+                                keyword: term.clone(),
+                                ..release_query.clone()
+                            },
+                        )
+                        .await?,
+                    );
+                }
+                Ok(dedupe_releases(releases))
+            };
+            result.map(|releases| (config.clone(), releases))
+        }))
+        .await;
+
+        let mut errors = Vec::new();
+        let mut per_source = Vec::with_capacity(sources.len());
+        for (config, fetched) in sources.iter().zip(fetched) {
+            match fetched {
+                Ok((source, releases)) => per_source.push(SourceFetchResult {
+                    source,
+                    releases: releases
+                        .into_iter()
+                        .map(|release| enrich_release_from_title(release, fansubs))
+                        .filter(|release| {
+                            matches_anime_release_title(&release.title, &terms)
+                                && classify_anime_release(release, anime)
+                                    != AnimeReleaseCompatibility::Mismatch
+                                && release_matches_episode(release, query.episode_no)
+                        })
+                        .map(|mut release| {
+                            release.anime_id = Some(anime.id.clone());
+                            release
+                        })
+                        .collect(),
+                }),
+                Err(error) => {
+                    errors.push(ReleaseSearchError {
+                        source_id: config.id.clone(),
+                        message: format_source_error(&error),
+                    });
+                    per_source.push(SourceFetchResult {
+                        source: config.clone(),
+                        releases: Vec::new(),
+                    });
+                }
+            }
+        }
+        let limit = normalize_result_limit(query.limit);
+        let releases = sort_releases(dedupe_releases(
+            per_source
+                .iter()
+                .flat_map(|result| result.releases.iter().cloned())
+                .collect(),
+        ))
+        .into_iter()
+        .take(limit)
+        .collect();
+        let result = ReleaseSearchResult {
+            query: release_query,
+            releases,
+            source_results: per_source
+                .into_iter()
+                .map(|result| ReleaseSourceSearchResult {
+                    source_id: result.source.id,
+                    source_name: result.source.name,
+                    releases: sort_releases(dedupe_releases(result.releases))
+                        .into_iter()
+                        .take(limit)
+                        .collect(),
+                })
+                .collect(),
+            searched_source_ids: sources.iter().map(|source| source.id.clone()).collect(),
+            errors,
+        };
+        save_cached_result(store, cache_key.as_deref(), query.cache_ttl_ms, &result);
+        Ok(result)
+    }
+
+    /// 搜索单条追番 RSS，独立于全局来源开关并按番剧上下文过滤。
+    pub async fn search_rss_subscription<S>(
+        &self,
+        store: &S,
+        source: &ReleaseSourceConfig,
+        fansubs: &[FansubGroup],
+        anime: &MyAnime,
+        query: RssSubscriptionReleaseQuery,
+        preferred_subtitle_languages: &[String],
+    ) -> RssSubscriptionReleaseResult
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let source_query = ReleaseQuery {
+            keyword: String::new(),
+            anime_id: Some(query.anime_id.clone()),
+            episode_no: None,
+            fansub_group_id: None,
+            preferred_resolution: query.preferred_resolution.clone(),
+            limit: query.limit,
+            cache_ttl_ms: None,
+            force_refresh: true,
+        };
+        match self.fetch_source(store, source, &source_query).await {
+            Ok(releases) => {
+                let terms = build_anime_release_search_terms(&anime.anime, &[], 12);
+                let exact_mikan = source
+                    .rss_url
+                    .as_deref()
+                    .is_some_and(is_exact_mikan_rss_url);
+                let mut releases = releases
+                    .into_iter()
+                    .map(|release| enrich_release_from_title(release, fansubs))
+                    .filter(|release| {
+                        (exact_mikan || matches_anime_release_title(&release.title, &terms))
+                            && classify_anime_release(release, &anime.anime)
+                                != AnimeReleaseCompatibility::Mismatch
+                    })
+                    .map(|mut release| {
+                        release.anime_id = Some(anime.anime.id.clone());
+                        release
+                    })
+                    .collect::<Vec<_>>();
+                let preferred = preferred_subtitle_languages
+                    .iter()
+                    .filter_map(|value| parse_subtitle_language(value))
+                    .collect::<Vec<_>>();
+                releases.sort_by(|left, right| {
+                    subtitle_sort_rank(left, &preferred)
+                        .cmp(&subtitle_sort_rank(right, &preferred))
+                        .then_with(|| right.published_at.cmp(&left.published_at))
+                });
+                RssSubscriptionReleaseResult {
+                    query,
+                    releases,
+                    errors: Vec::new(),
+                }
+            }
+            Err(error) => RssSubscriptionReleaseResult {
+                errors: vec![ReleaseSearchError {
+                    source_id: query.subscription_id.clone(),
+                    message: format_source_error(&error),
+                }],
+                query,
+                releases: Vec::new(),
+            },
+        }
+    }
+
+    async fn fetch_source<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        match config.kind {
+            SourceKind::Rss => self.fetch_generic_rss(store, config, query).await,
+            SourceKind::Torznab => self.fetch_torznab(store, config, query).await,
+            SourceKind::SiteAdapter if is_dmhy_config(config) => {
+                self.fetch_dmhy(store, config, query).await
+            }
+            SourceKind::SiteAdapter if is_mikan_config(config) => {
+                self.fetch_mikan(store, config, query).await
+            }
+            SourceKind::SiteAdapter if is_anibt_config(config) => {
+                self.fetch_anibt(store, config, query).await
+            }
+            SourceKind::SiteAdapter if is_acgnx_config(config) => {
+                self.fetch_acgnx(store, config, query).await
+            }
+            SourceKind::SiteAdapter if is_nyaa_config(config) => {
+                self.fetch_rss_pages(store, config, query, build_nyaa_rss_url, "Nyaa")
+                    .await
+            }
+            SourceKind::SiteAdapter if is_acgrip_config(config) => {
+                self.fetch_rss_pages(store, config, query, build_acgrip_rss_url, "ACG.RIP")
+                    .await
+            }
+            SourceKind::SiteAdapter | SourceKind::Manual => Ok(Vec::new()),
+        }
+    }
+
+    async fn fetch_generic_rss<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let Some(url) = config.rss_url.as_deref() else {
+            return Ok(Vec::new());
+        };
+        let response = self
+            .get(
+                store,
+                config,
+                url,
+                &[(("Accept"), "application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8")],
+            )
+            .await?;
+        if response.status == 304 {
+            return Ok(Vec::new());
+        }
+        let keyword = normalize_release_search_text(&query.keyword);
+        Ok(parse_rss_releases(&response.text(), config, Some(url))?
+            .into_iter()
+            .filter(|release| {
+                keyword.is_empty()
+                    || normalize_release_search_text(&release.title).contains(&keyword)
+            })
+            .take(normalize_fetch_limit(query.limit))
+            .collect())
+    }
+
+    async fn fetch_torznab<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let Some(base_url) = config.base_url.as_deref() else {
+            return Ok(Vec::new());
+        };
+        let target = normalize_result_limit(query.limit);
+        let mut releases = Vec::new();
+        let mut offset = 0;
+        while releases.len() < target {
+            let page_limit = MAX_RELEASE_SOURCE_FETCH_LIMIT.min(target - releases.len());
+            let mut url = Url::parse(base_url)
+                .and_then(|base| base.join("/api"))
+                .map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+            url.query_pairs_mut()
+                .append_pair("t", "search")
+                .append_pair("q", &query.keyword)
+                .append_pair("limit", &page_limit.to_string())
+                .append_pair("offset", &offset.to_string());
+            if let Some(api_key) = config.api_key.as_deref() {
+                url.query_pairs_mut().append_pair("apikey", api_key);
+            }
+            let response = self.get(store, config, url.as_str(), &[]).await?;
+            let page = parse_torznab_releases(&response.text(), config)?;
+            let count = page.releases.len();
+            releases.extend(page.releases);
+            let reported_offset = page.offset.unwrap_or(offset);
+            offset = reported_offset + count;
+            if count == 0 || page.total.is_some_and(|total| offset >= total) || count < page_limit {
+                break;
+            }
+        }
+        releases.truncate(target);
+        Ok(releases)
+    }
+
+    async fn fetch_dmhy<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let base_url = config
+            .base_url
+            .as_deref()
+            .unwrap_or("https://share.dmhy.org/");
+        self.fetch_html_pages(
+            store,
+            config,
+            query,
+            |page| build_dmhy_list_url(base_url, &query.keyword, page),
+            parse_dmhy_list,
+        )
+        .await
+    }
+
+    async fn fetch_mikan<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        if query.keyword.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let base_url = config.base_url.as_deref().unwrap_or("https://mikanani.me/");
+        self.fetch_html_pages(
+            store,
+            config,
+            query,
+            |page| build_mikan_search_url(base_url, &query.keyword, page),
+            parse_mikan_release_list,
+        )
+        .await
+    }
+
+    async fn fetch_anibt<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let target = normalize_fetch_limit(query.limit);
+        let mut releases = Vec::new();
+        if !query.keyword.trim().is_empty() {
+            match self
+                .search_anibt_bgm_ids(store, config, &query.keyword)
+                .await
+            {
+                Ok(ids) => {
+                    for bgm_id in ids.into_iter().take(MAX_ANIBT_BGM_FEEDS_PER_SEARCH) {
+                        let url = build_anibt_anime_rss_url(config, &bgm_id, target)?;
+                        let response = self
+                            .get_with_headers(
+                                store,
+                                config,
+                                &url,
+                                create_anibt_headers(
+                                    config,
+                                    "application/rss+xml,application/xml,text/xml",
+                                ),
+                            )
+                            .await?;
+                        releases.extend(parse_anibt_rss(&response.text(), config)?);
+                    }
+                }
+                Err(error) => log::warn!(
+                    "AniBT 番剧匹配失败，回退最新 RSS source_id={} error={}",
+                    config.id,
+                    error
+                ),
+            }
+        }
+        if query.keyword.trim().is_empty() || releases.len() < target {
+            let mut url = Url::parse(config.base_url.as_deref().unwrap_or("https://anibt.net/"))
+                .and_then(|base| base.join("/rss/magnets.xml"))
+                .map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+            url.query_pairs_mut()
+                .append_pair("limit", &target.to_string());
+            let response = self
+                .get_with_headers(
+                    store,
+                    config,
+                    url.as_str(),
+                    create_anibt_headers(config, "application/rss+xml,application/xml,text/xml"),
+                )
+                .await?;
+            let latest = parse_anibt_rss(&response.text(), config)?;
+            releases.extend(latest.into_iter().filter(|release| {
+                query.keyword.trim().is_empty() || matches_keyword(release, &query.keyword)
+            }));
+        }
+        let mut releases = dedupe_releases(releases);
+        releases.truncate(target);
+        Ok(releases)
+    }
+
+    async fn search_anibt_bgm_ids<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        keyword: &str,
+    ) -> Result<Vec<String>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let mut url = Url::parse(config.base_url.as_deref().unwrap_or("https://anibt.net/"))
+            .and_then(|base| base.join("/api/bgm/search"))
+            .map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+        url.query_pairs_mut().append_pair("q", keyword);
+        let response = self
+            .get_with_headers(
+                store,
+                config,
+                url.as_str(),
+                create_anibt_headers(config, "application/json"),
+            )
+            .await?;
+        let payload: Value = serde_json::from_slice(&response.body)
+            .map_err(|error| SourceError::Parse(error.to_string()))?;
+        if payload.get("ok") == Some(&Value::Bool(false)) {
+            return Err(SourceError::Parse("AniBT BGM 查询返回错误".to_owned()));
+        }
+        Ok(payload
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|item| item.get("bgmId"))
+            .filter_map(value_to_string)
+            .collect())
+    }
+
+    async fn fetch_acgnx<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let target = normalize_result_limit(query.limit);
+        let mut releases = Vec::new();
+        let max_pages = target.div_ceil(MAX_RELEASE_SOURCE_FETCH_LIMIT);
+        for page in 1..=max_pages {
+            let mut page_releases = Vec::new();
+            let candidates = build_acgnx_search_urls(
+                config
+                    .base_url
+                    .as_deref()
+                    .unwrap_or("https://share.acgnx.se/"),
+                &query.keyword,
+                page,
+                MAX_RELEASE_SOURCE_FETCH_LIMIT,
+            )?;
+            let mut last_error = None;
+            for url in candidates {
+                match self
+                    .get(
+                        store,
+                        config,
+                        &url,
+                        &[("Accept", "application/json,text/html,application/xhtml+xml")],
+                    )
+                    .await
+                {
+                    Ok(response) => {
+                        let text = response.text();
+                        let trimmed = text.trim();
+                        page_releases = if trimmed.starts_with('{') || trimmed.starts_with('[') {
+                            let payload = serde_json::from_str(trimmed)
+                                .map_err(|error| SourceError::Parse(error.to_string()))?;
+                            parse_acgnx_api_response(&payload, config)
+                        } else {
+                            parse_acgnx_html(&text, config)
+                        };
+                        if !page_releases.is_empty() {
+                            break;
+                        }
+                    }
+                    Err(SourceError::HttpStatus { status: 404 | 405 }) => continue,
+                    Err(error) => last_error = Some(error),
+                }
+            }
+            if page_releases.is_empty() {
+                if releases.is_empty() {
+                    if let Some(error) = last_error {
+                        return Err(error);
+                    }
+                }
+                break;
+            }
+            let count = page_releases.len();
+            releases.extend(page_releases);
+            if releases.len() >= target || count < MAX_RELEASE_SOURCE_FETCH_LIMIT {
+                break;
+            }
+        }
+        let mut releases = dedupe_releases(releases);
+        releases.truncate(target);
+        Ok(releases)
+    }
+
+    async fn fetch_rss_pages<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+        build_url: fn(&str, &str, usize) -> Result<String, SourceError>,
+        source_name: &str,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let Some(base_url) = config.base_url.as_deref() else {
+            return Ok(Vec::new());
+        };
+        let target = normalize_result_limit(query.limit);
+        let max_pages = target.div_ceil(MAX_RELEASE_SOURCE_FETCH_LIMIT);
+        let mut releases = Vec::new();
+        for page in 1..=max_pages {
+            let url = build_url(base_url, &query.keyword, page)?;
+            let response = self
+                .get(
+                    store,
+                    config,
+                    &url,
+                    &[("Accept", "application/rss+xml,application/xml,text/xml")],
+                )
+                .await?;
+            let page_releases = parse_rss_releases(&response.text(), config, Some(&url))?;
+            let count = page_releases.len();
+            releases.extend(page_releases);
+            if releases.len() >= target || count < MAX_RELEASE_SOURCE_FETCH_LIMIT {
+                break;
+            }
+        }
+        releases.truncate(target);
+        log::info!("Rust {source_name} 搜索完成 count={}", releases.len());
+        Ok(releases)
+    }
+
+    async fn fetch_html_pages<S, B, P>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+        build_url: B,
+        parse: P,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+        B: Fn(usize) -> Result<String, SourceError>,
+        P: Fn(&str, &ReleaseSourceConfig) -> Vec<Release>,
+    {
+        let target = normalize_result_limit(query.limit);
+        let max_pages = target.div_ceil(MAX_RELEASE_SOURCE_FETCH_LIMIT);
+        let mut releases = Vec::new();
+        for page in 1..=max_pages {
+            let url = build_url(page)?;
+            let response = self
+                .get(
+                    store,
+                    config,
+                    &url,
+                    &[("Accept", "text/html,application/xhtml+xml")],
+                )
+                .await?;
+            let page_releases = parse(&response.text(), config);
+            let count = page_releases.len();
+            releases.extend(page_releases);
+            if releases.len() >= target || count < MAX_RELEASE_SOURCE_FETCH_LIMIT {
+                break;
+            }
+        }
+        releases.truncate(target);
+        Ok(releases)
+    }
+
+    async fn get<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        url: &str,
+        headers: &[(&str, &str)],
+    ) -> Result<crate::NativeHttpResponse, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let mut values = BTreeMap::from([
+            (
+                "Accept-Language".to_owned(),
+                DESKTOP_BROWSER_ACCEPT_LANGUAGE.to_owned(),
+            ),
+            (
+                "User-Agent".to_owned(),
+                DESKTOP_BROWSER_USER_AGENT.to_owned(),
+            ),
+        ]);
+        values.extend(
+            headers
+                .iter()
+                .map(|(name, value)| ((*name).to_owned(), (*value).to_owned())),
+        );
+        self.get_with_headers(store, config, url, values).await
+    }
+
+    async fn get_with_headers<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        url: &str,
+        headers: BTreeMap<String, String>,
+    ) -> Result<crate::NativeHttpResponse, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        self.network
+            .execute(
+                store,
+                config,
+                NativeHttpRequest {
+                    source_id: config.id.clone(),
+                    method: HttpMethod::Get,
+                    url: url.to_owned(),
+                    headers,
+                    body: None,
+                    request_interval_ms: config.request_interval_ms.max(0) as u64,
+                },
+            )
+            .await
+    }
+}
+
+#[derive(Debug)]
+struct SourceFetchResult {
+    source: ReleaseSourceConfig,
+    releases: Vec<Release>,
+}
+
+/// 生成动漫花园关键词分页 URL。
+pub fn build_dmhy_list_url(
+    base_url: &str,
+    keyword: &str,
+    page: usize,
+) -> Result<String, SourceError> {
+    let path = if page > 1 {
+        format!("/topics/list/page/{page}")
+    } else {
+        "/topics/list".to_owned()
+    };
+    let mut url = Url::parse(base_url)
+        .and_then(|base| base.join(&path))
+        .map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+    if !keyword.trim().is_empty() {
+        url.query_pairs_mut().append_pair("keyword", keyword.trim());
+    }
+    Ok(url.to_string())
+}
+
+/// 生成 Mikan 关键词分页 URL。
+pub fn build_mikan_search_url(
+    base_url: &str,
+    keyword: &str,
+    page: usize,
+) -> Result<String, SourceError> {
+    let mut url = Url::parse(base_url)
+        .and_then(|base| base.join("/Home/Search"))
+        .map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+    url.query_pairs_mut().append_pair("searchstr", keyword);
+    if page > 1 {
+        url.query_pairs_mut().append_pair("page", &page.to_string());
+    }
+    Ok(url.to_string())
+}
+
+/// 生成 Nyaa Anime RSS 查询 URL。
+pub fn build_nyaa_rss_url(
+    base_url: &str,
+    keyword: &str,
+    page: usize,
+) -> Result<String, SourceError> {
+    let mut url = Url::parse(base_url)
+        .and_then(|base| base.join("/"))
+        .map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+    url.query_pairs_mut().append_pair("page", "rss");
+    if !keyword.trim().is_empty() {
+        url.query_pairs_mut().append_pair("q", keyword.trim());
+    }
+    url.query_pairs_mut()
+        .append_pair("c", "1_0")
+        .append_pair("f", "0");
+    if page > 1 {
+        url.query_pairs_mut().append_pair("p", &page.to_string());
+    }
+    Ok(url.to_string())
+}
+
+/// 生成 ACG.RIP RSS 查询 URL。
+pub fn build_acgrip_rss_url(
+    base_url: &str,
+    keyword: &str,
+    page: usize,
+) -> Result<String, SourceError> {
+    let mut url = Url::parse(base_url)
+        .and_then(|base| base.join("/.xml"))
+        .map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+    if !keyword.trim().is_empty() {
+        url.query_pairs_mut().append_pair("term", keyword.trim());
+    }
+    if page > 1 {
+        url.query_pairs_mut().append_pair("page", &page.to_string());
+    }
+    Ok(url.to_string())
+}
+
+/// 生成 AniBT 精确番剧 RSS URL。
+pub fn build_anibt_anime_rss_url(
+    config: &ReleaseSourceConfig,
+    source_anime_id: &str,
+    limit: usize,
+) -> Result<String, SourceError> {
+    let mut url = Url::parse(config.base_url.as_deref().unwrap_or("https://anibt.net/"))
+        .and_then(|base| base.join("/rss/anime.xml"))
+        .map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+    url.query_pairs_mut()
+        .append_pair("bgmId", source_anime_id)
+        .append_pair("limit", &normalize_fetch_limit(Some(limit)).to_string());
+    Ok(url.to_string())
+}
+
+/// 根据 AniBT 凭据格式生成 Cookie、Authorization 或 X-API-Key 请求头。
+pub fn create_anibt_headers(
+    config: &ReleaseSourceConfig,
+    accept: &str,
+) -> BTreeMap<String, String> {
+    let mut headers = BTreeMap::from([
+        ("Accept".to_owned(), accept.to_owned()),
+        (
+            "Accept-Language".to_owned(),
+            DESKTOP_BROWSER_ACCEPT_LANGUAGE.to_owned(),
+        ),
+        (
+            "User-Agent".to_owned(),
+            DESKTOP_BROWSER_USER_AGENT.to_owned(),
+        ),
+    ]);
+    let Some(credential) = config
+        .api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return headers;
+    };
+    let lower = credential.to_lowercase();
+    if lower.starts_with("cookie:") {
+        headers.insert("Cookie".to_owned(), credential[7..].trim().to_owned());
+    } else if lower.starts_with("authorization:") {
+        headers.insert(
+            "Authorization".to_owned(),
+            credential[14..].trim().to_owned(),
+        );
+    } else if lower.starts_with("x-api-key:") {
+        headers.insert("X-API-Key".to_owned(), credential[10..].trim().to_owned());
+    } else if looks_like_cookie(credential) {
+        headers.insert("Cookie".to_owned(), credential.to_owned());
+    } else {
+        let token = credential
+            .strip_prefix("Bearer ")
+            .or_else(|| credential.strip_prefix("bearer "))
+            .unwrap_or(credential);
+        headers.insert(
+            "Authorization".to_owned(),
+            if lower.starts_with("bearer ") {
+                credential.to_owned()
+            } else {
+                format!("Bearer {credential}")
+            },
+        );
+        headers.insert("X-API-Key".to_owned(), token.to_owned());
+    }
+    headers
+}
+
+fn enabled_supported_sources(configs: &[ReleaseSourceConfig]) -> Vec<ReleaseSourceConfig> {
+    configs
+        .iter()
+        .filter(|config| config.enabled && is_supported_source(config))
+        .cloned()
+        .collect()
+}
+
+fn is_supported_source(config: &ReleaseSourceConfig) -> bool {
+    matches!(config.kind, SourceKind::Rss | SourceKind::Torznab)
+        || (config.kind == SourceKind::SiteAdapter
+            && (is_dmhy_config(config)
+                || is_mikan_config(config)
+                || is_anibt_config(config)
+                || is_acgnx_config(config)
+                || is_nyaa_config(config)
+                || is_acgrip_config(config)))
+}
+
+fn config_identity(config: &ReleaseSourceConfig) -> String {
+    format!(
+        "{} {} {}",
+        config.id,
+        config.name,
+        config.base_url.as_deref().unwrap_or_default()
+    )
+    .to_lowercase()
+}
+
+fn is_dmhy_config(config: &ReleaseSourceConfig) -> bool {
+    let value = config_identity(config);
+    value.contains("dmhy") || value.contains("动漫花园") || value.contains("share.dmhy.org")
+}
+
+fn is_mikan_config(config: &ReleaseSourceConfig) -> bool {
+    let value = config_identity(config);
+    value.contains("mikan") || value.contains("蜜柑") || value.contains("mikanani.me")
+}
+
+fn is_mikan_site_config(config: &ReleaseSourceConfig) -> bool {
+    config.kind == SourceKind::SiteAdapter && is_mikan_config(config)
+}
+
+fn is_anibt_config(config: &ReleaseSourceConfig) -> bool {
+    let value = config_identity(config);
+    value.contains("anibt") || value.contains("anibt.net")
+}
+
+fn is_acgnx_config(config: &ReleaseSourceConfig) -> bool {
+    let value = config_identity(config);
+    value.contains("acgnx") || value.contains("share.acgnx")
+}
+
+fn is_nyaa_config(config: &ReleaseSourceConfig) -> bool {
+    let value = config_identity(config);
+    value.contains("nyaa") || value.contains("nyaa.si")
+}
+
+fn is_acgrip_config(config: &ReleaseSourceConfig) -> bool {
+    let value = config_identity(config);
+    value.contains("acg-rip") || value.contains("acgrip") || value.contains("acg.rip")
+}
+
+fn build_acgnx_search_urls(
+    base_url: &str,
+    keyword: &str,
+    page: usize,
+    limit: usize,
+) -> Result<Vec<String>, SourceError> {
+    let base = Url::parse(base_url).map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+    let paths = if base.path() == "/" || base.path().is_empty() {
+        vec!["/api.php", "/api/search", "/search.php"]
+    } else {
+        vec![base.path()]
+    };
+    paths
+        .into_iter()
+        .map(|path| {
+            let mut url = if path == base.path() && path != "/" {
+                base.clone()
+            } else {
+                base.join(path)
+                    .map_err(|error| SourceError::InvalidUrl(error.to_string()))?
+            };
+            if !url.query_pairs().any(|(key, _)| key == "keyword") {
+                url.query_pairs_mut().append_pair("keyword", keyword);
+            }
+            if url.path().contains("api") && !url.query_pairs().any(|(key, _)| key == "q") {
+                url.query_pairs_mut().append_pair("q", keyword);
+            }
+            url.query_pairs_mut()
+                .append_pair("page", &page.to_string())
+                .append_pair("limit", &limit.to_string());
+            Ok(url.to_string())
+        })
+        .collect()
+}
+
+fn build_search_cache_key(
+    query: &ReleaseQuery,
+    configs: &[ReleaseSourceConfig],
+    fansubs: &[FansubGroup],
+    extra: Option<Value>,
+) -> Option<String> {
+    let ttl = normalize_cache_ttl(query.cache_ttl_ms);
+    if ttl == 0 {
+        return None;
+    }
+    let sources = configs
+        .iter()
+        .filter(|config| config.enabled)
+        .map(|config| {
+            json!({
+                "id": config.id,
+                "name": config.name,
+                "kind": config.kind,
+                "useProxy": config.use_proxy,
+                "requestIntervalMs": config.request_interval_ms,
+                "baseUrl": config.base_url,
+                "rssUrl": config.rss_url,
+                "tags": config.tags,
+                "apiKeyHash": config.api_key.as_deref().map(hash_value),
+            })
+        })
+        .collect::<Vec<_>>();
+    let input = json!({
+        "version": RELEASE_SEARCH_CACHE_VERSION,
+        "query": {
+            "keyword": query.keyword,
+            "animeId": query.anime_id,
+            "episodeNo": query.episode_no,
+            "fansubGroupId": query.fansub_group_id,
+            "preferredResolution": query.preferred_resolution,
+            "limit": query.limit,
+            "cacheTtlMs": ttl,
+        },
+        "sources": sources,
+        "fansubs": fansubs,
+        "extra": extra,
+    });
+    serde_json::to_vec(&input)
+        .ok()
+        .map(|value| hash_bytes(&value))
+}
+
+fn load_cached_result<S>(
+    store: &S,
+    cache_key: Option<&str>,
+    query: &ReleaseQuery,
+) -> Result<Option<ReleaseSearchResult>, SourceError>
+where
+    S: ReleaseSearchStore,
+{
+    let Some(cache_key) = cache_key else {
+        return Ok(None);
+    };
+    let now = Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true);
+    let Some(entry) = store.get_search_cache(cache_key, &now)? else {
+        return Ok(None);
+    };
+    match serde_json::from_value::<ReleaseSearchResult>(entry.result) {
+        Ok(mut result) => {
+            result.query = query.clone();
+            Ok(Some(result))
+        }
+        Err(error) => {
+            log::warn!(
+                "Rust 资源搜索缓存解码失败 cache_key={} error={}",
+                cache_key,
+                error
+            );
+            Ok(None)
+        }
+    }
+}
+
+fn save_cached_result<S>(
+    store: &S,
+    cache_key: Option<&str>,
+    requested_ttl_ms: Option<u64>,
+    result: &ReleaseSearchResult,
+) where
+    S: ReleaseSearchStore,
+{
+    let ttl = normalize_cache_ttl(requested_ttl_ms);
+    let Some(cache_key) = cache_key.filter(|_| ttl > 0) else {
+        return;
+    };
+    let Ok(payload) = serde_json::to_value(result) else {
+        log::error!("Rust 资源搜索缓存序列化失败 cache_key={cache_key}");
+        return;
+    };
+    let expires_at = Utc::now() + Duration::milliseconds(i64::try_from(ttl).unwrap_or(i64::MAX));
+    let entry = ReleaseSearchCacheEntry {
+        result: payload,
+        expires_at: expires_at.to_rfc3339_opts(SecondsFormat::Millis, true),
+    };
+    if let Err(error) = store.save_search_cache(cache_key, &entry) {
+        log::warn!(
+            "Rust 资源搜索缓存保存失败 cache_key={} error={}",
+            cache_key,
+            error
+        );
+    }
+}
+
+fn normalize_fetch_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(MAX_RELEASE_SOURCE_FETCH_LIMIT)
+        .clamp(1, MAX_RELEASE_SOURCE_FETCH_LIMIT)
+}
+
+fn normalize_result_limit(limit: Option<usize>) -> usize {
+    limit
+        .unwrap_or(MAX_RELEASE_SOURCE_FETCH_LIMIT)
+        .clamp(1, MAX_RELEASE_SOURCE_RESULT_LIMIT)
+}
+
+fn normalize_cache_ttl(value: Option<u64>) -> u64 {
+    value.unwrap_or(0).min(COMPLETED_ANIME_RELEASE_CACHE_TTL_MS)
+}
+
+fn matches_keyword(release: &Release, keyword: &str) -> bool {
+    let keyword = normalize_release_search_text(keyword);
+    keyword.is_empty() || normalize_release_search_text(&release.title).contains(&keyword)
+}
+
+fn dedupe_releases(releases: Vec<Release>) -> Vec<Release> {
+    let mut seen = HashSet::new();
+    releases
+        .into_iter()
+        .filter(|release| {
+            let key = release
+                .info_hash
+                .as_ref()
+                .or(release.magnet_url.as_ref())
+                .or(release.torrent_url.as_ref())
+                .unwrap_or(&release.title);
+            seen.insert(key.clone())
+        })
+        .collect()
+}
+
+fn sort_releases(mut releases: Vec<Release>) -> Vec<Release> {
+    releases.sort_by(|left, right| right.published_at.cmp(&left.published_at));
+    releases
+}
+
+fn format_source_error(error: &SourceError) -> String {
+    match error {
+        SourceError::Transport(error) if error.is_timeout() => {
+            "下载源请求超时，请稍后重试".to_owned()
+        }
+        SourceError::Transport(_) => "下载源网络请求失败，请检查网络、代理或下载源地址".to_owned(),
+        _ => error.to_string(),
+    }
+}
+
+fn is_exact_mikan_rss_url(value: &str) -> bool {
+    Url::parse(value).ok().is_some_and(|url| {
+        url.host_str()
+            .is_some_and(|host| host == "mikanani.me" || host.ends_with(".mikanani.me"))
+            && url.path().to_lowercase().contains("/rss/bangumi")
+            && url
+                .query_pairs()
+                .any(|(key, value)| key.eq_ignore_ascii_case("bangumiId") && !value.is_empty())
+    })
+}
+
+fn subtitle_sort_rank(release: &Release, preferred: &[SubtitleLanguage]) -> u8 {
+    if preferred.is_empty() {
+        return 0;
+    }
+    let actual = if release.subtitle_languages.is_empty() {
+        match release.subtitle {
+            Some(SubtitlePreference::Chs) => vec![SubtitleLanguage::Chs],
+            Some(SubtitlePreference::Cht) => vec![SubtitleLanguage::Cht],
+            Some(SubtitlePreference::Jpn) => vec![SubtitleLanguage::Jpn],
+            Some(SubtitlePreference::Eng) => vec![SubtitleLanguage::Eng],
+            Some(SubtitlePreference::Multi) | None => Vec::new(),
+        }
+    } else {
+        release.subtitle_languages.clone()
+    };
+    let matched = preferred
+        .iter()
+        .filter(|language| actual.contains(language))
+        .count();
+    if matched == preferred.len() {
+        0
+    } else if matched > 0 {
+        1
+    } else if release.subtitle == Some(SubtitlePreference::Multi) {
+        2
+    } else {
+        3
+    }
+}
+
+fn parse_subtitle_language(value: &str) -> Option<SubtitleLanguage> {
+    match value {
+        "chs" => Some(SubtitleLanguage::Chs),
+        "cht" => Some(SubtitleLanguage::Cht),
+        "jpn" => Some(SubtitleLanguage::Jpn),
+        "eng" => Some(SubtitleLanguage::Eng),
+        _ => None,
+    }
+}
+
+fn looks_like_cookie(value: &str) -> bool {
+    value.split(';').all(|part| {
+        part.trim()
+            .split_once('=')
+            .is_some_and(|(name, content)| !name.trim().is_empty() && !content.is_empty())
+    })
+}
+
+fn value_to_string(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        _ => None,
+    }
+}
+
+fn hash_value(value: &str) -> String {
+    hash_bytes(value.as_bytes())
+}
+
+fn hash_bytes(value: &[u8]) -> String {
+    let digest = Sha256::digest(value);
+    format!("{digest:x}")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+    use std::sync::{Arc, Mutex};
+
+    use ani_domain::{ReleaseQuery, ReleaseSourceConfig, RequestCircuitState, SourceKind};
+    use ani_repository::{ReleaseSearchCacheEntry, RepositoryResult};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::TcpListener;
+
+    use super::{
+        build_acgrip_rss_url, build_anibt_anime_rss_url, build_dmhy_list_url,
+        build_mikan_search_url, build_nyaa_rss_url, create_anibt_headers, ReleaseSearchService,
+        ReleaseSearchStore,
+    };
+    use crate::{CircuitStateStore, NativeHttpConfig, ProxyMode, SourceNetworkService};
+
+    #[derive(Default)]
+    struct MemoryReleaseSearchStore {
+        circuits: Mutex<BTreeMap<String, RequestCircuitState>>,
+        cache: Mutex<BTreeMap<String, ReleaseSearchCacheEntry>>,
+    }
+
+    impl CircuitStateStore for MemoryReleaseSearchStore {
+        /// 读取测试内存中的指定熔断状态。
+        fn get_circuit_state(&self, key: &str) -> RepositoryResult<Option<RequestCircuitState>> {
+            Ok(self
+                .circuits
+                .lock()
+                .expect("lock circuit states")
+                .get(key)
+                .cloned())
+        }
+
+        /// 保存测试内存中的指定熔断状态。
+        fn save_circuit_state(&self, state: &RequestCircuitState) -> RepositoryResult<()> {
+            self.circuits
+                .lock()
+                .expect("lock circuit states")
+                .insert(state.key.clone(), state.clone());
+            Ok(())
+        }
+    }
+
+    impl ReleaseSearchStore for MemoryReleaseSearchStore {
+        /// 读取仍在有效期内的测试搜索缓存。
+        fn get_search_cache(
+            &self,
+            cache_key: &str,
+            current_time: &str,
+        ) -> RepositoryResult<Option<ReleaseSearchCacheEntry>> {
+            Ok(self
+                .cache
+                .lock()
+                .expect("lock search cache")
+                .get(cache_key)
+                .filter(|entry| entry.expires_at.as_str() > current_time)
+                .cloned())
+        }
+
+        /// 保存测试搜索缓存，模拟跨服务实例持久化。
+        fn save_search_cache(
+            &self,
+            cache_key: &str,
+            entry: &ReleaseSearchCacheEntry,
+        ) -> RepositoryResult<()> {
+            self.cache
+                .lock()
+                .expect("lock search cache")
+                .insert(cache_key.to_owned(), entry.clone());
+            Ok(())
+        }
+    }
+
+    /// 验证各站点查询地址使用对应关键词和分页协议。
+    #[test]
+    fn builds_site_search_urls() {
+        assert_eq!(
+            build_mikan_search_url("https://mikanani.me/", "测试番", 1).expect("Mikan URL"),
+            "https://mikanani.me/Home/Search?searchstr=%E6%B5%8B%E8%AF%95%E7%95%AA"
+        );
+        assert_eq!(
+            build_dmhy_list_url("https://share.dmhy.org/", "测试番", 2).expect("DMHY URL"),
+            "https://share.dmhy.org/topics/list/page/2?keyword=%E6%B5%8B%E8%AF%95%E7%95%AA"
+        );
+        assert_eq!(
+            build_nyaa_rss_url("https://nyaa.si/", "测试番", 1).expect("Nyaa URL"),
+            "https://nyaa.si/?page=rss&q=%E6%B5%8B%E8%AF%95%E7%95%AA&c=1_0&f=0"
+        );
+        assert_eq!(
+            build_acgrip_rss_url("https://acg.rip/", "测试番", 1).expect("ACG.RIP URL"),
+            "https://acg.rip/.xml?term=%E6%B5%8B%E8%AF%95%E7%95%AA"
+        );
+    }
+
+    /// 验证 AniBT 精确 RSS 上限和凭据请求头。
+    #[test]
+    fn builds_anibt_urls_and_headers() {
+        let mut config = source("anibt", "AniBT", "https://anibt.net/");
+        config.api_key = Some("test-token".to_owned());
+        assert_eq!(
+            build_anibt_anime_rss_url(&config, "528828", 200).expect("AniBT URL"),
+            "https://anibt.net/rss/anime.xml?bgmId=528828&limit=50"
+        );
+        let headers = create_anibt_headers(&config, "application/json");
+        assert_eq!(
+            headers.get("Authorization").map(String::as_str),
+            Some("Bearer test-token")
+        );
+        assert_eq!(
+            headers.get("X-API-Key").map(String::as_str),
+            Some("test-token")
+        );
+        config.api_key = Some("Cookie: anibt.sid=session".to_owned());
+        let headers = create_anibt_headers(&config, "application/json");
+        assert_eq!(
+            headers.get("Cookie").map(String::as_str),
+            Some("anibt.sid=session")
+        );
+    }
+
+    /// 验证单个来源失败不会清空成功结果，缓存可被新服务实例复用。
+    #[tokio::test]
+    async fn preserves_partial_results_and_reuses_persisted_cache() {
+        let successful_url = serve_once(
+            "200 OK",
+            r#"<rss><channel><item><title>[测试组] 测试番 - 03 [1080p][CHS]</title><guid>release-3</guid><link>magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567</link></item></channel></rss>"#,
+        )
+        .await;
+        let failing_url = serve_once("503 Service Unavailable", "busy").await;
+        let configs = vec![
+            rss_source("working", "可用来源", successful_url),
+            rss_source("broken", "失败来源", failing_url),
+        ];
+        let store = MemoryReleaseSearchStore::default();
+        let query = ReleaseQuery {
+            keyword: "测试番".to_owned(),
+            anime_id: Some("anime-test".to_owned()),
+            episode_no: Some(3.0),
+            fansub_group_id: None,
+            preferred_resolution: Some("1080p".to_owned()),
+            limit: Some(10),
+            cache_ttl_ms: Some(60_000),
+            force_refresh: false,
+        };
+
+        let result = ReleaseSearchService::new(test_network())
+            .search(&store, &configs, &[], query.clone())
+            .await
+            .expect("aggregate release search");
+
+        assert_eq!(result.releases.len(), 1);
+        assert_eq!(result.releases[0].source_id, "working");
+        assert_eq!(result.source_results.len(), 2);
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(result.errors[0].source_id, "broken");
+        assert_eq!(store.cache.lock().expect("lock saved cache").len(), 1);
+
+        let cached = ReleaseSearchService::new(test_network())
+            .search(&store, &configs, &[], query)
+            .await
+            .expect("load persisted release cache");
+        assert_eq!(cached, result);
+    }
+
+    fn source(id: &str, name: &str, base_url: &str) -> ReleaseSourceConfig {
+        ReleaseSourceConfig {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: SourceKind::SiteAdapter,
+            enabled: true,
+            use_proxy: false,
+            request_interval_ms: 250,
+            base_url: Some(base_url.to_owned()),
+            api_key: None,
+            rss_url: None,
+            tags: Vec::new(),
+        }
+    }
+
+    /// 创建指向本地测试服务的 RSS 来源。
+    fn rss_source(id: &str, name: &str, rss_url: String) -> ReleaseSourceConfig {
+        ReleaseSourceConfig {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            kind: SourceKind::Rss,
+            enabled: true,
+            use_proxy: false,
+            request_interval_ms: 250,
+            base_url: None,
+            api_key: None,
+            rss_url: Some(rss_url),
+            tags: Vec::new(),
+        }
+    }
+
+    /// 创建关闭代理的本地测试网络服务。
+    fn test_network() -> Arc<SourceNetworkService> {
+        Arc::new(
+            SourceNetworkService::new(NativeHttpConfig {
+                proxy_mode: ProxyMode::Off,
+                ..NativeHttpConfig::default()
+            })
+            .expect("create local source network"),
+        )
+    }
+
+    /// 启动只处理一次请求的本地 HTTP 服务。
+    async fn serve_once(status: &str, body: &str) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind local HTTP listener");
+        let address = listener.local_addr().expect("read local HTTP address");
+        let status = status.to_owned();
+        let body = body.as_bytes().to_vec();
+        tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept local HTTP request");
+            let mut request = [0_u8; 2_048];
+            let _ = stream
+                .read(&mut request)
+                .await
+                .expect("read local HTTP request");
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write local HTTP headers");
+            stream
+                .write_all(&body)
+                .await
+                .expect("write local HTTP body");
+        });
+        format!("http://{address}/source")
+    }
+}

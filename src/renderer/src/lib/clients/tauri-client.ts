@@ -2,12 +2,17 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppClient } from "@shared/app-client";
 import type {
+  AnimeReleaseQuery,
   AnimeDetailResult,
   AnimeDiscoverySearchResult,
   AnimeWatchProgress,
   AppWindowState,
   PlaybackCheckpoint,
+  ReleaseQuery,
+  ReleaseSearchResult,
   ReportPlaybackProgressInput,
+  RssSubscriptionReleaseQuery,
+  RssSubscriptionReleaseResult,
   SavePlaybackCheckpointInput,
   SetAnimeWatchProgressInput
 } from "@shared/contracts";
@@ -278,6 +283,29 @@ class TauriClientCore {
   async upsertSource(source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]> {
     return invoke<ReleaseSourceConfig[]>("upsert_source", { source }).catch((error) => {
       throw normalizeTauriError("upsert_source", error);
+    });
+  }
+
+  /** 使用 Rust 来源适配器按任意关键词搜索资源。 */
+  async searchReleases(query: ReleaseQuery): Promise<ReleaseSearchResult> {
+    return invoke<ReleaseSearchResult>("search_releases", { query }).catch((error) => {
+      throw normalizeTauriError("search_releases", error);
+    });
+  }
+
+  /** 使用 Rust 标题匹配与追番规则搜索资源。 */
+  async searchAnimeReleases(query: AnimeReleaseQuery): Promise<ReleaseSearchResult> {
+    return invoke<ReleaseSearchResult>("search_anime_releases", { query }).catch((error) => {
+      throw normalizeTauriError("search_anime_releases", error);
+    });
+  }
+
+  /** 使用 Rust RSS 解析器搜索一条追番订阅。 */
+  async searchRssSubscriptionReleases(
+    query: RssSubscriptionReleaseQuery
+  ): Promise<RssSubscriptionReleaseResult> {
+    return invoke<RssSubscriptionReleaseResult>("search_rss_subscription_releases", { query }).catch((error) => {
+      throw normalizeTauriError("search_rss_subscription_releases", error);
     });
   }
 }

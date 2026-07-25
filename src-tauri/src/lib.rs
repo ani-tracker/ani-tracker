@@ -2,6 +2,7 @@ use log::LevelFilter;
 use tauri::Manager;
 
 mod commands;
+mod sources;
 mod storage;
 
 /// 装配并启动 Tauri 应用宿主。
@@ -16,6 +17,7 @@ pub fn run() {
         .setup(|app| {
             let storage_state = storage::initialize(app.handle())?;
             app.manage(storage_state);
+            app.manage(sources::AppSourceState::new());
             log::info!(
                 "Tauri 宿主初始化完成 platform={} arch={}",
                 std::env::consts::OS,
@@ -49,6 +51,9 @@ pub fn run() {
             commands::data::list_sources,
             commands::data::set_source_enabled,
             commands::data::upsert_source,
+            commands::sources::search_releases,
+            commands::sources::search_anime_releases,
+            commands::sources::search_rss_subscription_releases,
             commands::window::get_window_state,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,

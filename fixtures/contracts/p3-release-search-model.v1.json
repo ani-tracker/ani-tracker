@@ -1,0 +1,101 @@
+{
+  "schemaVersion": 1,
+  "kind": "p3-release-search-model",
+  "payload": {
+    "searchResult": {
+      "query": {
+        "keyword": "契约测试番",
+        "animeId": "anime-release-contract-1",
+        "episodeNo": 3,
+        "preferredResolution": "1080p",
+        "limit": 80,
+        "cacheTtlMs": 86400000,
+        "forceRefresh": false
+      },
+      "releases": [
+        {
+          "id": "rss-contract:release-3",
+          "title": "[契约字幕组] 契约测试番 - 03 [1080p][CHS][HEVC 10bit]",
+          "animeId": "anime-release-contract-1",
+          "episodeNo": 3,
+          "contentKind": "episode",
+          "fansubGroupId": "fansub-contract",
+          "fansubName": "契约字幕组",
+          "sourceId": "rss-contract",
+          "sourceName": "契约 RSS",
+          "magnetUrl": "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
+          "infoHash": "0123456789abcdef0123456789abcdef01234567",
+          "size": 1073741824,
+          "resolution": "1080p",
+          "declaredVideoCodec": "HEVC",
+          "normalizedVideoCodec": "H.265/HEVC",
+          "bitDepth": 10,
+          "subtitleLanguages": ["chs"],
+          "subtitle": "chs",
+          "publishedAt": "2026-07-25T12:00:00.000Z",
+          "seeders": 24,
+          "sourceMeta": {
+            "sourceUrl": "https://example.com/release/3",
+            "rssUrl": "https://example.com/feed.xml"
+          }
+        }
+      ],
+      "sourceResults": [
+        {
+          "sourceId": "rss-contract",
+          "sourceName": "契约 RSS",
+          "releases": [
+            {
+              "id": "rss-contract:release-3",
+              "title": "[契约字幕组] 契约测试番 - 03 [1080p][CHS][HEVC 10bit]",
+              "animeId": "anime-release-contract-1",
+              "episodeNo": 3,
+              "contentKind": "episode",
+              "fansubGroupId": "fansub-contract",
+              "fansubName": "契约字幕组",
+              "sourceId": "rss-contract",
+              "sourceName": "契约 RSS",
+              "magnetUrl": "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
+              "infoHash": "0123456789abcdef0123456789abcdef01234567",
+              "size": 1073741824,
+              "resolution": "1080p",
+              "declaredVideoCodec": "HEVC",
+              "normalizedVideoCodec": "H.265/HEVC",
+              "bitDepth": 10,
+              "subtitleLanguages": ["chs"],
+              "subtitle": "chs",
+              "publishedAt": "2026-07-25T12:00:00.000Z",
+              "seeders": 24,
+              "sourceMeta": {
+                "sourceUrl": "https://example.com/release/3",
+                "rssUrl": "https://example.com/feed.xml"
+              }
+            }
+          ]
+        }
+      ],
+      "searchedSourceIds": ["rss-contract", "broken-contract"],
+      "errors": [
+        {
+          "sourceId": "broken-contract",
+          "message": "下载源响应解析失败"
+        }
+      ]
+    },
+    "rssResult": {
+      "query": {
+        "animeId": "anime-release-contract-1",
+        "subscriptionId": "rss-subscription-contract",
+        "preferredResolution": "1080p",
+        "limit": 50
+      },
+      "releases": [],
+      "errors": [
+        {
+          "sourceId": "rss-subscription-contract",
+          "message": "RSS 订阅不存在或未启用"
+        }
+      ]
+    }
+  }
+}

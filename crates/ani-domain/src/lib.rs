@@ -190,6 +190,285 @@ pub struct RequestCircuitState {
     pub backoff_until: Option<String>,
 }
 
+/// 资源包含的内容形态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ReleaseContentKind {
+    Episode,
+    Range,
+    Batch,
+    Unknown,
+}
+
+/// 资源标题声明的标准视频编码。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum NormalizedVideoCodec {
+    #[serde(rename = "H.264/AVC")]
+    H264Avc,
+    #[serde(rename = "H.265/HEVC")]
+    H265Hevc,
+    #[serde(rename = "AV1")]
+    Av1,
+    #[serde(rename = "VP9")]
+    Vp9,
+    #[serde(rename = "Unknown")]
+    Unknown,
+}
+
+impl NormalizedVideoCodec {
+    /// 返回与 TypeScript 偏好字段一致的稳定文本。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::H264Avc => "H.264/AVC",
+            Self::H265Hevc => "H.265/HEVC",
+            Self::Av1 => "AV1",
+            Self::Vp9 => "VP9",
+            Self::Unknown => "Unknown",
+        }
+    }
+}
+
+/// 资源声明的标准分辨率。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ReleaseResolution {
+    #[serde(rename = "720p")]
+    P720,
+    #[serde(rename = "1080p")]
+    P1080,
+    #[serde(rename = "2160p")]
+    P2160,
+}
+
+impl ReleaseResolution {
+    /// 返回前端契约使用的分辨率文本。
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::P720 => "720p",
+            Self::P1080 => "1080p",
+            Self::P2160 => "2160p",
+        }
+    }
+}
+
+/// 可明确识别的字幕语言。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubtitleLanguage {
+    Chs,
+    Cht,
+    Jpn,
+    Eng,
+}
+
+/// 兼容旧数据的单值字幕描述。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubtitlePreference {
+    Chs,
+    Cht,
+    Jpn,
+    Eng,
+    Multi,
+}
+
+/// 连集或合集资源覆盖的集数范围。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseEpisodeRange {
+    pub start: f64,
+    pub end: f64,
+}
+
+/// 下载源附带的可复用来源元数据。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseSourceMeta {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rss_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mikan_bangumi_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mikan_subgroup_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mikan_subgroup_name: Option<String>,
+}
+
+/// 跨来源归一化后的下载资源。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Release {
+    pub id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anime_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_no: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_range: Option<ReleaseEpisodeRange>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub series_season_no: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content_kind: Option<ReleaseContentKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fansub_group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fansub_name: Option<String>,
+    pub source_id: String,
+    pub source_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub magnet_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub torrent_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub info_hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolution: Option<ReleaseResolution>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub declared_video_codec: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub normalized_video_codec: Option<NormalizedVideoCodec>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bit_depth: Option<i64>,
+    #[serde(default)]
+    pub subtitle_languages: Vec<SubtitleLanguage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subtitle: Option<SubtitlePreference>,
+    pub published_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seeders: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_meta: Option<ReleaseSourceMeta>,
+}
+
+/// 任意关键词资源搜索输入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseQuery {
+    pub keyword: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anime_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_no: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fansub_group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_resolution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_ttl_ms: Option<u64>,
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+/// 按本地番剧上下文搜索资源的输入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeReleaseQuery {
+    pub anime_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_no: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fansub_group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_resolution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_ttl_ms: Option<u64>,
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+/// 单个下载源的资源搜索结果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseSourceSearchResult {
+    pub source_id: String,
+    pub source_name: String,
+    pub releases: Vec<Release>,
+}
+
+/// 单个下载源的可展示搜索错误。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseSearchError {
+    pub source_id: String,
+    pub message: String,
+}
+
+/// 多下载源聚合后的资源搜索结果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseSearchResult {
+    pub query: ReleaseQuery,
+    pub releases: Vec<Release>,
+    pub source_results: Vec<ReleaseSourceSearchResult>,
+    pub searched_source_ids: Vec<String>,
+    pub errors: Vec<ReleaseSearchError>,
+}
+
+/// 单条追番 RSS 订阅资源搜索输入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RssSubscriptionReleaseQuery {
+    pub anime_id: String,
+    pub subscription_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_resolution: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+}
+
+/// 单条追番 RSS 订阅资源搜索结果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RssSubscriptionReleaseResult {
+    pub query: RssSubscriptionReleaseQuery,
+    pub releases: Vec<Release>,
+    pub errors: Vec<ReleaseSearchError>,
+}
+
+/// 资源评分所需的追番与单集上下文。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseMatchContext {
+    pub anime: MyAnime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_no: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_fansub_override_id: Option<String>,
+    #[serde(default)]
+    pub candidate_fansub_group_ids: Vec<String>,
+    #[serde(default)]
+    pub candidate_fansub_names: Vec<String>,
+}
+
+/// 单条资源的匹配、偏好和可用性评分。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseMatchResult {
+    pub release: Release,
+    pub score: i64,
+    pub match_score: i64,
+    pub preference_score: i64,
+    pub availability_score: i64,
+    pub reasons: Vec<String>,
+    pub warnings: Vec<String>,
+}
+
+/// 自动下载对最高分候选的最终判定。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomaticDownloadDecision {
+    pub accepted: bool,
+    pub reason: String,
+}
+
 /// 首页和追番列表需要的完整番剧目录记录。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -703,8 +982,9 @@ mod tests {
     use super::{
         AnimeDetailResult, AnimeDiscoverySearchResult, AnimeStatus, DashboardData, Episode,
         EpisodePreference, MyAnime, NotificationKind, NotificationRecord, PlaybackCheckpoint,
-        ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
-        RequestCircuitState, SavePlaybackCheckpointInput, SecretValue, SetAnimeWatchProgressInput,
+        ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSyncState,
+        ReportPlaybackProgressInput, RequestCircuitState, RssSubscriptionReleaseResult,
+        SavePlaybackCheckpointInput, SecretValue, SetAnimeWatchProgressInput,
     };
 
     #[derive(Debug, Deserialize)]
@@ -748,6 +1028,13 @@ mod tests {
         source: ReleaseSourceConfig,
         sync_state: ReleaseSourceSyncState,
         circuit_state: RequestCircuitState,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct P3ReleaseSearchModelFixture {
+        search_result: ReleaseSearchResult,
+        rss_result: RssSubscriptionReleaseResult,
     }
 
     /// 验证领域枚举沿用前端现有的 JSON 字面量。
@@ -849,6 +1136,27 @@ mod tests {
             decoded.payload.circuit_state.key,
             "release-source:torznab-contract"
         );
+    }
+
+    /// 验证 P3 聚合搜索、单源错误和 RSS 结果契约可跨语言解码。
+    #[test]
+    fn decodes_p3_release_search_model_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-release-search-model.v1.json"
+        ));
+        let decoded: ContractFixture<P3ReleaseSearchModelFixture> =
+            serde_json::from_str(fixture).expect("p3 release search fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p3-release-search-model");
+        assert_eq!(decoded.payload.search_result.releases.len(), 1);
+        assert_eq!(decoded.payload.search_result.errors.len(), 1);
+        assert_eq!(
+            decoded.payload.search_result.releases[0].episode_no,
+            Some(3.0)
+        );
+        assert_eq!(decoded.payload.rss_result.errors.len(), 1);
     }
 
     /// 验证敏感值不会通过 Debug 输出泄漏。

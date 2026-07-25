@@ -9,7 +9,9 @@ import type {
   AnimeDiscoverySearchResult,
   AnimeWatchProgress,
   PlaybackCheckpoint,
+  ReleaseSearchResult,
   ReportPlaybackProgressInput,
+  RssSubscriptionReleaseResult,
   SavePlaybackCheckpointInput,
   SetAnimeWatchProgressInput
 } from "../contracts";
@@ -123,4 +125,19 @@ test("Tauri P3 来源网络契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.source.requestIntervalMs, 1_750);
   assert.equal(fixture.payload.syncState.requestFailureCount, 2);
   assert.equal(fixture.payload.circuitState.key, `release-source:${fixture.payload.source.id}`);
+});
+
+/** 读取 P3 资源搜索金样，验证聚合结果、单源错误和 RSS 字段一致。 */
+test("Tauri P3 资源搜索契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p3-release-search-model.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    searchResult: ReleaseSearchResult;
+    rssResult: RssSubscriptionReleaseResult;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p3-release-search-model");
+  assert.equal(fixture.payload.searchResult.releases[0].episodeNo, 3);
+  assert.equal(fixture.payload.searchResult.errors[0].sourceId, "broken-contract");
+  assert.equal(fixture.payload.rssResult.query.subscriptionId, "rss-subscription-contract");
 });

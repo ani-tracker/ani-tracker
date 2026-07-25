@@ -2,7 +2,7 @@
 
 最近更新：2026-07-25
 
-状态：P0-P2 已完成；P3 追番、目录与来源网络切片已完成；跨平台构建待后续统一验证
+状态：P0-P2 已完成；P3 追番、目录、来源网络与资源搜索切片已完成；跨平台构建待后续统一验证
 
 ## 1. 迁移目标
 
@@ -260,6 +260,8 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - 已新增数据库无关的分域 Repository Ports、稳定错误模型和 UnitOfWork；SQLite Adapter 已通过显式提交/回滚测试，并为未来 MySQL Adapter 保留实现边界。
 - 已迁移来源配置与设置写入 commands，建立 Rust Native HTTP、HTTP/HTTPS 白名单、系统/手动/关闭代理、AniBT 强制直连、主机限流、响应大小限制、跨重启熔断及搜索缓存。
 - 已接通 `TauriClient` 的来源配置、代理设置和字幕组读取，新增来源网络跨语言金样；Rust、Clippy、TypeScript 与 354 项 Node 回归通过，其中 353 项通过、1 项跳过。
+- 已迁移 RSS、Torznab、Mikan、AniBT、DMHY、ACGNX、Nyaa 和 ACG.RIP 解析，完成标题归一化、季度与集数过滤、字幕组识别、资源评分、聚合去重及单源失败隔离。
+- 已接通关键词、番剧上下文和单番 RSS 三组 Tauri 搜索命令与 `TauriClient`，搜索缓存通过服务重建复用测试；Rust 全工作区测试、Clippy、TypeScript 与 355 项 Node 回归通过，其中 354 项通过、1 项跳过。
 
 ### P4：下载、torrent-core 与媒体闭环
 
