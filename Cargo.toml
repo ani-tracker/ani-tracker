@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ani-contracts"]
+members = ["crates/ani-contracts", "src-tauri"]
 resolver = "2"
 
 [workspace.package]
