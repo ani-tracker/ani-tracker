@@ -1,0 +1,108 @@
+name: Tauri 2 Desktop Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master_android
+    paths:
+      - ".github/workflows/tauri-desktop.yml"
+      - ".cargo/**"
+      - "crates/**"
+      - "src-tauri/**"
+      - "src/renderer/**"
+      - "src/shared/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "rust-toolchain.toml"
+      - "vite.tauri.config.ts"
+  pull_request:
+    paths:
+      - ".github/workflows/tauri-desktop.yml"
+      - ".cargo/**"
+      - "crates/**"
+      - "src-tauri/**"
+      - "src/renderer/**"
+      - "src/shared/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "rust-toolchain.toml"
+      - "vite.tauri.config.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  desktop:
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            runner: windows-2022
+          - target: macos-arm64
+            runner: macos-15
+          - target: linux-x64
+            runner: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> out/cargo-target
+
+      - name: Install Linux Tauri dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            curl \
+            file \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libwebkit2gtk-4.1-dev \
+            libxdo-dev \
+            patchelf \
+            wget
+
+      - name: Install JavaScript dependencies
+        run: |
+          corepack enable
+          pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Check TypeScript contracts and Renderer
+        run: pnpm run typecheck
+
+      - name: Check Rust formatting
+        run: cargo fmt --all -- --check
+
+      - name: Test Rust workspace
+        run: cargo test --workspace
+
+      - name: Lint Rust workspace
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build Tauri desktop host
+        run: pnpm run build:tauri

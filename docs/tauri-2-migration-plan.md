@@ -2,7 +2,7 @@
 
 最近更新：2026-07-25
 
-状态：P0 已完成，P1 待实施
+状态：P0 已完成；P1 实现完成，跨平台 CI 待远端验证
 
 ## 1. 迁移目标
 
@@ -195,6 +195,13 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 3. `feat: 添加 Tauri 桌面构建门禁`
 
 门禁：Tauri 首屏可用且无白屏；React 主壳、主题和窗口控制工作；Electron 回归通过。
+
+执行记录：
+
+- 已建立 `src-tauri` 共存宿主、独立 Renderer 构建、日志、跨平台图标及受限命令入口，Electron 仍为默认入口。
+- 已接入 TauriClient、窗口状态事件、无边框窗口控制、HTTP/HTTPS 外链白名单及 Android/iOS 运行时能力矩阵。
+- Windows 已通过 Rust 测试、Clippy、TypeScript 类型检查、Renderer/Android Web 构建、Tauri release 构建和进程启动退出冒烟。
+- 已新增 Windows、macOS、Linux 三平台 GitHub Actions 门禁；macOS/Linux 结果必须以远端首次运行结果为准，当前不标记为已通过。
 
 ### P2：Rust 数据层与首页闭环
 
