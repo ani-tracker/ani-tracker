@@ -6,7 +6,9 @@ import type { PlayerCapabilities, PlayerCommand, PlayerCommandResult, PlayerSnap
 import { acceptPlayerSnapshot } from "../player-contract";
 import type {
   AnimeDetailResult,
+  AnimeDiscoveryResult,
   AnimeDiscoverySearchResult,
+  AnimeDiscoverySeasonResult,
   AnimeSourceBindingState,
   AnimeSourceCandidate,
   AnimeWatchProgress,
@@ -16,6 +18,7 @@ import type {
   DownloadServiceStatus,
   DesktopMediaToolsStatus,
   EmbeddedTorrentCoreStatus,
+  EpisodeReleasePreview,
   ImageCacheResolveResult,
   MediaScanResult,
   PlaybackCheckpoint,
@@ -83,6 +86,22 @@ test("Tauri P6 远程网关契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.gatewayStatus.devices[0]?.lastAccessedAt, null);
   assert.equal(fixture.payload.pairingChallenge.code, "123456");
   assert.equal(fixture.payload.playbackSession.mode, "direct");
+});
+
+/** 读取 P6 桌面功能对等金样，验证采集和单集预览字段。 */
+test("Tauri P6 桌面功能对等契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p6-desktop-parity.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    monthResult: AnimeDiscoveryResult;
+    seasonResult: AnimeDiscoverySeasonResult;
+    episodePreview: EpisodeReleasePreview;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p6-desktop-parity");
+  assert.equal(fixture.payload.monthResult.query.forceRefresh, true);
+  assert.equal(fixture.payload.seasonResult.query.season, "summer");
+  assert.equal(fixture.payload.episodePreview.candidates[0].score, 95);
 });
 
 /** 读取版本化播放器快照金样，验证 TypeScript 与 Rust 共用契约。 */

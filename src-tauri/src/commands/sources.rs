@@ -3,15 +3,16 @@ use std::sync::{Arc, Mutex};
 use ani_contracts::AppCommandError;
 use ani_domain::{
     AnimeReleaseQuery, AnimeSourceBinding, AnimeSourceBindingState, AnimeStatus, AppSettings,
-    ConfirmAnimeSourceBindingInput, Episode, EpisodePreference, FansubGroup, MyAnime, Release,
-    ReleaseMatchContext, ReleaseQuery, ReleaseSearchError, ReleaseSearchResult,
+    ConfirmAnimeSourceBindingInput, Episode, EpisodePreference, EpisodeReleasePreview, FansubGroup,
+    MyAnime, Release, ReleaseMatchContext, ReleaseQuery, ReleaseSearchError, ReleaseSearchResult,
     ReleaseSourceConfig, RemoveAnimeSourceCandidateMismatchInput,
     ReportAnimeSourceCandidateMismatchInput, RssSubscriptionReleaseQuery,
     RssSubscriptionReleaseResult, SetAnimeSourceExclusionInput, SourceKind,
 };
 use ani_repository::{prelude::*, RepositoryError};
 use ani_sources::{
-    sort_releases_by_rules, AnimeSourceBindingService, ReleaseSearchService, SourceError,
+    build_anime_release_search_terms, rank_releases, sort_releases_by_rules,
+    AnimeSourceBindingService, ReleaseSearchService, SourceError,
     COMPLETED_ANIME_RELEASE_CACHE_TTL_MS,
 };
 use ani_storage::Storage;
@@ -283,6 +284,103 @@ pub(crate) async fn search_anime_releases(
     )
     .await?;
     Ok(result)
+}
+
+/// 搜索并评分一集的候选资源，不触发自动下载。
+#[tauri::command]
+pub(crate) async fn preview_episode_releases(
+    anime_id: String,
+    episode_id: String,
+    storage_state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<EpisodeReleasePreview, AppCommandError> {
+    let storage = Arc::clone(storage_state.storage());
+    let snapshot = load_anime_search_snapshot(
+        Arc::clone(&storage),
+        storage_state.platform_defaults().clone(),
+        anime_id.clone(),
+    )
+    .await?;
+    let episode = snapshot
+        .episodes
+        .iter()
+        .find(|episode| episode.id == episode_id)
+        .cloned()
+        .ok_or_else(|| AppCommandError {
+            code: "record_not_found".to_owned(),
+            message: format!("单集不存在：{episode_id}"),
+        })?;
+    let preference = snapshot
+        .preferences
+        .iter()
+        .find(|preference| preference.episode_id == episode_id);
+    let preferred_fansub_group_id = preference
+        .and_then(|preference| preference.fansub_group_id.clone())
+        .or_else(|| snapshot.anime.default_fansub_group_id.clone());
+    let requested_ttl_ms = snapshot
+        .search
+        .settings
+        .pointer("/automation/checkIntervalMinutes")
+        .and_then(serde_json::Value::as_u64)
+        .map(|minutes| minutes.saturating_mul(60_000));
+    let cache_ttl_ms = if snapshot.anime.status == AnimeStatus::Completed {
+        Some(COMPLETED_ANIME_RELEASE_CACHE_TTL_MS)
+    } else {
+        requested_ttl_ms
+    };
+    let network = source_state
+        .network_service(&snapshot.search.settings)
+        .await
+        .map_err(|error| map_source_error("初始化单集预览网络", error))?;
+    let store = SharedReleaseSearchStore::new(Arc::clone(&storage));
+    let result = ReleaseSearchService::new(network)
+        .search_anime(
+            &store,
+            &snapshot.search.sources,
+            &snapshot.search.fansubs,
+            &snapshot.anime.anime,
+            &snapshot.bindings,
+            AnimeReleaseQuery {
+                anime_id: anime_id.clone(),
+                episode_no: Some(episode.episode_no),
+                fansub_group_id: preferred_fansub_group_id,
+                preferred_resolution: snapshot.anime.preferred_resolution.clone(),
+                limit: Some(80),
+                cache_ttl_ms,
+                force_refresh: false,
+            },
+        )
+        .await
+        .map_err(|error| map_source_error("预览单集资源", error))?;
+    let releases = result
+        .releases
+        .into_iter()
+        .map(|mut release| {
+            release.anime_id = Some(anime_id.clone());
+            release
+        })
+        .collect::<Vec<_>>();
+    observe_search_fansubs(storage, anime_id.clone(), releases.clone()).await?;
+    let mut candidates = rank_releases(
+        &releases,
+        &ReleaseMatchContext {
+            anime: snapshot.anime.clone(),
+            episode_no: Some(episode.episode_no),
+            episode_fansub_override_id: preference
+                .and_then(|preference| preference.fansub_group_id.clone()),
+            candidate_fansub_group_ids: Vec::new(),
+            candidate_fansub_names: Vec::new(),
+        },
+        &snapshot.search.fansubs,
+    );
+    candidates.truncate(20);
+    Ok(EpisodeReleasePreview {
+        anime_id,
+        episode_id,
+        searched_terms: build_anime_release_search_terms(&snapshot.anime.anime, &[], 12),
+        candidates,
+        errors: result.errors,
+    })
 }
 
 /// 搜索一条追番 RSS 订阅，独立于全局来源开关。

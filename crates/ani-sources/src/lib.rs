@@ -9,11 +9,16 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, Proxy};
 
 mod bindings;
+mod metadata;
 mod parsers;
 mod release;
 mod search;
 
 pub use bindings::{AnimeSourceBindingService, AnimeSourceBindingStore};
+pub use metadata::{
+    merge_anime_metadata_batches, AnimeMetadataBatch, AnimeMetadataCollection,
+    AnimeMetadataRefresh, AnimeMetadataService,
+};
 
 pub use parsers::{
     parse_acgnx_api_response, parse_acgnx_html, parse_anibt_rss, parse_dmhy_list,

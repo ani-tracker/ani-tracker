@@ -712,6 +712,17 @@ pub struct ReleaseMatchResult {
     pub warnings: Vec<String>,
 }
 
+/// 单集规则页展示的候选资源评分预览。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodeReleasePreview {
+    pub anime_id: String,
+    pub episode_id: String,
+    pub searched_terms: Vec<String>,
+    pub candidates: Vec<ReleaseMatchResult>,
+    pub errors: Vec<ReleaseSearchError>,
+}
+
 /// 自动下载对最高分候选的最终判定。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -793,6 +804,50 @@ pub struct MyAnime {
     pub preferred_subtitle: Option<String>,
     pub added_at: String,
     pub updated_at: String,
+}
+
+/// 月度新番采集输入。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDiscoveryQuery {
+    pub year: i64,
+    pub month: i64,
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+/// 季度新番采集输入。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDiscoverySeasonQuery {
+    pub year: i64,
+    pub season: String,
+    #[serde(default)]
+    pub force_refresh: bool,
+}
+
+/// 月度新番采集及持久化结果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDiscoveryResult {
+    pub query: AnimeDiscoveryQuery,
+    pub items: Vec<Anime>,
+    pub added_count: usize,
+    pub existing_count: usize,
+    pub source: String,
+    pub errors: Vec<String>,
+}
+
+/// 季度新番采集及持久化结果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDiscoverySeasonResult {
+    pub query: AnimeDiscoverySeasonQuery,
+    pub items: Vec<Anime>,
+    pub added_count: usize,
+    pub existing_count: usize,
+    pub source: String,
+    pub errors: Vec<String>,
 }
 
 /// 新番关键词搜索的本地与在线聚合结果。
@@ -1231,14 +1286,15 @@ mod tests {
     use serde::Deserialize;
 
     use super::{
-        AnimeDetailResult, AnimeDiscoverySearchResult, AnimeSourceBinding, AnimeSourceBindingState,
+        AnimeDetailResult, AnimeDiscoveryResult, AnimeDiscoverySearchResult,
+        AnimeDiscoverySeasonResult, AnimeSourceBinding, AnimeSourceBindingState,
         AnimeSourceCandidate, AnimeSourceExclusion, AnimeStatus, ConfirmAnimeSourceBindingInput,
-        DashboardData, Episode, EpisodePreference, MyAnime, NotificationKind, NotificationRecord,
-        PlaybackCheckpoint, ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSyncState,
-        RemoveAnimeSourceCandidateMismatchInput, ReportAnimeSourceCandidateMismatchInput,
-        ReportPlaybackProgressInput, RequestCircuitState, RssSubscriptionReleaseResult,
-        SavePlaybackCheckpointInput, SecretValue, SetAnimeSourceExclusionInput,
-        SetAnimeWatchProgressInput,
+        DashboardData, Episode, EpisodePreference, EpisodeReleasePreview, MyAnime,
+        NotificationKind, NotificationRecord, PlaybackCheckpoint, ReleaseSearchResult,
+        ReleaseSourceConfig, ReleaseSourceSyncState, RemoveAnimeSourceCandidateMismatchInput,
+        ReportAnimeSourceCandidateMismatchInput, ReportPlaybackProgressInput, RequestCircuitState,
+        RssSubscriptionReleaseResult, SavePlaybackCheckpointInput, SecretValue,
+        SetAnimeSourceExclusionInput, SetAnimeWatchProgressInput,
     };
 
     #[derive(Debug, Deserialize)]
@@ -1274,6 +1330,14 @@ mod tests {
     struct P3CatalogReadModelFixture {
         search_result: AnimeDiscoverySearchResult,
         detail_result: AnimeDetailResult,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct P6DesktopParityFixture {
+        month_result: AnimeDiscoveryResult,
+        season_result: AnimeDiscoverySeasonResult,
+        episode_preview: EpisodeReleasePreview,
     }
 
     #[derive(Debug, Deserialize)]
@@ -1383,6 +1447,23 @@ mod tests {
             "anime-catalog-contract-1"
         );
         assert!(!decoded.payload.detail_result.stale);
+    }
+
+    /// 验证桌面功能对等补齐的采集与单集预览契约。
+    #[test]
+    fn decodes_p6_desktop_parity_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p6-desktop-parity.v1.json"
+        ));
+        let decoded: ContractFixture<P6DesktopParityFixture> =
+            serde_json::from_str(fixture).expect("p6 desktop parity fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p6-desktop-parity");
+        assert_eq!(decoded.payload.month_result.query.month, 7);
+        assert_eq!(decoded.payload.season_result.query.season, "summer");
+        assert_eq!(decoded.payload.episode_preview.candidates[0].score, 95);
     }
 
     /// 验证 P3 来源配置、同步游标和熔断状态契约可跨语言解码。

@@ -2,12 +2,16 @@ use std::sync::{Arc, Mutex};
 
 use ani_contracts::AppCommandError;
 use ani_domain::{
-    Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeWatchProgress, AppSettings,
-    DashboardData, Episode, EpisodePreference, FansubGroup, MyAnime, NotificationRecord,
-    PlaybackCheckpoint, ReleaseSourceConfig, ReportPlaybackProgressInput,
-    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    Anime, AnimeDetailResult, AnimeDiscoveryQuery, AnimeDiscoveryResult,
+    AnimeDiscoverySearchResult, AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult,
+    AnimeWatchProgress, AppSettings, DashboardData, Episode, EpisodePreference, FansubGroup,
+    MyAnime, NotificationRecord, PlaybackCheckpoint, ReleaseSourceConfig,
+    ReportPlaybackProgressInput, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use ani_repository::{prelude::*, RepositoryError};
+use ani_sources::{
+    merge_anime_metadata_batches, AnimeMetadataBatch, AnimeMetadataService, SourceError,
+};
 use ani_storage::Storage;
 use serde_json::Value;
 use tauri::{AppHandle, State};
@@ -15,6 +19,7 @@ use tauri::{AppHandle, State};
 use crate::automation::AppAutomationState;
 use crate::downloads::AppDownloadState;
 use crate::source_sync::AppSourceSyncState;
+use crate::sources::{AppSourceState, SharedReleaseSearchStore};
 use crate::storage::AppStorageState;
 
 /// 将数据层错误转换为稳定的 Tauri 命令错误。
@@ -37,6 +42,26 @@ fn map_runtime_error(action: &str, error: impl std::fmt::Display) -> AppCommandE
     log::error!("Tauri 数据运行时失败 action={action} error={error}");
     AppCommandError {
         code: "storage_runtime_failed".to_owned(),
+        message: format!("{action}失败：{error}"),
+    }
+}
+
+/// 将元数据网络错误转换为稳定命令错误。
+fn map_metadata_error(action: &str, error: SourceError) -> AppCommandError {
+    log::error!("Tauri 元数据命令失败 action={action} error={error}");
+    AppCommandError {
+        code: match error {
+            SourceError::InvalidUrl(_)
+            | SourceError::UnsupportedScheme(_)
+            | SourceError::InvalidProxy(_)
+            | SourceError::InvalidHeader(_)
+            | SourceError::Parse(_) => "metadata_invalid_response",
+            SourceError::CircuitOpen { .. } => "metadata_circuit_open",
+            SourceError::ResponseTooLarge { .. } => "metadata_response_too_large",
+            SourceError::HttpStatus { .. } | SourceError::Transport(_) => "metadata_network_failed",
+            SourceError::Repository(_) => "storage_operation_failed",
+        }
+        .to_owned(),
         message: format!("{action}失败：{error}"),
     }
 }
@@ -376,18 +401,268 @@ pub(crate) async fn list_anime_catalog(
     .await
 }
 
-/// 按标题、原名和别名搜索本地番剧目录。
+/// 聚合本地目录与在线元数据来源搜索结果，并尽力更新本地缓存。
 #[tauri::command]
 pub(crate) async fn search_anime_catalog(
     keyword: String,
     state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
 ) -> Result<AnimeDiscoverySearchResult, AppCommandError> {
-    run_query(
-        "搜索番剧目录",
-        Arc::clone(state.storage()),
-        move |storage| storage.repository().search_anime_catalog(&keyword),
+    let keyword = keyword.trim().to_owned();
+    let storage = Arc::clone(state.storage());
+    let defaults = state.platform_defaults().clone();
+    let query_keyword = keyword.clone();
+    let (local, settings) = run_query(
+        "读取番剧搜索上下文",
+        Arc::clone(&storage),
+        move |storage| {
+            Ok((
+                storage.repository().search_anime_catalog(&query_keyword)?,
+                storage.repository().get_settings(&defaults)?,
+            ))
+        },
     )
-    .await
+    .await?;
+    if keyword.is_empty() {
+        return Ok(local);
+    }
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_metadata_error("初始化元数据网络", error))?;
+    let online = AnimeMetadataService::new(network)
+        .search(
+            &SharedReleaseSearchStore::new(Arc::clone(&storage)),
+            &keyword,
+        )
+        .await;
+    let items = merge_anime_metadata_batches(&[
+        AnimeMetadataBatch {
+            source: "local".to_owned(),
+            items: local.items,
+        },
+        AnimeMetadataBatch {
+            source: online.source.clone(),
+            items: online.items,
+        },
+    ]);
+    let mut errors = online.errors;
+    if !items.is_empty() {
+        let cached_items = items.clone();
+        if let Err(error) = run_query("缓存在线番剧搜索结果", storage, move |storage| {
+            storage
+                .repository()
+                .upsert_anime_catalog(&cached_items)
+                .map(|_| ())
+        })
+        .await
+        {
+            log::warn!("Tauri 在线番剧搜索缓存失败 error={}", error.message);
+            errors.push(format!("local-cache: {}", error.message));
+        }
+    }
+    Ok(AnimeDiscoverySearchResult {
+        keyword,
+        items,
+        source: if online.source.is_empty() {
+            "local".to_owned()
+        } else {
+            format!("local+{}", online.source)
+        },
+        errors,
+    })
+}
+
+/// 采集并保存指定月份的新番目录。
+#[tauri::command]
+pub(crate) async fn collect_anime_month(
+    query: AnimeDiscoveryQuery,
+    state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<AnimeDiscoveryResult, AppCommandError> {
+    let storage = Arc::clone(state.storage());
+    let defaults = state.platform_defaults().clone();
+    let year = query.year;
+    let month = query.month;
+    let (existing, settings) = run_query(
+        "读取月度采集上下文",
+        Arc::clone(&storage),
+        move |storage| {
+            Ok((
+                storage
+                    .repository()
+                    .list_anime_catalog(Some(year), Some(month))?,
+                storage.repository().get_settings(&defaults)?,
+            ))
+        },
+    )
+    .await?;
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_metadata_error("初始化月度元数据网络", error))?;
+    let mut collected = AnimeMetadataService::new(network)
+        .collect_month(
+            &SharedReleaseSearchStore::new(Arc::clone(&storage)),
+            year,
+            month,
+        )
+        .await
+        .map_err(|error| map_metadata_error("采集月度新番", error))?;
+    if collected.items.is_empty() {
+        if collected.errors.is_empty() {
+            collected.errors.push("新番采集没有返回结果".to_owned());
+        }
+        return Ok(AnimeDiscoveryResult {
+            query,
+            existing_count: existing.len(),
+            items: existing,
+            added_count: 0,
+            source: collected.source,
+            errors: collected.errors,
+        });
+    }
+    let items = collected.items;
+    let force_refresh = query.force_refresh;
+    let persisted = run_query("保存月度新番目录", storage, move |storage| {
+        if force_refresh {
+            storage
+                .repository()
+                .replace_anime_catalog_month(year, month, &items)
+        } else {
+            storage.repository().upsert_anime_catalog(&items)
+        }
+    })
+    .await?;
+    Ok(AnimeDiscoveryResult {
+        query,
+        items: persisted
+            .items
+            .into_iter()
+            .filter(|item| item.premiere_year == year && item.premiere_month == month)
+            .collect(),
+        added_count: persisted.added_count,
+        existing_count: persisted.existing_count,
+        source: collected.source,
+        errors: collected.errors,
+    })
+}
+
+/// 采集季度来源数据，并按首播月份分别原子保存。
+#[tauri::command]
+pub(crate) async fn collect_anime_season(
+    query: AnimeDiscoverySeasonQuery,
+    state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<AnimeDiscoverySeasonResult, AppCommandError> {
+    let months = match query.season.as_str() {
+        "winter" => [1, 2, 3],
+        "spring" => [4, 5, 6],
+        "summer" => [7, 8, 9],
+        "fall" => [10, 11, 12],
+        _ => {
+            return Err(AppCommandError {
+                code: "invalid_input".to_owned(),
+                message: format!("采集季度新番失败：季度无效：{}", query.season),
+            })
+        }
+    };
+    let storage = Arc::clone(state.storage());
+    let defaults = state.platform_defaults().clone();
+    let year = query.year;
+    let (existing, settings) = run_query(
+        "读取季度采集上下文",
+        Arc::clone(&storage),
+        move |storage| {
+            let mut existing = Vec::new();
+            for month in months {
+                existing.extend(
+                    storage
+                        .repository()
+                        .list_anime_catalog(Some(year), Some(month))?,
+                );
+            }
+            Ok((existing, storage.repository().get_settings(&defaults)?))
+        },
+    )
+    .await?;
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_metadata_error("初始化季度元数据网络", error))?;
+    let mut collected = AnimeMetadataService::new(network)
+        .collect_season(
+            &SharedReleaseSearchStore::new(Arc::clone(&storage)),
+            year,
+            &query.season,
+        )
+        .await
+        .map_err(|error| map_metadata_error("采集季度新番", error))?;
+    if collected.items.is_empty() {
+        if collected.errors.is_empty() {
+            collected.errors.push("新番季度采集没有返回结果".to_owned());
+        }
+        return Ok(AnimeDiscoverySeasonResult {
+            query,
+            existing_count: existing.len(),
+            items: existing,
+            added_count: 0,
+            source: collected.source,
+            errors: collected.errors,
+        });
+    }
+    let force_refresh = query.force_refresh;
+    let collected_items = collected.items;
+    let (items, added_count, existing_count) =
+        run_query("保存季度新番目录", storage, move |storage| {
+            let mut persisted_items = Vec::new();
+            let mut added_count = 0usize;
+            let mut existing_count = 0usize;
+            for month in months {
+                let month_items = collected_items
+                    .iter()
+                    .filter(|item| item.premiere_year == year && item.premiere_month == month)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if month_items.is_empty() {
+                    let existing = storage
+                        .repository()
+                        .list_anime_catalog(Some(year), Some(month))?;
+                    existing_count += existing.len();
+                    persisted_items.extend(existing);
+                    continue;
+                }
+                let persisted = if force_refresh {
+                    storage
+                        .repository()
+                        .replace_anime_catalog_month(year, month, &month_items)?
+                } else {
+                    storage.repository().upsert_anime_catalog(&month_items)?
+                };
+                persisted_items.extend(
+                    persisted
+                        .items
+                        .into_iter()
+                        .filter(|item| item.premiere_year == year && item.premiere_month == month),
+                );
+                added_count += persisted.added_count;
+                existing_count += persisted.existing_count;
+            }
+            Ok((persisted_items, added_count, existing_count))
+        })
+        .await?;
+    let items = merge_anime_metadata_batches(&[AnimeMetadataBatch {
+        source: "persisted".to_owned(),
+        items,
+    }]);
+    Ok(AnimeDiscoverySeasonResult {
+        query,
+        items,
+        added_count,
+        existing_count,
+        source: collected.source,
+        errors: collected.errors,
+    })
 }
 
 /// 读取本地番剧详情聚合数据。
@@ -402,6 +677,82 @@ pub(crate) async fn get_anime_detail(
         move |storage| storage.repository().get_anime_detail(&anime_id),
     )
     .await
+}
+
+/// 按已有 external id 刷新多来源详情，并在成功后补齐追番单集。
+#[tauri::command]
+pub(crate) async fn refresh_anime_detail(
+    anime_id: String,
+    state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<AnimeDetailResult, AppCommandError> {
+    let storage = Arc::clone(state.storage());
+    let defaults = state.platform_defaults().clone();
+    let lookup_id = anime_id.clone();
+    let (local, settings) = run_query(
+        "读取详情刷新上下文",
+        Arc::clone(&storage),
+        move |storage| {
+            let local = storage
+                .repository()
+                .get_anime_catalog_by_id(&lookup_id)?
+                .ok_or_else(|| RepositoryError::RecordNotFound {
+                    entity: "番剧".to_owned(),
+                    id: lookup_id.clone(),
+                })?;
+            Ok((local, storage.repository().get_settings(&defaults)?))
+        },
+    )
+    .await?;
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_metadata_error("初始化详情元数据网络", error))?;
+    let refresh = AnimeMetadataService::new(network)
+        .refresh_detail(&SharedReleaseSearchStore::new(Arc::clone(&storage)), &local)
+        .await;
+    if refresh.success_count > 0 {
+        let item = refresh.item.clone();
+        run_query(
+            "保存刷新番剧详情",
+            Arc::clone(&storage),
+            move |storage| {
+                storage
+                    .repository()
+                    .upsert_anime_catalog(&[item])
+                    .map(|_| ())
+            },
+        )
+        .await?;
+        let followed_id = anime_id.clone();
+        let followed = run_query(
+            "读取详情刷新追番",
+            Arc::clone(&storage),
+            move |storage| {
+                Ok(storage
+                    .repository()
+                    .list_my_anime()?
+                    .into_iter()
+                    .find(|item| item.anime.id == followed_id))
+            },
+        )
+        .await?;
+        if let Some(followed) = followed {
+            ani_automation::EpisodeSyncService::sync(
+                &SharedReleaseSearchStore::new(Arc::clone(&storage)),
+                &followed,
+                &[],
+                chrono::Utc::now(),
+            )
+            .map_err(|error| map_repository_error("同步刷新详情单集", error))?;
+        }
+    }
+    let mut result = run_query("读取刷新后番剧详情", storage, move |storage| {
+        storage.repository().get_anime_detail(&anime_id)
+    })
+    .await?;
+    result.partial_errors = refresh.errors;
+    Ok(result)
 }
 
 /// 读取全部或指定番剧的字幕组。

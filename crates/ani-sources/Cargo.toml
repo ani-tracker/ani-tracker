@@ -19,7 +19,7 @@ serde.workspace = true
 serde_json.workspace = true
 sha2 = "0.10"
 thiserror.workspace = true
-tokio = { version = "1", features = ["sync", "time"] }
+tokio = { version = "1", features = ["macros", "sync", "time"] }
 unicode-normalization = "0.1"
 url = "2"
 

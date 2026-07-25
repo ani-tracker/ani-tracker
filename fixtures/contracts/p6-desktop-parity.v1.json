@@ -1,0 +1,100 @@
+{
+  "schemaVersion": 1,
+  "kind": "p6-desktop-parity",
+  "payload": {
+    "monthResult": {
+      "query": {
+        "year": 2026,
+        "month": 7,
+        "forceRefresh": true
+      },
+      "items": [
+        {
+          "id": "anime-parity-1",
+          "title": "桌面对等测试番",
+          "aliases": [],
+          "premiereDate": "2026-07-03",
+          "premiereYear": 2026,
+          "premiereMonth": 7,
+          "season": "summer",
+          "externalIds": {
+            "bangumi": "1001",
+            "anilist": "2001"
+          },
+          "detail": {
+            "episodeCount": 12,
+            "metadataSources": ["bangumi", "anilist"],
+            "refreshedAt": "2026-07-26T00:00:00.000Z"
+          }
+        }
+      ],
+      "addedCount": 1,
+      "existingCount": 0,
+      "source": "bangumi+anilist",
+      "errors": ["mikan: 请求超时"]
+    },
+    "seasonResult": {
+      "query": {
+        "year": 2026,
+        "season": "summer",
+        "forceRefresh": false
+      },
+      "items": [
+        {
+          "id": "anime-parity-1",
+          "title": "桌面对等测试番",
+          "aliases": [],
+          "premiereDate": "2026-07-03",
+          "premiereYear": 2026,
+          "premiereMonth": 7,
+          "season": "summer",
+          "externalIds": {
+            "bangumi": "1001",
+            "anilist": "2001"
+          }
+        }
+      ],
+      "addedCount": 0,
+      "existingCount": 1,
+      "source": "bangumi+anilist",
+      "errors": []
+    },
+    "episodePreview": {
+      "animeId": "anime-parity-1",
+      "episodeId": "episode-parity-3",
+      "searchedTerms": ["桌面对等测试番", "Desktop Parity Anime"],
+      "candidates": [
+        {
+          "release": {
+            "id": "release-parity-3",
+            "title": "[契约字幕组] 桌面对等测试番 - 03 [1080p]",
+            "animeId": "anime-parity-1",
+            "episodeNo": 3,
+            "contentKind": "episode",
+            "fansubGroupId": "fansub-parity",
+            "fansubName": "契约字幕组",
+            "sourceId": "rss-parity",
+            "sourceName": "契约 RSS",
+            "magnetUrl": "magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567",
+            "resolution": "1080p",
+            "subtitleLanguages": ["chs"],
+            "publishedAt": "2026-07-26T00:00:00.000Z",
+            "seeders": 12
+          },
+          "score": 95,
+          "matchScore": 50,
+          "preferenceScore": 40,
+          "availabilityScore": 5,
+          "reasons": ["资源已关联目标番剧", "集数精确匹配"],
+          "warnings": []
+        }
+      ],
+      "errors": [
+        {
+          "sourceId": "mikan-parity",
+          "message": "来源暂时不可用"
+        }
+      ]
+    }
+  }
+}

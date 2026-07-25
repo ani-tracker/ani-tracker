@@ -6,7 +6,11 @@ import type {
   AddReleaseDownloadInput,
   AnimeReleaseQuery,
   AnimeDetailResult,
+  AnimeDiscoveryQuery,
+  AnimeDiscoveryResult,
   AnimeDiscoverySearchResult,
+  AnimeDiscoverySeasonQuery,
+  AnimeDiscoverySeasonResult,
   AnimeSourceBindingState,
   AnimeWatchProgress,
   AutomationRunResult,
@@ -19,6 +23,7 @@ import type {
   DesktopMediaToolsStatus,
   DownloadServiceStatus,
   EmbeddedTorrentCoreStatus,
+  EpisodeReleasePreview,
   ImageCacheResolveResult,
   MediaScanResult,
   PlaybackCheckpoint,
@@ -85,7 +90,7 @@ function normalizeTauriError(method: string, error: unknown): Error {
 }
 
 /** 封装 P1 已开放的 Tauri 平台命令与事件。 */
-class TauriClientCore {
+class TauriClientCore implements AppClient {
   /** 保存当前 Tauri 宿主对应的平台标识。 */
   constructor(readonly platform: TauriClientPlatform) {}
 
@@ -322,6 +327,13 @@ class TauriClientCore {
     });
   }
 
+  /** 使用 Rust 来源搜索与评分核心预览单集候选资源。 */
+  async previewEpisodeReleases(animeId: string, episodeId: string): Promise<EpisodeReleasePreview> {
+    return invoke<EpisodeReleasePreview>("preview_episode_releases", { animeId, episodeId }).catch((error) => {
+      throw normalizeTauriError("preview_episode_releases", error);
+    });
+  }
+
   /** 按可选年月读取 Rust SQLite 番剧目录。 */
   async listAnimeCatalog(year?: number, month?: number): Promise<Anime[]> {
     return invoke<Anime[]>("list_anime_catalog", { year, month }).catch((error) => {
@@ -336,10 +348,31 @@ class TauriClientCore {
     });
   }
 
+  /** 使用 Rust 多来源元数据服务采集指定月份。 */
+  async collectAnimeMonth(query: AnimeDiscoveryQuery): Promise<AnimeDiscoveryResult> {
+    return invoke<AnimeDiscoveryResult>("collect_anime_month", { query }).catch((error) => {
+      throw normalizeTauriError("collect_anime_month", error);
+    });
+  }
+
+  /** 使用 Rust 多来源元数据服务采集指定季度。 */
+  async collectAnimeSeason(query: AnimeDiscoverySeasonQuery): Promise<AnimeDiscoverySeasonResult> {
+    return invoke<AnimeDiscoverySeasonResult>("collect_anime_season", { query }).catch((error) => {
+      throw normalizeTauriError("collect_anime_season", error);
+    });
+  }
+
   /** 读取番剧详情页所需的本地聚合数据。 */
   async getAnimeDetail(animeId: string): Promise<AnimeDetailResult> {
     return invoke<AnimeDetailResult>("get_anime_detail", { animeId }).catch((error) => {
       throw normalizeTauriError("get_anime_detail", error);
+    });
+  }
+
+  /** 按本地 external id 使用 Rust 多来源服务刷新详情。 */
+  async refreshAnimeDetail(animeId: string): Promise<AnimeDetailResult> {
+    return invoke<AnimeDetailResult>("refresh_anime_detail", { animeId }).catch((error) => {
+      throw normalizeTauriError("refresh_anime_detail", error);
     });
   }
 
@@ -731,23 +764,7 @@ class TauriClientCore {
   }
 }
 
-/** 创建仅暴露已迁移命令的 Tauri AppClient。 */
+/** 创建由编译器完整校验业务方法的 Tauri AppClient。 */
 export function createTauriClient(platform: TauriClientPlatform): AppClient {
-  const client = new TauriClientCore(platform);
-  return new Proxy(client as unknown as AppClient, {
-    get(target, property) {
-      const value = Reflect.get(target, property, target) as unknown;
-      if (typeof value === "function") {
-        return value.bind(target);
-      }
-      if (value !== undefined || typeof property !== "string") {
-        return value;
-      }
-
-      return async () => {
-        console.warn("[tauri-client] 调用了尚未迁移的业务方法", { method: property });
-        throw new Error(`Tauri 业务方法尚未迁移：${property}`);
-      };
-    }
-  });
+  return new TauriClientCore(platform);
 }
