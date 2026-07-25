@@ -440,7 +440,7 @@ fn select_playable_file(
         .iter()
         .filter(|file| file.selected && (task.is_completed() || file.progress >= 1.0))
         .filter(|file| is_video_path(&file.name))
-        .find(|file| requested_index.map_or(true, |index| file.index == i64::from(index)))
+        .find(|file| requested_index.is_none_or(|index| file.index == i64::from(index)))
         .ok_or_else(|| "当前任务没有已完成的可播放视频".to_owned())
 }
 

@@ -1747,14 +1747,14 @@ mod tests {
                 .expect("lock raw release cache")
                 .values()
                 .filter(|release| {
-                    query.source_ids.as_ref().map_or(true, |source_ids| {
+                    query.source_ids.as_ref().is_none_or(|source_ids| {
                         source_ids
                             .iter()
                             .any(|source_id| source_id == &release.source_id)
                     }) && query
                         .anime_id
                         .as_ref()
-                        .map_or(true, |anime_id| release.anime_id.as_ref() == Some(anime_id))
+                        .is_none_or(|anime_id| release.anime_id.as_ref() == Some(anime_id))
                 })
                 .cloned()
                 .collect::<Vec<_>>();

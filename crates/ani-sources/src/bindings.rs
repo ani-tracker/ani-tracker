@@ -798,12 +798,9 @@ fn parse_mikan_candidates(html: &str, base: &Url) -> Vec<AnimeSourceCandidate> {
             score: 0,
             reasons: Vec::new(),
         };
-        if by_id
-            .get(id)
-            .map_or(true, |existing: &AnimeSourceCandidate| {
-                existing.title.len() < candidate.title.len()
-            })
-        {
+        if by_id.get(id).is_none_or(|existing: &AnimeSourceCandidate| {
+            existing.title.len() < candidate.title.len()
+        }) {
             by_id.insert(id.to_owned(), candidate);
         }
     }

@@ -174,7 +174,7 @@ pub fn validate_command(command: &PlayerCommand) -> Option<PlayerError> {
         PlayerCommandAction::SetAspectRatio {
             aspect_ratio: ani_contracts::PlayerAspectRatio::Custom,
             value,
-        } if value.as_deref().map_or(true, str::is_empty) => {
+        } if value.as_deref().is_none_or(str::is_empty) => {
             return Some(invalid_command("自定义画面比例无效"));
         }
         _ => {}

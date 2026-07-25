@@ -848,8 +848,8 @@ fn contains_word(value: &str, word: &str) -> bool {
     value.match_indices(word).any(|(index, _)| {
         let before = value[..index].chars().next_back();
         let after = value[index + word.len()..].chars().next();
-        before.map_or(true, |character| !character.is_ascii_alphanumeric())
-            && after.map_or(true, |character| !character.is_ascii_alphanumeric())
+        before.is_none_or(|character| !character.is_ascii_alphanumeric())
+            && after.is_none_or(|character| !character.is_ascii_alphanumeric())
     })
 }
 

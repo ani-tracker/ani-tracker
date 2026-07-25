@@ -116,7 +116,7 @@ impl ReleaseSearchStore for MemorySyncStore {
             .expect("lock releases")
             .values()
             .filter(|release| {
-                query.source_ids.as_ref().map_or(true, |source_ids| {
+                query.source_ids.as_ref().is_none_or(|source_ids| {
                     source_ids
                         .iter()
                         .any(|source_id| source_id == &release.source_id)
