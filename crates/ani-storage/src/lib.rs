@@ -1,5 +1,6 @@
 mod error;
 mod migration;
+mod repository;
 
 use std::ffi::OsString;
 use std::fs;
@@ -12,6 +13,7 @@ use serde_json::Value;
 
 pub use error::StorageError;
 use migration::{initialize_database, read_database_versions};
+pub use repository::AppRepository;
 
 /// 当前与 Electron 共用的 SQLite 结构版本。
 pub const SQLITE_SCHEMA_VERSION: u32 = 18;
@@ -191,6 +193,11 @@ impl Storage {
     /// 执行完整性与外键一致性检查。
     pub fn verify(&self) -> Result<(), StorageError> {
         verify_integrity(&self.connection, &self.database_path)
+    }
+
+    /// 创建仅在当前连接生命周期内有效的业务 Repository。
+    pub fn repository(&self) -> AppRepository<'_> {
+        AppRepository::new(&self.connection)
     }
 }
 

@@ -1,0 +1,68 @@
+{
+  "schemaVersion": 1,
+  "kind": "p2-read-model",
+  "payload": {
+    "notification": {
+      "id": "notification-contract-1",
+      "kind": "download",
+      "title": "下载完成",
+      "body": "《测试番剧》第 3 集已完成",
+      "severity": "success",
+      "animeId": "anime-contract-1",
+      "episodeId": "episode-contract-3",
+      "downloadTaskId": "download-contract-3",
+      "createdAt": "2026-07-25T01:00:00.000Z"
+    },
+    "myAnime": {
+      "id": "my-anime-contract-1",
+      "anime": {
+        "id": "anime-contract-1",
+        "title": "测试番剧",
+        "originalTitle": "Test Anime",
+        "aliases": [
+          {
+            "id": "alias-contract-1",
+            "animeId": "anime-contract-1",
+            "alias": "测试别名",
+            "language": "zh",
+            "priority": 10
+          }
+        ],
+        "premiereYear": 2026,
+        "premiereMonth": 7,
+        "externalIds": {
+          "bangumi": "1"
+        },
+        "detail": {
+          "episodeCount": 12
+        }
+      },
+      "status": "watching",
+      "autoDownload": true,
+      "rssSubscriptions": [],
+      "preferredSubtitleLanguages": [
+        "chs",
+        "cht"
+      ],
+      "addedAt": "2026-07-25T00:00:00.000Z",
+      "updatedAt": "2026-07-25T00:00:00.000Z"
+    },
+    "dashboard": {
+      "dailyReminder": {
+        "date": "2026-07-25",
+        "total": 0,
+        "upcoming": 0,
+        "aired": 0,
+        "downloading": 0,
+        "downloaded": 0,
+        "items": []
+      },
+      "todayEpisodes": [],
+      "pendingActions": [],
+      "activeDownloads": [],
+      "recentCompleted": [],
+      "weeklySchedule": [],
+      "sourceHealth": []
+    }
+  }
+}

@@ -202,6 +202,68 @@ fn rejects_corrupt_database_without_overwrite() {
     );
 }
 
+/// 验证 P2 首批设置、通知、追番和首页查询使用同一 SQLite 数据源。
+#[test]
+fn reads_p2_business_views_from_sqlite() {
+    let directory = TestDirectory::new("p2-views");
+    let options = test_options(&directory, "active.sqlite");
+    let storage = Storage::open(options).expect("create p2 view database");
+    insert_p2_read_model_fixture(&storage.connection);
+    let repository = storage.repository();
+
+    let settings = repository
+        .get_settings(&json!({
+            "appearance": { "mode": "system", "themePackId": "default" },
+            "network": { "metadataProxy": { "mode": "off", "timeoutMs": 15000 } },
+            "players": [
+                { "id": "built-in", "name": "内置播放器", "executablePath": "", "argumentTemplate": "{file}" },
+                { "id": "system", "name": "系统播放器", "executablePath": "", "argumentTemplate": "{file}" }
+            ]
+        }))
+        .expect("read merged settings");
+    assert_eq!(settings["appearance"]["mode"], "dark");
+    assert_eq!(settings["appearance"]["themePackId"], "default");
+    assert_eq!(settings["network"]["metadataProxy"]["timeoutMs"], 15_000);
+    assert_eq!(settings["players"][0]["executablePath"], "C:/VLC/vlc.exe");
+    assert_eq!(settings["players"][0]["argumentTemplate"], "{file}");
+    assert_eq!(settings["players"][1]["id"], "system");
+
+    let notifications = repository.list_notifications().expect("list notifications");
+    assert_eq!(notifications.len(), 2);
+    assert_eq!(notifications[0].id, "notification-new");
+    assert_eq!(
+        repository
+            .get_unread_notification_count()
+            .expect("unread count"),
+        1
+    );
+
+    let followed = repository.list_my_anime().expect("list my anime");
+    assert_eq!(followed.len(), 1);
+    assert_eq!(followed[0].anime.title, "测试番剧");
+    assert_eq!(followed[0].anime.aliases[0].alias, "测试别名");
+    assert_eq!(followed[0].preferred_subtitle_languages, ["chs", "cht"]);
+    assert_eq!(followed[0].rss_subscriptions.len(), 1);
+    assert_eq!(
+        followed[0].rss_subscriptions[0].preferred_subtitle_languages,
+        ["cht"]
+    );
+
+    let dashboard = repository.get_dashboard().expect("read dashboard");
+    assert_eq!(dashboard.daily_reminder.total, 3);
+    assert_eq!(dashboard.daily_reminder.aired, 1);
+    assert_eq!(dashboard.daily_reminder.downloading, 1);
+    assert_eq!(dashboard.daily_reminder.downloaded, 1);
+    assert_eq!(dashboard.today_episodes.len(), 3);
+    assert_eq!(dashboard.pending_actions.len(), 1);
+    assert_eq!(dashboard.pending_actions[0].episode_no, Some(1.0));
+    assert_eq!(dashboard.active_downloads.len(), 1);
+    assert_eq!(dashboard.active_downloads[0].id, "download-active");
+    assert_eq!(dashboard.recent_completed.len(), 1);
+    assert_eq!(dashboard.weekly_schedule[0].day, "周一");
+    assert_eq!(dashboard.source_health[0].status, "warning");
+}
+
 /// 创建包含固定设置和下载源的测试启动参数。
 fn test_options(directory: &TestDirectory, database_name: &str) -> StorageOptions {
     StorageOptions {
@@ -225,6 +287,151 @@ fn test_options(directory: &TestDirectory, database_name: &str) -> StorageOption
             }],
         },
     }
+}
+
+/// 写入覆盖 P2 首批查询的固定业务样本。
+fn insert_p2_read_model_fixture(connection: &Connection) {
+    let now = chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    connection
+        .execute(
+            "UPDATE app_settings SET value_json = ?1 WHERE key = 'settings'",
+            [r#"{"appearance":{"mode":"dark"},"players":[{"id":"built-in","executablePath":"C:/VLC/vlc.exe"}]}"#],
+        )
+        .expect("patch stored settings");
+    connection
+        .execute(
+            "UPDATE app_state SET value_json = ?1 WHERE key = 'dashboard'",
+            [r#"{"weeklySchedule":[{"day":"周一","items":[]}],"sourceHealth":[{"sourceId":"anibt","name":"AniBT","status":"ok"}]}"#],
+        )
+        .expect("patch stored dashboard");
+    connection
+        .execute(
+            "UPDATE release_source SET enabled = 0 WHERE id = 'anibt'",
+            [],
+        )
+        .expect("disable fixture source");
+    connection
+        .execute(
+            "INSERT INTO fansub_group (id, name, aliases_json, source_ids_json, created_at, updated_at)
+             VALUES ('fansub-1', '测试字幕组', '[]', '[]', ?1, ?1)",
+            [&now],
+        )
+        .expect("insert fansub");
+    connection
+        .execute(
+            r#"INSERT INTO anime_catalog (
+               id, title, original_title, premiere_year, premiere_month, external_ids_json,
+               detail_json, created_at, updated_at
+             ) VALUES ('anime-1', '测试番剧', 'Test Anime', 2026, 7, '{"bangumi":"1"}',
+               '{"episodeCount":12}', ?1, ?1)"#,
+            [&now],
+        )
+        .expect("insert anime");
+    connection
+        .execute(
+            "INSERT INTO anime_alias (id, anime_id, alias, language, priority)
+             VALUES ('alias-1', 'anime-1', '测试别名', 'zh', 10)",
+            [],
+        )
+        .expect("insert alias");
+    connection
+        .execute(
+            "INSERT INTO my_anime (
+               id, anime_id, status, default_fansub_group_id, auto_download,
+               preferred_subtitle, preferred_subtitle_languages_json, added_at, updated_at
+             ) VALUES ('my-anime-1', 'anime-1', 'watching', 'fansub-1', 1,
+               'multi', '[]', ?1, ?1)",
+            [&now],
+        )
+        .expect("insert my anime");
+    connection
+        .execute(
+            "INSERT INTO my_anime_rss_subscription (
+               id, my_anime_id, name, url, enabled, preferred_subtitle,
+               preferred_subtitle_languages_json, created_at, updated_at
+             ) VALUES ('rss-1', 'my-anime-1', '测试 RSS', 'https://example.test/rss', 1,
+               'cht', '[]', ?1, ?1)",
+            [&now],
+        )
+        .expect("insert rss subscription");
+
+    for (episode_no, status) in [(1_i64, "aired"), (2_i64, "aired"), (3_i64, "aired")] {
+        connection
+            .execute(
+                "INSERT INTO episode (
+                   id, anime_id, episode_no, air_time, status, created_at, updated_at
+                 ) VALUES (?1, 'anime-1', ?2, ?3, ?4, ?3, ?3)",
+                params![format!("episode-{episode_no}"), episode_no, &now, status],
+            )
+            .expect("insert episode");
+    }
+    insert_download(
+        connection,
+        "download-active",
+        "episode-2",
+        2,
+        "downloading",
+        0.5,
+        &now,
+    );
+    insert_download(
+        connection,
+        "download-completed",
+        "episode-3",
+        3,
+        "completed",
+        1.0,
+        &now,
+    );
+    connection
+        .execute(
+            r#"INSERT INTO media_file (
+               id, anime_id, episode_id, download_task_id, file_path, file_name, size,
+               normalized_video_codec, audio_codecs_json, subtitle_tracks_json, downloaded_at
+             ) VALUES ('media-1', 'anime-1', 'episode-3', 'download-completed',
+               'C:/video/3.mkv', '3.mkv', 1024, 'H.265/HEVC', '["aac"]', '["ass"]', ?1)"#,
+            [&now],
+        )
+        .expect("insert media file");
+    connection
+        .execute(
+            "INSERT INTO notification (id, kind, title, body, severity, created_at, read_at)
+             VALUES ('notification-old', 'system', '已读', '旧通知', 'info',
+               '2026-07-01T00:00:00.000Z', '2026-07-01T01:00:00.000Z')",
+            [],
+        )
+        .expect("insert old notification");
+    connection
+        .execute(
+            "INSERT INTO notification (id, kind, title, body, severity, created_at)
+             VALUES ('notification-new', 'download', '下载完成', '第 3 集', 'success',
+               '2026-07-02T00:00:00.000Z')",
+            [],
+        )
+        .expect("insert unread notification");
+}
+
+/// 写入首页下载状态测试记录。
+fn insert_download(
+    connection: &Connection,
+    id: &str,
+    episode_id: &str,
+    episode_no: i64,
+    status: &str,
+    progress: f64,
+    timestamp: &str,
+) {
+    connection
+        .execute(
+            "INSERT INTO download_task (
+               id, anime_id, episode_id, anime_title, episode_no, fansub_group_id, fansub_name,
+               engine, name, status, progress, download_speed, upload_speed, save_path,
+               created_at, updated_at
+             ) VALUES (?1, 'anime-1', ?2, '测试番剧', ?3, 'fansub-1', '测试字幕组',
+               'embedded', ?1, ?4, ?5, 1024, 0, 'C:/video', ?6, ?6)",
+            params![id, episode_id, episode_no, status, progress, timestamp],
+        )
+        .expect("insert download task");
 }
 
 /// 插入旧版下载源测试记录。

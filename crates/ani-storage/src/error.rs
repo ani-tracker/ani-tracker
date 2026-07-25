@@ -12,6 +12,14 @@ pub enum StorageError {
     },
     #[error("SQLite 操作失败：{0}")]
     Sqlite(#[from] rusqlite::Error),
+    #[error("数据库 JSON 字段解析失败（{context}）：{source}")]
+    JsonData {
+        context: &'static str,
+        #[source]
+        source: serde_json::Error,
+    },
+    #[error("数据库字段值不受支持（{field}={value}）")]
+    InvalidDomainValue { field: &'static str, value: String },
     #[error("数据库不是有效的 SQLite 文件：{path}：{detail}")]
     CorruptDatabase { path: PathBuf, detail: String },
     #[error("数据库结构版本 {actual} 高于当前支持版本 {supported}")]
