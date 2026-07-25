@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "kind": "p3-source-network-model",
+  "payload": {
+    "source": {
+      "id": "torznab-contract",
+      "name": "Torznab Contract",
+      "kind": "torznab",
+      "enabled": true,
+      "useProxy": true,
+      "requestIntervalMs": 1750,
+      "baseUrl": "https://indexer.example/api",
+      "apiKey": "fixture-api-key",
+      "tags": ["anime", "contract"]
+    },
+    "syncState": {
+      "sourceId": "torznab-contract",
+      "requestHost": "indexer.example",
+      "lastRequestAt": "2026-07-25T00:00:00.000Z",
+      "requestFailureCount": 2,
+      "backoffUntil": "2026-07-25T00:02:00.000Z",
+      "etag": "fixture-etag"
+    },
+    "circuitState": {
+      "key": "release-source:torznab-contract",
+      "group": "release-source",
+      "requestHost": "indexer.example",
+      "lastRequestAt": "2026-07-25T00:00:00.000Z",
+      "failureCount": 2,
+      "backoffUntil": "2026-07-25T00:02:00.000Z"
+    }
+  }
+}

@@ -4,8 +4,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_domain::{
-    AnimeStatus, Episode, EpisodePreference, MyAnime, PlaybackCheckpoint,
-    ReportPlaybackProgressInput, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    AnimeStatus, Episode, EpisodePreference, MyAnime, PlaybackCheckpoint, ReleaseSourceConfig,
+    ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
+    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+};
+use ani_repository::{
+    ReleaseSearchCacheEntry, ReleaseSourceRepository, UnitOfWork, UnitOfWorkFactory,
 };
 use rusqlite::{params, Connection, OpenFlags};
 use serde::Deserialize;
@@ -36,6 +40,14 @@ struct P3FollowingWriteModelFixture {
     report_playback_progress_input: ReportPlaybackProgressInput,
     save_playback_checkpoint_input: SavePlaybackCheckpointInput,
     checkpoint: PlaybackCheckpoint,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct P3SourceNetworkModelFixture {
+    source: ReleaseSourceConfig,
+    sync_state: ReleaseSourceSyncState,
+    circuit_state: RequestCircuitState,
 }
 
 /// 验证新库在单次启动中完成建表、seed 和版本写入。
@@ -70,6 +82,37 @@ fn initializes_new_database_with_seed() {
         1
     );
     storage.verify().expect("new database integrity");
+}
+
+/// 验证设置补丁可持久化，同时不能覆盖宿主拥有的存储路径。
+#[test]
+fn updates_and_resets_settings_through_repository() {
+    let directory = TestDirectory::new("settings-write");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("open settings write database");
+    let defaults = json!({
+        "appearance": { "mode": "system" },
+        "network": { "metadataProxy": { "mode": "system", "timeoutMs": 15000 } },
+        "storage": { "databasePath": "host-owned.sqlite" }
+    });
+    let updated = storage
+        .repository()
+        .update_settings(
+            &json!({
+                "network": { "metadataProxy": { "mode": "manual", "url": "http://127.0.0.1:7890" } },
+                "storage": { "databasePath": "untrusted.sqlite" }
+            }),
+            &defaults,
+        )
+        .expect("update settings");
+
+    assert_eq!(updated["network"]["metadataProxy"]["mode"], "manual");
+    assert_eq!(updated["storage"]["databasePath"], "host-owned.sqlite");
+    let reset = storage
+        .repository()
+        .reset_settings(&defaults)
+        .expect("reset settings");
+    assert_eq!(reset, defaults);
 }
 
 /// 验证旧库升级前保留一致性备份，并执行结构与应用数据迁移。
@@ -509,6 +552,112 @@ fn reads_and_replaces_p3_anime_catalog() {
     assert!(detail.my_anime.is_some());
     assert!(!detail.stale);
     assert!(detail.partial_errors.is_empty());
+}
+
+/// 验证公共工作单元能回滚或提交复用事务的 Repository 写入。
+#[test]
+fn exposes_atomic_repository_unit_of_work() {
+    let directory = TestDirectory::new("repository-unit-of-work");
+    let mut storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("open repository unit of work database");
+    let cache_key = "source-search-unit-of-work";
+    let now = "2026-07-25T00:00:00.000Z";
+    let entry = ReleaseSearchCacheEntry {
+        result: json!({ "items": [{ "title": "事务缓存" }] }),
+        expires_at: "2026-07-26T00:00:00.000Z".to_owned(),
+    };
+
+    let work = storage
+        .begin_unit_of_work()
+        .expect("begin rollback unit of work");
+    {
+        let repositories = work.repositories();
+        ReleaseSourceRepository::upsert_release_search_cache(&repositories, cache_key, &entry)
+            .expect("write cache inside rollback unit of work");
+        assert!(
+            ReleaseSourceRepository::get_release_search_cache(&repositories, cache_key, now)
+                .expect("read uncommitted cache")
+                .is_some()
+        );
+    }
+    work.rollback().expect("rollback unit of work");
+    assert!(ReleaseSourceRepository::get_release_search_cache(
+        &storage.repository(),
+        cache_key,
+        now
+    )
+    .expect("read cache after rollback")
+    .is_none());
+
+    let work = storage
+        .begin_unit_of_work()
+        .expect("begin commit unit of work");
+    {
+        let repositories = work.repositories();
+        ReleaseSourceRepository::upsert_release_search_cache(&repositories, cache_key, &entry)
+            .expect("write cache inside commit unit of work");
+    }
+    work.commit().expect("commit unit of work");
+    assert!(ReleaseSourceRepository::get_release_search_cache(
+        &storage.repository(),
+        cache_key,
+        now
+    )
+    .expect("read cache after commit")
+    .is_some());
+}
+
+/// 验证来源配置、同步游标、熔断和搜索缓存均通过 SQLite 适配器持久化。
+#[test]
+fn persists_p3_source_network_state() {
+    let directory = TestDirectory::new("p3-source-network");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("open p3 source network database");
+    let fixture: ContractFixture<P3SourceNetworkModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-source-network-model.v1.json"
+        )))
+        .expect("decode p3 source network fixture");
+    let repository = storage.repository();
+
+    let sources = repository
+        .upsert_source(&fixture.payload.source)
+        .expect("save source config");
+    assert!(sources
+        .iter()
+        .any(|source| source.id == fixture.payload.source.id));
+    repository
+        .upsert_source_sync_state(&fixture.payload.sync_state)
+        .expect("save source sync state");
+    assert_eq!(
+        repository
+            .list_source_sync_states()
+            .expect("list source sync states")
+            .into_iter()
+            .find(|state| state.source_id == fixture.payload.source.id)
+            .expect("saved source sync state")
+            .request_failure_count,
+        2
+    );
+    repository
+        .upsert_request_circuit_state(&fixture.payload.circuit_state)
+        .expect("save request circuit state");
+    assert_eq!(
+        repository
+            .get_request_circuit_state(&fixture.payload.circuit_state.key)
+            .expect("read request circuit state")
+            .expect("saved request circuit state")
+            .failure_count,
+        2
+    );
+    repository
+        .clear_request_circuit_state(&fixture.payload.circuit_state.key)
+        .expect("clear request circuit state");
+    assert!(repository
+        .get_request_circuit_state(&fixture.payload.circuit_state.key)
+        .expect("read cleared request circuit state")
+        .is_none());
 }
 
 /// 创建包含固定设置和下载源的测试启动参数。

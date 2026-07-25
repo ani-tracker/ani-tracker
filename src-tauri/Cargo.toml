@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 ani-contracts = { path = "../crates/ani-contracts" }
 ani-domain = { path = "../crates/ani-domain" }
+ani-repository = { path = "../crates/ani-repository" }
 ani-storage = { path = "../crates/ani-storage" }
 log = "0.4"
 serde_json.workspace = true

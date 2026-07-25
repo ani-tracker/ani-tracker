@@ -1,0 +1,12 @@
+[package]
+name = "ani-repository"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Ani Tracker storage ports shared by persistence adapters"
+
+[dependencies]
+ani-domain = { path = "../ani-domain" }
+serde_json.workspace = true
+thiserror.workspace = true

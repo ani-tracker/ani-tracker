@@ -112,6 +112,84 @@ pub struct FansubGroup {
     pub source_ids: Vec<String>,
 }
 
+/// 下载源类型。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SourceKind {
+    Rss,
+    Torznab,
+    SiteAdapter,
+    Manual,
+}
+
+/// 下载源配置。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseSourceConfig {
+    pub id: String,
+    pub name: String,
+    pub kind: SourceKind,
+    pub enabled: bool,
+    #[serde(default)]
+    pub use_proxy: bool,
+    #[serde(default = "default_source_request_interval_ms")]
+    pub request_interval_ms: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rss_url: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// 返回下载源默认请求间隔。
+fn default_source_request_interval_ms() -> i64 {
+    1_500
+}
+
+/// 单个下载源的请求和同步游标。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReleaseSourceSyncState {
+    pub source_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_request_at: Option<String>,
+    #[serde(default)]
+    pub request_failure_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_until: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync_attempt_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_successful_sync_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_sync_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub etag: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_modified: Option<String>,
+}
+
+/// 通用网络请求熔断状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RequestCircuitState {
+    pub key: String,
+    pub group: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_host: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_request_at: Option<String>,
+    #[serde(default)]
+    pub failure_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_until: Option<String>,
+}
+
 /// 首页和追番列表需要的完整番剧目录记录。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -625,8 +703,8 @@ mod tests {
     use super::{
         AnimeDetailResult, AnimeDiscoverySearchResult, AnimeStatus, DashboardData, Episode,
         EpisodePreference, MyAnime, NotificationKind, NotificationRecord, PlaybackCheckpoint,
-        ReportPlaybackProgressInput, SavePlaybackCheckpointInput, SecretValue,
-        SetAnimeWatchProgressInput,
+        ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
+        RequestCircuitState, SavePlaybackCheckpointInput, SecretValue, SetAnimeWatchProgressInput,
     };
 
     #[derive(Debug, Deserialize)]
@@ -662,6 +740,14 @@ mod tests {
     struct P3CatalogReadModelFixture {
         search_result: AnimeDiscoverySearchResult,
         detail_result: AnimeDetailResult,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct P3SourceNetworkModelFixture {
+        source: ReleaseSourceConfig,
+        sync_state: ReleaseSourceSyncState,
+        circuit_state: RequestCircuitState,
     }
 
     /// 验证领域枚举沿用前端现有的 JSON 字面量。
@@ -743,6 +829,26 @@ mod tests {
             "anime-catalog-contract-1"
         );
         assert!(!decoded.payload.detail_result.stale);
+    }
+
+    /// 验证 P3 来源配置、同步游标和熔断状态契约可跨语言解码。
+    #[test]
+    fn decodes_p3_source_network_model_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-source-network-model.v1.json"
+        ));
+        let decoded: ContractFixture<P3SourceNetworkModelFixture> =
+            serde_json::from_str(fixture).expect("p3 source network fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p3-source-network-model");
+        assert_eq!(decoded.payload.source.id, "torznab-contract");
+        assert_eq!(decoded.payload.sync_state.request_failure_count, 2);
+        assert_eq!(
+            decoded.payload.circuit_state.key,
+            "release-source:torznab-contract"
+        );
     }
 
     /// 验证敏感值不会通过 Debug 输出泄漏。

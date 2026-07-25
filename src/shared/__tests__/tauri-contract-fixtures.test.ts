@@ -18,7 +18,10 @@ import type {
   Episode,
   EpisodePreference,
   MyAnime,
-  NotificationRecord
+  NotificationRecord,
+  ReleaseSourceConfig,
+  ReleaseSourceSyncState,
+  RequestCircuitState
 } from "../domain";
 
 interface ContractFixture<T> {
@@ -103,4 +106,21 @@ test("Tauri P3 番剧目录契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.searchResult.items[0].externalIds.bangumi, "catalog-contract-1");
   assert.equal(fixture.payload.detailResult.anime.id, fixture.payload.searchResult.items[0].id);
   assert.equal(fixture.payload.detailResult.stale, false);
+});
+
+/** 读取 P3 来源网络金样，验证配置、游标与熔断状态字段一致。 */
+test("Tauri P3 来源网络契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p3-source-network-model.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    source: ReleaseSourceConfig;
+    syncState: ReleaseSourceSyncState;
+    circuitState: RequestCircuitState;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p3-source-network-model");
+  assert.equal(fixture.payload.source.kind, "torznab");
+  assert.equal(fixture.payload.source.requestIntervalMs, 1_750);
+  assert.equal(fixture.payload.syncState.requestFailureCount, 2);
+  assert.equal(fixture.payload.circuitState.key, `release-source:${fixture.payload.source.id}`);
 });

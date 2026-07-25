@@ -1,5 +1,7 @@
 use std::path::PathBuf;
 
+use ani_repository::RepositoryError;
+
 /// SQLite 数据层启动和迁移错误。
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
@@ -63,6 +65,26 @@ impl StorageError {
             operation,
             path: path.into(),
             source,
+        }
+    }
+}
+
+impl From<StorageError> for RepositoryError {
+    /// 隔离 SQLite 驱动细节，只向业务层暴露稳定错误分类。
+    fn from(error: StorageError) -> Self {
+        match error {
+            StorageError::InvalidInput { field, message } => Self::InvalidInput {
+                field: field.to_owned(),
+                message,
+            },
+            StorageError::RecordNotFound { entity, id } => Self::RecordNotFound {
+                entity: entity.to_owned(),
+                id,
+            },
+            error => Self::Backend {
+                backend: "sqlite".to_owned(),
+                message: error.to_string(),
+            },
         }
     }
 }

@@ -2,7 +2,7 @@
 
 最近更新：2026-07-25
 
-状态：P0-P2 已完成；P3 追番与单集切片已完成；跨平台构建待后续统一验证
+状态：P0-P2 已完成；P3 追番、目录与来源网络切片已完成；跨平台构建待后续统一验证
 
 ## 1. 迁移目标
 
@@ -83,7 +83,8 @@ React / Tailwind / shadcn UI
     Tauri invoke / event bridge
               |
 +------------------- Rust workspace --------------------+
-| ani-contracts | ani-domain | ani-storage | ani-sources |
+| ani-contracts | ani-domain | ani-repository             |
+| ani-storage   | ani-sources                              |
 | ani-downloads | ani-media  | ani-automation            |
 +-------------------------------------------------------+
               |
@@ -93,7 +94,7 @@ React / Tailwind / shadcn UI
 | iOS: Swift plugin / BGTask / MobileVLCKit              |
 +-------------------------------------------------------+
               |
- SQLite | torrent-core | qBittorrent | libVLC | OS APIs
+ SQLite / future MySQL adapter | torrent-core | libVLC | OS APIs
 ```
 
 ### 3.1 Rust 模块边界
@@ -102,7 +103,8 @@ React / Tailwind / shadcn UI
 | --- | --- |
 | `ani-contracts` | 与 `src/shared` 对齐的序列化 DTO、版本和错误模型 |
 | `ani-domain` | 追番、来源、匹配、播放进度、下载状态和自动化规则 |
-| `ani-storage` | SQLite、迁移、事务、备份、路径迁移和安全字段引用 |
+| `ani-repository` | 与数据库驱动无关的分域 Repository Ports、稳定错误和 UnitOfWork |
+| `ani-storage` | SQLite Adapter、迁移、事务、备份、路径迁移和安全字段引用 |
 | `ani-sources` | Metadata、RSS、Torznab、站点适配、限流、缓存和熔断 |
 | `ani-downloads` | 下载引擎接口、任务编排、恢复、文件优先级和状态归一化 |
 | `ani-media` | 文件关联、桌面探测、播放会话和平台播放器接口 |
@@ -123,6 +125,9 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 ### 3.3 数据与安全
 
 - Rust Repository 使用 SQLite 单写者模型，启用 WAL、外键、busy timeout 和事务。
+- 业务服务仅依赖 `ani-repository` 公共端口；SQL 方言、连接、迁移和备份归具体适配器所有。
+- SQLite 保持桌面和移动默认本地存储；未来 MySQL 通过独立 Adapter 接入，不改变 Tauri commands、`AppClient` 或页面。
+- 面向公网部署时客户端不直连 MySQL，使用服务端 API 保存凭据并实施认证；直连 Adapter 只用于受控服务进程。
 - 复用当前 schema 语义与版本，不允许 Tauri 首启创建不兼容的第二套桌面数据。
 - 桌面首次启动检测 Electron `userData` 数据库，执行只复制不删除的版本化迁移。
 - Android / iOS 使用各自应用数据目录，保持设备本地数据库，不依赖桌面在线。
@@ -252,6 +257,9 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - 已迁移番剧目录合并、年月查询、本地搜索、月份原子替换和详情聚合，并保护追番、单集、下载和媒体引用。
 - 已接通对应 Tauri commands 与 `TauriClient`，新增 TypeScript/Rust 共用 P3 写入、目录金样及事务回滚测试。
 - Rust 测试、Clippy、Tauri Rust check、TypeScript 类型检查及 353 项 Node 测试通过；平台构建按当前安排后续统一验证。
+- 已新增数据库无关的分域 Repository Ports、稳定错误模型和 UnitOfWork；SQLite Adapter 已通过显式提交/回滚测试，并为未来 MySQL Adapter 保留实现边界。
+- 已迁移来源配置与设置写入 commands，建立 Rust Native HTTP、HTTP/HTTPS 白名单、系统/手动/关闭代理、AniBT 强制直连、主机限流、响应大小限制、跨重启熔断及搜索缓存。
+- 已接通 `TauriClient` 的来源配置、代理设置和字幕组读取，新增来源网络跨语言金样；Rust、Clippy、TypeScript 与 354 项 Node 回归通过，其中 353 项通过、1 项跳过。
 
 ### P4：下载、torrent-core 与媒体闭环
 
@@ -443,5 +451,6 @@ P0 执行记录：
 4. 同意 Linux 首期支持 X11/XWayland，原生 Wayland 后续单独验收。
 5. 同意按 P0-P8 顺序实施并按上述边界提交。
 6. 同意 P0 安装 Rust 工具链并增加 Tauri/Cargo 依赖。
+7. 同意业务存储依赖公共 Repository Ports 与 UnitOfWork，SQLite 为默认本地 Adapter，并为未来 MySQL Adapter 保持可替换边界。
 
 P0 已按上述决策执行；后续阶段继续逐阶段实现、验证并提交。

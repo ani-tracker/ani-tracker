@@ -6,14 +6,15 @@ use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use ani_repository::{RepositoryError, RepositoryResult, UnitOfWork, UnitOfWorkFactory};
 use chrono::{SecondsFormat, Utc};
 use log::{error, info, warn};
-use rusqlite::{backup::Backup, Connection, OpenFlags};
+use rusqlite::{backup::Backup, Connection, OpenFlags, Transaction};
 use serde_json::Value;
 
 pub use error::StorageError;
 use migration::{initialize_database, read_database_versions};
-pub use repository::AppRepository;
+pub use repository::SqliteRepository;
 
 /// 当前与 Electron 共用的 SQLite 结构版本。
 pub const SQLITE_SCHEMA_VERSION: u32 = 18;
@@ -78,6 +79,11 @@ pub struct Storage {
     connection: Connection,
     database_path: PathBuf,
     report: StorageOpenReport,
+}
+
+/// SQLite 事务实现的工作单元，未提交即按 rusqlite 语义回滚。
+pub struct SqliteUnitOfWork<'connection> {
+    transaction: Option<Transaction<'connection>>,
 }
 
 impl Storage {
@@ -196,8 +202,60 @@ impl Storage {
     }
 
     /// 创建仅在当前连接生命周期内有效的业务 Repository。
-    pub fn repository(&self) -> AppRepository<'_> {
-        AppRepository::new(&self.connection)
+    pub fn repository(&self) -> SqliteRepository<'_> {
+        SqliteRepository::new(&self.connection)
+    }
+}
+
+impl UnitOfWorkFactory for Storage {
+    type Work<'work> = SqliteUnitOfWork<'work>;
+
+    /// 在 SQLite 单写者连接上开始显式事务。
+    fn begin_unit_of_work(&mut self) -> RepositoryResult<Self::Work<'_>> {
+        let transaction = self
+            .connection
+            .transaction()
+            .map_err(StorageError::from)
+            .map_err(RepositoryError::from)?;
+        Ok(SqliteUnitOfWork {
+            transaction: Some(transaction),
+        })
+    }
+}
+
+impl UnitOfWork for SqliteUnitOfWork<'_> {
+    type Repositories<'repository>
+        = SqliteRepository<'repository>
+    where
+        Self: 'repository;
+
+    /// 返回复用当前 SQLite 事务的 Repository 集合。
+    fn repositories(&self) -> Self::Repositories<'_> {
+        let transaction = self
+            .transaction
+            .as_ref()
+            .expect("unit of work transaction must exist before completion");
+        SqliteRepository::in_unit_of_work(transaction)
+    }
+
+    /// 提交 SQLite 工作单元。
+    fn commit(mut self) -> RepositoryResult<()> {
+        self.transaction
+            .take()
+            .expect("unit of work transaction must exist before commit")
+            .commit()
+            .map_err(StorageError::from)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 回滚 SQLite 工作单元。
+    fn rollback(mut self) -> RepositoryResult<()> {
+        self.transaction
+            .take()
+            .expect("unit of work transaction must exist before rollback")
+            .rollback()
+            .map_err(StorageError::from)
+            .map_err(RepositoryError::from)
     }
 }
 

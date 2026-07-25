@@ -3,20 +3,24 @@ use std::sync::{Arc, Mutex};
 use ani_contracts::AppCommandError;
 use ani_domain::{
     Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeWatchProgress, AppSettings,
-    DashboardData, Episode, EpisodePreference, MyAnime, NotificationRecord, PlaybackCheckpoint,
-    ReportPlaybackProgressInput, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    DashboardData, Episode, EpisodePreference, FansubGroup, MyAnime, NotificationRecord,
+    PlaybackCheckpoint, ReleaseSourceConfig, ReportPlaybackProgressInput,
+    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
-use ani_storage::{Storage, StorageError};
+use ani_repository::{prelude::*, RepositoryError};
+use ani_storage::Storage;
+use serde_json::Value;
 use tauri::State;
 
 use crate::storage::AppStorageState;
 
 /// 将数据层错误转换为稳定的 Tauri 命令错误。
-fn map_storage_error(action: &str, error: StorageError) -> AppCommandError {
+fn map_repository_error(action: &str, error: RepositoryError) -> AppCommandError {
     log::error!("Tauri 数据命令失败 action={action} error={error}");
     let code = match &error {
-        StorageError::InvalidInput { .. } => "invalid_input",
-        StorageError::RecordNotFound { .. } => "record_not_found",
+        RepositoryError::InvalidInput { .. } => "invalid_input",
+        RepositoryError::RecordNotFound { .. } => "record_not_found",
+        RepositoryError::BackendUnavailable { .. } => "storage_unavailable",
         _ => "storage_operation_failed",
     };
     AppCommandError {
@@ -42,13 +46,13 @@ async fn run_query<T, F>(
 ) -> Result<T, AppCommandError>
 where
     T: Send + 'static,
-    F: FnOnce(&Storage) -> Result<T, StorageError> + Send + 'static,
+    F: FnOnce(&Storage) -> Result<T, RepositoryError> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(move || {
         let guard = storage
             .lock()
             .map_err(|error| map_runtime_error(action, error))?;
-        query(&guard).map_err(|error| map_storage_error(action, error))
+        query(&guard).map_err(|error| map_repository_error(action, error))
     })
     .await
     .map_err(|error| map_runtime_error(action, error))?
@@ -74,6 +78,33 @@ pub(crate) async fn get_settings(
     run_query("读取设置", Arc::clone(state.storage()), move |storage| {
         storage.repository().get_settings(&defaults)
     })
+    .await
+}
+
+/// 递归合并应用设置，并保护宿主路径字段。
+#[tauri::command]
+pub(crate) async fn update_settings(
+    patch: Value,
+    state: State<'_, AppStorageState>,
+) -> Result<AppSettings, AppCommandError> {
+    let defaults = state.platform_defaults().clone();
+    run_query("更新设置", Arc::clone(state.storage()), move |storage| {
+        storage.repository().update_settings(&patch, &defaults)
+    })
+    .await
+}
+
+/// 恢复当前平台默认设置。
+#[tauri::command]
+pub(crate) async fn reset_settings_to_defaults(
+    state: State<'_, AppStorageState>,
+) -> Result<AppSettings, AppCommandError> {
+    let defaults = state.platform_defaults().clone();
+    run_query(
+        "恢复默认设置",
+        Arc::clone(state.storage()),
+        move |storage| storage.repository().reset_settings(&defaults),
+    )
     .await
 }
 
@@ -298,6 +329,62 @@ pub(crate) async fn get_anime_detail(
         "读取番剧详情",
         Arc::clone(state.storage()),
         move |storage| storage.repository().get_anime_detail(&anime_id),
+    )
+    .await
+}
+
+/// 读取全部或指定番剧的字幕组。
+#[tauri::command]
+pub(crate) async fn list_fansubs(
+    anime_id: Option<String>,
+    state: State<'_, AppStorageState>,
+) -> Result<Vec<FansubGroup>, AppCommandError> {
+    run_query(
+        "读取字幕组",
+        Arc::clone(state.storage()),
+        move |storage| storage.repository().list_fansubs(anime_id.as_deref()),
+    )
+    .await
+}
+
+/// 读取全部下载源配置。
+#[tauri::command]
+pub(crate) async fn list_sources(
+    state: State<'_, AppStorageState>,
+) -> Result<Vec<ReleaseSourceConfig>, AppCommandError> {
+    run_query(
+        "读取下载源",
+        Arc::clone(state.storage()),
+        move |storage| storage.repository().list_sources(),
+    )
+    .await
+}
+
+/// 启用或停用一个下载源。
+#[tauri::command]
+pub(crate) async fn set_source_enabled(
+    source_id: String,
+    enabled: bool,
+    state: State<'_, AppStorageState>,
+) -> Result<Vec<ReleaseSourceConfig>, AppCommandError> {
+    run_query(
+        "更新下载源状态",
+        Arc::clone(state.storage()),
+        move |storage| storage.repository().set_source_enabled(&source_id, enabled),
+    )
+    .await
+}
+
+/// 新增或更新一个下载源配置。
+#[tauri::command]
+pub(crate) async fn upsert_source(
+    source: ReleaseSourceConfig,
+    state: State<'_, AppStorageState>,
+) -> Result<Vec<ReleaseSourceConfig>, AppCommandError> {
+    run_query(
+        "保存下载源",
+        Arc::clone(state.storage()),
+        move |storage| storage.repository().upsert_source(&source),
     )
     .await
 }

@@ -17,8 +17,10 @@ import type {
   DashboardData,
   Episode,
   EpisodePreference,
+  FansubGroup,
   MyAnime,
-  NotificationRecord
+  NotificationRecord,
+  ReleaseSourceConfig
 } from "@shared/domain";
 
 const WINDOW_STATE_CHANGED_EVENT = "window-state-changed";
@@ -115,6 +117,20 @@ class TauriClientCore {
   async getSettings(): Promise<AppSettings> {
     return invoke<AppSettings>("get_settings").catch((error) => {
       throw normalizeTauriError("get_settings", error);
+    });
+  }
+
+  /** 递归合并应用设置，并由 Rust 保护宿主路径。 */
+  async updateSettings(patch: Partial<AppSettings>): Promise<AppSettings> {
+    return invoke<AppSettings>("update_settings", { patch }).catch((error) => {
+      throw normalizeTauriError("update_settings", error);
+    });
+  }
+
+  /** 恢复当前 Tauri 平台默认设置。 */
+  async resetSettingsToDefaults(): Promise<AppSettings> {
+    return invoke<AppSettings>("reset_settings_to_defaults").catch((error) => {
+      throw normalizeTauriError("reset_settings_to_defaults", error);
     });
   }
 
@@ -234,6 +250,34 @@ class TauriClientCore {
   async getAnimeDetail(animeId: string): Promise<AnimeDetailResult> {
     return invoke<AnimeDetailResult>("get_anime_detail", { animeId }).catch((error) => {
       throw normalizeTauriError("get_anime_detail", error);
+    });
+  }
+
+  /** 读取全部或指定番剧的字幕组。 */
+  async listFansubs(animeId?: string): Promise<FansubGroup[]> {
+    return invoke<FansubGroup[]>("list_fansubs", { animeId }).catch((error) => {
+      throw normalizeTauriError("list_fansubs", error);
+    });
+  }
+
+  /** 从公共 Repository 端口读取下载源配置。 */
+  async listSources(): Promise<ReleaseSourceConfig[]> {
+    return invoke<ReleaseSourceConfig[]>("list_sources").catch((error) => {
+      throw normalizeTauriError("list_sources", error);
+    });
+  }
+
+  /** 启用或停用一个下载源。 */
+  async setSourceEnabled(sourceId: string, enabled: boolean): Promise<ReleaseSourceConfig[]> {
+    return invoke<ReleaseSourceConfig[]>("set_source_enabled", { sourceId, enabled }).catch((error) => {
+      throw normalizeTauriError("set_source_enabled", error);
+    });
+  }
+
+  /** 新增或更新一个下载源。 */
+  async upsertSource(source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]> {
+    return invoke<ReleaseSourceConfig[]>("upsert_source", { source }).catch((error) => {
+      throw normalizeTauriError("upsert_source", error);
     });
   }
 }

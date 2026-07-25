@@ -7,8 +7,14 @@ use ani_domain::{
     AppSettings, DailyReminderItem, DailyReminderSummary, DashboardData, DownloadStatus,
     DownloadTask, Episode, EpisodePreference, EpisodeStatus, EpisodeSummary, FansubGroup,
     MediaFile, MyAnime, NotificationKind, NotificationRecord, NotificationSeverity, PendingAction,
-    PlaybackCheckpoint, ReportPlaybackProgressInput, SavePlaybackCheckpointInput,
-    SetAnimeWatchProgressInput, SourceHealth, TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
+    PlaybackCheckpoint, ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
+    RequestCircuitState, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput, SourceHealth,
+    SourceKind, TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
+};
+use ani_repository::{
+    AnimeCatalogRepository, AnimeCatalogWriteResult, AnimeTrackingRepository, DashboardRepository,
+    NotificationRepository, PlaybackRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository,
+    RepositoryError, RepositoryResult, SettingsRepository,
 };
 use chrono::{DateTime, Duration, Local, Utc};
 use log::{debug, info, warn};
@@ -18,27 +24,31 @@ use serde_json::Value;
 
 use crate::{now_iso, StorageError};
 
-/// 提供 P2 首批设置、通知、追番和首页只读查询。
-pub struct AppRepository<'connection> {
+/// 基于单个 SQLite 连接实现公共业务 Repository 端口。
+pub struct SqliteRepository<'connection> {
     connection: &'connection Connection,
+    transaction_active: bool,
 }
 
-/// 番剧目录批量写入后的计数和完整目录。
-#[derive(Debug, Clone, PartialEq)]
-pub struct AnimeCatalogWriteResult {
-    pub items: Vec<Anime>,
-    pub added_count: usize,
-    pub existing_count: usize,
-}
-
-impl<'connection> AppRepository<'connection> {
+impl<'connection> SqliteRepository<'connection> {
     /// 使用已完成迁移的 SQLite 连接创建 Repository。
     pub(crate) fn new(connection: &'connection Connection) -> Self {
-        Self { connection }
+        Self {
+            connection,
+            transaction_active: false,
+        }
+    }
+
+    /// 创建绑定外层工作单元的 Repository，内部原子操作复用同一事务。
+    pub(crate) fn in_unit_of_work(connection: &'connection Connection) -> Self {
+        Self {
+            connection,
+            transaction_active: true,
+        }
     }
 
     /// 读取设置，并用当前平台默认值递归补齐新增字段。
-    pub fn get_settings(
+    pub(crate) fn get_settings(
         &self,
         platform_defaults: &AppSettings,
     ) -> Result<AppSettings, StorageError> {
@@ -56,8 +66,35 @@ impl<'connection> AppRepository<'connection> {
         Ok(merged)
     }
 
+    /// 递归合并设置补丁，并保护宿主控制的平台路径。
+    pub(crate) fn update_settings(
+        &self,
+        patch: &Value,
+        platform_defaults: &AppSettings,
+    ) -> Result<AppSettings, StorageError> {
+        if !patch.is_object() {
+            return invalid_input("settings", "设置补丁必须是 JSON 对象");
+        }
+        let mut settings = self.get_settings(platform_defaults)?;
+        merge_json(&mut settings, patch.clone());
+        preserve_host_storage_paths(&mut settings, platform_defaults);
+        self.save_settings(&settings)?;
+        info!("Rust 应用设置更新完成");
+        Ok(settings)
+    }
+
+    /// 覆盖保存当前宿主生成的平台默认设置。
+    pub(crate) fn reset_settings(
+        &self,
+        platform_defaults: &AppSettings,
+    ) -> Result<AppSettings, StorageError> {
+        self.save_settings(platform_defaults)?;
+        info!("Rust 应用设置已恢复平台默认值");
+        Ok(platform_defaults.clone())
+    }
+
     /// 按创建时间倒序读取提醒中心通知。
-    pub fn list_notifications(&self) -> Result<Vec<NotificationRecord>, StorageError> {
+    pub(crate) fn list_notifications(&self) -> Result<Vec<NotificationRecord>, StorageError> {
         let rows = query_all(
             self.connection,
             "SELECT * FROM notification ORDER BY created_at DESC",
@@ -67,7 +104,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 统计当前未读通知数量。
-    pub fn get_unread_notification_count(&self) -> Result<u64, StorageError> {
+    pub(crate) fn get_unread_notification_count(&self) -> Result<u64, StorageError> {
         let count = self.connection.query_row(
             "SELECT COUNT(*) FROM notification WHERE read_at IS NULL",
             [],
@@ -77,7 +114,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 按可选年月读取并排序本地番剧目录。
-    pub fn list_anime_catalog(
+    pub(crate) fn list_anime_catalog(
         &self,
         year: Option<i64>,
         month: Option<i64>,
@@ -111,7 +148,10 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 按目录标识读取一部番剧及其别名。
-    pub fn get_anime_catalog_by_id(&self, anime_id: &str) -> Result<Option<Anime>, StorageError> {
+    pub(crate) fn get_anime_catalog_by_id(
+        &self,
+        anime_id: &str,
+    ) -> Result<Option<Anime>, StorageError> {
         let row = self
             .connection
             .query_row(
@@ -136,7 +176,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 按标题、原名和别名搜索本地番剧目录。
-    pub fn search_anime_catalog(
+    pub(crate) fn search_anime_catalog(
         &self,
         keyword: &str,
     ) -> Result<AnimeDiscoverySearchResult, StorageError> {
@@ -167,7 +207,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 合并并原子保存一批番剧目录记录。
-    pub fn upsert_anime_catalog(
+    pub(crate) fn upsert_anime_catalog(
         &self,
         items: &[Anime],
     ) -> Result<AnimeCatalogWriteResult, StorageError> {
@@ -175,7 +215,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 原子替换指定月份的未引用缓存，并保留业务引用记录。
-    pub fn replace_anime_catalog_month(
+    pub(crate) fn replace_anime_catalog_month(
         &self,
         year: i64,
         month: i64,
@@ -188,7 +228,10 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 聚合本地番剧、追番、单集和字幕组供详情页首屏使用。
-    pub fn get_anime_detail(&self, anime_id: &str) -> Result<AnimeDetailResult, StorageError> {
+    pub(crate) fn get_anime_detail(
+        &self,
+        anime_id: &str,
+    ) -> Result<AnimeDetailResult, StorageError> {
         let anime = self.get_anime_catalog_by_id(anime_id)?.ok_or_else(|| {
             StorageError::RecordNotFound {
                 entity: "番剧",
@@ -230,7 +273,10 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 读取全部或指定番剧已观察到的字幕组。
-    pub fn list_fansubs(&self, anime_id: Option<&str>) -> Result<Vec<FansubGroup>, StorageError> {
+    pub(crate) fn list_fansubs(
+        &self,
+        anime_id: Option<&str>,
+    ) -> Result<Vec<FansubGroup>, StorageError> {
         match anime_id {
             Some(anime_id) => query_all_with_params(
                 self.connection,
@@ -257,8 +303,247 @@ impl<'connection> AppRepository<'connection> {
         }
     }
 
+    /// 按名称读取全部下载源配置。
+    pub(crate) fn list_sources(&self) -> Result<Vec<ReleaseSourceConfig>, StorageError> {
+        query_all(
+            self.connection,
+            "SELECT * FROM release_source ORDER BY name",
+            map_release_source_row,
+        )?
+        .into_iter()
+        .map(ReleaseSourceRow::into_domain)
+        .collect()
+    }
+
+    /// 启用或停用一个下载源。
+    pub(crate) fn set_source_enabled(
+        &self,
+        source_id: &str,
+        enabled: bool,
+    ) -> Result<Vec<ReleaseSourceConfig>, StorageError> {
+        validate_identifier("sourceId", source_id)?;
+        let changed = self.connection.execute(
+            "UPDATE release_source SET enabled = ?1, updated_at = ?2 WHERE id = ?3",
+            params![i64::from(enabled), now_iso(), source_id],
+        )?;
+        if changed == 0 {
+            return Err(StorageError::RecordNotFound {
+                entity: "下载源",
+                id: source_id.to_owned(),
+            });
+        }
+        info!("Rust 下载源状态更新：source_id={source_id}, enabled={enabled}");
+        self.list_sources()
+    }
+
+    /// 新增或更新下载源配置。
+    pub(crate) fn upsert_source(
+        &self,
+        source: &ReleaseSourceConfig,
+    ) -> Result<Vec<ReleaseSourceConfig>, StorageError> {
+        validate_identifier("source.id", &source.id)?;
+        if source.name.trim().is_empty() {
+            return invalid_input("source.name", "下载源名称不能为空");
+        }
+        validate_optional_http_url("source.baseUrl", source.base_url.as_deref())?;
+        validate_optional_http_url("source.rssUrl", source.rss_url.as_deref())?;
+        let timestamp = now_iso();
+        let tags_json =
+            serde_json::to_string(&source.tags).map_err(|source| StorageError::JsonData {
+                context: "下载源标签",
+                source,
+            })?;
+        self.connection.execute(
+            "INSERT INTO release_source (
+               id, name, kind, enabled, use_proxy, request_interval_ms, base_url, api_key,
+               rss_url, tags_json, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+               name = excluded.name, kind = excluded.kind, enabled = excluded.enabled,
+               use_proxy = excluded.use_proxy, request_interval_ms = excluded.request_interval_ms,
+               base_url = excluded.base_url, api_key = excluded.api_key,
+               rss_url = excluded.rss_url, tags_json = excluded.tags_json,
+               updated_at = excluded.updated_at",
+            params![
+                &source.id,
+                source.name.trim(),
+                source_kind_value(&source.kind),
+                i64::from(source.enabled),
+                i64::from(source.use_proxy),
+                normalize_source_request_interval(source.request_interval_ms),
+                source.base_url.as_deref(),
+                source.api_key.as_deref(),
+                source.rss_url.as_deref(),
+                tags_json,
+                timestamp,
+            ],
+        )?;
+        info!(
+            "Rust 下载源保存完成：source_id={}, kind={}, enabled={}",
+            source.id,
+            source_kind_value(&source.kind),
+            source.enabled
+        );
+        self.list_sources()
+    }
+
+    /// 读取全部来源同步和条件请求游标。
+    pub(crate) fn list_source_sync_states(
+        &self,
+    ) -> Result<Vec<ReleaseSourceSyncState>, StorageError> {
+        query_all(
+            self.connection,
+            "SELECT * FROM release_source_sync_state ORDER BY source_id",
+            map_source_sync_state_row,
+        )
+    }
+
+    /// 保存单个来源同步和条件请求游标。
+    pub(crate) fn upsert_source_sync_state(
+        &self,
+        state: &ReleaseSourceSyncState,
+    ) -> Result<(), StorageError> {
+        validate_identifier("sourceSyncState.sourceId", &state.source_id)?;
+        self.connection.execute(
+            "INSERT INTO release_source_sync_state (
+               source_id, request_host, last_request_at, request_failure_count, backoff_until,
+               last_sync_attempt_at, last_successful_sync_at, last_sync_error, etag,
+               last_modified, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(source_id) DO UPDATE SET
+               request_host = excluded.request_host, last_request_at = excluded.last_request_at,
+               request_failure_count = excluded.request_failure_count,
+               backoff_until = excluded.backoff_until,
+               last_sync_attempt_at = excluded.last_sync_attempt_at,
+               last_successful_sync_at = excluded.last_successful_sync_at,
+               last_sync_error = excluded.last_sync_error, etag = excluded.etag,
+               last_modified = excluded.last_modified, updated_at = excluded.updated_at",
+            params![
+                &state.source_id,
+                state.request_host.as_deref(),
+                state.last_request_at.as_deref(),
+                state.request_failure_count.max(0),
+                state.backoff_until.as_deref(),
+                state.last_sync_attempt_at.as_deref(),
+                state.last_successful_sync_at.as_deref(),
+                state.last_sync_error.as_deref(),
+                state.etag.as_deref(),
+                state.last_modified.as_deref(),
+                now_iso(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 读取一个通用网络熔断状态。
+    pub(crate) fn get_request_circuit_state(
+        &self,
+        key: &str,
+    ) -> Result<Option<RequestCircuitState>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT * FROM request_circuit_state WHERE circuit_key = ?1",
+                [key],
+                map_request_circuit_state_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    /// 保存通用网络熔断状态。
+    pub(crate) fn upsert_request_circuit_state(
+        &self,
+        state: &RequestCircuitState,
+    ) -> Result<(), StorageError> {
+        validate_identifier("requestCircuit.key", &state.key)?;
+        validate_identifier("requestCircuit.group", &state.group)?;
+        self.connection.execute(
+            "INSERT INTO request_circuit_state (
+               circuit_key, circuit_group, request_host, last_request_at,
+               failure_count, backoff_until, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(circuit_key) DO UPDATE SET
+               circuit_group = excluded.circuit_group, request_host = excluded.request_host,
+               last_request_at = excluded.last_request_at, failure_count = excluded.failure_count,
+               backoff_until = excluded.backoff_until, updated_at = excluded.updated_at",
+            params![
+                &state.key,
+                &state.group,
+                state.request_host.as_deref(),
+                state.last_request_at.as_deref(),
+                state.failure_count.max(0),
+                state.backoff_until.as_deref(),
+                now_iso(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// 删除一个已恢复的通用网络熔断状态。
+    pub(crate) fn clear_request_circuit_state(&self, key: &str) -> Result<(), StorageError> {
+        self.connection.execute(
+            "DELETE FROM request_circuit_state WHERE circuit_key = ?1",
+            [key],
+        )?;
+        Ok(())
+    }
+
+    /// 读取尚未过期的跨重启资源搜索缓存。
+    pub(crate) fn get_release_search_cache(
+        &self,
+        cache_key: &str,
+        current_time: &str,
+    ) -> Result<Option<ReleaseSearchCacheEntry>, StorageError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT result_json, expires_at FROM release_search_cache
+                 WHERE cache_key = ?1 AND expires_at > ?2",
+                params![cache_key, current_time],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .optional()?;
+        row.map(|(result_json, expires_at)| {
+            Ok(ReleaseSearchCacheEntry {
+                result: parse_json(&result_json, "资源搜索缓存")?,
+                expires_at,
+            })
+        })
+        .transpose()
+    }
+
+    /// 保存资源搜索结果并清理已过期缓存。
+    pub(crate) fn upsert_release_search_cache(
+        &self,
+        cache_key: &str,
+        entry: &ReleaseSearchCacheEntry,
+    ) -> Result<(), StorageError> {
+        validate_identifier("releaseSearchCache.cacheKey", cache_key)?;
+        let result_json =
+            serde_json::to_string(&entry.result).map_err(|source| StorageError::JsonData {
+                context: "资源搜索缓存",
+                source,
+            })?;
+        let timestamp = now_iso();
+        self.with_transaction(|connection| {
+            connection.execute(
+                "DELETE FROM release_search_cache WHERE expires_at <= ?1",
+                [&timestamp],
+            )?;
+            connection.execute(
+                "INSERT INTO release_search_cache (cache_key, result_json, expires_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(cache_key) DO UPDATE SET
+                   result_json = excluded.result_json, expires_at = excluded.expires_at,
+                   updated_at = excluded.updated_at",
+                params![cache_key, result_json, &entry.expires_at, &timestamp],
+            )?;
+            Ok(())
+        })
+    }
+
     /// 读取并按季度、标题排序我的追番。
-    pub fn list_my_anime(&self) -> Result<Vec<MyAnime>, StorageError> {
+    pub(crate) fn list_my_anime(&self) -> Result<Vec<MyAnime>, StorageError> {
         let anime = self.list_anime_catalog(None, None)?;
         let anime_by_id = anime
             .into_iter()
@@ -279,7 +564,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 在单个事务中保存番剧目录、追番规则和 RSS 订阅。
-    pub fn upsert_my_anime(&self, mut item: MyAnime) -> Result<Vec<MyAnime>, StorageError> {
+    pub(crate) fn upsert_my_anime(&self, mut item: MyAnime) -> Result<Vec<MyAnime>, StorageError> {
         validate_identifier("myAnime.id", &item.id)?;
         validate_identifier("myAnime.anime.id", &item.anime.id)?;
         if item.anime.title.trim().is_empty() {
@@ -295,10 +580,10 @@ impl<'connection> AppRepository<'connection> {
             item.auto_download = false;
         }
 
-        let transaction = self.connection.unchecked_transaction()?;
-        upsert_anime_row(&transaction, &item.anime, &timestamp)?;
-        upsert_my_anime_row(&transaction, &item, &timestamp)?;
-        transaction.commit()?;
+        self.with_transaction(|connection| {
+            upsert_anime_row(connection, &item.anime, &timestamp)?;
+            upsert_my_anime_row(connection, &item, &timestamp)
+        })?;
         info!(
             "Rust 追番保存完成：item_id={}, anime_id={}, status={}",
             item.id,
@@ -309,7 +594,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 删除追番及其单集业务数据，保留可复用的番剧目录记录。
-    pub fn remove_my_anime(&self, item_id: &str) -> Result<Vec<MyAnime>, StorageError> {
+    pub(crate) fn remove_my_anime(&self, item_id: &str) -> Result<Vec<MyAnime>, StorageError> {
         validate_identifier("itemId", item_id)?;
         let anime_id = self
             .connection
@@ -319,18 +604,19 @@ impl<'connection> AppRepository<'connection> {
                 |row| row.get::<_, String>(0),
             )
             .optional()?;
-        let transaction = self.connection.unchecked_transaction()?;
-        transaction.execute("DELETE FROM my_anime WHERE id = ?1", [item_id])?;
-        if let Some(anime_id) = anime_id.as_deref() {
-            transaction.execute("DELETE FROM episode WHERE anime_id = ?1", [anime_id])?;
-        }
-        transaction.commit()?;
+        self.with_transaction(|connection| {
+            connection.execute("DELETE FROM my_anime WHERE id = ?1", [item_id])?;
+            if let Some(anime_id) = anime_id.as_deref() {
+                connection.execute("DELETE FROM episode WHERE anime_id = ?1", [anime_id])?;
+            }
+            Ok(())
+        })?;
         info!("Rust 追番删除完成：item_id={item_id}");
         self.list_my_anime()
     }
 
     /// 读取指定番剧的全部单集。
-    pub fn list_episodes(&self, anime_id: &str) -> Result<Vec<Episode>, StorageError> {
+    pub(crate) fn list_episodes(&self, anime_id: &str) -> Result<Vec<Episode>, StorageError> {
         query_all_with_params(
             self.connection,
             "SELECT * FROM episode WHERE anime_id = ?1 ORDER BY episode_no",
@@ -343,14 +629,16 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 新增或更新一条单集记录。
-    pub fn upsert_episode(&self, episode: &Episode) -> Result<Vec<Episode>, StorageError> {
+    pub(crate) fn upsert_episode(&self, episode: &Episode) -> Result<Vec<Episode>, StorageError> {
         validate_episode(episode)?;
         upsert_episode_row(self.connection, episode, &now_iso())?;
         self.list_episodes(&episode.anime_id)
     }
 
     /// 汇总全部追番的连续观看进度。
-    pub fn list_my_anime_watch_progress(&self) -> Result<Vec<AnimeWatchProgress>, StorageError> {
+    pub(crate) fn list_my_anime_watch_progress(
+        &self,
+    ) -> Result<Vec<AnimeWatchProgress>, StorageError> {
         self.list_my_anime()?
             .into_iter()
             .map(|item| {
@@ -361,7 +649,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 在单个事务中补齐单集并批量调整已看状态。
-    pub fn set_anime_watch_progress(
+    pub(crate) fn set_anime_watch_progress(
         &self,
         input: &SetAnimeWatchProgressInput,
     ) -> Result<AnimeWatchProgress, StorageError> {
@@ -386,37 +674,38 @@ impl<'connection> AppRepository<'connection> {
             .map(|episode| (episode.episode_no as i64, episode.clone()))
             .collect::<HashMap<_, _>>();
         let timestamp = now_iso();
-        let transaction = self.connection.unchecked_transaction()?;
+        self.with_transaction(|connection| {
+            for episode_no in 1..=input.watched_episode_count {
+                let mut episode =
+                    episode_by_number
+                        .get(&episode_no)
+                        .cloned()
+                        .unwrap_or_else(|| Episode {
+                            id: create_download_episode_id(&input.anime_id, episode_no),
+                            anime_id: input.anime_id.clone(),
+                            episode_no: episode_no as f64,
+                            title: None,
+                            air_time: None,
+                            status: EpisodeStatus::Aired,
+                        });
+                episode.status = EpisodeStatus::Watched;
+                upsert_episode_row(connection, &episode, &timestamp)?;
+            }
 
-        for episode_no in 1..=input.watched_episode_count {
-            let mut episode = episode_by_number
-                .get(&episode_no)
-                .cloned()
-                .unwrap_or_else(|| Episode {
-                    id: create_download_episode_id(&input.anime_id, episode_no),
-                    anime_id: input.anime_id.clone(),
-                    episode_no: episode_no as f64,
-                    title: None,
-                    air_time: None,
-                    status: EpisodeStatus::Aired,
-                });
-            episode.status = EpisodeStatus::Watched;
-            upsert_episode_row(&transaction, &episode, &timestamp)?;
-        }
-
-        for episode in episodes.iter().filter(|episode| {
-            episode.episode_no > input.watched_episode_count as f64
-                && episode.status == EpisodeStatus::Watched
-        }) {
-            let mut episode = episode.clone();
-            episode.status = resolve_episode_status_after_unwatch(&transaction, &episode)?;
-            upsert_episode_row(&transaction, &episode, &timestamp)?;
-        }
-        transaction.execute(
-            "UPDATE my_anime SET updated_at = ?1 WHERE anime_id = ?2",
-            params![&timestamp, &input.anime_id],
-        )?;
-        transaction.commit()?;
+            for episode in episodes.iter().filter(|episode| {
+                episode.episode_no > input.watched_episode_count as f64
+                    && episode.status == EpisodeStatus::Watched
+            }) {
+                let mut episode = episode.clone();
+                episode.status = resolve_episode_status_after_unwatch(connection, &episode)?;
+                upsert_episode_row(connection, &episode, &timestamp)?;
+            }
+            connection.execute(
+                "UPDATE my_anime SET updated_at = ?1 WHERE anime_id = ?2",
+                params![&timestamp, &input.anime_id],
+            )?;
+            Ok(())
+        })?;
 
         let progress = build_anime_watch_progress(&item, &self.list_episodes(&input.anime_id)?);
         info!(
@@ -427,7 +716,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 按下载任务和文件关联将达到阈值的单集标记为已看。
-    pub fn report_playback_progress(
+    pub(crate) fn report_playback_progress(
         &self,
         input: &ReportPlaybackProgressInput,
     ) -> Result<bool, StorageError> {
@@ -498,7 +787,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 读取指定下载文件最近一次可靠的播放位置。
-    pub fn get_playback_checkpoint(
+    pub(crate) fn get_playback_checkpoint(
         &self,
         task_id: &str,
         file_index: Option<i64>,
@@ -515,7 +804,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 校验并保存续播位置，首次跨过 90% 时同步已看状态。
-    pub fn save_playback_checkpoint(
+    pub(crate) fn save_playback_checkpoint(
         &self,
         input: &SavePlaybackCheckpointInput,
     ) -> Result<PlaybackCheckpoint, StorageError> {
@@ -570,7 +859,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 读取指定番剧的单集级偏好。
-    pub fn list_episode_preferences(
+    pub(crate) fn list_episode_preferences(
         &self,
         anime_id: &str,
     ) -> Result<Vec<EpisodePreference>, StorageError> {
@@ -583,7 +872,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 新增或更新一条单集级偏好。
-    pub fn upsert_episode_preference(
+    pub(crate) fn upsert_episode_preference(
         &self,
         preference: &EpisodePreference,
     ) -> Result<Vec<EpisodePreference>, StorageError> {
@@ -591,14 +880,14 @@ impl<'connection> AppRepository<'connection> {
         validate_identifier("preference.animeId", &preference.anime_id)?;
         validate_identifier("preference.episodeId", &preference.episode_id)?;
         let timestamp = now_iso();
-        let transaction = self.connection.unchecked_transaction()?;
-        upsert_episode_preference_row(&transaction, preference, &timestamp)?;
-        transaction.commit()?;
+        self.with_transaction(|connection| {
+            upsert_episode_preference_row(connection, preference, &timestamp)
+        })?;
         self.list_episode_preferences(&preference.anime_id)
     }
 
     /// 删除一条单集级偏好并返回同番剧剩余项。
-    pub fn remove_episode_preference(
+    pub(crate) fn remove_episode_preference(
         &self,
         episode_id: &str,
     ) -> Result<Vec<EpisodePreference>, StorageError> {
@@ -621,7 +910,7 @@ impl<'connection> AppRepository<'connection> {
     }
 
     /// 从追番、单集、下载和媒体表生成首页实时聚合数据。
-    pub fn get_dashboard(&self) -> Result<DashboardData, StorageError> {
+    pub(crate) fn get_dashboard(&self) -> Result<DashboardData, StorageError> {
         let stored = self
             .read_json_state("app_state", "dashboard", "首页状态")?
             .unwrap_or_else(|| Value::Object(Default::default()));
@@ -678,6 +967,21 @@ impl<'connection> AppRepository<'connection> {
             weekly_schedule,
             source_health,
         })
+    }
+
+    /// 在独立调用中创建事务，在工作单元内复用外层事务。
+    fn with_transaction<T>(
+        &self,
+        operation: impl FnOnce(&Connection) -> Result<T, StorageError>,
+    ) -> Result<T, StorageError> {
+        if self.transaction_active {
+            return operation(self.connection);
+        }
+
+        let transaction = self.connection.unchecked_transaction()?;
+        let result = operation(&transaction)?;
+        transaction.commit()?;
+        Ok(result)
     }
 
     /// 读取番剧别名并按番剧分组。
@@ -846,14 +1150,15 @@ impl<'connection> AppRepository<'connection> {
         .filter(|id| !keep_ids.contains(id))
         .collect::<Vec<_>>();
         let timestamp = now_iso();
-        let transaction = self.connection.unchecked_transaction()?;
-        for id in &delete_ids {
-            transaction.execute("DELETE FROM anime_catalog WHERE id = ?1", [id])?;
-        }
-        for anime in &catalog {
-            upsert_anime_row(&transaction, anime, &timestamp)?;
-        }
-        transaction.commit()?;
+        self.with_transaction(|connection| {
+            for id in &delete_ids {
+                connection.execute("DELETE FROM anime_catalog WHERE id = ?1", [id])?;
+            }
+            for anime in &catalog {
+                upsert_anime_row(connection, anime, &timestamp)?;
+            }
+            Ok(())
+        })?;
         if let Some((year, month)) = replace_month {
             info!(
                 "Rust 番剧月度目录替换完成：year={}, month={}, removed={}, collected={}, retained_referenced={}",
@@ -902,6 +1207,272 @@ impl<'connection> AppRepository<'connection> {
             .query_row(sql, [key], |row| row.get::<_, String>(0))
             .optional()?;
         raw.map(|value| parse_json(&value, context)).transpose()
+    }
+
+    /// 将完整设置 JSON 原子写入固定设置记录。
+    fn save_settings(&self, settings: &AppSettings) -> Result<(), StorageError> {
+        let value_json =
+            serde_json::to_string(settings).map_err(|source| StorageError::JsonData {
+                context: "应用设置",
+                source,
+            })?;
+        self.connection.execute(
+            "INSERT INTO app_settings (key, value_json, updated_at) VALUES ('settings', ?1, ?2)
+             ON CONFLICT(key) DO UPDATE SET
+               value_json = excluded.value_json, updated_at = excluded.updated_at",
+            params![value_json, now_iso()],
+        )?;
+        Ok(())
+    }
+}
+
+impl SettingsRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取应用设置。
+    fn get_settings(&self, platform_defaults: &AppSettings) -> RepositoryResult<AppSettings> {
+        SqliteRepository::get_settings(self, platform_defaults).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器合并应用设置。
+    fn update_settings(
+        &self,
+        patch: &Value,
+        platform_defaults: &AppSettings,
+    ) -> RepositoryResult<AppSettings> {
+        SqliteRepository::update_settings(self, patch, platform_defaults)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器恢复平台默认设置。
+    fn reset_settings(&self, platform_defaults: &AppSettings) -> RepositoryResult<AppSettings> {
+        SqliteRepository::reset_settings(self, platform_defaults).map_err(RepositoryError::from)
+    }
+}
+
+impl NotificationRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取通知。
+    fn list_notifications(&self) -> RepositoryResult<Vec<NotificationRecord>> {
+        SqliteRepository::list_notifications(self).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器统计未读通知。
+    fn get_unread_notification_count(&self) -> RepositoryResult<u64> {
+        SqliteRepository::get_unread_notification_count(self).map_err(RepositoryError::from)
+    }
+}
+
+impl AnimeCatalogRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取番剧目录。
+    fn list_anime_catalog(
+        &self,
+        year: Option<i64>,
+        month: Option<i64>,
+    ) -> RepositoryResult<Vec<Anime>> {
+        SqliteRepository::list_anime_catalog(self, year, month).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器按标识读取番剧。
+    fn get_anime_catalog_by_id(&self, anime_id: &str) -> RepositoryResult<Option<Anime>> {
+        SqliteRepository::get_anime_catalog_by_id(self, anime_id).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器搜索番剧目录。
+    fn search_anime_catalog(&self, keyword: &str) -> RepositoryResult<AnimeDiscoverySearchResult> {
+        SqliteRepository::search_anime_catalog(self, keyword).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器合并番剧目录。
+    fn upsert_anime_catalog(&self, items: &[Anime]) -> RepositoryResult<AnimeCatalogWriteResult> {
+        SqliteRepository::upsert_anime_catalog(self, items).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器替换月度番剧目录。
+    fn replace_anime_catalog_month(
+        &self,
+        year: i64,
+        month: i64,
+        items: &[Anime],
+    ) -> RepositoryResult<AnimeCatalogWriteResult> {
+        SqliteRepository::replace_anime_catalog_month(self, year, month, items)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取番剧详情。
+    fn get_anime_detail(&self, anime_id: &str) -> RepositoryResult<AnimeDetailResult> {
+        SqliteRepository::get_anime_detail(self, anime_id).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取字幕组。
+    fn list_fansubs(&self, anime_id: Option<&str>) -> RepositoryResult<Vec<FansubGroup>> {
+        SqliteRepository::list_fansubs(self, anime_id).map_err(RepositoryError::from)
+    }
+}
+
+impl ReleaseSourceRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取下载源。
+    fn list_sources(&self) -> RepositoryResult<Vec<ReleaseSourceConfig>> {
+        SqliteRepository::list_sources(self).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器更新下载源启用状态。
+    fn set_source_enabled(
+        &self,
+        source_id: &str,
+        enabled: bool,
+    ) -> RepositoryResult<Vec<ReleaseSourceConfig>> {
+        SqliteRepository::set_source_enabled(self, source_id, enabled)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存下载源。
+    fn upsert_source(
+        &self,
+        source: &ReleaseSourceConfig,
+    ) -> RepositoryResult<Vec<ReleaseSourceConfig>> {
+        SqliteRepository::upsert_source(self, source).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取来源同步状态。
+    fn list_source_sync_states(&self) -> RepositoryResult<Vec<ReleaseSourceSyncState>> {
+        SqliteRepository::list_source_sync_states(self).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存来源同步状态。
+    fn upsert_source_sync_state(&self, state: &ReleaseSourceSyncState) -> RepositoryResult<()> {
+        SqliteRepository::upsert_source_sync_state(self, state).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取请求熔断状态。
+    fn get_request_circuit_state(
+        &self,
+        key: &str,
+    ) -> RepositoryResult<Option<RequestCircuitState>> {
+        SqliteRepository::get_request_circuit_state(self, key).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存请求熔断状态。
+    fn upsert_request_circuit_state(&self, state: &RequestCircuitState) -> RepositoryResult<()> {
+        SqliteRepository::upsert_request_circuit_state(self, state).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器清理请求熔断状态。
+    fn clear_request_circuit_state(&self, key: &str) -> RepositoryResult<()> {
+        SqliteRepository::clear_request_circuit_state(self, key).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取资源搜索缓存。
+    fn get_release_search_cache(
+        &self,
+        cache_key: &str,
+        current_time: &str,
+    ) -> RepositoryResult<Option<ReleaseSearchCacheEntry>> {
+        SqliteRepository::get_release_search_cache(self, cache_key, current_time)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存资源搜索缓存。
+    fn upsert_release_search_cache(
+        &self,
+        cache_key: &str,
+        entry: &ReleaseSearchCacheEntry,
+    ) -> RepositoryResult<()> {
+        SqliteRepository::upsert_release_search_cache(self, cache_key, entry)
+            .map_err(RepositoryError::from)
+    }
+}
+
+impl AnimeTrackingRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取追番。
+    fn list_my_anime(&self) -> RepositoryResult<Vec<MyAnime>> {
+        SqliteRepository::list_my_anime(self).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存追番。
+    fn upsert_my_anime(&self, item: MyAnime) -> RepositoryResult<Vec<MyAnime>> {
+        SqliteRepository::upsert_my_anime(self, item).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器删除追番。
+    fn remove_my_anime(&self, item_id: &str) -> RepositoryResult<Vec<MyAnime>> {
+        SqliteRepository::remove_my_anime(self, item_id).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取单集。
+    fn list_episodes(&self, anime_id: &str) -> RepositoryResult<Vec<Episode>> {
+        SqliteRepository::list_episodes(self, anime_id).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存单集。
+    fn upsert_episode(&self, episode: &Episode) -> RepositoryResult<Vec<Episode>> {
+        SqliteRepository::upsert_episode(self, episode).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取观看进度。
+    fn list_my_anime_watch_progress(&self) -> RepositoryResult<Vec<AnimeWatchProgress>> {
+        SqliteRepository::list_my_anime_watch_progress(self).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器更新观看进度。
+    fn set_anime_watch_progress(
+        &self,
+        input: &SetAnimeWatchProgressInput,
+    ) -> RepositoryResult<AnimeWatchProgress> {
+        SqliteRepository::set_anime_watch_progress(self, input).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取单集偏好。
+    fn list_episode_preferences(&self, anime_id: &str) -> RepositoryResult<Vec<EpisodePreference>> {
+        SqliteRepository::list_episode_preferences(self, anime_id).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存单集偏好。
+    fn upsert_episode_preference(
+        &self,
+        preference: &EpisodePreference,
+    ) -> RepositoryResult<Vec<EpisodePreference>> {
+        SqliteRepository::upsert_episode_preference(self, preference).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器删除单集偏好。
+    fn remove_episode_preference(
+        &self,
+        episode_id: &str,
+    ) -> RepositoryResult<Vec<EpisodePreference>> {
+        SqliteRepository::remove_episode_preference(self, episode_id).map_err(RepositoryError::from)
+    }
+}
+
+impl PlaybackRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器回写播放进度。
+    fn report_playback_progress(
+        &self,
+        input: &ReportPlaybackProgressInput,
+    ) -> RepositoryResult<bool> {
+        SqliteRepository::report_playback_progress(self, input).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取续播位置。
+    fn get_playback_checkpoint(
+        &self,
+        task_id: &str,
+        file_index: Option<i64>,
+    ) -> RepositoryResult<Option<PlaybackCheckpoint>> {
+        SqliteRepository::get_playback_checkpoint(self, task_id, file_index)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存续播位置。
+    fn save_playback_checkpoint(
+        &self,
+        input: &SavePlaybackCheckpointInput,
+    ) -> RepositoryResult<PlaybackCheckpoint> {
+        SqliteRepository::save_playback_checkpoint(self, input).map_err(RepositoryError::from)
+    }
+}
+
+impl DashboardRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取首页聚合数据。
+    fn get_dashboard(&self) -> RepositoryResult<DashboardData> {
+        SqliteRepository::get_dashboard(self).map_err(RepositoryError::from)
     }
 }
 
@@ -1454,6 +2025,50 @@ fn alias_language_value(language: &AnimeAliasLanguage) -> &'static str {
     }
 }
 
+/// 返回下载源类型的 SQLite 字面量。
+fn source_kind_value(kind: &SourceKind) -> &'static str {
+    match kind {
+        SourceKind::Rss => "rss",
+        SourceKind::Torznab => "torznab",
+        SourceKind::SiteAdapter => "site_adapter",
+        SourceKind::Manual => "manual",
+    }
+}
+
+/// 解析下载源类型。
+fn parse_source_kind(value: &str) -> Result<SourceKind, StorageError> {
+    match value {
+        "rss" => Ok(SourceKind::Rss),
+        "torznab" => Ok(SourceKind::Torznab),
+        "site_adapter" => Ok(SourceKind::SiteAdapter),
+        "manual" => Ok(SourceKind::Manual),
+        _ => invalid_value("release_source.kind", value),
+    }
+}
+
+/// 将来源采集间隔限制在 250 毫秒到 60 秒之间。
+fn normalize_source_request_interval(value: i64) -> i64 {
+    value.clamp(250, 60_000)
+}
+
+/// 校验可选来源 URL 只使用 HTTP 或 HTTPS。
+fn validate_optional_http_url(
+    field: &'static str,
+    value: Option<&str>,
+) -> Result<(), StorageError> {
+    let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    let parsed = url::Url::parse(value).map_err(|error| StorageError::InvalidInput {
+        field,
+        message: format!("URL 格式无效：{error}"),
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return invalid_input(field, "仅允许 HTTP 或 HTTPS URL");
+    }
+    Ok(())
+}
+
 /// 将持久化设置递归覆盖到平台默认设置。
 fn merge_json(target: &mut Value, patch: Value) {
     match (target, patch) {
@@ -2004,6 +2619,37 @@ impl FansubGroupRow {
     }
 }
 
+struct ReleaseSourceRow {
+    id: String,
+    name: String,
+    kind: String,
+    enabled: bool,
+    use_proxy: bool,
+    request_interval_ms: i64,
+    base_url: Option<String>,
+    api_key: Option<String>,
+    rss_url: Option<String>,
+    tags_json: String,
+}
+
+impl ReleaseSourceRow {
+    /// 将 SQLite 下载源行转换为领域对象。
+    fn into_domain(self) -> Result<ReleaseSourceConfig, StorageError> {
+        Ok(ReleaseSourceConfig {
+            id: self.id,
+            name: self.name,
+            kind: parse_source_kind(&self.kind)?,
+            enabled: self.enabled,
+            use_proxy: self.use_proxy,
+            request_interval_ms: normalize_source_request_interval(self.request_interval_ms),
+            base_url: self.base_url,
+            api_key: self.api_key,
+            rss_url: self.rss_url,
+            tags: parse_json(&self.tags_json, "下载源标签")?,
+        })
+    }
+}
+
 struct MyAnimeRow {
     id: String,
     anime_id: String,
@@ -2324,6 +2970,50 @@ fn map_fansub_group_row(row: &Row<'_>) -> rusqlite::Result<FansubGroupRow> {
         name: row.get("name")?,
         aliases_json: row.get("aliases_json")?,
         source_ids_json: row.get("source_ids_json")?,
+    })
+}
+
+/// 映射 SQLite 下载源行。
+fn map_release_source_row(row: &Row<'_>) -> rusqlite::Result<ReleaseSourceRow> {
+    Ok(ReleaseSourceRow {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        kind: row.get("kind")?,
+        enabled: row.get::<_, i64>("enabled")? != 0,
+        use_proxy: row.get::<_, i64>("use_proxy")? != 0,
+        request_interval_ms: row.get("request_interval_ms")?,
+        base_url: row.get("base_url")?,
+        api_key: row.get("api_key")?,
+        rss_url: row.get("rss_url")?,
+        tags_json: row.get("tags_json")?,
+    })
+}
+
+/// 映射 SQLite 来源同步游标。
+fn map_source_sync_state_row(row: &Row<'_>) -> rusqlite::Result<ReleaseSourceSyncState> {
+    Ok(ReleaseSourceSyncState {
+        source_id: row.get("source_id")?,
+        request_host: row.get("request_host")?,
+        last_request_at: row.get("last_request_at")?,
+        request_failure_count: row.get("request_failure_count")?,
+        backoff_until: row.get("backoff_until")?,
+        last_sync_attempt_at: row.get("last_sync_attempt_at")?,
+        last_successful_sync_at: row.get("last_successful_sync_at")?,
+        last_sync_error: row.get("last_sync_error")?,
+        etag: row.get("etag")?,
+        last_modified: row.get("last_modified")?,
+    })
+}
+
+/// 映射 SQLite 通用网络熔断状态。
+fn map_request_circuit_state_row(row: &Row<'_>) -> rusqlite::Result<RequestCircuitState> {
+    Ok(RequestCircuitState {
+        key: row.get("circuit_key")?,
+        group: row.get("circuit_group")?,
+        request_host: row.get("request_host")?,
+        last_request_at: row.get("last_request_at")?,
+        failure_count: row.get("failure_count")?,
+        backoff_until: row.get("backoff_until")?,
     })
 }
 

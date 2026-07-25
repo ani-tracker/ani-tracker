@@ -1,5 +1,12 @@
 [workspace]
-members = ["crates/ani-contracts", "crates/ani-domain", "crates/ani-storage", "src-tauri"]
+members = [
+  "crates/ani-contracts",
+  "crates/ani-domain",
+  "crates/ani-repository",
+  "crates/ani-storage",
+  "crates/ani-sources",
+  "src-tauri"
+]
 resolver = "2"
 
 [workspace.package]
