@@ -329,7 +329,7 @@ impl AppSourceState {
 }
 
 /// 从版本化设置中读取代理模式、地址和超时。
-fn native_http_config(settings: &Value) -> NativeHttpConfig {
+pub(crate) fn native_http_config(settings: &Value) -> NativeHttpConfig {
     let proxy = settings.pointer("/network/metadataProxy");
     let mode = match proxy
         .and_then(|value| value.get("mode"))

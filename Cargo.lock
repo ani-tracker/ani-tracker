@@ -111,6 +111,7 @@ dependencies = [
  "async-trait",
  "log",
  "serde",
+ "serde_json",
  "thiserror 2.0.19",
  "tokio",
 ]
@@ -168,6 +169,7 @@ dependencies = [
  "ani-automation",
  "ani-contracts",
  "ani-domain",
+ "ani-downloads",
  "ani-repository",
  "ani-sources",
  "ani-storage",
@@ -175,6 +177,7 @@ dependencies = [
  "chrono",
  "log",
  "open",
+ "serde",
  "serde_json",
  "tauri",
  "tauri-build",

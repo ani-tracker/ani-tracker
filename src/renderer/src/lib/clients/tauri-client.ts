@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppClient } from "@shared/app-client";
 import type {
+  AddDownloadUrlInput,
+  AddReleaseDownloadInput,
   AnimeReleaseQuery,
   AnimeDetailResult,
   AnimeDiscoverySearchResult,
@@ -29,6 +31,7 @@ import type {
   Anime,
   AppSettings,
   DashboardData,
+  DownloadTask,
   Episode,
   EpisodePreference,
   FansubGroup,
@@ -271,6 +274,62 @@ class TauriClientCore {
   async listFansubs(animeId?: string): Promise<FansubGroup[]> {
     return invoke<FansubGroup[]>("list_fansubs", { animeId }).catch((error) => {
       throw normalizeTauriError("list_fansubs", error);
+    });
+  }
+
+  /** 从 Rust Repository 读取本地下载任务快照。 */
+  async listDownloads(): Promise<DownloadTask[]> {
+    return invoke<DownloadTask[]>("list_downloads").catch((error) => {
+      throw normalizeTauriError("list_downloads", error);
+    });
+  }
+
+  /** 刷新默认引擎和历史任务所属引擎。 */
+  async refreshDownloads(): Promise<DownloadTask[]> {
+    return invoke<DownloadTask[]>("refresh_downloads").catch((error) => {
+      throw normalizeTauriError("refresh_downloads", error);
+    });
+  }
+
+  /** 暂停任务创建时所属的下载引擎。 */
+  async pauseDownload(taskId: string): Promise<DownloadTask[]> {
+    return invoke<DownloadTask[]>("pause_download", { taskId }).catch((error) => {
+      throw normalizeTauriError("pause_download", error);
+    });
+  }
+
+  /** 恢复任务创建时所属的下载引擎。 */
+  async resumeDownload(taskId: string): Promise<DownloadTask[]> {
+    return invoke<DownloadTask[]>("resume_download", { taskId }).catch((error) => {
+      throw normalizeTauriError("resume_download", error);
+    });
+  }
+
+  /** 从下载引擎和本地数据库删除任务。 */
+  async removeDownload(taskId: string, deleteFiles: boolean): Promise<DownloadTask[]> {
+    return invoke<DownloadTask[]>("remove_download", { taskId, deleteFiles }).catch((error) => {
+      throw normalizeTauriError("remove_download", error);
+    });
+  }
+
+  /** 更新任务内一组文件的下载优先级。 */
+  async setDownloadFilePriority(taskId: string, fileIndexes: number[], priority: number): Promise<DownloadTask[]> {
+    return invoke<DownloadTask[]>("set_download_file_priority", { taskId, fileIndexes, priority }).catch((error) => {
+      throw normalizeTauriError("set_download_file_priority", error);
+    });
+  }
+
+  /** 通过磁链或远程 torrent 文件添加任务。 */
+  async addDownloadUrl(input: AddDownloadUrlInput): Promise<DownloadTask[]> {
+    return invoke<DownloadTask[]>("add_download_url", { input }).catch((error) => {
+      throw normalizeTauriError("add_download_url", error);
+    });
+  }
+
+  /** 将资源搜索结果加入当前默认下载引擎。 */
+  async addReleaseDownload(input: AddReleaseDownloadInput): Promise<DownloadTask[]> {
+    return invoke<DownloadTask[]>("add_release_download", { input }).catch((error) => {
+      throw normalizeTauriError("add_release_download", error);
     });
   }
 

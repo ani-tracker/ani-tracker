@@ -10,12 +10,14 @@ use ani_domain::{
     AppSettings, AutomationRunResult, AutomationSchedulerStatus, NotificationKind,
     NotificationRecord, NotificationSeverity,
 };
+use ani_downloads::{AddTorrentOptions, DownloadAddRequest};
 use ani_repository::prelude::*;
 use ani_storage::Storage;
 use async_trait::async_trait;
 use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
+use crate::downloads::{release_download_context, AppDownloadState};
 use crate::sources::{AppSourceState, SharedReleaseSearchStore};
 
 const MIN_INTERVAL_MINUTES: i64 = 5;
@@ -314,17 +316,77 @@ impl AppAutomationState {
     }
 }
 
-/// P4 引擎装配前的明确失败适配器，避免生成虚假下载任务。
-pub(crate) struct PendingAutomaticDownloadExecutor;
+/// 将自动扫描下载请求交给 Tauri 统一下载服务。
+pub(crate) struct TauriAutomaticDownloadExecutor {
+    downloads: AppDownloadState,
+}
+
+impl TauriAutomaticDownloadExecutor {
+    /// 创建复用 commands 下载状态的自动执行器。
+    pub(crate) fn new(downloads: AppDownloadState) -> Self {
+        Self { downloads }
+    }
+}
 
 #[async_trait]
-impl AutomaticDownloadExecutor for PendingAutomaticDownloadExecutor {
-    /// 明确拒绝尚未接入的下载动作，由扫描结果记录单集级错误。
+impl AutomaticDownloadExecutor for TauriAutomaticDownloadExecutor {
+    /// 添加磁链或远程 torrent，并持久化完整番剧和单集关联。
     async fn execute(
         &self,
-        _request: AutomaticDownloadRequest,
+        request: AutomaticDownloadRequest,
     ) -> Result<AutomaticDownloadReceipt, String> {
-        Err("Tauri 下载引擎正在迁移，尚未完成运行时装配".to_owned())
+        let settings = self.downloads.settings()?;
+        let engine = self
+            .downloads
+            .default_engine(&settings)
+            .map_err(|error| error.to_string())?;
+        let source_url = request
+            .release
+            .magnet_url
+            .as_deref()
+            .or(request.release.torrent_url.as_deref())
+            .ok_or_else(|| "自动下载资源没有磁链或 torrent 地址".to_owned())?;
+        let prepared = self.downloads.prepare_source(source_url, &settings).await?;
+        let correlation_tag = format!(
+            "ani:{}:{}:{}",
+            request.anime.anime.id, request.episode.id, request.release.id
+        );
+        let context = release_download_context(
+            &request.release,
+            Some(request.anime.anime.id.clone()),
+            Some(request.anime.anime.title.clone()),
+            Some(request.episode.id.clone()),
+            Some(request.episode.episode_no),
+            request
+                .release
+                .fansub_group_id
+                .clone()
+                .or(request.anime.default_fansub_group_id.clone()),
+        );
+        let tasks = self
+            .downloads
+            .service()
+            .add(DownloadAddRequest {
+                engine,
+                source: prepared.source(),
+                options: AddTorrentOptions {
+                    save_path: request.save_path,
+                    correlation_tag: Some(correlation_tag),
+                    paused: false,
+                    ..AddTorrentOptions::default()
+                },
+                context,
+            })
+            .await
+            .map_err(|error| error.to_string())?;
+        let task = tasks
+            .into_iter()
+            .find(|task| {
+                task.release_id.as_deref() == Some(request.release.id.as_str())
+                    && task.episode_id.as_deref() == Some(request.episode.id.as_str())
+            })
+            .ok_or_else(|| "下载引擎已接收任务，但未找到持久化回执".to_owned())?;
+        Ok(AutomaticDownloadReceipt { task_id: task.id })
     }
 }
 

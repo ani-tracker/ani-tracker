@@ -1,14 +1,17 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use ani_domain::{DownloadStatus, DownloadTask, TorrentEngineKind, TorrentFile};
 use ani_repository::RepositoryResult;
 use async_trait::async_trait;
+use serde_json::{json, Value};
 
 use crate::{
     AddTorrentOptions, DownloadAddRequest, DownloadEngine, DownloadEngineConfig,
     DownloadEngineError, DownloadEngineRegistry, DownloadEngineStatus, DownloadSource,
-    DownloadTaskContext, DownloadTaskService, DownloadTaskStore,
+    DownloadTaskContext, DownloadTaskService, DownloadTaskStore, TorrentCoreEngine,
+    TorrentCoreTransport,
 };
 
 #[derive(Default)]
@@ -198,6 +201,39 @@ impl DownloadEngine for FakeEngine {
     }
 }
 
+struct RecordingCoreTransport {
+    responses: HashMap<String, Value>,
+    calls: Mutex<Vec<(String, Value)>>,
+    shutdown_count: Mutex<usize>,
+}
+
+impl RecordingCoreTransport {
+    /// 创建返回固定协议结果的内存 transport。
+    fn new(responses: HashMap<String, Value>) -> Self {
+        Self {
+            responses,
+            calls: Mutex::new(Vec::new()),
+            shutdown_count: Mutex::new(0),
+        }
+    }
+}
+
+#[async_trait]
+impl TorrentCoreTransport for RecordingCoreTransport {
+    async fn execute(&self, method: &str, params: Value) -> Result<Value, DownloadEngineError> {
+        self.calls
+            .lock()
+            .expect("lock core calls")
+            .push((method.to_owned(), params));
+        Ok(self.responses.get(method).cloned().unwrap_or(Value::Null))
+    }
+
+    async fn shutdown(&self) -> Result<(), DownloadEngineError> {
+        *self.shutdown_count.lock().expect("lock shutdown count") += 1;
+        Ok(())
+    }
+}
+
 /// 验证添加任务时业务关联覆盖引擎动态快照并进入持久化端口。
 #[tokio::test]
 async fn adds_associated_task_through_selected_engine() {
@@ -220,6 +256,7 @@ async fn adds_associated_task_through_selected_engine() {
                 ..AddTorrentOptions::default()
             },
             context: DownloadTaskContext {
+                name: Some("测试任务".to_owned()),
                 release_id: Some("release-1".to_owned()),
                 anime_id: Some("anime-1".to_owned()),
                 episode_id: Some("episode-1".to_owned()),
@@ -234,6 +271,7 @@ async fn adds_associated_task_through_selected_engine() {
         .expect("add associated task");
 
     assert_eq!(tasks[0].anime_id.as_deref(), Some("anime-1"));
+    assert_eq!(tasks[0].name, "测试任务");
     assert_eq!(tasks[0].release_id.as_deref(), Some("release-1"));
     assert_eq!(tasks[0].correlation_tag.as_deref(), Some("auto-1"));
     assert_eq!(embedded.recorded(), vec!["addMagnet"]);
@@ -363,6 +401,136 @@ fn rejects_duplicate_and_missing_engines() {
     assert!(registry.register(embedded).is_err());
     assert!(registry.require(&TorrentEngineKind::Qbittorrent).is_err());
     assert_eq!(registry.kinds(), vec![TorrentEngineKind::Embedded]);
+}
+
+/// 验证 property_tree 字符串叶子可映射为领域任务和配置协议。
+#[tokio::test]
+async fn maps_torrent_core_protocol_and_options() {
+    let core_task = json!({
+        "id": "core-hash",
+        "torrentHash": "core-hash",
+        "correlationTag": "core-tag",
+        "name": "Core Task",
+        "status": "downloading",
+        "progress": "0.25",
+        "downloadSpeed": "2048",
+        "uploadSpeed": "128",
+        "etaSeconds": "60",
+        "savePath": "C:/Downloads",
+        "createdAt": "2026-07-25T00:00:00.000Z",
+        "files": [{
+            "index": "0",
+            "name": "episode.mkv",
+            "size": "4096",
+            "progress": "0.5",
+            "priority": "7",
+            "selected": "true"
+        }]
+    });
+    let transport = Arc::new(RecordingCoreTransport::new(HashMap::from([
+        (
+            "status".to_owned(),
+            json!({ "version": "2.1.0", "taskCount": "1", "listenPort": "51413" }),
+        ),
+        (
+            "configure".to_owned(),
+            json!({ "version": "2.1.0", "taskCount": "1", "listenPort": "51515" }),
+        ),
+        ("addMagnet".to_owned(), core_task.clone()),
+        ("listTasks".to_owned(), json!({ "tasks": [core_task] })),
+    ])));
+    let engine = TorrentCoreEngine::new(transport.clone());
+
+    let status = engine.status().await.expect("read core status");
+    assert_eq!(status.task_count, 1);
+    assert_eq!(status.listen_port, Some(51413));
+    let configured = engine
+        .configure(&DownloadEngineConfig {
+            listen_port: 51515,
+            dht_enabled: true,
+            upnp_enabled: false,
+            max_active_downloads: 2,
+            max_download_speed: 1024,
+            max_upload_speed: 256,
+            seeding_limits: Default::default(),
+        })
+        .await
+        .expect("configure core");
+    assert_eq!(configured.listen_port, Some(51515));
+    let added = engine
+        .add_magnet(
+            "magnet:?xt=urn:btih:core-hash",
+            &AddTorrentOptions {
+                save_path: "C:/Downloads".to_owned(),
+                selected_file_indexes: Some(vec![0]),
+                correlation_tag: Some("core-tag".to_owned()),
+                paused: true,
+                ..AddTorrentOptions::default()
+            },
+        )
+        .await
+        .expect("add core magnet");
+    assert_eq!(added.progress, 0.25);
+    assert_eq!(added.files[0].priority, 7);
+    assert_eq!(added.files[0].id, "core-hash:0");
+    assert_eq!(engine.list_tasks().await.expect("list core tasks").len(), 1);
+    engine.shutdown().await.expect("shutdown core");
+
+    let calls = transport.calls.lock().expect("lock core calls");
+    let configure = calls
+        .iter()
+        .find(|(method, _)| method == "configure")
+        .expect("configure call");
+    assert_eq!(configure.1["maxActiveDownloads"], 2);
+    let add = calls
+        .iter()
+        .find(|(method, _)| method == "addMagnet")
+        .expect("add call");
+    assert_eq!(add.1["selectedFileIndexes"], json!([0]));
+    assert_eq!(add.1["paused"], true);
+    assert_eq!(*transport.shutdown_count.lock().expect("shutdown count"), 1);
+}
+
+/// 验证 property_tree 空节点不会让空任务和文件列表解析失败。
+#[tokio::test]
+async fn accepts_property_tree_empty_arrays() {
+    let transport = Arc::new(RecordingCoreTransport::new(HashMap::from([
+        ("listTasks".to_owned(), json!({ "tasks": "" })),
+        ("getFiles".to_owned(), json!({ "files": "" })),
+    ])));
+    let engine = TorrentCoreEngine::new(transport);
+
+    assert!(engine
+        .list_tasks()
+        .await
+        .expect("list empty core tasks")
+        .is_empty());
+    assert!(engine
+        .get_files("core-hash")
+        .await
+        .expect("list empty core files")
+        .is_empty());
+}
+
+/// 验证缺失桌面 sidecar 时返回可诊断的引擎不可用错误。
+#[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+#[tokio::test]
+async fn reports_missing_torrent_core_binary() {
+    use std::path::PathBuf;
+
+    use crate::{ProcessTorrentCoreTransport, TorrentCoreProcessOptions};
+
+    let transport = Arc::new(ProcessTorrentCoreTransport::new(
+        TorrentCoreProcessOptions::new(
+            PathBuf::from("missing-torrent-core-binary"),
+            PathBuf::from("missing-torrent-core-data"),
+        ),
+    ));
+    let error = TorrentCoreEngine::new(transport)
+        .status()
+        .await
+        .expect_err("missing sidecar must fail");
+    assert!(matches!(error, DownloadEngineError::Unavailable(_)));
 }
 
 /// 创建统一任务服务测试使用的任务快照。

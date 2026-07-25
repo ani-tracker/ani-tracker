@@ -13,6 +13,7 @@ use serde_json::Value;
 use tauri::State;
 
 use crate::automation::AppAutomationState;
+use crate::downloads::AppDownloadState;
 use crate::source_sync::AppSourceSyncState;
 use crate::storage::AppStorageState;
 
@@ -90,6 +91,7 @@ pub(crate) async fn update_settings(
     state: State<'_, AppStorageState>,
     source_sync_state: State<'_, AppSourceSyncState>,
     automation_state: State<'_, AppAutomationState>,
+    download_state: State<'_, AppDownloadState>,
 ) -> Result<AppSettings, AppCommandError> {
     let defaults = state.platform_defaults().clone();
     let settings = run_query("更新设置", Arc::clone(state.storage()), move |storage| {
@@ -98,6 +100,9 @@ pub(crate) async fn update_settings(
     .await?;
     source_sync_state.refresh_from_settings(&settings).await;
     automation_state.refresh_from_settings(&settings).await;
+    if let Err(error) = download_state.refresh_from_settings(&settings).await {
+        log::error!("Tauri 下载设置应用失败 error={error}");
+    }
     Ok(settings)
 }
 
@@ -107,6 +112,7 @@ pub(crate) async fn reset_settings_to_defaults(
     state: State<'_, AppStorageState>,
     source_sync_state: State<'_, AppSourceSyncState>,
     automation_state: State<'_, AppAutomationState>,
+    download_state: State<'_, AppDownloadState>,
 ) -> Result<AppSettings, AppCommandError> {
     let defaults = state.platform_defaults().clone();
     let settings = run_query(
@@ -117,6 +123,9 @@ pub(crate) async fn reset_settings_to_defaults(
     .await?;
     source_sync_state.refresh_from_settings(&settings).await;
     automation_state.refresh_from_settings(&settings).await;
+    if let Err(error) = download_state.refresh_from_settings(&settings).await {
+        log::error!("Tauri 默认下载设置应用失败 error={error}");
+    }
     Ok(settings)
 }
 

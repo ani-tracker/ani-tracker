@@ -38,6 +38,7 @@ where
 /// 添加任务时由业务层附加的番剧、资源和媒体元数据。
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct DownloadTaskContext {
+    pub name: Option<String>,
     pub release_id: Option<String>,
     pub anime_id: Option<String>,
     pub episode_id: Option<String>,
@@ -86,6 +87,11 @@ impl DownloadTaskService {
     /// 创建不依赖 SQLite 或 Tauri 宿主的下载任务服务。
     pub fn new(registry: Arc<DownloadEngineRegistry>, store: Arc<dyn DownloadTaskStore>) -> Self {
         Self { registry, store }
+    }
+
+    /// 读取持久化下载任务，供 Tauri 首屏和下载页使用。
+    pub fn list(&self) -> Result<Vec<DownloadTask>, DownloadServiceError> {
+        Ok(self.store.list_downloads()?)
     }
 
     /// 通过指定引擎添加任务，附加业务元数据后原子持久化。
@@ -343,6 +349,14 @@ fn validate_file_priority(file_indexes: &[i64], priority: i64) -> Result<(), Dow
 fn apply_add_context(mut task: DownloadTask, request: &DownloadAddRequest) -> DownloadTask {
     let context = &request.context;
     task.engine = request.engine.clone();
+    if let Some(name) = context
+        .name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+    {
+        task.name = name.to_owned();
+    }
     task.release_id = context.release_id.clone();
     task.anime_id = context.anime_id.clone();
     task.episode_id = context.episode_id.clone();

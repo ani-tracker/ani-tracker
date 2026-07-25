@@ -5,6 +5,7 @@ use tauri::Manager;
 
 mod automation;
 mod commands;
+mod downloads;
 mod source_sync;
 mod sources;
 mod storage;
@@ -27,11 +28,19 @@ pub fn run() {
                 source_state.clone(),
             );
             source_sync_state.start();
+            let download_state = downloads::AppDownloadState::new(
+                app.handle(),
+                Arc::clone(storage_state.storage()),
+                storage_state.platform_defaults().clone(),
+            )?;
+            download_state.start();
             let automation_state = automation::AppAutomationState::new(
                 Arc::clone(storage_state.storage()),
                 storage_state.platform_defaults().clone(),
                 source_state.clone(),
-                Arc::new(automation::PendingAutomaticDownloadExecutor),
+                Arc::new(automation::TauriAutomaticDownloadExecutor::new(
+                    download_state.clone(),
+                )),
             );
             automation_state.start();
             let reminder_storage = Arc::clone(storage_state.storage());
@@ -59,6 +68,7 @@ pub fn run() {
             app.manage(storage_state);
             app.manage(source_state);
             app.manage(source_sync_state);
+            app.manage(download_state);
             app.manage(automation_state);
             log::info!(
                 "Tauri 宿主初始化完成 platform={} arch={}",
@@ -107,6 +117,14 @@ pub fn run() {
             commands::automation::get_automation_scheduler_status,
             commands::automation::run_automation_once,
             commands::automation::restart_automation_scheduler,
+            commands::downloads::list_downloads,
+            commands::downloads::refresh_downloads,
+            commands::downloads::pause_download,
+            commands::downloads::resume_download,
+            commands::downloads::remove_download,
+            commands::downloads::set_download_file_priority,
+            commands::downloads::add_download_url,
+            commands::downloads::add_release_download,
             commands::window::get_window_state,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,
@@ -115,7 +133,18 @@ pub fn run() {
         ])
         .on_window_event(commands::handle_window_event);
 
-    if let Err(error) = builder.run(tauri::generate_context!()) {
-        eprintln!("[tauri] 应用宿主运行失败: {error}");
-    }
+    let app = match builder.build(tauri::generate_context!()) {
+        Ok(app) => app,
+        Err(error) => {
+            eprintln!("[tauri] 应用宿主构建失败: {error}");
+            return;
+        }
+    };
+    app.run(|app_handle, event| {
+        if matches!(event, tauri::RunEvent::Exit) {
+            log::info!("Tauri 宿主退出，开始关闭下载引擎");
+            let state = app_handle.state::<downloads::AppDownloadState>();
+            tauri::async_runtime::block_on(state.shutdown());
+        }
+    });
 }
