@@ -263,6 +263,7 @@ export interface EmbeddedTorrentCoreStatus {
   binaryPath?: string;
   dataDir?: string;
   pid?: number;
+  foregroundService?: boolean;
   version?: string;
   taskCount?: number;
   listenPort?: number;

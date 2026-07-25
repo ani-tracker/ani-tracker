@@ -1,0 +1,6 @@
+<resources>
+    <string name="ani_torrent_notification_channel">下载任务</string>
+    <string name="ani_torrent_notification_channel_description">保持内置 BT 下载引擎运行</string>
+    <string name="ani_torrent_notification_title">Ani Tracker 正在下载</string>
+    <string name="ani_torrent_notification_text">内置下载引擎正在后台运行</string>
+</resources>

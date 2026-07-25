@@ -204,6 +204,7 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tauri-plugin-ani-torrent",
  "tauri-plugin-log",
  "tokio",
  "url",
@@ -3953,6 +3954,20 @@ dependencies = [
  "serde_json",
  "tauri-utils",
  "walkdir",
+]
+
+[[package]]
+name = "tauri-plugin-ani-torrent"
+version = "0.1.0"
+dependencies = [
+ "ani-downloads",
+ "async-trait",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-plugin",
+ "thiserror 2.0.19",
+ "tokio",
 ]
 
 [[package]]

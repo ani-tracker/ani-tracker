@@ -24,6 +24,8 @@ use ani_storage::Storage;
 use chrono::{SecondsFormat, Utc};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
+#[cfg(any(target_os = "android", target_os = "ios"))]
+use tauri_plugin_ani_torrent::{AniTorrentExt, MobileTorrentCoreTransport};
 
 use crate::qbittorrent_managed::{managed_credentials, AppManagedQbittorrentState};
 use crate::sources::native_http_config;
@@ -92,6 +94,8 @@ pub(crate) struct AppDownloadState {
     embedded_binary_path: PathBuf,
     #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
     embedded_data_directory: PathBuf,
+    #[cfg(any(target_os = "android", target_os = "ios"))]
+    mobile_transport: Arc<MobileTorrentCoreTransport>,
     storage: Arc<Mutex<Storage>>,
     platform_defaults: AppSettings,
     torrent_import_directory: PathBuf,
@@ -122,6 +126,18 @@ impl AppDownloadState {
             );
             (transport, binary_path, data_directory)
         };
+        #[cfg(any(target_os = "android", target_os = "ios"))]
+        let mobile_transport = {
+            let transport = Arc::new(app.ani_torrent().transport());
+            registry
+                .register(Arc::new(TorrentCoreEngine::new(transport.clone())))
+                .map_err(|error| error.to_string())?;
+            log::info!(
+                "Tauri 移动 torrent-core transport 已装配 platform={}",
+                std::env::consts::OS
+            );
+            transport
+        };
         let qbittorrent = Arc::new(
             QbittorrentEngine::new(qbittorrent_connection_config(
                 &platform_defaults,
@@ -150,6 +166,8 @@ impl AppDownloadState {
             embedded_binary_path,
             #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
             embedded_data_directory,
+            #[cfg(any(target_os = "android", target_os = "ios"))]
+            mobile_transport,
             storage,
             platform_defaults,
             torrent_import_directory,
@@ -443,6 +461,7 @@ impl AppDownloadState {
                 binary_path: Some(self.embedded_binary_path.to_string_lossy().into_owned()),
                 data_dir: Some(self.embedded_data_directory.to_string_lossy().into_owned()),
                 pid,
+                foreground_service: None,
                 version: protocol.as_ref().map(|value| value.version.clone()),
                 task_count: protocol.as_ref().map(|value| value.task_count),
                 listen_port: protocol.and_then(|value| value.listen_port),
@@ -453,8 +472,46 @@ impl AppDownloadState {
         }
         #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
         {
-            let _ = settings;
-            Err("移动 torrent-core transport 尚未装配".to_owned())
+            let native = self
+                .mobile_transport
+                .native_status()
+                .await
+                .map_err(|error| error.to_string())?;
+            let protocol = if native.running {
+                Some(
+                    self.registry
+                        .require(&TorrentEngineKind::Embedded)
+                        .map_err(|error| error.to_string())?
+                        .status()
+                        .await
+                        .map_err(|error| error.to_string())?,
+                )
+            } else {
+                None
+            };
+            let lifecycle = self
+                .embedded_lifecycle
+                .lock()
+                .map_err(|error| error.to_string())?;
+            Ok(EmbeddedTorrentCoreStatus {
+                enabled: settings
+                    .pointer("/download/embedded/enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                running: native.running,
+                platform: std::env::consts::OS.to_owned(),
+                arch: std::env::consts::ARCH.to_owned(),
+                binary_path: None,
+                data_dir: native.data_directory,
+                pid: None,
+                foreground_service: Some(native.foreground_service),
+                version: protocol.as_ref().map(|value| value.version.clone()),
+                task_count: protocol.as_ref().map(|value| value.task_count),
+                listen_port: protocol.and_then(|value| value.listen_port),
+                last_started_at: lifecycle.last_started_at.clone(),
+                last_stopped_at: lifecycle.last_stopped_at.clone(),
+                last_error: lifecycle.last_error.clone(),
+            })
         }
     }
 

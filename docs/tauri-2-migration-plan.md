@@ -2,7 +2,7 @@
 
 最近更新：2026-07-25
 
-状态：P0-P3 已完成；P4 桌面下载与媒体闭环已完成，移动 torrent-core 生命周期进行中；跨平台构建待后续统一验证
+状态：P0-P4 实现已完成；P5 全平台 libVLC 待执行；跨平台构建与真机门禁待后续统一验证
 
 ## 1. 迁移目标
 
@@ -301,6 +301,10 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - 新增 P4 下载服务跨语言金样与真实 Windows 托管 qBittorrent 冒烟，验证临时登录、固定凭据更新、任务读取和 API 优雅退出；Rust、Clippy、TypeScript 与 359 项 Node 回归通过，其中 358 项通过、1 项跳过。
 - 已建立数据库无关的 `MediaRepository` 与 `ani-media` 核心，接通媒体列表、手动扫描、下载完成自动关联、路径逃逸防护、SQLite 路径去重写入及桌面 FFprobe/FFmpeg 状态；移动端探测入口保留给 P5 libVLC 插件。
 - 新增 P4 媒体跨语言金样，Rust 工作区测试、Clippy、格式检查、TypeScript 与 360 项 Node 回归通过，其中 359 项通过、1 项跳过；Windows 真实 FFprobe 媒体流探测通过，平台完整构建按当前安排后续统一验证。
+- 已建立不向 Renderer 暴露原生命令的 `tauri-plugin-ani-torrent`；Rust 统一 transport 已接入 `AppDownloadState`，Android/iOS 与桌面复用添加、控制、文件优先级、任务恢复和状态映射。
+- Android 已复用 JNI libtorrent 并迁入 Tauri 前台 `dataSync` Service，使用应用内 Binder 串行调用、私有 no-backup 恢复目录和配置重放；Activity 重建不终止下载，显式退出会同步刷盘。
+- iOS 已新增稳定 C ABI、Swift 串行 Session、配置重放、前后台恢复与有限后台刷盘语义，并提供设备/模拟器 `AniTorrentCore.xcframework` 构建脚本；不承诺系统挂起后的持续下载。
+- 新增 P4 移动生命周期跨语言金样；Rust 工作区测试、Clippy、格式检查、TypeScript、Shell 语法与 361 项 Node 回归通过，其中 360 项通过、1 项跳过。Kotlin、Swift、XCFramework 和真机门禁按当前安排后续统一验证。
 
 ### P5：全平台 libVLC
 

@@ -14,11 +14,15 @@ fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 install_root="${repo_root}/.cache/android-torrent/vcpkg_installed"
 manifest_root="${repo_root}/native/torrent-dependencies"
+triplets="${ANI_ANDROID_TRIPLETS:-arm64-android}"
 
 mkdir -p "${install_root}"
-"${VCPKG_ROOT}/vcpkg" install \
-  --triplet=arm64-android \
-  --x-manifest-root="${manifest_root}" \
-  --x-install-root="${install_root}"
+for triplet in ${triplets}; do
+  "${VCPKG_ROOT}/vcpkg" install \
+    --triplet="${triplet}" \
+    --x-manifest-root="${manifest_root}" \
+    --x-install-root="${install_root}"
+  echo "Android 原生依赖已准备：${install_root}/${triplet}"
+done
 
-echo "Android 原生依赖已准备：${install_root}/arm64-android"
+echo "Android torrent-core 依赖准备完成：${triplets}"

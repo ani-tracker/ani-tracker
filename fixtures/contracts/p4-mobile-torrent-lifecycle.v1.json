@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "p4-mobile-torrent-lifecycle",
+  "payload": {
+    "androidStatus": {
+      "enabled": true,
+      "running": true,
+      "platform": "android",
+      "arch": "aarch64",
+      "dataDir": "/data/user/0/com.ani.tracker/no_backup/torrent-core",
+      "foregroundService": true,
+      "version": "0.1.0",
+      "taskCount": 2,
+      "listenPort": 51413,
+      "lastStartedAt": "2026-07-25T13:00:00.000Z"
+    },
+    "iosStatus": {
+      "enabled": true,
+      "running": true,
+      "platform": "ios",
+      "arch": "aarch64",
+      "dataDir": "/private/var/mobile/Containers/Data/Application/test/Library/Application Support/torrent-core",
+      "foregroundService": false,
+      "version": "0.1.0",
+      "taskCount": 1,
+      "listenPort": 51413,
+      "lastStartedAt": "2026-07-25T13:01:00.000Z"
+    },
+    "executeRequest": {
+      "id": "mobile-1",
+      "method": "listTasks",
+      "params": {}
+    },
+    "executeResponse": {
+      "id": "mobile-1",
+      "ok": "true",
+      "result": {
+        "tasks": ""
+      }
+    }
+  }
+}

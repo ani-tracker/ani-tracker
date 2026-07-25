@@ -102,6 +102,8 @@ pub struct EmbeddedTorrentCoreStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pid: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub foreground_service: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task_count: Option<usize>,
@@ -360,6 +362,15 @@ mod tests {
         media_tools_status: DesktopMediaToolsStatus,
     }
 
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct MobileTorrentLifecycleFixture {
+        android_status: EmbeddedTorrentCoreStatus,
+        ios_status: EmbeddedTorrentCoreStatus,
+        execute_request: serde_json::Value,
+        execute_response: serde_json::Value,
+    }
+
     /// 验证 Rust 能严格解码前端共用的播放器快照金样。
     #[test]
     fn decodes_player_snapshot_fixture() {
@@ -418,5 +429,26 @@ mod tests {
         assert_eq!(decoded.kind, "p4-media-model");
         assert!(decoded.payload.media_tools_status.ffprobe.available);
         assert!(decoded.payload.media_tools_status.ffmpeg.available);
+    }
+
+    /// 验证 Android 前台服务与 iOS Session 使用同一生命周期契约。
+    #[test]
+    fn decodes_mobile_torrent_lifecycle_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p4-mobile-torrent-lifecycle.v1.json"
+        ));
+        let decoded: ContractFixture<MobileTorrentLifecycleFixture> =
+            serde_json::from_str(fixture).expect("mobile torrent fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p4-mobile-torrent-lifecycle");
+        assert_eq!(
+            decoded.payload.android_status.foreground_service,
+            Some(true)
+        );
+        assert_eq!(decoded.payload.ios_status.foreground_service, Some(false));
+        assert_eq!(decoded.payload.execute_request["method"], "listTasks");
+        assert_eq!(decoded.payload.execute_response["ok"], "true");
     }
 }

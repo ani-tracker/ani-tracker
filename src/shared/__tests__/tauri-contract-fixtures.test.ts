@@ -249,3 +249,21 @@ test("Tauri P4 媒体扫描契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.scanResult.mediaFiles[0].normalizedVideoCodec, "H.265/HEVC");
   assert.equal(fixture.payload.scanResult.skippedFiles[0].reason, "非视频文件");
 });
+
+/** 验证移动 torrent-core 生命周期和桌面使用同一状态契约。 */
+test("Tauri P4 移动 torrent-core 生命周期金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p4-mobile-torrent-lifecycle.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    androidStatus: EmbeddedTorrentCoreStatus;
+    iosStatus: EmbeddedTorrentCoreStatus;
+    executeRequest: { id: string; method: string; params: Record<string, never> };
+    executeResponse: { id: string; ok: string; result: { tasks: string } };
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p4-mobile-torrent-lifecycle");
+  assert.equal(fixture.payload.androidStatus.foregroundService, true);
+  assert.equal(fixture.payload.iosStatus.foregroundService, false);
+  assert.equal(fixture.payload.executeRequest.method, "listTasks");
+  assert.equal(fixture.payload.executeResponse.ok, "true");
+});

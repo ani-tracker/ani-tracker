@@ -21,6 +21,7 @@ pub fn run() {
                 .level(LevelFilter::Info)
                 .build(),
         )
+        .plugin(tauri_plugin_ani_torrent::init())
         .setup(|app| {
             let storage_state = storage::initialize(app.handle())?;
             let source_state = sources::AppSourceState::new();

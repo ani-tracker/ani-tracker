@@ -24,6 +24,7 @@
     "prepare:desktop-torrent-core-dev": "node scripts/prepare-desktop-torrent-core-dev.mjs",
     "prepare:torrent-core:android": "bash scripts/prepare-android-torrent-dependencies.sh",
     "build:torrent-core:android": "gradle -p android :torrent-host:assembleRelease",
+    "prepare:torrent-core:ios": "bash scripts/prepare-ios-torrent-core.sh",
     "build:android:web": "vite build --config vite.mobile.config.ts",
     "sync:android": "pnpm run build:android:web && cap sync android",
     "package:android:debug": "pnpm run sync:android && gradle -p android :app:assembleDebug :torrent-host:assembleRelease",
