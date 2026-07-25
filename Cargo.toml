@@ -6,6 +6,7 @@ members = [
   "crates/ani-storage",
   "crates/ani-sources",
   "crates/ani-automation",
+  "crates/ani-downloads",
   "src-tauri"
 ]
 resolver = "2"

@@ -103,6 +103,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ani-downloads"
+version = "0.1.0"
+dependencies = [
+ "ani-domain",
+ "ani-repository",
+ "async-trait",
+ "log",
+ "serde",
+ "thiserror 2.0.19",
+ "tokio",
+]
+
+[[package]]
 name = "ani-repository"
 version = "0.1.0"
 dependencies = [
