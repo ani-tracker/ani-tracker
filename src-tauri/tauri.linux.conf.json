@@ -1,0 +1,16 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../out/libvlc/linux-x64/": "libvlc/linux-x64/"
+    },
+    "linux": {
+      "deb": {
+        "depends": ["vlc (>= 3.0.0)"]
+      },
+      "rpm": {
+        "depends": ["vlc >= 3.0.0"]
+      }
+    }
+  }
+}

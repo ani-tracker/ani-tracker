@@ -2,7 +2,7 @@
 
 最近更新：2026-07-25
 
-状态：P0-P4 实现已完成；P5 Windows/macOS libVLC 已完成代码门禁，Linux/Android/iOS 待执行；跨平台构建与真机门禁待后续统一验证
+状态：P0-P4 实现已完成；P5 桌面三平台 libVLC 已完成代码门禁，Android/iOS 待执行；跨平台构建与真机门禁待后续统一验证
 
 ## 1. 迁移目标
 
@@ -335,6 +335,8 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - Rust 全工作区测试、Clippy、格式检查、TypeScript、361 项 Node 通过项及本机 libVLC 实例创建/释放冒烟通过；Windows 完整打包、实际媒体播放和跨平台门禁按当前安排后续统一验证。
 - macOS 已接通 NSView 视频目标与 VideoToolbox，使用逻辑坐标同步透明控制层和视频窗口，避免 Retina 缩放重复放大拖动位移；Apple Silicon/Intel 运行库分别使用独立资源布局。
 - macOS 运行库准备入口已移除 Electron 原生模块依赖，并复用 Rust FFI 冒烟；Windows 上的共享 Rust、Clippy、TypeScript 和坐标测试通过，macOS 实际编译、签名、运行库装包与播放按当前安排后续统一验证。
+- Linux 已接通 Xlib/XCB 视频目标和 X11/XWayland 窗口，原生 Wayland 返回明确的平台不支持错误；运行库按系统 VLC 3.0.x 实际版本整理并设置相对 RPATH。
+- Deb/RPM 已声明 VLC 运行依赖，桌面 CI 会在 Windows、macOS、Linux 分别准备并真实加载本平台运行库；Windows 共享门禁通过，Linux 实际编译、装包和播放按当前安排后续统一验证。
 
 ### P6：桌面完整能力与远程网关
 

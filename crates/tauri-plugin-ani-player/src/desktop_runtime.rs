@@ -1004,6 +1004,8 @@ mod tests {
         assert!(options
             .iter()
             .any(|value| value == "--avcodec-hw=videotoolbox"));
+        #[cfg(target_os = "linux")]
+        assert!(options.iter().any(|value| value == "--avcodec-hw=any"));
     }
 
     /// VLC 状态码必须稳定映射到跨平台快照状态。

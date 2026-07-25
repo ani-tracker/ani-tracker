@@ -85,12 +85,26 @@ jobs:
             libwebkit2gtk-4.1-dev \
             libxdo-dev \
             patchelf \
+            pax-utils \
+            vlc \
             wget
 
       - name: Install JavaScript dependencies
         run: |
           corepack enable
           pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Prepare Windows Tauri libVLC runtime
+        if: runner.os == 'Windows'
+        run: pnpm run prepare:tauri:win-libvlc
+
+      - name: Prepare macOS Tauri libVLC runtime
+        if: runner.os == 'macOS'
+        run: pnpm run prepare:tauri:mac-libvlc
+
+      - name: Prepare Linux Tauri libVLC runtime
+        if: runner.os == 'Linux'
+        run: pnpm run prepare:tauri:linux-libvlc
 
       - name: Check TypeScript contracts and Renderer
         run: pnpm run typecheck
@@ -106,3 +120,6 @@ jobs:
 
       - name: Build Tauri desktop host
         run: pnpm run build:tauri
+
+      - name: Verify staged libVLC runtime
+        run: pnpm run verify:libvlc
