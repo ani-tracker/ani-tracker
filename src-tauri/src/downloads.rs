@@ -8,8 +8,9 @@ use ani_domain::{
     AppSettings, DownloadTask, Release, SubtitleLanguage, SubtitlePreference, TorrentEngineKind,
 };
 use ani_downloads::{
-    DownloadEngineConfig, DownloadEngineRegistry, DownloadServiceError, DownloadSource,
-    DownloadTaskContext, DownloadTaskService, DownloadTaskStore, SeedingLimits, TorrentCoreEngine,
+    DownloadEngine, DownloadEngineConfig, DownloadEngineRegistry, DownloadServiceError,
+    DownloadSource, DownloadTaskContext, DownloadTaskService, DownloadTaskStore,
+    QbittorrentConnectionConfig, QbittorrentEngine, SeedingLimits, TorrentCoreEngine,
 };
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use ani_downloads::{ProcessTorrentCoreTransport, TorrentCoreProcessOptions};
@@ -69,6 +70,7 @@ impl DownloadTaskStore for SharedDownloadTaskStore {
 pub(crate) struct AppDownloadState {
     service: Arc<DownloadTaskService>,
     registry: Arc<DownloadEngineRegistry>,
+    qbittorrent: Arc<QbittorrentEngine>,
     storage: Arc<Mutex<Storage>>,
     platform_defaults: AppSettings,
     torrent_import_directory: PathBuf,
@@ -98,6 +100,13 @@ impl AppDownloadState {
                 binary_path.display()
             );
         }
+        let qbittorrent = Arc::new(
+            QbittorrentEngine::new(qbittorrent_connection_config(&platform_defaults))
+                .map_err(|error| error.to_string())?,
+        );
+        registry
+            .register(qbittorrent.clone())
+            .map_err(|error| error.to_string())?;
         let registry = Arc::new(registry);
         let store = Arc::new(SharedDownloadTaskStore::new(Arc::clone(&storage)));
         let service = Arc::new(DownloadTaskService::new(Arc::clone(&registry), store));
@@ -106,6 +115,7 @@ impl AppDownloadState {
         Ok(Self {
             service,
             registry,
+            qbittorrent,
             storage,
             platform_defaults,
             torrent_import_directory,
@@ -138,7 +148,18 @@ impl AppDownloadState {
             .pointer("/download/defaultTorrentEngine")
             .and_then(Value::as_str)
         {
-            Some("embedded") | None => Ok(TorrentEngineKind::Embedded),
+            Some("embedded") | None
+                if settings
+                    .pointer("/download/embedded/enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true) =>
+            {
+                Ok(TorrentEngineKind::Embedded)
+            }
+            Some("embedded") | None => Err(DownloadServiceError::InvalidInput {
+                field: "defaultTorrentEngine",
+                message: "内置下载引擎已停用".to_owned(),
+            }),
             Some("qbittorrent") => Ok(TorrentEngineKind::Qbittorrent),
             Some(value) => Err(DownloadServiceError::InvalidInput {
                 field: "defaultTorrentEngine",
@@ -166,25 +187,40 @@ impl AppDownloadState {
 
     /// 设置变化后立即应用内置核心参数，关闭时请求恢复数据落盘。
     pub(crate) async fn refresh_from_settings(&self, settings: &AppSettings) -> Result<(), String> {
-        let enabled = settings
+        self.qbittorrent
+            .update_connection(qbittorrent_connection_config(settings))
+            .await
+            .map_err(|error| error.to_string())?;
+        let embedded_enabled = settings
             .pointer("/download/embedded/enabled")
             .and_then(Value::as_bool)
             .unwrap_or(true);
-        if !enabled {
-            let failures = self.registry.shutdown_all().await;
-            return failures
-                .first()
-                .map(|(_, error)| Err(error.to_string()))
-                .unwrap_or(Ok(()));
+        let default_engine = self
+            .default_engine(settings)
+            .map_err(|error| error.to_string())?;
+        if default_engine == TorrentEngineKind::Embedded && embedded_enabled {
+            let engine = self
+                .registry
+                .require(&TorrentEngineKind::Embedded)
+                .map_err(|error| error.to_string())?;
+            engine
+                .configure(&embedded_engine_config(settings))
+                .await
+                .map_err(|error| error.to_string())?;
+        } else if let Ok(engine) = self.registry.require(&TorrentEngineKind::Embedded) {
+            engine.shutdown().await.map_err(|error| error.to_string())?;
         }
-        let engine = self
-            .registry
-            .require(&TorrentEngineKind::Embedded)
-            .map_err(|error| error.to_string())?;
-        engine
-            .configure(&download_engine_config(settings))
-            .await
-            .map_err(|error| error.to_string())?;
+        if default_engine == TorrentEngineKind::Qbittorrent {
+            self.qbittorrent
+                .configure(&qbittorrent_engine_config(settings))
+                .await
+                .map_err(|error| error.to_string())?;
+        } else {
+            self.qbittorrent
+                .shutdown()
+                .await
+                .map_err(|error| error.to_string())?;
+        }
         Ok(())
     }
 
@@ -339,7 +375,7 @@ fn subtitle_preference_value(value: &SubtitlePreference) -> &'static str {
 }
 
 /// 将版本化设置解析为 torrent-core 运行配置。
-fn download_engine_config(settings: &AppSettings) -> DownloadEngineConfig {
+fn embedded_engine_config(settings: &AppSettings) -> DownloadEngineConfig {
     let embedded = settings.pointer("/download/embedded");
     let seeding = embedded.and_then(|value| value.get("seedingLimits"));
     DownloadEngineConfig {
@@ -349,6 +385,54 @@ fn download_engine_config(settings: &AppSettings) -> DownloadEngineConfig {
         max_active_downloads: setting_u64(embedded, "maxActiveDownloads", 3, 1, 100) as u32,
         max_download_speed: setting_u64(embedded, "maxDownloadSpeed", 0, 0, u32::MAX as u64) as u32,
         max_upload_speed: setting_u64(embedded, "maxUploadSpeed", 0, 0, u32::MAX as u64) as u32,
+        seeding_limits: SeedingLimits {
+            enabled: setting_bool(seeding, "enabled", false),
+            ratio_enabled: setting_bool(seeding, "ratioEnabled", false),
+            ratio_limit: seeding
+                .and_then(|value| value.get("ratioLimit"))
+                .and_then(Value::as_f64)
+                .unwrap_or(1.0)
+                .max(0.1),
+            time_enabled: setting_bool(seeding, "timeEnabled", false),
+            time_limit_minutes: setting_u64(seeding, "timeLimitMinutes", 120, 1, u32::MAX as u64)
+                as u32,
+        },
+    }
+}
+
+/// 将 qBittorrent 设置解析为 WebUI 连接参数。
+fn qbittorrent_connection_config(settings: &AppSettings) -> QbittorrentConnectionConfig {
+    QbittorrentConnectionConfig::new(
+        settings
+            .pointer("/download/qbittorrent/baseUrl")
+            .and_then(Value::as_str)
+            .unwrap_or("http://127.0.0.1:18080")
+            .to_owned(),
+        settings
+            .pointer("/download/qbittorrent/username")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_owned(),
+        settings
+            .pointer("/download/qbittorrent/password")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    )
+}
+
+/// 将 qBittorrent KiB/s 和做种设置映射到统一引擎配置。
+fn qbittorrent_engine_config(settings: &AppSettings) -> DownloadEngineConfig {
+    let qbittorrent = settings.pointer("/download/qbittorrent");
+    let seeding = qbittorrent.and_then(|value| value.get("seedingLimits"));
+    DownloadEngineConfig {
+        listen_port: 0,
+        dht_enabled: false,
+        upnp_enabled: false,
+        max_active_downloads: 1,
+        max_download_speed: setting_u64(qbittorrent, "downloadLimitKiBps", 0, 0, u32::MAX as u64)
+            as u32,
+        max_upload_speed: setting_u64(qbittorrent, "uploadLimitKiBps", 0, 0, u32::MAX as u64)
+            as u32,
         seeding_limits: SeedingLimits {
             enabled: setting_bool(seeding, "enabled", false),
             ratio_enabled: setting_bool(seeding, "ratioEnabled", false),
@@ -455,7 +539,7 @@ mod tests {
     /// 验证下载设置被边界化后映射到核心配置。
     #[test]
     fn maps_download_engine_settings() {
-        let config = download_engine_config(&json!({
+        let config = embedded_engine_config(&json!({
             "download": {
                 "embedded": {
                     "listenPort": 1,
@@ -475,5 +559,29 @@ mod tests {
         assert!(config.seeding_limits.enabled);
         assert_eq!(config.seeding_limits.ratio_limit, 0.1);
         assert_eq!(config.seeding_limits.time_limit_minutes, 1);
+    }
+
+    /// 验证 qBittorrent 限速和做种设置使用独立配置分支。
+    #[test]
+    fn maps_qbittorrent_engine_settings() {
+        let config = qbittorrent_engine_config(&json!({
+            "download": {
+                "qbittorrent": {
+                    "downloadLimitKiBps": 512,
+                    "uploadLimitKiBps": 128,
+                    "seedingLimits": {
+                        "enabled": true,
+                        "ratioEnabled": true,
+                        "ratioLimit": 1.5,
+                        "timeEnabled": true,
+                        "timeLimitMinutes": 90
+                    }
+                }
+            }
+        }));
+        assert_eq!(config.max_download_speed, 512);
+        assert_eq!(config.max_upload_speed, 128);
+        assert_eq!(config.seeding_limits.ratio_limit, 1.5);
+        assert_eq!(config.seeding_limits.time_limit_minutes, 90);
     }
 }

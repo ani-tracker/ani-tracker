@@ -1,5 +1,6 @@
 mod engine;
 mod error;
+mod qbittorrent;
 mod registry;
 mod service;
 mod torrent_core;
@@ -9,6 +10,7 @@ pub use engine::{
     SeedingLimits,
 };
 pub use error::{DownloadEngineError, DownloadServiceError};
+pub use qbittorrent::{QbittorrentConnectionConfig, QbittorrentEngine};
 pub use registry::DownloadEngineRegistry;
 pub use service::{
     DownloadAddRequest, DownloadRefreshFailure, DownloadRefreshResult, DownloadTaskContext,
