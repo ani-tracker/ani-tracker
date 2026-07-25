@@ -4,12 +4,13 @@ import { App } from "./App";
 import { ErrorBoundary } from "./components/error-boundary";
 import { ThemeProvider, ThemeToaster } from "./components/theme-provider";
 import { appApi, isElectronClient } from "./lib/api";
+import { isLocalAppRuntime } from "./lib/runtime";
 import type { AppearanceSettings } from "@shared/theme";
 import "./styles/globals.css";
 
-/** 仅在 Web/PWA 生产环境注册离线缓存，避免干扰 Electron 调试。 */
+/** 仅在 Web/PWA 生产环境注册离线缓存，避免干扰本地应用宿主。 */
 async function registerWebServiceWorker(): Promise<void> {
-  if (window.aniBridge || !import.meta.env.PROD || !("serviceWorker" in navigator)) {
+  if (isLocalAppRuntime() || !import.meta.env.PROD || !("serviceWorker" in navigator)) {
     return;
   }
 

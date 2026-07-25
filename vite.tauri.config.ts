@@ -10,6 +10,7 @@ export default defineConfig({
   publicDir: resolve("src/renderer/public"),
   base: "./",
   clearScreen: false,
+  envPrefix: ["VITE_", "TAURI_ENV_*"],
   resolve: {
     alias: {
       "@": resolve("src/renderer/src"),

@@ -33,6 +33,7 @@ export function WindowControls() {
       <div
         aria-hidden="true"
         className="fixed left-0 right-[var(--window-controls-width)] top-0 z-40 hidden h-[var(--app-content-padding)] md:block"
+        data-tauri-drag-region=""
         data-window-drag-region=""
         onDoubleClick={() => void toggleMaximize()}
         style={dragRegionStyle}

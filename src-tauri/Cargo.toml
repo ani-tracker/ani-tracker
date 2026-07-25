@@ -14,6 +14,11 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+ani-contracts = { path = "../crates/ani-contracts" }
 log = "0.4"
 tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
+url = "2"
+
+[target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+open = "5"

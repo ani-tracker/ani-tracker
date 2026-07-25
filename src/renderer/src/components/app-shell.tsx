@@ -246,6 +246,7 @@ export function AppShell({
               "sticky top-0 z-30 flex min-h-16 items-center border-b bg-background px-[max(1rem,var(--safe-area-left))] pt-[var(--safe-area-top)] md:hidden",
               framelessWindow && "pr-[calc(var(--window-controls-width)+max(1rem,var(--safe-area-right)))]"
             )}
+            data-tauri-drag-region={framelessWindow ? "" : undefined}
             data-window-drag-region={framelessWindow ? "" : undefined}
             style={framelessWindow ? dragRegionStyle : undefined}
           >

@@ -9,6 +9,21 @@ pub struct ContractFixture<T> {
     pub payload: T,
 }
 
+/// 无边框窗口控制区需要的最小窗口状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppWindowState {
+    pub maximized: bool,
+}
+
+/// Tauri 命令返回给 Renderer 的稳定错误结构。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppCommandError {
+    pub code: String,
+    pub message: String,
+}
+
 /// 播放器后端类型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]

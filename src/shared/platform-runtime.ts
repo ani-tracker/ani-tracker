@@ -1,5 +1,5 @@
 /** 应用支持的客户端运行时。 */
-export type AppRuntimeKind = "desktop" | "android" | "remote";
+export type AppRuntimeKind = "desktop" | "android" | "ios" | "remote";
 
 /** 页面用于决定功能可见性的平台能力集合。 */
 export interface PlatformCapabilities {
@@ -21,6 +21,7 @@ export interface PlatformCapabilities {
 /** 运行时探测所需的最小环境信息，避免共享层直接访问 window。 */
 export interface AppRuntimeProbe {
   hasElectronBridge: boolean;
+  hasTauriBridge: boolean;
   nativePlatform?: string;
 }
 
@@ -49,7 +50,22 @@ const PLATFORM_CAPABILITIES: Record<AppRuntimeKind, PlatformCapabilities> = {
     managedQbittorrent: false,
     nativePlayer: true,
     externalPlayerConfiguration: false,
-    mediaScan: true,
+    mediaScan: false,
+    backgroundAutomation: true,
+    windowControls: false,
+    remoteGateway: false,
+    fileExport: true
+  },
+  ios: {
+    runtime: "ios",
+    localData: true,
+    sourceManagement: true,
+    embeddedTorrent: true,
+    externalQbittorrent: true,
+    managedQbittorrent: false,
+    nativePlayer: true,
+    externalPlayerConfiguration: false,
+    mediaScan: false,
     backgroundAutomation: true,
     windowControls: false,
     remoteGateway: false,
@@ -72,13 +88,20 @@ const PLATFORM_CAPABILITIES: Record<AppRuntimeKind, PlatformCapabilities> = {
   }
 };
 
-/** 按明确优先级识别桌面、Android 或远程运行时。 */
+/** 按明确优先级识别桌面、Android、iOS 或远程运行时。 */
 export function resolveAppRuntime(probe: AppRuntimeProbe): AppRuntimeKind {
   if (probe.hasElectronBridge) {
     return "desktop";
   }
-  if (probe.nativePlatform?.toLowerCase() === "android") {
+  const nativePlatform = probe.nativePlatform?.toLowerCase();
+  if (nativePlatform === "android") {
     return "android";
+  }
+  if (nativePlatform === "ios") {
+    return "ios";
+  }
+  if (probe.hasTauriBridge) {
+    return "desktop";
   }
   return "remote";
 }

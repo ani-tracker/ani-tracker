@@ -32,7 +32,13 @@ import { PlayerDesignPreview } from "@/features/player/PlayerDesignPreview";
 import { DesktopPlayerPage } from "@/features/player/DesktopPlayerPage";
 import { DesktopVlcHostPage } from "@/features/player/DesktopVlcHostPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
-import { appApi, getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
+import {
+  appApi,
+  getRemotePairingState,
+  isElectronClient,
+  isTauriClient,
+  REMOTE_AUTH_CHANGED_EVENT
+} from "@/lib/api";
 import { getAppCapabilities, getAppRuntime } from "@/lib/runtime";
 import type { DownloadServiceStatus } from "@shared/contracts";
 import type { Anime } from "@shared/domain";
@@ -211,7 +217,7 @@ function MainApplication() {
   const desktopPlatform = window.aniBridge?.platform;
   const framelessWindow = capabilities.windowControls
     && desktopClient
-    && (desktopPlatform === "win32" || desktopPlatform === "darwin");
+    && (isTauriClient() || desktopPlatform === "win32" || desktopPlatform === "darwin");
   const remotePlayerTaskId = runtime === "remote"
     ? resolveRemotePlayerTaskId(window.location.pathname)
     : undefined;
