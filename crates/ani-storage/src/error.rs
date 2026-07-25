@@ -1,0 +1,48 @@
+use std::path::PathBuf;
+
+/// SQLite 数据层启动和迁移错误。
+#[derive(Debug, thiserror::Error)]
+pub enum StorageError {
+    #[error("数据库文件操作失败（{operation}）：{path}：{source}")]
+    FileOperation {
+        operation: &'static str,
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("SQLite 操作失败：{0}")]
+    Sqlite(#[from] rusqlite::Error),
+    #[error("数据库不是有效的 SQLite 文件：{path}：{detail}")]
+    CorruptDatabase { path: PathBuf, detail: String },
+    #[error("数据库结构版本 {actual} 高于当前支持版本 {supported}")]
+    UnsupportedSchemaVersion { actual: u32, supported: u32 },
+    #[error("应用数据版本 {actual} 高于当前支持版本 {supported}")]
+    UnsupportedAppDataVersion { actual: u32, supported: u32 },
+    #[error("数据库元数据 {key} 不是有效版本号：{value}")]
+    InvalidVersionMetadata { key: &'static str, value: String },
+    #[error("数据库迁移失败，已恢复迁移前备份：{source}")]
+    MigrationRolledBack {
+        #[source]
+        source: Box<StorageError>,
+    },
+    #[error("数据库迁移失败且恢复备份失败；迁移错误：{migration}; 恢复错误：{restore}")]
+    MigrationRestoreFailed {
+        migration: Box<StorageError>,
+        restore: Box<StorageError>,
+    },
+}
+
+impl StorageError {
+    /// 创建带操作名和路径的文件系统错误。
+    pub(crate) fn file(
+        operation: &'static str,
+        path: impl Into<PathBuf>,
+        source: std::io::Error,
+    ) -> Self {
+        Self::FileOperation {
+            operation,
+            path: path.into(),
+            source,
+        }
+    }
+}
