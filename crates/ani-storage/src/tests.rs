@@ -437,6 +437,80 @@ fn rolls_back_failed_p3_following_write() {
     );
 }
 
+/// 验证番剧目录合并、搜索、月份替换和详情聚合保持业务引用。
+#[test]
+fn reads_and_replaces_p3_anime_catalog() {
+    let directory = TestDirectory::new("p3-catalog");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create p3 catalog database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode p3 following fixture");
+    let repository = storage.repository();
+    repository
+        .upsert_my_anime(fixture.payload.my_anime.clone())
+        .expect("save referenced anime");
+
+    let mut old_cache = fixture.payload.my_anime.anime.clone();
+    old_cache.id = "anime-p3-old-cache".to_owned();
+    old_cache.title = "待替换缓存番剧".to_owned();
+    old_cache.original_title = Some("Old Cache Anime".to_owned());
+    old_cache.external_ids = json!({ "bangumi": "old-cache" });
+    old_cache.aliases[0].alias = "Old Cache Alias".to_owned();
+    let initial = repository
+        .upsert_anime_catalog(&[old_cache])
+        .expect("save old catalog cache");
+    assert_eq!(initial.added_count, 1);
+    assert_eq!(
+        repository
+            .list_anime_catalog(Some(2026), Some(7))
+            .expect("list july catalog")
+            .len(),
+        2
+    );
+    assert_eq!(
+        repository
+            .search_anime_catalog("p3 alias")
+            .expect("search alias")
+            .items[0]
+            .id,
+        "anime-p3-1"
+    );
+
+    let mut refreshed = fixture.payload.my_anime.anime.clone();
+    refreshed.id = "provider-replacement-id".to_owned();
+    refreshed.title = "P3 刷新番剧".to_owned();
+    refreshed.aliases[0].alias = "Refreshed Alias".to_owned();
+    refreshed.detail = Some(json!({
+        "episodeCount": 12,
+        "refreshedAt": chrono::Utc::now().to_rfc3339()
+    }));
+    let replaced = repository
+        .replace_anime_catalog_month(2026, 7, &[refreshed])
+        .expect("replace july catalog");
+    assert_eq!(replaced.existing_count, 1);
+    let july = repository
+        .list_anime_catalog(Some(2026), Some(7))
+        .expect("list replaced july catalog");
+    assert_eq!(july.len(), 1);
+    assert_eq!(july[0].id, "anime-p3-1");
+    assert_eq!(july[0].title, "P3 刷新番剧");
+    assert!(july[0]
+        .aliases
+        .iter()
+        .any(|alias| alias.alias == "Refreshed Alias"));
+
+    let detail = repository
+        .get_anime_detail("anime-p3-1")
+        .expect("read local anime detail");
+    assert!(detail.my_anime.is_some());
+    assert!(!detail.stale);
+    assert!(detail.partial_errors.is_empty());
+}
+
 /// 创建包含固定设置和下载源的测试启动参数。
 fn test_options(directory: &TestDirectory, database_name: &str) -> StorageOptions {
     StorageOptions {

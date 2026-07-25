@@ -5,6 +5,8 @@ import { test } from "node:test";
 import type { PlayerSnapshot } from "../player-contract";
 import { acceptPlayerSnapshot } from "../player-contract";
 import type {
+  AnimeDetailResult,
+  AnimeDiscoverySearchResult,
   AnimeWatchProgress,
   PlaybackCheckpoint,
   ReportPlaybackProgressInput,
@@ -85,4 +87,20 @@ test("Tauri P3 追番写模型契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.savePlaybackCheckpointInput.fileIndex, 0);
   assert.equal(fixture.payload.checkpoint.watchedReported, true);
   assert.equal(progress.totalEpisodeCount, 12);
+});
+
+/** 读取 P3 目录与详情金样，验证 Rust 聚合结果和前端契约一致。 */
+test("Tauri P3 番剧目录契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p3-catalog-read-model.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    searchResult: AnimeDiscoverySearchResult;
+    detailResult: AnimeDetailResult;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p3-catalog-read-model");
+  assert.equal(fixture.payload.searchResult.source, "local");
+  assert.equal(fixture.payload.searchResult.items[0].externalIds.bangumi, "catalog-contract-1");
+  assert.equal(fixture.payload.detailResult.anime.id, fixture.payload.searchResult.items[0].id);
+  assert.equal(fixture.payload.detailResult.stale, false);
 });

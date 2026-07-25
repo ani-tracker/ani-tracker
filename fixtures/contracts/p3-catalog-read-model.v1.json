@@ -1,0 +1,65 @@
+{
+  "schemaVersion": 1,
+  "kind": "p3-catalog-read-model",
+  "payload": {
+    "searchResult": {
+      "keyword": "契约目录",
+      "items": [
+        {
+          "id": "anime-catalog-contract-1",
+          "title": "契约目录番剧",
+          "aliases": [
+            {
+              "id": "anime-catalog-contract-1-alias-1",
+              "animeId": "anime-catalog-contract-1",
+              "alias": "Catalog Contract Anime",
+              "language": "en",
+              "priority": 10
+            }
+          ],
+          "premiereYear": 2026,
+          "premiereMonth": 7,
+          "season": "summer",
+          "externalIds": {
+            "bangumi": "catalog-contract-1"
+          },
+          "detail": {
+            "episodeCount": 12,
+            "refreshedAt": "2026-07-25T00:00:00.000Z"
+          }
+        }
+      ],
+      "source": "local",
+      "errors": []
+    },
+    "detailResult": {
+      "anime": {
+        "id": "anime-catalog-contract-1",
+        "title": "契约目录番剧",
+        "aliases": [
+          {
+            "id": "anime-catalog-contract-1-alias-1",
+            "animeId": "anime-catalog-contract-1",
+            "alias": "Catalog Contract Anime",
+            "language": "en",
+            "priority": 10
+          }
+        ],
+        "premiereYear": 2026,
+        "premiereMonth": 7,
+        "season": "summer",
+        "externalIds": {
+          "bangumi": "catalog-contract-1"
+        },
+        "detail": {
+          "episodeCount": 12,
+          "refreshedAt": "2026-07-25T00:00:00.000Z"
+        }
+      },
+      "episodes": [],
+      "fansubGroups": [],
+      "stale": false,
+      "partialErrors": []
+    }
+  }
+}

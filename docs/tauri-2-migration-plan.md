@@ -249,8 +249,9 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 执行记录：
 
 - 已迁移追番 CRUD、单集、单集偏好、连续观看进度、播放进度回写和续播检查点，复合写入使用 SQLite 事务。
-- 已接通对应 Tauri commands 与 `TauriClient`，新增 TypeScript/Rust 共用 P3 写模型金样及事务回滚测试。
-- Rust 测试、Clippy、Tauri Rust check、TypeScript 类型检查及 352 项 Node 测试通过；平台构建按当前安排后续统一验证。
+- 已迁移番剧目录合并、年月查询、本地搜索、月份原子替换和详情聚合，并保护追番、单集、下载和媒体引用。
+- 已接通对应 Tauri commands 与 `TauriClient`，新增 TypeScript/Rust 共用 P3 写入、目录金样及事务回滚测试。
+- Rust 测试、Clippy、Tauri Rust check、TypeScript 类型检查及 353 项 Node 测试通过；平台构建按当前安排后续统一验证。
 
 ### P4：下载、torrent-core 与媒体闭环
 

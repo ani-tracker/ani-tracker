@@ -1,15 +1,16 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use ani_domain::{
-    Anime, AnimeAlias, AnimeAliasLanguage, AnimeRating, AnimeRssSubscription, AnimeStatus,
-    AnimeWatchProgress, AppSettings, DailyReminderItem, DailyReminderSummary, DashboardData,
-    DownloadStatus, DownloadTask, Episode, EpisodePreference, EpisodeStatus, EpisodeSummary,
+    Anime, AnimeAlias, AnimeAliasLanguage, AnimeDetailPartialError, AnimeDetailResult,
+    AnimeDiscoverySearchResult, AnimeRating, AnimeRssSubscription, AnimeStatus, AnimeWatchProgress,
+    AppSettings, DailyReminderItem, DailyReminderSummary, DashboardData, DownloadStatus,
+    DownloadTask, Episode, EpisodePreference, EpisodeStatus, EpisodeSummary, FansubGroup,
     MediaFile, MyAnime, NotificationKind, NotificationRecord, NotificationSeverity, PendingAction,
     PlaybackCheckpoint, ReportPlaybackProgressInput, SavePlaybackCheckpointInput,
     SetAnimeWatchProgressInput, SourceHealth, TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
 };
-use chrono::{DateTime, Local, Utc};
+use chrono::{DateTime, Duration, Local, Utc};
 use log::{debug, info, warn};
 use rusqlite::{params, Connection, OptionalExtension, Params, Row};
 use serde::de::DeserializeOwned;
@@ -20,6 +21,14 @@ use crate::{now_iso, StorageError};
 /// 提供 P2 首批设置、通知、追番和首页只读查询。
 pub struct AppRepository<'connection> {
     connection: &'connection Connection,
+}
+
+/// 番剧目录批量写入后的计数和完整目录。
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimeCatalogWriteResult {
+    pub items: Vec<Anime>,
+    pub added_count: usize,
+    pub existing_count: usize,
 }
 
 impl<'connection> AppRepository<'connection> {
@@ -67,20 +76,190 @@ impl<'connection> AppRepository<'connection> {
         Ok(count)
     }
 
-    /// 读取并按季度、标题排序我的追番。
-    pub fn list_my_anime(&self) -> Result<Vec<MyAnime>, StorageError> {
+    /// 按可选年月读取并排序本地番剧目录。
+    pub fn list_anime_catalog(
+        &self,
+        year: Option<i64>,
+        month: Option<i64>,
+    ) -> Result<Vec<Anime>, StorageError> {
+        if month.is_some_and(|value| !(1..=12).contains(&value)) {
+            return invalid_input("month", "月份必须在 1 到 12 之间");
+        }
         let aliases = self.list_aliases_by_anime()?;
-        let anime = query_all(
+        let rows = match (year, month) {
+            (Some(year), Some(month)) => query_all_with_params(
+                self.connection,
+                "SELECT * FROM anime_catalog WHERE premiere_year = ?1 AND premiere_month = ?2",
+                params![year, month],
+                map_anime_row,
+            )?,
+            _ => query_all(
+                self.connection,
+                "SELECT * FROM anime_catalog",
+                map_anime_row,
+            )?,
+        };
+        let mut items = rows
+            .into_iter()
+            .map(|row| {
+                let anime_aliases = aliases.get(&row.id).cloned().unwrap_or_default();
+                row.into_domain(anime_aliases)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        sort_anime_catalog(&mut items);
+        Ok(items)
+    }
+
+    /// 按目录标识读取一部番剧及其别名。
+    pub fn get_anime_catalog_by_id(&self, anime_id: &str) -> Result<Option<Anime>, StorageError> {
+        let row = self
+            .connection
+            .query_row(
+                "SELECT * FROM anime_catalog WHERE id = ?1",
+                [anime_id],
+                map_anime_row,
+            )
+            .optional()?;
+        let Some(row) = row else {
+            return Ok(None);
+        };
+        let aliases = query_all_with_params(
             self.connection,
-            "SELECT * FROM anime_catalog",
-            map_anime_row,
+            "SELECT * FROM anime_alias WHERE anime_id = ?1 ORDER BY priority DESC",
+            [anime_id],
+            map_alias_row,
         )?
         .into_iter()
-        .map(|row| {
-            let anime_aliases = aliases.get(&row.id).cloned().unwrap_or_default();
-            row.into_domain(anime_aliases)
-        })
+        .map(AnimeAliasRow::into_domain)
         .collect::<Result<Vec<_>, _>>()?;
+        row.into_domain(aliases).map(Some)
+    }
+
+    /// 按标题、原名和别名搜索本地番剧目录。
+    pub fn search_anime_catalog(
+        &self,
+        keyword: &str,
+    ) -> Result<AnimeDiscoverySearchResult, StorageError> {
+        let keyword = keyword.trim();
+        let normalized = keyword.to_lowercase();
+        let items = self
+            .list_anime_catalog(None, None)?
+            .into_iter()
+            .filter(|anime| {
+                normalized.is_empty()
+                    || anime.title.to_lowercase().contains(&normalized)
+                    || anime
+                        .original_title
+                        .as_deref()
+                        .is_some_and(|title| title.to_lowercase().contains(&normalized))
+                    || anime
+                        .aliases
+                        .iter()
+                        .any(|alias| alias.alias.to_lowercase().contains(&normalized))
+            })
+            .collect();
+        Ok(AnimeDiscoverySearchResult {
+            keyword: keyword.to_owned(),
+            items,
+            source: "local".to_owned(),
+            errors: Vec::new(),
+        })
+    }
+
+    /// 合并并原子保存一批番剧目录记录。
+    pub fn upsert_anime_catalog(
+        &self,
+        items: &[Anime],
+    ) -> Result<AnimeCatalogWriteResult, StorageError> {
+        self.persist_anime_catalog(items, None)
+    }
+
+    /// 原子替换指定月份的未引用缓存，并保留业务引用记录。
+    pub fn replace_anime_catalog_month(
+        &self,
+        year: i64,
+        month: i64,
+        items: &[Anime],
+    ) -> Result<AnimeCatalogWriteResult, StorageError> {
+        if !(1..=12).contains(&month) {
+            return invalid_input("month", "月份必须在 1 到 12 之间");
+        }
+        self.persist_anime_catalog(items, Some((year, month)))
+    }
+
+    /// 聚合本地番剧、追番、单集和字幕组供详情页首屏使用。
+    pub fn get_anime_detail(&self, anime_id: &str) -> Result<AnimeDetailResult, StorageError> {
+        let anime = self.get_anime_catalog_by_id(anime_id)?.ok_or_else(|| {
+            StorageError::RecordNotFound {
+                entity: "番剧",
+                id: anime_id.to_owned(),
+            }
+        })?;
+        let my_anime = self
+            .list_my_anime()?
+            .into_iter()
+            .find(|item| item.anime.id == anime_id);
+        let episodes = self.list_episodes(anime_id)?;
+        let fansub_groups = self.list_fansubs(Some(anime_id))?;
+        let refreshed_at = anime
+            .detail
+            .as_ref()
+            .and_then(|detail| detail.get("refreshedAt"))
+            .and_then(Value::as_str)
+            .and_then(parse_timestamp);
+        let stale = match refreshed_at {
+            Some(value) => Utc::now() - value > Duration::hours(24),
+            None => true,
+        };
+        debug!(
+            "Rust 番剧详情聚合完成：anime_id={}, followed={}, episodes={}, fansubs={}, stale={}",
+            anime_id,
+            my_anime.is_some(),
+            episodes.len(),
+            fansub_groups.len(),
+            stale
+        );
+        Ok(AnimeDetailResult {
+            anime,
+            my_anime,
+            episodes,
+            fansub_groups,
+            stale,
+            partial_errors: Vec::<AnimeDetailPartialError>::new(),
+        })
+    }
+
+    /// 读取全部或指定番剧已观察到的字幕组。
+    pub fn list_fansubs(&self, anime_id: Option<&str>) -> Result<Vec<FansubGroup>, StorageError> {
+        match anime_id {
+            Some(anime_id) => query_all_with_params(
+                self.connection,
+                "SELECT fansub_group.*
+                 FROM fansub_group
+                 INNER JOIN anime_fansub_group
+                   ON anime_fansub_group.fansub_group_id = fansub_group.id
+                 WHERE anime_fansub_group.anime_id = ?1
+                 ORDER BY anime_fansub_group.last_seen_at DESC, fansub_group.name",
+                [anime_id],
+                map_fansub_group_row,
+            )?
+            .into_iter()
+            .map(FansubGroupRow::into_domain)
+            .collect(),
+            None => query_all(
+                self.connection,
+                "SELECT * FROM fansub_group ORDER BY name",
+                map_fansub_group_row,
+            )?
+            .into_iter()
+            .map(FansubGroupRow::into_domain)
+            .collect(),
+        }
+    }
+
+    /// 读取并按季度、标题排序我的追番。
+    pub fn list_my_anime(&self) -> Result<Vec<MyAnime>, StorageError> {
+        let anime = self.list_anime_catalog(None, None)?;
         let anime_by_id = anime
             .into_iter()
             .map(|item| (item.id.clone(), item))
@@ -609,6 +788,101 @@ impl<'connection> AppRepository<'connection> {
             |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)? != 0)),
         )?;
         Ok(rows.into_iter().collect())
+    }
+
+    /// 合并目录写入；指定月份时先移除该月未引用缓存。
+    fn persist_anime_catalog(
+        &self,
+        items: &[Anime],
+        replace_month: Option<(i64, i64)>,
+    ) -> Result<AnimeCatalogWriteResult, StorageError> {
+        let current = self.list_anime_catalog(None, None)?;
+        let referenced_ids = self.read_referenced_anime_ids()?;
+        let followed_ids = query_all(self.connection, "SELECT anime_id FROM my_anime", |row| {
+            row.get::<_, String>(0)
+        })?
+        .into_iter()
+        .collect::<HashSet<_>>();
+        let mut catalog = match replace_month {
+            Some((year, month)) => current
+                .into_iter()
+                .filter(|anime| {
+                    anime.premiere_year != year
+                        || anime.premiere_month != month
+                        || referenced_ids.contains(&anime.id)
+                })
+                .collect::<Vec<_>>(),
+            None => current,
+        };
+        let mut added_count = 0;
+        let mut existing_count = 0;
+        for item in items {
+            validate_identifier("anime.id", &item.id)?;
+            if item.title.trim().is_empty() {
+                return invalid_input("anime.title", "番剧标题不能为空");
+            }
+            if let Some(index) = catalog
+                .iter()
+                .position(|existing| is_same_anime(existing, item))
+            {
+                let preserve_rating = followed_ids.contains(&catalog[index].id);
+                catalog[index] = merge_anime(&catalog[index], item, preserve_rating);
+                existing_count += 1;
+            } else {
+                catalog.push(item.clone());
+                added_count += 1;
+            }
+        }
+
+        let keep_ids = catalog
+            .iter()
+            .map(|anime| anime.id.clone())
+            .chain(referenced_ids.iter().cloned())
+            .collect::<HashSet<_>>();
+        let delete_ids = query_all(self.connection, "SELECT id FROM anime_catalog", |row| {
+            row.get::<_, String>(0)
+        })?
+        .into_iter()
+        .filter(|id| !keep_ids.contains(id))
+        .collect::<Vec<_>>();
+        let timestamp = now_iso();
+        let transaction = self.connection.unchecked_transaction()?;
+        for id in &delete_ids {
+            transaction.execute("DELETE FROM anime_catalog WHERE id = ?1", [id])?;
+        }
+        for anime in &catalog {
+            upsert_anime_row(&transaction, anime, &timestamp)?;
+        }
+        transaction.commit()?;
+        if let Some((year, month)) = replace_month {
+            info!(
+                "Rust 番剧月度目录替换完成：year={}, month={}, removed={}, collected={}, retained_referenced={}",
+                year,
+                month,
+                delete_ids.len(),
+                items.len(),
+                referenced_ids.len()
+            );
+        }
+        Ok(AnimeCatalogWriteResult {
+            items: self.list_anime_catalog(None, None)?,
+            added_count,
+            existing_count,
+        })
+    }
+
+    /// 读取不能随目录缓存清理的番剧标识。
+    fn read_referenced_anime_ids(&self) -> Result<HashSet<String>, StorageError> {
+        Ok(query_all(
+            self.connection,
+            "SELECT anime_id AS id FROM my_anime
+             UNION SELECT anime_id AS id FROM episode
+             UNION SELECT anime_id AS id FROM download_task WHERE anime_id IS NOT NULL
+             UNION SELECT anime_id AS id FROM media_file WHERE anime_id IS NOT NULL",
+            |row| row.get::<_, String>(0),
+        )?
+        .into_iter()
+        .collect())
     }
 
     /// 从固定表读取 JSON 状态。
@@ -1497,6 +1771,123 @@ fn media_sort_key(media: &MediaFile) -> &str {
         .unwrap_or("")
 }
 
+/// 按季度和标题排序番剧目录。
+fn sort_anime_catalog(items: &mut [Anime]) {
+    items.sort_by(|left, right| {
+        right
+            .premiere_year
+            .cmp(&left.premiere_year)
+            .then_with(|| right.premiere_month.cmp(&left.premiere_month))
+            .then_with(|| left.title.cmp(&right.title))
+    });
+}
+
+/// 根据 ID、同来源外部 ID 或标题判断两条目录记录是否相同。
+fn is_same_anime(left: &Anime, right: &Anime) -> bool {
+    if left.id == right.id {
+        return true;
+    }
+    let shared_external_id = right.external_ids.as_object().is_some_and(|right_ids| {
+        left.external_ids.as_object().is_some_and(|left_ids| {
+            right_ids
+                .iter()
+                .any(|(key, value)| left_ids.get(key) == Some(value))
+        })
+    });
+    if shared_external_id {
+        return true;
+    }
+    let left_titles = [Some(left.title.as_str()), left.original_title.as_deref()];
+    let right_titles = [Some(right.title.as_str()), right.original_title.as_deref()];
+    left_titles.into_iter().flatten().any(|left_title| {
+        right_titles
+            .into_iter()
+            .flatten()
+            .any(|right_title| left_title == right_title)
+    })
+}
+
+/// 以新采集字段为主合并目录记录，同时保持已有稳定标识和业务保护字段。
+fn merge_anime(existing: &Anime, incoming: &Anime, preserve_rating: bool) -> Anime {
+    Anime {
+        id: existing.id.clone(),
+        title: incoming.title.clone(),
+        original_title: incoming
+            .original_title
+            .clone()
+            .or_else(|| existing.original_title.clone()),
+        aliases: merge_anime_aliases(&existing.aliases, &incoming.aliases, &existing.id),
+        premiere_date: incoming
+            .premiere_date
+            .clone()
+            .or_else(|| existing.premiere_date.clone()),
+        premiere_year: incoming.premiere_year,
+        premiere_month: incoming.premiere_month,
+        season: incoming.season.clone().or_else(|| existing.season.clone()),
+        summary: incoming
+            .summary
+            .clone()
+            .or_else(|| existing.summary.clone()),
+        cover_url: incoming
+            .cover_url
+            .clone()
+            .or_else(|| existing.cover_url.clone()),
+        rating: if preserve_rating {
+            existing.rating.clone().or_else(|| incoming.rating.clone())
+        } else {
+            incoming.rating.clone().or_else(|| existing.rating.clone())
+        },
+        external_ids: merge_json_objects(&existing.external_ids, &incoming.external_ids),
+        detail: merge_optional_json_objects(existing.detail.as_ref(), incoming.detail.as_ref()),
+    }
+}
+
+/// 合并别名并忽略大小写重复项。
+fn merge_anime_aliases(
+    existing: &[AnimeAlias],
+    incoming: &[AnimeAlias],
+    anime_id: &str,
+) -> Vec<AnimeAlias> {
+    let mut aliases = existing.to_vec();
+    for alias in incoming {
+        if !aliases
+            .iter()
+            .any(|item| item.alias.eq_ignore_ascii_case(&alias.alias))
+        {
+            aliases.push(AnimeAlias {
+                anime_id: anime_id.to_owned(),
+                ..alias.clone()
+            });
+        }
+    }
+    aliases
+}
+
+/// 浅合并两个 JSON 对象，非对象值由新值覆盖。
+fn merge_json_objects(existing: &Value, incoming: &Value) -> Value {
+    match (existing.as_object(), incoming.as_object()) {
+        (Some(existing), Some(incoming)) => {
+            let mut merged = existing.clone();
+            merged.extend(incoming.clone());
+            Value::Object(merged)
+        }
+        _ => incoming.clone(),
+    }
+}
+
+/// 合并可选详情对象并保留任一侧已有字段。
+fn merge_optional_json_objects(
+    existing: Option<&Value>,
+    incoming: Option<&Value>,
+) -> Option<Value> {
+    match (existing, incoming) {
+        (Some(existing), Some(incoming)) => Some(merge_json_objects(existing, incoming)),
+        (Some(existing), None) => Some(existing.clone()),
+        (None, Some(incoming)) => Some(incoming.clone()),
+        (None, None) => None,
+    }
+}
+
 /// 按季度和标题排序追番列表。
 fn sort_my_anime(items: &mut [MyAnime]) {
     items.sort_by(|left, right| {
@@ -1590,6 +1981,25 @@ impl AnimeRow {
             rating,
             external_ids: parse_json(&self.external_ids_json, "番剧外部标识")?,
             detail,
+        })
+    }
+}
+
+struct FansubGroupRow {
+    id: String,
+    name: String,
+    aliases_json: String,
+    source_ids_json: String,
+}
+
+impl FansubGroupRow {
+    /// 将 SQLite 字幕组行转换为领域对象。
+    fn into_domain(self) -> Result<FansubGroup, StorageError> {
+        Ok(FansubGroup {
+            id: self.id,
+            name: self.name,
+            aliases: parse_json(&self.aliases_json, "字幕组别名")?,
+            source_ids: parse_json(&self.source_ids_json, "字幕组来源")?,
         })
     }
 }
@@ -1904,6 +2314,16 @@ fn map_anime_row(row: &Row<'_>) -> rusqlite::Result<AnimeRow> {
         rating_source: row.get("rating_source")?,
         external_ids_json: row.get("external_ids_json")?,
         detail_json: row.get("detail_json")?,
+    })
+}
+
+/// 映射 SQLite 字幕组行。
+fn map_fansub_group_row(row: &Row<'_>) -> rusqlite::Result<FansubGroupRow> {
+    Ok(FansubGroupRow {
+        id: row.get("id")?,
+        name: row.get("name")?,
+        aliases_json: row.get("aliases_json")?,
+        source_ids_json: row.get("source_ids_json")?,
     })
 }
 

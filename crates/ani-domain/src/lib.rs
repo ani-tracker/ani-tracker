@@ -102,6 +102,16 @@ pub struct AnimeRating {
     pub source: String,
 }
 
+/// 本地识别到的字幕组。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FansubGroup {
+    pub id: String,
+    pub name: String,
+    pub aliases: Vec<String>,
+    pub source_ids: Vec<String>,
+}
+
 /// 首页和追番列表需要的完整番剧目录记录。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -175,6 +185,37 @@ pub struct MyAnime {
     pub preferred_subtitle: Option<String>,
     pub added_at: String,
     pub updated_at: String,
+}
+
+/// 新番关键词搜索的本地与在线聚合结果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDiscoverySearchResult {
+    pub keyword: String,
+    pub items: Vec<Anime>,
+    pub source: String,
+    pub errors: Vec<String>,
+}
+
+/// 番剧详情刷新中的单来源错误。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDetailPartialError {
+    pub source: String,
+    pub message: String,
+}
+
+/// 详情页使用的本地番剧聚合结果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDetailResult {
+    pub anime: Anime,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub my_anime: Option<MyAnime>,
+    pub episodes: Vec<Episode>,
+    pub fansub_groups: Vec<FansubGroup>,
+    pub stale: bool,
+    pub partial_errors: Vec<AnimeDetailPartialError>,
 }
 
 /// 番剧单集记录。
@@ -582,9 +623,10 @@ mod tests {
     use serde::Deserialize;
 
     use super::{
-        AnimeStatus, DashboardData, Episode, EpisodePreference, MyAnime, NotificationKind,
-        NotificationRecord, PlaybackCheckpoint, ReportPlaybackProgressInput,
-        SavePlaybackCheckpointInput, SecretValue, SetAnimeWatchProgressInput,
+        AnimeDetailResult, AnimeDiscoverySearchResult, AnimeStatus, DashboardData, Episode,
+        EpisodePreference, MyAnime, NotificationKind, NotificationRecord, PlaybackCheckpoint,
+        ReportPlaybackProgressInput, SavePlaybackCheckpointInput, SecretValue,
+        SetAnimeWatchProgressInput,
     };
 
     #[derive(Debug, Deserialize)]
@@ -613,6 +655,13 @@ mod tests {
         report_playback_progress_input: ReportPlaybackProgressInput,
         save_playback_checkpoint_input: SavePlaybackCheckpointInput,
         checkpoint: PlaybackCheckpoint,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct P3CatalogReadModelFixture {
+        search_result: AnimeDiscoverySearchResult,
+        detail_result: AnimeDetailResult,
     }
 
     /// 验证领域枚举沿用前端现有的 JSON 字面量。
@@ -673,6 +722,27 @@ mod tests {
             Some(0)
         );
         assert!(decoded.payload.checkpoint.watched_reported);
+    }
+
+    /// 验证 P3 目录搜索和详情聚合契约可跨语言解码。
+    #[test]
+    fn decodes_p3_catalog_read_model_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-catalog-read-model.v1.json"
+        ));
+        let decoded: ContractFixture<P3CatalogReadModelFixture> =
+            serde_json::from_str(fixture).expect("p3 catalog fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p3-catalog-read-model");
+        assert_eq!(decoded.payload.search_result.source, "local");
+        assert_eq!(decoded.payload.search_result.items.len(), 1);
+        assert_eq!(
+            decoded.payload.detail_result.anime.id,
+            "anime-catalog-contract-1"
+        );
+        assert!(!decoded.payload.detail_result.stale);
     }
 
     /// 验证敏感值不会通过 Debug 输出泄漏。

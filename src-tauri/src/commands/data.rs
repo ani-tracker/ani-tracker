@@ -2,9 +2,9 @@ use std::sync::{Arc, Mutex};
 
 use ani_contracts::AppCommandError;
 use ani_domain::{
-    AnimeWatchProgress, AppSettings, DashboardData, Episode, EpisodePreference, MyAnime,
-    NotificationRecord, PlaybackCheckpoint, ReportPlaybackProgressInput,
-    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeWatchProgress, AppSettings,
+    DashboardData, Episode, EpisodePreference, MyAnime, NotificationRecord, PlaybackCheckpoint,
+    ReportPlaybackProgressInput, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use ani_storage::{Storage, StorageError};
 use tauri::State;
@@ -255,6 +255,49 @@ pub(crate) async fn remove_episode_preference(
         "删除单集偏好",
         Arc::clone(state.storage()),
         move |storage| storage.repository().remove_episode_preference(&episode_id),
+    )
+    .await
+}
+
+/// 按可选年月读取本地番剧目录。
+#[tauri::command]
+pub(crate) async fn list_anime_catalog(
+    year: Option<i64>,
+    month: Option<i64>,
+    state: State<'_, AppStorageState>,
+) -> Result<Vec<Anime>, AppCommandError> {
+    run_query(
+        "读取番剧目录",
+        Arc::clone(state.storage()),
+        move |storage| storage.repository().list_anime_catalog(year, month),
+    )
+    .await
+}
+
+/// 按标题、原名和别名搜索本地番剧目录。
+#[tauri::command]
+pub(crate) async fn search_anime_catalog(
+    keyword: String,
+    state: State<'_, AppStorageState>,
+) -> Result<AnimeDiscoverySearchResult, AppCommandError> {
+    run_query(
+        "搜索番剧目录",
+        Arc::clone(state.storage()),
+        move |storage| storage.repository().search_anime_catalog(&keyword),
+    )
+    .await
+}
+
+/// 读取本地番剧详情聚合数据。
+#[tauri::command]
+pub(crate) async fn get_anime_detail(
+    anime_id: String,
+    state: State<'_, AppStorageState>,
+) -> Result<AnimeDetailResult, AppCommandError> {
+    run_query(
+        "读取番剧详情",
+        Arc::clone(state.storage()),
+        move |storage| storage.repository().get_anime_detail(&anime_id),
     )
     .await
 }

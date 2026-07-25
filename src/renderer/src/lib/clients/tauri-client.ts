@@ -2,6 +2,8 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppClient } from "@shared/app-client";
 import type {
+  AnimeDetailResult,
+  AnimeDiscoverySearchResult,
   AnimeWatchProgress,
   AppWindowState,
   PlaybackCheckpoint,
@@ -10,6 +12,7 @@ import type {
   SetAnimeWatchProgressInput
 } from "@shared/contracts";
 import type {
+  Anime,
   AppSettings,
   DashboardData,
   Episode,
@@ -210,6 +213,27 @@ class TauriClientCore {
   async removeEpisodePreference(episodeId: string): Promise<EpisodePreference[]> {
     return invoke<EpisodePreference[]>("remove_episode_preference", { episodeId }).catch((error) => {
       throw normalizeTauriError("remove_episode_preference", error);
+    });
+  }
+
+  /** 按可选年月读取 Rust SQLite 番剧目录。 */
+  async listAnimeCatalog(year?: number, month?: number): Promise<Anime[]> {
+    return invoke<Anime[]>("list_anime_catalog", { year, month }).catch((error) => {
+      throw normalizeTauriError("list_anime_catalog", error);
+    });
+  }
+
+  /** 按标题、原名和别名搜索本地番剧目录。 */
+  async searchAnimeCatalog(keyword: string): Promise<AnimeDiscoverySearchResult> {
+    return invoke<AnimeDiscoverySearchResult>("search_anime_catalog", { keyword }).catch((error) => {
+      throw normalizeTauriError("search_anime_catalog", error);
+    });
+  }
+
+  /** 读取番剧详情页所需的本地聚合数据。 */
+  async getAnimeDetail(animeId: string): Promise<AnimeDetailResult> {
+    return invoke<AnimeDetailResult>("get_anime_detail", { animeId }).catch((error) => {
+      throw normalizeTauriError("get_anime_detail", error);
     });
   }
 }
