@@ -34,6 +34,7 @@
     "verify:torrent-core:all": "node scripts/prepare-torrent-core-resources.mjs --verify-all",
     "prepare:qbittorrent": "node scripts/prepare-qbittorrent-resources.mjs",
     "verify:qbittorrent": "node scripts/prepare-qbittorrent-resources.mjs --required",
+    "smoke:qbittorrent:managed": "node scripts/smoke-managed-qbittorrent.mjs",
     "prepare:qbittorrent:sources": "node scripts/prepare-qbittorrent-build-sources.mjs",
     "build:qbittorrent:nox:unix": "bash scripts/build-qbittorrent-nox-unix.sh",
     "build:qbittorrent:nox:windows": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/build-qbittorrent-nox-windows.ps1",

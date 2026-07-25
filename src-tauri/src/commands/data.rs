@@ -10,7 +10,7 @@ use ani_domain::{
 use ani_repository::{prelude::*, RepositoryError};
 use ani_storage::Storage;
 use serde_json::Value;
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use crate::automation::AppAutomationState;
 use crate::downloads::AppDownloadState;
@@ -88,6 +88,7 @@ pub(crate) async fn get_settings(
 #[tauri::command]
 pub(crate) async fn update_settings(
     patch: Value,
+    app: AppHandle,
     state: State<'_, AppStorageState>,
     source_sync_state: State<'_, AppSourceSyncState>,
     automation_state: State<'_, AppAutomationState>,
@@ -103,12 +104,14 @@ pub(crate) async fn update_settings(
     if let Err(error) = download_state.refresh_from_settings(&settings).await {
         log::error!("Tauri 下载设置应用失败 error={error}");
     }
+    crate::commands::downloads::emit_download_service_status_changed(&app);
     Ok(settings)
 }
 
 /// 恢复当前平台默认设置。
 #[tauri::command]
 pub(crate) async fn reset_settings_to_defaults(
+    app: AppHandle,
     state: State<'_, AppStorageState>,
     source_sync_state: State<'_, AppSourceSyncState>,
     automation_state: State<'_, AppAutomationState>,
@@ -126,6 +129,7 @@ pub(crate) async fn reset_settings_to_defaults(
     if let Err(error) = download_state.refresh_from_settings(&settings).await {
         log::error!("Tauri 默认下载设置应用失败 error={error}");
     }
+    crate::commands::downloads::emit_download_service_status_changed(&app);
     Ok(settings)
 }
 

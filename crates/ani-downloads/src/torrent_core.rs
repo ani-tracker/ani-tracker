@@ -386,6 +386,27 @@ mod process {
             }
         }
 
+        /// 返回当前仍存活的 sidecar 进程 ID，不会为查询而启动进程。
+        pub async fn process_id(&self) -> Result<Option<u32>, DownloadEngineError> {
+            let process = Arc::clone(&self.process);
+            tokio::task::spawn_blocking(move || {
+                let mut guard = process
+                    .lock()
+                    .map_err(|error| DownloadEngineError::Transport(error.to_string()))?;
+                let Some(current) = guard.as_mut() else {
+                    return Ok(None);
+                };
+                if current.has_exited()? {
+                    *guard = None;
+                    Ok(None)
+                } else {
+                    Ok(Some(current.child.id()))
+                }
+            })
+            .await
+            .map_err(|error| DownloadEngineError::Transport(error.to_string()))?
+        }
+
         /// 在线程池中串行执行阻塞式进程 IO。
         async fn execute_blocking(
             &self,

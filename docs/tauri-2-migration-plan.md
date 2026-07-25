@@ -297,6 +297,8 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - Rust 自动扫描已使用统一下载服务执行真实任务，设置保存会刷新引擎配置，历史任务继续按原属引擎路由并隔离不可用旧引擎。
 - 已接入外部 qBittorrent Web API，支持登录会话、经典版与 Enhanced 版添加回执、关联标签确认、任务和文件映射、qBittorrent 4/5 控制端点、连接动态重配、限速及做种目标。
 - Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查及 358 项 Node 回归通过，其中 357 项通过、1 项跳过；Windows `torrent-core` 状态、配置、空任务列表和优雅关闭协议冒烟通过，平台完整构建按当前安排后续统一验证。
+- 已接入托管 qBittorrent-nox 的跨平台二进制解析、随机端口回退、启动输出脱敏、临时凭据同步、回环 WebUI 约束、优雅关闭和超时回收；统一下载服务、托管进程与内置核心状态可通过 Tauri commands/events 查询和控制。
+- 新增 P4 下载服务跨语言金样与真实 Windows 托管 qBittorrent 冒烟，验证临时登录、固定凭据更新、任务读取和 API 优雅退出；Rust、Clippy、TypeScript 与 359 项 Node 回归通过，其中 358 项通过、1 项跳过。
 
 ### P5：全平台 libVLC
 

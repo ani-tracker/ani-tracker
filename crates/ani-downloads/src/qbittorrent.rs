@@ -126,6 +126,44 @@ impl QbittorrentEngine {
         Ok(())
     }
 
+    /// 托管进程首次启动后同步固定 WebUI 账号，并关闭 WebUI UPnP 暴露。
+    pub async fn update_webui_credentials(
+        &self,
+        username: &str,
+        password: &str,
+    ) -> Result<(), DownloadEngineError> {
+        let preferences = json!({
+            "web_ui_username": username,
+            "web_ui_password": password,
+            "web_ui_address": "127.0.0.1",
+            "web_ui_upnp": false,
+            "bypass_local_auth": false,
+            "web_ui_csrf_protection_enabled": true,
+            "web_ui_host_header_validation_enabled": true
+        });
+        self.response_text(|client, connection| {
+            Ok(client
+                .post(endpoint(connection, "/api/v2/app/setPreferences")?)
+                .timeout(connection.request_timeout)
+                .form(&[("json", preferences.to_string())]))
+        })
+        .await?;
+        *self.session.lock().await = None;
+        Ok(())
+    }
+
+    /// 请求托管 qBittorrent 保存状态并退出。
+    pub async fn shutdown_application(&self) -> Result<(), DownloadEngineError> {
+        self.response_text(|client, connection| {
+            Ok(client
+                .post(endpoint(connection, "/api/v2/app/shutdown")?)
+                .timeout(connection.request_timeout))
+        })
+        .await?;
+        *self.session.lock().await = None;
+        Ok(())
+    }
+
     /// 返回当前连接参数快照，避免在网络等待期间持有读锁。
     async fn connection(&self) -> QbittorrentConnectionConfig {
         self.connection.read().await.clone()

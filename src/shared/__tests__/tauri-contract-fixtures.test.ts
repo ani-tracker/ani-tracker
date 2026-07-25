@@ -13,7 +13,10 @@ import type {
   AutomationRunResult,
   AutomationSchedulerStatus,
   ConfirmAnimeSourceBindingInput,
+  DownloadServiceStatus,
+  EmbeddedTorrentCoreStatus,
   PlaybackCheckpoint,
+  QbittorrentManagedStatus,
   ReleaseSearchResult,
   RemoveAnimeSourceCandidateMismatchInput,
   ReportAnimeSourceCandidateMismatchInput,
@@ -23,7 +26,8 @@ import type {
   SetAnimeSourceExclusionInput,
   SetAnimeWatchProgressInput,
   SourceSyncRunResult,
-  SourceSyncSchedulerStatus
+  SourceSyncSchedulerStatus,
+  TorrentConnectionTestResult
 } from "../contracts";
 import type {
   AnimeSourceBinding,
@@ -209,4 +213,22 @@ test("Tauri P3 资源搜索契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.searchResult.releases[0].episodeNo, 3);
   assert.equal(fixture.payload.searchResult.errors[0].sourceId, "broken-contract");
   assert.equal(fixture.payload.rssResult.query.subscriptionId, "rss-subscription-contract");
+});
+
+/** 读取 P4 下载服务金样，验证统一状态、托管进程与内置核心字段一致。 */
+test("Tauri P4 下载服务契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p4-download-service-model.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    serviceStatus: DownloadServiceStatus;
+    connectionTest: TorrentConnectionTestResult;
+    managedStatus: QbittorrentManagedStatus;
+    embeddedStatus: EmbeddedTorrentCoreStatus;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p4-download-service-model");
+  assert.equal(fixture.payload.serviceStatus.mode, "managed");
+  assert.equal(fixture.payload.connectionTest.taskCount, 2);
+  assert.equal(fixture.payload.managedStatus.webUiUrl, "http://127.0.0.1:18080/");
+  assert.equal(fixture.payload.embeddedStatus.listenPort, 6881);
 });

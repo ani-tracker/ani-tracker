@@ -24,11 +24,12 @@ ani-storage = { path = "../crates/ani-storage" }
 async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 log = "0.4"
+regex = "1"
 serde.workspace = true
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
-tokio = { version = "1", features = ["fs", "macros", "sync", "time"] }
+tokio = { version = "1", features = ["fs", "macros", "net", "sync", "time"] }
 url = "2"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]

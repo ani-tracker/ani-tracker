@@ -4,6 +4,10 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use ani_contracts::{
+    DownloadServiceMode, DownloadServiceState, DownloadServiceStatus, EmbeddedTorrentCoreStatus,
+    QbittorrentManagedStatus,
+};
 use ani_domain::{
     AppSettings, DownloadTask, Release, SubtitleLanguage, SubtitlePreference, TorrentEngineKind,
 };
@@ -17,12 +21,21 @@ use ani_downloads::{ProcessTorrentCoreTransport, TorrentCoreProcessOptions};
 use ani_repository::{DownloadRepository, RepositoryError, RepositoryResult, SettingsRepository};
 use ani_sources::{HttpMethod, NativeHttpClient, NativeHttpRequest};
 use ani_storage::Storage;
+use chrono::{SecondsFormat, Utc};
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
 
+use crate::qbittorrent_managed::{managed_credentials, AppManagedQbittorrentState};
 use crate::sources::native_http_config;
 
 static TORRENT_IMPORT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Default)]
+struct EmbeddedLifecycle {
+    last_started_at: Option<String>,
+    last_stopped_at: Option<String>,
+    last_error: Option<String>,
+}
 
 /// 将 Tauri 的 SQLite 单写者适配为线程安全下载任务存储端口。
 struct SharedDownloadTaskStore {
@@ -71,6 +84,14 @@ pub(crate) struct AppDownloadState {
     service: Arc<DownloadTaskService>,
     registry: Arc<DownloadEngineRegistry>,
     qbittorrent: Arc<QbittorrentEngine>,
+    managed_qbittorrent: AppManagedQbittorrentState,
+    embedded_lifecycle: Arc<Mutex<EmbeddedLifecycle>>,
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    embedded_transport: Arc<ProcessTorrentCoreTransport>,
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    embedded_binary_path: PathBuf,
+    #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+    embedded_data_directory: PathBuf,
     storage: Arc<Mutex<Storage>>,
     platform_defaults: AppSettings,
     torrent_import_directory: PathBuf,
@@ -85,24 +106,29 @@ impl AppDownloadState {
     ) -> Result<Self, String> {
         let mut registry = DownloadEngineRegistry::new();
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
-        {
+        let (embedded_transport, embedded_binary_path, embedded_data_directory) = {
             let binary_path = resolve_torrent_core_binary(app);
             let data_directory =
                 setting_path(&platform_defaults, "/storage/userDataDir")?.join("torrent-core");
             let transport = Arc::new(ProcessTorrentCoreTransport::new(
-                TorrentCoreProcessOptions::new(binary_path.clone(), data_directory),
+                TorrentCoreProcessOptions::new(binary_path.clone(), data_directory.clone()),
             ));
             registry
-                .register(Arc::new(TorrentCoreEngine::new(transport)))
+                .register(Arc::new(TorrentCoreEngine::new(transport.clone())))
                 .map_err(|error| error.to_string())?;
             log::info!(
                 "Tauri torrent-core transport 已装配 binary={}",
                 binary_path.display()
             );
-        }
+            (transport, binary_path, data_directory)
+        };
         let qbittorrent = Arc::new(
-            QbittorrentEngine::new(qbittorrent_connection_config(&platform_defaults))
-                .map_err(|error| error.to_string())?,
+            QbittorrentEngine::new(qbittorrent_connection_config(
+                &platform_defaults,
+                None,
+                false,
+            ))
+            .map_err(|error| error.to_string())?,
         );
         registry
             .register(qbittorrent.clone())
@@ -116,6 +142,14 @@ impl AppDownloadState {
             service,
             registry,
             qbittorrent,
+            managed_qbittorrent: AppManagedQbittorrentState::new(app),
+            embedded_lifecycle: Arc::new(Mutex::new(EmbeddedLifecycle::default())),
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+            embedded_transport,
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+            embedded_binary_path,
+            #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+            embedded_data_directory,
             storage,
             platform_defaults,
             torrent_import_directory,
@@ -185,12 +219,8 @@ impl AppDownloadState {
         });
     }
 
-    /// 设置变化后立即应用内置核心参数，关闭时请求恢复数据落盘。
+    /// 设置变化后切换默认引擎并同步托管进程和传输参数。
     pub(crate) async fn refresh_from_settings(&self, settings: &AppSettings) -> Result<(), String> {
-        self.qbittorrent
-            .update_connection(qbittorrent_connection_config(settings))
-            .await
-            .map_err(|error| error.to_string())?;
         let embedded_enabled = settings
             .pointer("/download/embedded/enabled")
             .and_then(Value::as_bool)
@@ -199,6 +229,147 @@ impl AppDownloadState {
             .default_engine(settings)
             .map_err(|error| error.to_string())?;
         if default_engine == TorrentEngineKind::Embedded && embedded_enabled {
+            self.start_embedded(settings).await?;
+        } else {
+            self.stop_embedded().await?;
+        }
+        if default_engine == TorrentEngineKind::Qbittorrent {
+            if AppManagedQbittorrentState::should_auto_start(settings) {
+                self.start_managed_qbittorrent(settings).await?;
+            } else {
+                self.managed_qbittorrent
+                    .stop(settings, Some(&self.qbittorrent))
+                    .await;
+                self.configure_qbittorrent(settings, false).await?;
+            }
+        } else {
+            self.managed_qbittorrent
+                .stop(settings, Some(&self.qbittorrent))
+                .await;
+            self.qbittorrent
+                .shutdown()
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    /// 测试当前外部或托管 qBittorrent 连接并返回任务数量。
+    pub(crate) async fn test_qbittorrent(&self) -> Result<usize, String> {
+        let settings = self.settings()?;
+        let managed = AppManagedQbittorrentState::is_managed_enabled(&settings)
+            && self.managed_qbittorrent.status(&settings).await.running;
+        self.configure_qbittorrent(&settings, managed).await?;
+        self.qbittorrent
+            .status()
+            .await
+            .map(|status| status.task_count)
+            .map_err(|error| error.to_string())
+    }
+
+    /// 返回应用壳使用的当前默认下载服务健康状态。
+    pub(crate) async fn download_service_status(&self) -> DownloadServiceStatus {
+        let settings = match self.settings() {
+            Ok(settings) => settings,
+            Err(error) => return download_service_error(DownloadServiceMode::Embedded, error),
+        };
+        match self.default_engine(&settings) {
+            Ok(TorrentEngineKind::Embedded) => match self.embedded_status(&settings).await {
+                Ok(status) if status.last_error.is_some() => download_service_error(
+                    DownloadServiceMode::Embedded,
+                    status.last_error.unwrap_or_default(),
+                ),
+                Ok(status) if status.running => DownloadServiceStatus {
+                    mode: DownloadServiceMode::Embedded,
+                    state: DownloadServiceState::Online,
+                    message: "内置下载引擎运行中".to_owned(),
+                    task_count: status.task_count,
+                },
+                Ok(_) => DownloadServiceStatus {
+                    mode: DownloadServiceMode::Embedded,
+                    state: DownloadServiceState::Idle,
+                    message: "内置下载引擎未启动".to_owned(),
+                    task_count: None,
+                },
+                Err(error) => download_service_error(DownloadServiceMode::Embedded, error),
+            },
+            Ok(TorrentEngineKind::Qbittorrent) => {
+                let managed = self.managed_qbittorrent.status(&settings).await;
+                if managed.enabled {
+                    if let Some(error) = managed.last_error {
+                        return download_service_error(DownloadServiceMode::Managed, error);
+                    }
+                    return DownloadServiceStatus {
+                        mode: DownloadServiceMode::Managed,
+                        state: if managed.running {
+                            DownloadServiceState::Online
+                        } else {
+                            DownloadServiceState::Idle
+                        },
+                        message: if managed.running {
+                            "qBittorrent-nox 运行中".to_owned()
+                        } else {
+                            "qBittorrent-nox 未运行".to_owned()
+                        },
+                        task_count: None,
+                    };
+                }
+                match self.qbittorrent.status().await {
+                    Ok(status) => DownloadServiceStatus {
+                        mode: DownloadServiceMode::External,
+                        state: DownloadServiceState::Online,
+                        message: "外部 qBittorrent 已连接".to_owned(),
+                        task_count: Some(status.task_count),
+                    },
+                    Err(error) => {
+                        download_service_error(DownloadServiceMode::External, error.to_string())
+                    }
+                }
+            }
+            Err(error) => download_service_error(DownloadServiceMode::Embedded, error.to_string()),
+        }
+    }
+
+    /// 读取托管 qBittorrent 进程状态。
+    pub(crate) async fn managed_qbittorrent_status(
+        &self,
+    ) -> Result<QbittorrentManagedStatus, String> {
+        let settings = self.settings()?;
+        Ok(self.managed_qbittorrent.status(&settings).await)
+    }
+
+    /// 手动启动托管进程、同步首次凭据并应用下载设置。
+    pub(crate) async fn start_managed_qbittorrent(
+        &self,
+        settings: &AppSettings,
+    ) -> Result<QbittorrentManagedStatus, String> {
+        let status = self.managed_qbittorrent.start(settings).await?;
+        if let Err(error) = self.configure_qbittorrent(settings, status.running).await {
+            self.managed_qbittorrent.stop(settings, None).await;
+            return Err(error);
+        }
+        Ok(self.managed_qbittorrent.status(settings).await)
+    }
+
+    /// 手动停止托管进程并清除 WebUI 会话。
+    pub(crate) async fn stop_managed_qbittorrent(
+        &self,
+    ) -> Result<QbittorrentManagedStatus, String> {
+        let settings = self.settings()?;
+        let status = self
+            .managed_qbittorrent
+            .stop(&settings, Some(&self.qbittorrent))
+            .await;
+        self.qbittorrent
+            .shutdown()
+            .await
+            .map_err(|error| error.to_string())?;
+        Ok(status)
+    }
+
+    /// 启动或重配桌面 torrent-core，并记录生命周期结果。
+    pub(crate) async fn start_embedded(&self, settings: &AppSettings) -> Result<(), String> {
+        let result = async {
             let engine = self
                 .registry
                 .require(&TorrentEngineKind::Embedded)
@@ -207,21 +378,131 @@ impl AppDownloadState {
                 .configure(&embedded_engine_config(settings))
                 .await
                 .map_err(|error| error.to_string())?;
-        } else if let Ok(engine) = self.registry.require(&TorrentEngineKind::Embedded) {
-            engine.shutdown().await.map_err(|error| error.to_string())?;
+            Ok::<_, String>(())
         }
-        if default_engine == TorrentEngineKind::Qbittorrent {
-            self.qbittorrent
-                .configure(&qbittorrent_engine_config(settings))
-                .await
-                .map_err(|error| error.to_string())?;
-        } else {
-            self.qbittorrent
-                .shutdown()
-                .await
-                .map_err(|error| error.to_string())?;
+        .await;
+        if let Ok(mut lifecycle) = self.embedded_lifecycle.lock() {
+            match &result {
+                Ok(()) => {
+                    lifecycle.last_started_at = Some(now_iso());
+                    lifecycle.last_error = None;
+                }
+                Err(error) => lifecycle.last_error = Some(error.clone()),
+            }
+        }
+        result
+    }
+
+    /// 请求 torrent-core 保存恢复数据并停止。
+    pub(crate) async fn stop_embedded(&self) -> Result<(), String> {
+        if let Ok(engine) = self.registry.require(&TorrentEngineKind::Embedded) {
+            engine.shutdown().await.map_err(|error| error.to_string())?;
+            if let Ok(mut lifecycle) = self.embedded_lifecycle.lock() {
+                lifecycle.last_stopped_at = Some(now_iso());
+            }
         }
         Ok(())
+    }
+
+    /// 读取内置核心进程与协议状态，未运行时不会隐式启动。
+    pub(crate) async fn embedded_status(
+        &self,
+        settings: &AppSettings,
+    ) -> Result<EmbeddedTorrentCoreStatus, String> {
+        #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
+        {
+            let pid = self
+                .embedded_transport
+                .process_id()
+                .await
+                .map_err(|error| error.to_string())?;
+            let protocol = if pid.is_some() {
+                Some(
+                    self.registry
+                        .require(&TorrentEngineKind::Embedded)
+                        .map_err(|error| error.to_string())?
+                        .status()
+                        .await
+                        .map_err(|error| error.to_string())?,
+                )
+            } else {
+                None
+            };
+            let lifecycle = self
+                .embedded_lifecycle
+                .lock()
+                .map_err(|error| error.to_string())?;
+            Ok(EmbeddedTorrentCoreStatus {
+                enabled: settings
+                    .pointer("/download/embedded/enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true),
+                running: pid.is_some(),
+                platform: std::env::consts::OS.to_owned(),
+                arch: std::env::consts::ARCH.to_owned(),
+                binary_path: Some(self.embedded_binary_path.to_string_lossy().into_owned()),
+                data_dir: Some(self.embedded_data_directory.to_string_lossy().into_owned()),
+                pid,
+                version: protocol.as_ref().map(|value| value.version.clone()),
+                task_count: protocol.as_ref().map(|value| value.task_count),
+                listen_port: protocol.and_then(|value| value.listen_port),
+                last_started_at: lifecycle.last_started_at.clone(),
+                last_stopped_at: lifecycle.last_stopped_at.clone(),
+                last_error: lifecycle.last_error.clone(),
+            })
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]
+        {
+            let _ = settings;
+            Err("移动 torrent-core transport 尚未装配".to_owned())
+        }
+    }
+
+    /// 为外部或托管 WebUI 更新连接、首次凭据和传输限制。
+    async fn configure_qbittorrent(
+        &self,
+        settings: &AppSettings,
+        managed_running: bool,
+    ) -> Result<(), String> {
+        let base_url = self.managed_qbittorrent.runtime_base_url(settings).await;
+        let desired =
+            qbittorrent_connection_config(settings, Some(base_url.clone()), managed_running);
+        self.qbittorrent
+            .update_connection(desired.clone())
+            .await
+            .map_err(|error| error.to_string())?;
+        let config = qbittorrent_engine_config(settings);
+        match self.qbittorrent.configure(&config).await {
+            Ok(_) => Ok(()),
+            Err(initial_error) if managed_running => {
+                let temporary_password = self
+                    .managed_qbittorrent
+                    .temporary_password()
+                    .await
+                    .ok_or_else(|| initial_error.to_string())?;
+                let bootstrap = QbittorrentEngine::new(QbittorrentConnectionConfig::new(
+                    base_url,
+                    "admin".to_owned(),
+                    Some(temporary_password),
+                ))
+                .map_err(|error| error.to_string())?;
+                let (username, password) = managed_credentials(settings);
+                bootstrap
+                    .update_webui_credentials(&username, &password)
+                    .await
+                    .map_err(|error| format!("同步托管 qBittorrent 凭据失败：{error}"))?;
+                self.qbittorrent
+                    .update_connection(desired)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                self.qbittorrent
+                    .configure(&config)
+                    .await
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            }
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     /// 下载远程 torrent 到受限临时目录，磁链直接返回。
@@ -282,6 +563,11 @@ impl AppDownloadState {
 
     /// 请求全部已注册引擎保存状态并关闭。
     pub(crate) async fn shutdown(&self) {
+        if let Ok(settings) = self.settings() {
+            self.managed_qbittorrent
+                .stop(&settings, Some(&self.qbittorrent))
+                .await;
+        }
         for (kind, error) in self.registry.shutdown_all().await {
             log::error!("Tauri 下载引擎关闭失败 engine={kind:?} error={error}");
         }
@@ -401,23 +687,54 @@ fn embedded_engine_config(settings: &AppSettings) -> DownloadEngineConfig {
 }
 
 /// 将 qBittorrent 设置解析为 WebUI 连接参数。
-fn qbittorrent_connection_config(settings: &AppSettings) -> QbittorrentConnectionConfig {
+fn qbittorrent_connection_config(
+    settings: &AppSettings,
+    base_url: Option<String>,
+    managed: bool,
+) -> QbittorrentConnectionConfig {
+    let (username, password) = if managed {
+        let (username, password) = managed_credentials(settings);
+        (username, Some(password))
+    } else {
+        (
+            settings
+                .pointer("/download/qbittorrent/username")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_owned(),
+            settings
+                .pointer("/download/qbittorrent/password")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+        )
+    };
     QbittorrentConnectionConfig::new(
-        settings
-            .pointer("/download/qbittorrent/baseUrl")
-            .and_then(Value::as_str)
-            .unwrap_or("http://127.0.0.1:18080")
-            .to_owned(),
-        settings
-            .pointer("/download/qbittorrent/username")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_owned(),
-        settings
-            .pointer("/download/qbittorrent/password")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        base_url.unwrap_or_else(|| {
+            settings
+                .pointer("/download/qbittorrent/baseUrl")
+                .and_then(Value::as_str)
+                .unwrap_or("http://127.0.0.1:18080")
+                .to_owned()
+        }),
+        username,
+        password,
     )
+}
+
+fn download_service_error(
+    mode: DownloadServiceMode,
+    message: impl Into<String>,
+) -> DownloadServiceStatus {
+    DownloadServiceStatus {
+        mode,
+        state: DownloadServiceState::Error,
+        message: message.into(),
+        task_count: None,
+    }
+}
+
+fn now_iso() -> String {
+    Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 /// 将 qBittorrent KiB/s 和做种设置映射到统一引擎配置。

@@ -1,13 +1,175 @@
-use ani_contracts::AppCommandError;
+use ani_contracts::{
+    AppCommandError, DownloadServiceStatus, EmbeddedTorrentCoreStatus, QbittorrentManagedStatus,
+    TorrentConnectionTestResult,
+};
 use ani_domain::{DownloadTask, Release};
 use ani_downloads::{
     AddTorrentOptions, DownloadAddRequest, DownloadServiceError, DownloadTaskContext,
 };
 use serde::Deserialize;
 use serde_json::Value;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::downloads::{release_download_context, AppDownloadState};
+
+const DOWNLOAD_SERVICE_STATUS_CHANGED_EVENT: &str = "download-service-status-changed";
+
+/// 通知应用壳重新读取默认下载服务状态。
+pub(crate) fn emit_download_service_status_changed(app: &AppHandle) {
+    if let Err(error) = app.emit(DOWNLOAD_SERVICE_STATUS_CHANGED_EVENT, ()) {
+        log::warn!("发布下载服务状态事件失败 error={error}");
+    }
+}
+
+/// 测试当前 qBittorrent WebUI 登录和任务读取。
+#[tauri::command]
+pub(crate) async fn test_qbittorrent(
+    state: State<'_, AppDownloadState>,
+) -> Result<TorrentConnectionTestResult, AppCommandError> {
+    match state.test_qbittorrent().await {
+        Ok(task_count) => Ok(TorrentConnectionTestResult {
+            ok: true,
+            message: "连接正常".to_owned(),
+            task_count: Some(task_count),
+        }),
+        Err(error) => Ok(TorrentConnectionTestResult {
+            ok: false,
+            message: error,
+            task_count: None,
+        }),
+    }
+}
+
+/// 读取当前默认下载引擎的统一健康状态。
+#[tauri::command]
+pub(crate) async fn get_download_service_status(
+    state: State<'_, AppDownloadState>,
+) -> Result<DownloadServiceStatus, AppCommandError> {
+    Ok(state.download_service_status().await)
+}
+
+/// 读取托管 qBittorrent-nox 的进程状态。
+#[tauri::command]
+pub(crate) async fn get_qbittorrent_managed_status(
+    state: State<'_, AppDownloadState>,
+) -> Result<QbittorrentManagedStatus, AppCommandError> {
+    state
+        .managed_qbittorrent_status()
+        .await
+        .map_err(|error| runtime_error("读取托管 qBittorrent 状态", error))
+}
+
+/// 手动启动托管 qBittorrent-nox 并同步 WebUI 凭据。
+#[tauri::command]
+pub(crate) async fn start_qbittorrent_managed(
+    app: AppHandle,
+    state: State<'_, AppDownloadState>,
+) -> Result<QbittorrentManagedStatus, AppCommandError> {
+    let settings = state
+        .settings()
+        .map_err(|error| runtime_error("读取托管 qBittorrent 设置", error))?;
+    let status = state
+        .start_managed_qbittorrent(&settings)
+        .await
+        .map_err(|error| runtime_error("启动托管 qBittorrent", error))?;
+    emit_download_service_status_changed(&app);
+    Ok(status)
+}
+
+/// 手动停止托管 qBittorrent-nox。
+#[tauri::command]
+pub(crate) async fn stop_qbittorrent_managed(
+    app: AppHandle,
+    state: State<'_, AppDownloadState>,
+) -> Result<QbittorrentManagedStatus, AppCommandError> {
+    let status = state
+        .stop_managed_qbittorrent()
+        .await
+        .map_err(|error| runtime_error("停止托管 qBittorrent", error))?;
+    emit_download_service_status_changed(&app);
+    Ok(status)
+}
+
+/// 读取内置 torrent-core 的进程与协议状态。
+#[tauri::command]
+pub(crate) async fn get_embedded_torrent_status(
+    state: State<'_, AppDownloadState>,
+) -> Result<EmbeddedTorrentCoreStatus, AppCommandError> {
+    let settings = state
+        .settings()
+        .map_err(|error| runtime_error("读取内置下载设置", error))?;
+    state
+        .embedded_status(&settings)
+        .await
+        .map_err(|error| runtime_error("读取内置下载核心状态", error))
+}
+
+/// 手动启动内置 torrent-core。
+#[tauri::command]
+pub(crate) async fn start_embedded_torrent(
+    app: AppHandle,
+    state: State<'_, AppDownloadState>,
+) -> Result<EmbeddedTorrentCoreStatus, AppCommandError> {
+    let settings = state
+        .settings()
+        .map_err(|error| runtime_error("读取内置下载设置", error))?;
+    state
+        .start_embedded(&settings)
+        .await
+        .map_err(|error| runtime_error("启动内置下载核心", error))?;
+    let status = state
+        .embedded_status(&settings)
+        .await
+        .map_err(|error| runtime_error("读取内置下载核心状态", error))?;
+    emit_download_service_status_changed(&app);
+    Ok(status)
+}
+
+/// 手动停止内置 torrent-core 并保存恢复数据。
+#[tauri::command]
+pub(crate) async fn stop_embedded_torrent(
+    app: AppHandle,
+    state: State<'_, AppDownloadState>,
+) -> Result<EmbeddedTorrentCoreStatus, AppCommandError> {
+    let settings = state
+        .settings()
+        .map_err(|error| runtime_error("读取内置下载设置", error))?;
+    state
+        .stop_embedded()
+        .await
+        .map_err(|error| runtime_error("停止内置下载核心", error))?;
+    let status = state
+        .embedded_status(&settings)
+        .await
+        .map_err(|error| runtime_error("读取内置下载核心状态", error))?;
+    emit_download_service_status_changed(&app);
+    Ok(status)
+}
+
+/// 先优雅停止再按当前设置重启内置 torrent-core。
+#[tauri::command]
+pub(crate) async fn restart_embedded_torrent(
+    app: AppHandle,
+    state: State<'_, AppDownloadState>,
+) -> Result<EmbeddedTorrentCoreStatus, AppCommandError> {
+    let settings = state
+        .settings()
+        .map_err(|error| runtime_error("读取内置下载设置", error))?;
+    state
+        .stop_embedded()
+        .await
+        .map_err(|error| runtime_error("停止内置下载核心", error))?;
+    state
+        .start_embedded(&settings)
+        .await
+        .map_err(|error| runtime_error("重启内置下载核心", error))?;
+    let status = state
+        .embedded_status(&settings)
+        .await
+        .map_err(|error| runtime_error("读取内置下载核心状态", error))?;
+    emit_download_service_status_changed(&app);
+    Ok(status)
+}
 
 /// 手动磁链或远程 torrent 添加输入。
 #[derive(Debug, Deserialize)]

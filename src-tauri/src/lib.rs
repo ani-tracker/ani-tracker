@@ -6,6 +6,7 @@ use tauri::Manager;
 mod automation;
 mod commands;
 mod downloads;
+mod qbittorrent_managed;
 mod source_sync;
 mod sources;
 mod storage;
@@ -118,6 +119,15 @@ pub fn run() {
             commands::automation::run_automation_once,
             commands::automation::restart_automation_scheduler,
             commands::downloads::list_downloads,
+            commands::downloads::test_qbittorrent,
+            commands::downloads::get_download_service_status,
+            commands::downloads::get_qbittorrent_managed_status,
+            commands::downloads::start_qbittorrent_managed,
+            commands::downloads::stop_qbittorrent_managed,
+            commands::downloads::get_embedded_torrent_status,
+            commands::downloads::start_embedded_torrent,
+            commands::downloads::stop_embedded_torrent,
+            commands::downloads::restart_embedded_torrent,
             commands::downloads::refresh_downloads,
             commands::downloads::pause_download,
             commands::downloads::resume_download,

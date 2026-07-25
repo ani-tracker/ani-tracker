@@ -13,7 +13,10 @@ import type {
   AutomationSchedulerStatus,
   AppWindowState,
   ConfirmAnimeSourceBindingInput,
+  DownloadServiceStatus,
+  EmbeddedTorrentCoreStatus,
   PlaybackCheckpoint,
+  QbittorrentManagedStatus,
   ReleaseQuery,
   ReleaseSearchResult,
   RemoveAnimeSourceCandidateMismatchInput,
@@ -25,7 +28,8 @@ import type {
   SetAnimeSourceExclusionInput,
   SetAnimeWatchProgressInput,
   SourceSyncRunResult,
-  SourceSyncSchedulerStatus
+  SourceSyncSchedulerStatus,
+  TorrentConnectionTestResult
 } from "@shared/contracts";
 import type {
   Anime,
@@ -41,6 +45,7 @@ import type {
 } from "@shared/domain";
 
 const WINDOW_STATE_CHANGED_EVENT = "window-state-changed";
+const DOWNLOAD_SERVICE_STATUS_CHANGED_EVENT = "download-service-status-changed";
 
 interface TauriCommandError {
   code?: string;
@@ -330,6 +335,86 @@ class TauriClientCore {
   async addReleaseDownload(input: AddReleaseDownloadInput): Promise<DownloadTask[]> {
     return invoke<DownloadTask[]>("add_release_download", { input }).catch((error) => {
       throw normalizeTauriError("add_release_download", error);
+    });
+  }
+
+  /** 测试当前 qBittorrent WebUI 登录与任务读取。 */
+  async testQbittorrent(): Promise<TorrentConnectionTestResult> {
+    return invoke<TorrentConnectionTestResult>("test_qbittorrent").catch((error) => {
+      throw normalizeTauriError("test_qbittorrent", error);
+    });
+  }
+
+  /** 读取当前默认下载服务健康状态。 */
+  async getDownloadServiceStatus(): Promise<DownloadServiceStatus> {
+    return invoke<DownloadServiceStatus>("get_download_service_status").catch((error) => {
+      throw normalizeTauriError("get_download_service_status", error);
+    });
+  }
+
+  /** 订阅默认下载服务状态变化。 */
+  onDownloadServiceStatusChanged(listener: () => void): () => void {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    void listen(DOWNLOAD_SERVICE_STATUS_CHANGED_EVENT, () => listener()).then((dispose) => {
+      if (disposed) {
+        dispose();
+      } else {
+        unlisten = dispose;
+      }
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }
+
+  /** 读取托管 qBittorrent-nox 进程状态。 */
+  async getQbittorrentManagedStatus(): Promise<QbittorrentManagedStatus> {
+    return invoke<QbittorrentManagedStatus>("get_qbittorrent_managed_status").catch((error) => {
+      throw normalizeTauriError("get_qbittorrent_managed_status", error);
+    });
+  }
+
+  /** 启动托管 qBittorrent-nox。 */
+  async startQbittorrentManaged(): Promise<QbittorrentManagedStatus> {
+    return invoke<QbittorrentManagedStatus>("start_qbittorrent_managed").catch((error) => {
+      throw normalizeTauriError("start_qbittorrent_managed", error);
+    });
+  }
+
+  /** 停止托管 qBittorrent-nox。 */
+  async stopQbittorrentManaged(): Promise<QbittorrentManagedStatus> {
+    return invoke<QbittorrentManagedStatus>("stop_qbittorrent_managed").catch((error) => {
+      throw normalizeTauriError("stop_qbittorrent_managed", error);
+    });
+  }
+
+  /** 读取内置 torrent-core 状态。 */
+  async getEmbeddedTorrentStatus(): Promise<EmbeddedTorrentCoreStatus> {
+    return invoke<EmbeddedTorrentCoreStatus>("get_embedded_torrent_status").catch((error) => {
+      throw normalizeTauriError("get_embedded_torrent_status", error);
+    });
+  }
+
+  /** 启动内置 torrent-core。 */
+  async startEmbeddedTorrent(): Promise<EmbeddedTorrentCoreStatus> {
+    return invoke<EmbeddedTorrentCoreStatus>("start_embedded_torrent").catch((error) => {
+      throw normalizeTauriError("start_embedded_torrent", error);
+    });
+  }
+
+  /** 停止内置 torrent-core。 */
+  async stopEmbeddedTorrent(): Promise<EmbeddedTorrentCoreStatus> {
+    return invoke<EmbeddedTorrentCoreStatus>("stop_embedded_torrent").catch((error) => {
+      throw normalizeTauriError("stop_embedded_torrent", error);
+    });
+  }
+
+  /** 重启内置 torrent-core。 */
+  async restartEmbeddedTorrent(): Promise<EmbeddedTorrentCoreStatus> {
+    return invoke<EmbeddedTorrentCoreStatus>("restart_embedded_torrent").catch((error) => {
+      throw normalizeTauriError("restart_embedded_torrent", error);
     });
   }
 

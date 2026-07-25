@@ -181,6 +181,7 @@ dependencies = [
  "chrono",
  "log",
  "open",
+ "regex",
  "serde",
  "serde_json",
  "tauri",

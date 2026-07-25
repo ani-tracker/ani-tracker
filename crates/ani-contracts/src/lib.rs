@@ -24,6 +24,97 @@ pub struct AppCommandError {
     pub message: String,
 }
 
+/// 当前默认下载服务的实现模式。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadServiceMode {
+    Embedded,
+    Managed,
+    External,
+}
+
+/// 当前默认下载服务的健康状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadServiceState {
+    Online,
+    Idle,
+    Error,
+}
+
+/// 应用壳展示的统一下载服务状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DownloadServiceStatus {
+    pub mode: DownloadServiceMode,
+    pub state: DownloadServiceState,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_count: Option<usize>,
+}
+
+/// 外部 qBittorrent 连接测试结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TorrentConnectionTestResult {
+    pub ok: bool,
+    pub message: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_count: Option<usize>,
+}
+
+/// 托管 qBittorrent-nox 的进程状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QbittorrentManagedStatus {
+    pub enabled: bool,
+    pub auto_start: bool,
+    pub running: bool,
+    pub web_ui_url: String,
+    pub platform: String,
+    pub arch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_stopped_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
+/// 内置 torrent-core 的进程和协议状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EmbeddedTorrentCoreStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub platform: String,
+    pub arch: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub binary_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_dir: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pid: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub version: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub listen_port: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_stopped_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
 /// 播放器后端类型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -225,7 +316,22 @@ pub struct PlayerSnapshot {
 
 #[cfg(test)]
 mod tests {
-    use super::{ContractFixture, PlayerHostPlatform, PlayerSnapshot, PlayerStatus};
+    use serde::Deserialize;
+
+    use super::{
+        ContractFixture, DownloadServiceMode, DownloadServiceState, DownloadServiceStatus,
+        EmbeddedTorrentCoreStatus, PlayerHostPlatform, PlayerSnapshot, PlayerStatus,
+        QbittorrentManagedStatus, TorrentConnectionTestResult,
+    };
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct DownloadServiceFixture {
+        service_status: DownloadServiceStatus,
+        connection_test: TorrentConnectionTestResult,
+        managed_status: QbittorrentManagedStatus,
+        embedded_status: EmbeddedTorrentCoreStatus,
+    }
 
     /// 验证 Rust 能严格解码前端共用的播放器快照金样。
     #[test]
@@ -244,5 +350,30 @@ mod tests {
         assert_eq!(decoded.payload.sequence, 7);
         assert_eq!(decoded.payload.audio_tracks.len(), 2);
         assert_eq!(decoded.payload.subtitle_tracks.len(), 1);
+    }
+
+    /// 验证 Rust 能严格解码下载服务、托管进程和内置核心状态金样。
+    #[test]
+    fn decodes_download_service_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p4-download-service-model.v1.json"
+        ));
+        let decoded: ContractFixture<DownloadServiceFixture> =
+            serde_json::from_str(fixture).expect("download service fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p4-download-service-model");
+        assert_eq!(
+            decoded.payload.service_status.mode,
+            DownloadServiceMode::Managed
+        );
+        assert_eq!(
+            decoded.payload.service_status.state,
+            DownloadServiceState::Online
+        );
+        assert!(decoded.payload.connection_test.ok);
+        assert!(decoded.payload.managed_status.running);
+        assert_eq!(decoded.payload.embedded_status.listen_port, Some(6881));
     }
 }
