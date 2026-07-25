@@ -108,6 +108,7 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         executor.shutdownNow()
     }
 
+    /** 从受控来源创建 Intent 并启动原生播放器。 */
     private fun launch(command: JSONObject): JSONObject {
         val commandId = command.getString("commandId")
         val sessionId = command.getString("sessionId")
@@ -156,6 +157,7 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         return accepted(commandId)
     }
 
+    /** 将非加载动作转发到当前 PlayerActivity。 */
     private fun dispatchToActivity(command: JSONObject): JSONObject {
         val commandId = command.getString("commandId")
         if (activeSessionId != command.optString("sessionId")) {
@@ -173,6 +175,7 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         return accepted(commandId)
     }
 
+    /** 把 Activity 状态归一为跨平台播放器快照。 */
     private fun buildSnapshot(raw: JSONObject): JSONObject? {
         val sessionId = activeSessionId ?: return null
         if (raw.optString("sessionId") != sessionId) return null
@@ -211,7 +214,12 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
             put("playbackRate", raw.optDouble("playbackRate", 1.0))
             put("audioTracks", normalizeTracks(raw.optJSONArray("audioTracks"), "audio"))
             put("subtitleTracks", normalizeTracks(raw.optJSONArray("subtitleTracks"), "subtitle"))
-            put("aspectRatio", raw.optString("aspectRatio").ifBlank { "default" })
+            val aspectRatio = raw.opt("aspectRatio")
+                ?.takeUnless { it == JSONObject.NULL }
+                ?.toString()
+                ?.takeIf(String::isNotBlank)
+                ?: "default"
+            put("aspectRatio", aspectRatio)
             put("fullscreen", raw.optBoolean("fullscreen"))
             put("pictureInPicture", false)
             errorMessage?.let {
@@ -225,6 +233,7 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /** 返回 Android libVLC 的能力字典。 */
     private fun capabilitiesJson(): JSONObject = JSONObject().apply {
         put("backend", "libvlc")
         put("platform", "android")
@@ -244,6 +253,7 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         put("supportsHdr", true)
     }
 
+    /** 将平台轨道转换为公共轨道结构。 */
     private fun normalizeTracks(tracks: JSONArray?, kind: String): JSONArray = JSONArray().apply {
         tracks.toObjectList().forEach { track ->
             put(JSONObject().apply {
@@ -255,16 +265,19 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /** 将绝对文件路径转换为 libVLC 可识别的 file URI。 */
     private fun normalizeUri(value: String): String {
         val parsed = Uri.parse(value)
         return if (parsed.scheme.isNullOrBlank()) Uri.fromFile(File(value)).toString() else value
     }
 
+    /** 构造成功命令响应。 */
     private fun accepted(commandId: String): JSONObject = JSONObject().apply {
         put("commandId", commandId)
         put("accepted", true)
     }
 
+    /** 构造稳定错误码的拒绝响应。 */
     private fun rejected(commandId: String, code: String, message: String): JSONObject = JSONObject().apply {
         put("commandId", commandId)
         put("accepted", false)
@@ -276,6 +289,7 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         })
     }
 
+    /** 将可空 JSON 数组安全转换为对象列表。 */
     private fun JSONArray?.toObjectList(): List<JSONObject> {
         if (this == null) return emptyList()
         return buildList {
