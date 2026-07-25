@@ -69,6 +69,12 @@ pub trait NotificationRepository {
 
     /// 统计未读通知数量。
     fn get_unread_notification_count(&self) -> RepositoryResult<u64>;
+
+    /// 增量写入提醒中心通知，并返回完整通知列表。
+    fn add_notifications(
+        &self,
+        records: &[NotificationRecord],
+    ) -> RepositoryResult<Vec<NotificationRecord>>;
 }
 
 /// 番剧目录与详情存储端口。

@@ -174,6 +174,44 @@ pub struct ReleaseSourceSyncState {
     pub last_modified: Option<String>,
 }
 
+/// 单个下载源增量同步失败信息。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceSyncError {
+    pub source_id: String,
+    pub message: String,
+}
+
+/// 一次下载源增量同步的稳定结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceSyncRunResult {
+    pub started_at: String,
+    pub finished_at: String,
+    pub synced_source_ids: Vec<String>,
+    pub skipped_source_ids: Vec<String>,
+    pub added_release_count: usize,
+    pub errors: Vec<SourceSyncError>,
+}
+
+/// 下载源每日同步调度器的当前状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SourceSyncSchedulerStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub in_flight: bool,
+    pub daily_time: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_run_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_result: Option<SourceSyncRunResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
 /// 通用网络请求熔断状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

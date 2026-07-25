@@ -5,15 +5,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_domain::{
     AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
-    AnimeSourceExclusionScope, AnimeStatus, Episode, EpisodePreference, MyAnime,
-    PlaybackCheckpoint, ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSyncState,
-    ReportPlaybackProgressInput, RequestCircuitState, SavePlaybackCheckpointInput,
-    SetAnimeWatchProgressInput,
+    AnimeSourceExclusionScope, AnimeStatus, Episode, EpisodePreference, MyAnime, NotificationKind,
+    NotificationRecord, NotificationSeverity, PlaybackCheckpoint, ReleaseSearchResult,
+    ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
+    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use ani_repository::{
     AnimeCatalogRepository, AnimeSourceBindingRepository, CachedReleaseQuery,
-    ReleaseCacheRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository, RepositoryError,
-    UnitOfWork, UnitOfWorkFactory,
+    NotificationRepository, ReleaseCacheRepository, ReleaseSearchCacheEntry,
+    ReleaseSourceRepository, RepositoryError, UnitOfWork, UnitOfWorkFactory,
 };
 use rusqlite::{params, Connection, OpenFlags};
 use serde::Deserialize;
@@ -868,6 +868,45 @@ fn persists_p3_release_cache_and_observed_fansubs() {
         ReleaseCacheRepository::list_cached_releases(&repository, &query)
             .expect("list pruned cache")
             .is_empty()
+    );
+}
+
+/// 验证公共通知写入端口增量保存来源同步提醒并保留已读状态。
+#[test]
+fn persists_notifications_through_repository_port() {
+    let directory = TestDirectory::new("notification-write");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("open notification database");
+    let repository = storage.repository();
+    let mut record = NotificationRecord {
+        id: "source-sync-contract".to_owned(),
+        kind: NotificationKind::System,
+        title: "来源同步失败".to_owned(),
+        body: "失败来源：契约来源".to_owned(),
+        severity: NotificationSeverity::Warning,
+        anime_id: None,
+        episode_id: None,
+        download_task_id: None,
+        created_at: "2026-07-25T01:00:00.000Z".to_owned(),
+        read_at: Some("2026-07-25T02:00:00.000Z".to_owned()),
+    };
+    let saved =
+        NotificationRepository::add_notifications(&repository, std::slice::from_ref(&record))
+            .expect("save source sync notification");
+    assert_eq!(saved, vec![record.clone()]);
+    record.body = "更新后的失败原因".to_owned();
+    record.read_at = None;
+    let updated = NotificationRepository::add_notifications(&repository, &[record])
+        .expect("update source sync notification");
+    assert_eq!(updated[0].body, "更新后的失败原因");
+    assert_eq!(
+        updated[0].read_at.as_deref(),
+        Some("2026-07-25T02:00:00.000Z")
+    );
+    assert_eq!(
+        NotificationRepository::get_unread_notification_count(&repository)
+            .expect("count unread notifications"),
+        0
     );
 }
 

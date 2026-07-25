@@ -19,7 +19,9 @@ import type {
   RssSubscriptionReleaseResult,
   SavePlaybackCheckpointInput,
   SetAnimeSourceExclusionInput,
-  SetAnimeWatchProgressInput
+  SetAnimeWatchProgressInput,
+  SourceSyncRunResult,
+  SourceSyncSchedulerStatus
 } from "../contracts";
 import type {
   AnimeSourceBinding,
@@ -133,6 +135,22 @@ test("Tauri P3 来源网络契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.source.requestIntervalMs, 1_750);
   assert.equal(fixture.payload.syncState.requestFailureCount, 2);
   assert.equal(fixture.payload.circuitState.key, `release-source:${fixture.payload.source.id}`);
+});
+
+/** 读取 P3 来源同步金样，验证调度器和执行结果字段一致。 */
+test("Tauri P3 来源同步契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p3-source-sync-model.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    syncState: ReleaseSourceSyncState;
+    runResult: SourceSyncRunResult;
+    schedulerStatus: SourceSyncSchedulerStatus;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p3-source-sync-model");
+  assert.equal(fixture.payload.syncState.etag, "\"release-v1\"");
+  assert.equal(fixture.payload.runResult.addedReleaseCount, 2);
+  assert.deepEqual(fixture.payload.schedulerStatus.lastResult, fixture.payload.runResult);
 });
 
 /** 读取 P3 来源绑定金样，验证绑定、候选、排除和命令输入字段一致。 */

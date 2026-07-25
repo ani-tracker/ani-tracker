@@ -1,8 +1,9 @@
 use std::sync::{Arc, Mutex};
 
+use ani_automation::SourceSyncStore;
 use ani_domain::{
-    AnimeSourceBinding, AnimeSourceExclusion, Episode, MyAnime, Release, ReleaseSourceConfig,
-    RequestCircuitState,
+    AnimeSourceBinding, AnimeSourceExclusion, Episode, FansubGroup, MyAnime, NotificationRecord,
+    Release, ReleaseSourceConfig, ReleaseSourceSyncState, RequestCircuitState,
 };
 use ani_repository::{
     ApplicationRepository, CachedReleaseQuery, ReleaseSearchCacheEntry, RepositoryError,
@@ -143,21 +144,71 @@ impl AnimeSourceBindingStore for SharedReleaseSearchStore {
     }
 }
 
+impl SourceSyncStore for SharedReleaseSearchStore {
+    /// 读取全部来源同步游标。
+    fn list_sync_states(&self) -> RepositoryResult<Vec<ReleaseSourceSyncState>> {
+        self.with_repository(|repository| repository.list_source_sync_states())
+    }
+
+    /// 保存一个来源同步游标。
+    fn save_sync_state(&self, state: &ReleaseSourceSyncState) -> RepositoryResult<()> {
+        self.with_repository(|repository| repository.upsert_source_sync_state(state))
+    }
+
+    /// 读取全部追番。
+    fn list_sync_anime(&self) -> RepositoryResult<Vec<MyAnime>> {
+        self.with_repository(|repository| repository.list_my_anime())
+    }
+
+    /// 读取指定番剧的来源绑定。
+    fn list_sync_bindings(&self, anime_id: &str) -> RepositoryResult<Vec<AnimeSourceBinding>> {
+        self.with_repository(|repository| repository.list_anime_source_bindings(anime_id))
+    }
+
+    /// 保存同步采集的资源。
+    fn save_synced_releases(&self, releases: &[Release]) -> RepositoryResult<usize> {
+        self.with_repository(|repository| repository.upsert_cached_releases(releases))
+    }
+
+    /// 观察同步资源中的番剧字幕组。
+    fn observe_sync_fansubs(
+        &self,
+        anime_id: &str,
+        releases: &[Release],
+    ) -> RepositoryResult<Vec<FansubGroup>> {
+        self.with_repository(|repository| repository.observe_anime_fansubs(anime_id, releases))
+    }
+
+    /// 清理过期资源缓存。
+    fn prune_synced_releases(&self, before: &str) -> RepositoryResult<usize> {
+        self.with_repository(|repository| repository.prune_cached_releases(before))
+    }
+
+    /// 写入同步失败通知。
+    fn add_sync_notifications(
+        &self,
+        records: &[NotificationRecord],
+    ) -> RepositoryResult<Vec<NotificationRecord>> {
+        self.with_repository(|repository| repository.add_notifications(records))
+    }
+}
+
 struct NetworkRuntime {
     config: NativeHttpConfig,
     service: Arc<SourceNetworkService>,
 }
 
 /// 根据当前代理设置复用或重建 Rust 来源网络服务。
+#[derive(Clone)]
 pub(crate) struct AppSourceState {
-    runtime: AsyncMutex<Option<NetworkRuntime>>,
+    runtime: Arc<AsyncMutex<Option<NetworkRuntime>>>,
 }
 
 impl AppSourceState {
     /// 创建尚未初始化连接池的来源状态。
     pub(crate) fn new() -> Self {
         Self {
-            runtime: AsyncMutex::new(None),
+            runtime: Arc::new(AsyncMutex::new(None)),
         }
     }
 

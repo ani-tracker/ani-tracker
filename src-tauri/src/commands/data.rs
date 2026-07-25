@@ -12,6 +12,7 @@ use ani_storage::Storage;
 use serde_json::Value;
 use tauri::State;
 
+use crate::source_sync::AppSourceSyncState;
 use crate::storage::AppStorageState;
 
 /// 将数据层错误转换为稳定的 Tauri 命令错误。
@@ -86,26 +87,32 @@ pub(crate) async fn get_settings(
 pub(crate) async fn update_settings(
     patch: Value,
     state: State<'_, AppStorageState>,
+    source_sync_state: State<'_, AppSourceSyncState>,
 ) -> Result<AppSettings, AppCommandError> {
     let defaults = state.platform_defaults().clone();
-    run_query("更新设置", Arc::clone(state.storage()), move |storage| {
+    let settings = run_query("更新设置", Arc::clone(state.storage()), move |storage| {
         storage.repository().update_settings(&patch, &defaults)
     })
-    .await
+    .await?;
+    source_sync_state.refresh_from_settings(&settings).await;
+    Ok(settings)
 }
 
 /// 恢复当前平台默认设置。
 #[tauri::command]
 pub(crate) async fn reset_settings_to_defaults(
     state: State<'_, AppStorageState>,
+    source_sync_state: State<'_, AppSourceSyncState>,
 ) -> Result<AppSettings, AppCommandError> {
     let defaults = state.platform_defaults().clone();
-    run_query(
+    let settings = run_query(
         "恢复默认设置",
         Arc::clone(state.storage()),
         move |storage| storage.repository().reset_settings(&defaults),
     )
-    .await
+    .await?;
+    source_sync_state.refresh_from_settings(&settings).await;
+    Ok(settings)
 }
 
 /// 按创建时间倒序读取通知。

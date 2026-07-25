@@ -19,7 +19,9 @@ import type {
   RssSubscriptionReleaseResult,
   SavePlaybackCheckpointInput,
   SetAnimeSourceExclusionInput,
-  SetAnimeWatchProgressInput
+  SetAnimeWatchProgressInput,
+  SourceSyncRunResult,
+  SourceSyncSchedulerStatus
 } from "@shared/contracts";
 import type {
   Anime,
@@ -288,6 +290,20 @@ class TauriClientCore {
   async upsertSource(source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]> {
     return invoke<ReleaseSourceConfig[]>("upsert_source", { source }).catch((error) => {
       throw normalizeTauriError("upsert_source", error);
+    });
+  }
+
+  /** 读取 Rust 每日来源同步调度器状态。 */
+  async getSourceSyncStatus(): Promise<SourceSyncSchedulerStatus> {
+    return invoke<SourceSyncSchedulerStatus>("get_source_sync_status").catch((error) => {
+      throw normalizeTauriError("get_source_sync_status", error);
+    });
+  }
+
+  /** 立即强制执行一次 Rust 来源增量同步。 */
+  async syncSourcesNow(): Promise<SourceSyncRunResult> {
+    return invoke<SourceSyncRunResult>("sync_sources_now").catch((error) => {
+      throw normalizeTauriError("sync_sources_now", error);
     });
   }
 

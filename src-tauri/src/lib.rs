@@ -1,7 +1,10 @@
+use std::sync::Arc;
+
 use log::LevelFilter;
 use tauri::Manager;
 
 mod commands;
+mod source_sync;
 mod sources;
 mod storage;
 
@@ -16,8 +19,16 @@ pub fn run() {
         )
         .setup(|app| {
             let storage_state = storage::initialize(app.handle())?;
+            let source_state = sources::AppSourceState::new();
+            let source_sync_state = source_sync::AppSourceSyncState::new(
+                Arc::clone(storage_state.storage()),
+                storage_state.platform_defaults().clone(),
+                source_state.clone(),
+            );
+            source_sync_state.start();
             app.manage(storage_state);
-            app.manage(sources::AppSourceState::new());
+            app.manage(source_state);
+            app.manage(source_sync_state);
             log::info!(
                 "Tauri 宿主初始化完成 platform={} arch={}",
                 std::env::consts::OS,
@@ -60,6 +71,8 @@ pub fn run() {
             commands::sources::remove_anime_source_candidate_mismatch,
             commands::sources::set_anime_source_excluded,
             commands::sources::remove_anime_source_binding,
+            commands::source_sync::get_source_sync_status,
+            commands::source_sync::sync_sources_now,
             commands::window::get_window_state,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,

@@ -30,9 +30,9 @@ pub use release::{
 };
 pub use search::{
     build_acgrip_rss_url, build_anibt_anime_rss_url, build_dmhy_list_url, build_mikan_search_url,
-    build_nyaa_rss_url, create_anibt_headers, ReleaseSearchService, ReleaseSearchStore,
-    COMPLETED_ANIME_RELEASE_CACHE_TTL_MS, MAX_RELEASE_SOURCE_FETCH_LIMIT,
-    MAX_RELEASE_SOURCE_RESULT_LIMIT,
+    build_nyaa_rss_url, create_anibt_headers, is_supported_source, ReleaseSearchService,
+    ReleaseSearchStore, SourceSyncFetchResult, COMPLETED_ANIME_RELEASE_CACHE_TTL_MS,
+    MAX_RELEASE_SOURCE_FETCH_LIMIT, MAX_RELEASE_SOURCE_RESULT_LIMIT,
 };
 
 pub const DEFAULT_SOURCE_REQUEST_INTERVAL_MS: u64 = 1_500;

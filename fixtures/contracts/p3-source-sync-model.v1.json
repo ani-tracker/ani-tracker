@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "kind": "p3-source-sync-model",
+  "payload": {
+    "syncState": {
+      "sourceId": "rss-contract",
+      "requestHost": "feeds.example.com",
+      "lastRequestAt": "2026-07-25T01:00:00.000Z",
+      "requestFailureCount": 0,
+      "lastSyncAttemptAt": "2026-07-25T01:00:00.000Z",
+      "lastSuccessfulSyncAt": "2026-07-25T01:00:00.000Z",
+      "etag": "\"release-v1\"",
+      "lastModified": "Fri, 25 Jul 2026 00:00:00 GMT"
+    },
+    "runResult": {
+      "startedAt": "2026-07-25T01:00:00.000Z",
+      "finishedAt": "2026-07-25T01:00:01.000Z",
+      "syncedSourceIds": ["rss-contract"],
+      "skippedSourceIds": ["rss-current"],
+      "addedReleaseCount": 2,
+      "errors": [
+        {
+          "sourceId": "rss-failed",
+          "message": "HTTP 响应状态异常：503"
+        }
+      ]
+    },
+    "schedulerStatus": {
+      "enabled": true,
+      "running": true,
+      "inFlight": false,
+      "dailyTime": "09:00",
+      "nextRunAt": "2026-07-26T01:00:00.000Z",
+      "lastRunAt": "2026-07-25T01:00:01.000Z",
+      "lastResult": {
+        "startedAt": "2026-07-25T01:00:00.000Z",
+        "finishedAt": "2026-07-25T01:00:01.000Z",
+        "syncedSourceIds": ["rss-contract"],
+        "skippedSourceIds": ["rss-current"],
+        "addedReleaseCount": 2,
+        "errors": [
+          {
+            "sourceId": "rss-failed",
+            "message": "HTTP 响应状态异常：503"
+          }
+        ]
+      }
+    }
+  }
+}

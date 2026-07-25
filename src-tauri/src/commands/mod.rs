@@ -1,5 +1,6 @@
 pub(crate) mod data;
 pub(crate) mod external;
+pub(crate) mod source_sync;
 pub(crate) mod sources;
 pub(crate) mod window;
 

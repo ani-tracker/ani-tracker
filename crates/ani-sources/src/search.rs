@@ -4,8 +4,8 @@ use std::sync::Arc;
 use ani_domain::{
     Anime, AnimeReleaseQuery, AnimeSourceBinding, FansubGroup, MyAnime, Release, ReleaseQuery,
     ReleaseSearchError, ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSearchResult,
-    RssSubscriptionReleaseQuery, RssSubscriptionReleaseResult, SourceKind, SubtitleLanguage,
-    SubtitlePreference,
+    ReleaseSourceSyncState, RssSubscriptionReleaseQuery, RssSubscriptionReleaseResult, SourceKind,
+    SubtitleLanguage, SubtitlePreference,
 };
 use ani_repository::{
     CachedReleaseQuery, ReleaseCacheRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository,
@@ -36,6 +36,15 @@ const MAX_ANIBT_BGM_FEEDS_PER_SEARCH: usize = 3;
 const DESKTOP_BROWSER_USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138.0 Safari/537.36";
 const DESKTOP_BROWSER_ACCEPT_LANGUAGE: &str = "zh-CN,zh;q=0.9,ja;q=0.8,en;q=0.7";
+
+/// 单个来源增量采集返回的资源与条件请求游标。
+#[derive(Debug, Clone, PartialEq)]
+pub struct SourceSyncFetchResult {
+    pub releases: Vec<Release>,
+    pub etag: Option<String>,
+    pub last_modified: Option<String>,
+    pub not_modified: bool,
+}
 
 /// 资源搜索需要的最小缓存与熔断状态端口。
 pub trait ReleaseSearchStore: CircuitStateStore {
@@ -508,6 +517,85 @@ impl ReleaseSearchService {
         }
     }
 
+    /// 为每日同步采集一个来源，优先使用追番的已确认精确 RSS。
+    pub async fn collect_source_for_sync<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        tracked_anime: &[MyAnime],
+        bindings: &[AnimeSourceBinding],
+        state: &ReleaseSourceSyncState,
+    ) -> Result<SourceSyncFetchResult, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        if is_bindable_anime_source(config) {
+            let mut releases = Vec::new();
+            for item in tracked_anime {
+                let Some(binding) = bindings.iter().find(|binding| {
+                    binding.anime_id == item.anime.id
+                        && binding.source_id == config.id
+                        && binding.confirmed
+                }) else {
+                    continue;
+                };
+                releases.extend(
+                    self.fetch_bound_anime_source(
+                        store,
+                        config,
+                        binding,
+                        &ReleaseQuery {
+                            keyword: String::new(),
+                            anime_id: Some(item.anime.id.clone()),
+                            episode_no: None,
+                            fansub_group_id: None,
+                            preferred_resolution: None,
+                            limit: Some(MAX_RELEASE_SOURCE_FETCH_LIMIT),
+                            cache_ttl_ms: None,
+                            force_refresh: true,
+                        },
+                    )
+                    .await?
+                    .into_iter()
+                    .map(|mut release| {
+                        release.anime_id = Some(item.anime.id.clone());
+                        release
+                    }),
+                );
+            }
+            if !releases.is_empty() || is_mikan_site_config(config) {
+                return Ok(SourceSyncFetchResult {
+                    releases: dedupe_releases(releases),
+                    etag: None,
+                    last_modified: None,
+                    not_modified: false,
+                });
+            }
+        }
+
+        let query = ReleaseQuery {
+            keyword: String::new(),
+            anime_id: None,
+            episode_no: None,
+            fansub_group_id: None,
+            preferred_resolution: None,
+            limit: Some(MAX_RELEASE_SOURCE_FETCH_LIMIT),
+            cache_ttl_ms: None,
+            force_refresh: true,
+        };
+        if config.kind == SourceKind::Rss {
+            return self
+                .fetch_generic_rss_for_sync(store, config, &query, state)
+                .await;
+        }
+        Ok(SourceSyncFetchResult {
+            releases: self.fetch_source(store, config, &query).await?,
+            etag: None,
+            last_modified: None,
+            not_modified: false,
+        })
+    }
+
     async fn fetch_source<S>(
         &self,
         store: &S,
@@ -588,29 +676,85 @@ impl ReleaseSearchService {
     where
         S: ReleaseSearchStore + Sync,
     {
-        let Some(url) = config.rss_url.as_deref() else {
-            return Ok(Vec::new());
-        };
-        let response = self
-            .get(
+        Ok(self
+            .fetch_generic_rss_for_sync(
                 store,
                 config,
-                url,
-                &[(("Accept"), "application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8")],
+                query,
+                &ReleaseSourceSyncState {
+                    source_id: config.id.clone(),
+                    request_host: None,
+                    last_request_at: None,
+                    request_failure_count: 0,
+                    backoff_until: None,
+                    last_sync_attempt_at: None,
+                    last_successful_sync_at: None,
+                    last_sync_error: None,
+                    etag: None,
+                    last_modified: None,
+                },
             )
-            .await?;
+            .await?
+            .releases)
+    }
+
+    /// 读取通用 RSS，并为同步任务维护 ETag 与 Last-Modified。
+    async fn fetch_generic_rss_for_sync<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        query: &ReleaseQuery,
+        state: &ReleaseSourceSyncState,
+    ) -> Result<SourceSyncFetchResult, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let Some(url) = config.rss_url.as_deref() else {
+            return Ok(SourceSyncFetchResult {
+                releases: Vec::new(),
+                etag: None,
+                last_modified: None,
+                not_modified: false,
+            });
+        };
+        let mut headers = default_request_headers();
+        headers.insert(
+            "Accept".to_owned(),
+            "application/rss+xml,application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8"
+                .to_owned(),
+        );
+        if let Some(etag) = state.etag.as_deref() {
+            headers.insert("If-None-Match".to_owned(), etag.to_owned());
+        }
+        if let Some(last_modified) = state.last_modified.as_deref() {
+            headers.insert("If-Modified-Since".to_owned(), last_modified.to_owned());
+        }
+        let response = self.get_with_headers(store, config, url, headers).await?;
+        let etag = response.header("etag").map(str::to_owned);
+        let last_modified = response.header("last-modified").map(str::to_owned);
         if response.status == 304 {
-            return Ok(Vec::new());
+            return Ok(SourceSyncFetchResult {
+                releases: Vec::new(),
+                etag,
+                last_modified,
+                not_modified: true,
+            });
         }
         let keyword = normalize_release_search_text(&query.keyword);
-        Ok(parse_rss_releases(&response.text(), config, Some(url))?
+        let releases = parse_rss_releases(&response.text(), config, Some(url))?
             .into_iter()
             .filter(|release| {
                 keyword.is_empty()
                     || normalize_release_search_text(&release.title).contains(&keyword)
             })
             .take(normalize_fetch_limit(query.limit))
-            .collect())
+            .collect();
+        Ok(SourceSyncFetchResult {
+            releases,
+            etag,
+            last_modified,
+            not_modified: false,
+        })
     }
 
     async fn fetch_torznab<S>(
@@ -958,16 +1102,7 @@ impl ReleaseSearchService {
     where
         S: ReleaseSearchStore + Sync,
     {
-        let mut values = BTreeMap::from([
-            (
-                "Accept-Language".to_owned(),
-                DESKTOP_BROWSER_ACCEPT_LANGUAGE.to_owned(),
-            ),
-            (
-                "User-Agent".to_owned(),
-                DESKTOP_BROWSER_USER_AGENT.to_owned(),
-            ),
-        ]);
+        let mut values = default_request_headers();
         values.extend(
             headers
                 .iter()
@@ -1173,6 +1308,20 @@ pub fn create_anibt_headers(
     headers
 }
 
+/// 创建站点适配器共用的浏览器兼容请求头。
+fn default_request_headers() -> BTreeMap<String, String> {
+    BTreeMap::from([
+        (
+            "Accept-Language".to_owned(),
+            DESKTOP_BROWSER_ACCEPT_LANGUAGE.to_owned(),
+        ),
+        (
+            "User-Agent".to_owned(),
+            DESKTOP_BROWSER_USER_AGENT.to_owned(),
+        ),
+    ])
+}
+
 fn enabled_supported_sources(configs: &[ReleaseSourceConfig]) -> Vec<ReleaseSourceConfig> {
     configs
         .iter()
@@ -1181,7 +1330,8 @@ fn enabled_supported_sources(configs: &[ReleaseSourceConfig]) -> Vec<ReleaseSour
         .collect()
 }
 
-fn is_supported_source(config: &ReleaseSourceConfig) -> bool {
+/// 判断来源是否已有 Rust 采集适配器。
+pub fn is_supported_source(config: &ReleaseSourceConfig) -> bool {
     matches!(config.kind, SourceKind::Rss | SourceKind::Torznab)
         || (config.kind == SourceKind::SiteAdapter
             && (is_dmhy_config(config)
@@ -1217,7 +1367,7 @@ pub(crate) fn is_mikan_site_config(config: &ReleaseSourceConfig) -> bool {
 }
 
 fn is_bindable_anime_source(config: &ReleaseSourceConfig) -> bool {
-    is_anibt_config(config) || (config.kind == SourceKind::Rss && is_mikan_config(config))
+    is_anibt_config(config) || is_mikan_config(config)
 }
 
 pub(crate) fn is_anibt_config(config: &ReleaseSourceConfig) -> bool {

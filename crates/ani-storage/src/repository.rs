@@ -118,6 +118,52 @@ impl<'connection> SqliteRepository<'connection> {
         Ok(count)
     }
 
+    /// 增量写入提醒中心通知，相同标识保留已有已读状态。
+    pub(crate) fn add_notifications(
+        &self,
+        records: &[NotificationRecord],
+    ) -> Result<Vec<NotificationRecord>, StorageError> {
+        self.with_transaction(|connection| {
+            for record in records {
+                validate_identifier("notification.id", &record.id)?;
+                if record.title.trim().is_empty() {
+                    return invalid_input("notification.title", "通知标题不能为空");
+                }
+                if record.created_at.trim().is_empty() {
+                    return invalid_input("notification.createdAt", "通知创建时间不能为空");
+                }
+                connection.execute(
+                    "INSERT INTO notification (
+                       id, kind, title, body, severity, anime_id, episode_id,
+                       download_task_id, created_at, read_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                     ON CONFLICT(id) DO UPDATE SET
+                       kind = excluded.kind, title = excluded.title, body = excluded.body,
+                       severity = excluded.severity, anime_id = excluded.anime_id,
+                       episode_id = excluded.episode_id,
+                       download_task_id = excluded.download_task_id,
+                       created_at = excluded.created_at,
+                       read_at = COALESCE(notification.read_at, excluded.read_at)",
+                    params![
+                        &record.id,
+                        notification_kind_value(&record.kind),
+                        record.title.trim(),
+                        &record.body,
+                        notification_severity_value(&record.severity),
+                        record.anime_id.as_deref(),
+                        record.episode_id.as_deref(),
+                        record.download_task_id.as_deref(),
+                        &record.created_at,
+                        record.read_at.as_deref(),
+                    ],
+                )?;
+            }
+            Ok(())
+        })?;
+        info!("Rust 通知增量写入完成：count={}", records.len());
+        self.list_notifications()
+    }
+
     /// 按可选年月读取并排序本地番剧目录。
     pub(crate) fn list_anime_catalog(
         &self,
@@ -1621,6 +1667,14 @@ impl NotificationRepository for SqliteRepository<'_> {
     /// 通过 SQLite 适配器统计未读通知。
     fn get_unread_notification_count(&self) -> RepositoryResult<u64> {
         SqliteRepository::get_unread_notification_count(self).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器增量写入通知。
+    fn add_notifications(
+        &self,
+        records: &[NotificationRecord],
+    ) -> RepositoryResult<Vec<NotificationRecord>> {
+        SqliteRepository::add_notifications(self, records).map_err(RepositoryError::from)
     }
 }
 
@@ -4104,6 +4158,26 @@ fn parse_notification_severity(value: &str) -> Result<NotificationSeverity, Stor
         "warning" => Ok(NotificationSeverity::Warning),
         "error" => Ok(NotificationSeverity::Error),
         _ => invalid_value("notification.severity", value),
+    }
+}
+
+/// 返回通知类别的 SQLite 字面量。
+fn notification_kind_value(value: &NotificationKind) -> &'static str {
+    match value {
+        NotificationKind::Automation => "automation",
+        NotificationKind::Download => "download",
+        NotificationKind::Reminder => "reminder",
+        NotificationKind::System => "system",
+    }
+}
+
+/// 返回通知严重程度的 SQLite 字面量。
+fn notification_severity_value(value: &NotificationSeverity) -> &'static str {
+    match value {
+        NotificationSeverity::Info => "info",
+        NotificationSeverity::Success => "success",
+        NotificationSeverity::Warning => "warning",
+        NotificationSeverity::Error => "error",
     }
 }
 

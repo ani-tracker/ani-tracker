@@ -14,16 +14,18 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+ani-automation = { path = "../crates/ani-automation" }
 ani-contracts = { path = "../crates/ani-contracts" }
 ani-domain = { path = "../crates/ani-domain" }
 ani-repository = { path = "../crates/ani-repository" }
 ani-sources = { path = "../crates/ani-sources" }
 ani-storage = { path = "../crates/ani-storage" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 log = "0.4"
 serde_json.workspace = true
 tauri = { version = "2", features = [] }
 tauri-plugin-log = "2"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["macros", "sync", "time"] }
 url = "2"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
