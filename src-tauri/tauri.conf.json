@@ -10,6 +10,7 @@
     "frontendDist": "../out/tauri"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "main",

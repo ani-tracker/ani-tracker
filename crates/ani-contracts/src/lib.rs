@@ -181,6 +181,39 @@ pub enum PlayerStatus {
     Closed,
 }
 
+/// 播放器错误的稳定分类。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlayerErrorCode {
+    ResourceUnavailable,
+    Network,
+    Decoder,
+    Permission,
+    Transcode,
+    RuntimeMissing,
+    Unsupported,
+    Unknown,
+}
+
+/// 播放失败后可展示的恢复动作。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PlayerRecoveryAction {
+    Retry,
+    Transcode,
+    Close,
+}
+
+/// 跨平台播放器的结构化错误。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerError {
+    pub code: PlayerErrorCode,
+    pub message: String,
+    pub recoverable: bool,
+    pub recovery_actions: Vec<PlayerRecoveryAction>,
+}
+
 /// 画面比例选项。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PlayerAspectRatio {
@@ -311,6 +344,101 @@ pub struct PlayerPlaylist {
     pub active_item_id: Option<String>,
 }
 
+/// 播放器命令的公共信封，动作字段会平铺到 JSON 顶层。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerCommand {
+    pub command_id: String,
+    pub session_id: String,
+    #[serde(flatten)]
+    pub action: PlayerCommandAction,
+}
+
+/// 所有原生播放器后端必须识别的动作。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "type",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase"
+)]
+pub enum PlayerCommandAction {
+    Load {
+        source: PlayerMediaSource,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        start_position_seconds: Option<f64>,
+    },
+    Play,
+    Pause,
+    Seek {
+        position_seconds: f64,
+    },
+    SetVolume {
+        volume: f64,
+    },
+    SetMuted {
+        muted: bool,
+    },
+    SetRate {
+        rate: f64,
+    },
+    SelectAudioTrack {
+        track_id: String,
+    },
+    SelectSubtitleTrack {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track_id: Option<String>,
+    },
+    SetAspectRatio {
+        aspect_ratio: PlayerAspectRatio,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        value: Option<String>,
+    },
+    SetFullscreen {
+        fullscreen: bool,
+    },
+    SetPictureInPicture {
+        enabled: bool,
+    },
+    PreviousItem,
+    NextItem,
+    Retry,
+    Close,
+}
+
+impl PlayerCommand {
+    /// 返回动作的稳定短名，供日志和能力检查使用。
+    pub fn action_name(&self) -> &'static str {
+        match &self.action {
+            PlayerCommandAction::Load { .. } => "load",
+            PlayerCommandAction::Play => "play",
+            PlayerCommandAction::Pause => "pause",
+            PlayerCommandAction::Seek { .. } => "seek",
+            PlayerCommandAction::SetVolume { .. } => "set-volume",
+            PlayerCommandAction::SetMuted { .. } => "set-muted",
+            PlayerCommandAction::SetRate { .. } => "set-rate",
+            PlayerCommandAction::SelectAudioTrack { .. } => "select-audio-track",
+            PlayerCommandAction::SelectSubtitleTrack { .. } => "select-subtitle-track",
+            PlayerCommandAction::SetAspectRatio { .. } => "set-aspect-ratio",
+            PlayerCommandAction::SetFullscreen { .. } => "set-fullscreen",
+            PlayerCommandAction::SetPictureInPicture { .. } => "set-picture-in-picture",
+            PlayerCommandAction::PreviousItem => "previous-item",
+            PlayerCommandAction::NextItem => "next-item",
+            PlayerCommandAction::Retry => "retry",
+            PlayerCommandAction::Close => "close",
+        }
+    }
+}
+
+/// 原生播放器对单条命令的结构化响应。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerCommandResult {
+    pub command_id: String,
+    pub accepted: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<PlayerError>,
+}
+
 /// 跨平台播放器的完整状态快照。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -335,6 +463,53 @@ pub struct PlayerSnapshot {
     pub aspect_ratio: PlayerAspectRatio,
     pub fullscreen: bool,
     pub picture_in_picture: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<PlayerError>,
+}
+
+/// 创建桌面播放器窗口时使用的受限目标。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DesktopPlayerWindowInput {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_index: Option<u32>,
+}
+
+/// 创建受控播放会话时使用的下载文件目标。
+pub type DesktopPlaybackSessionInput = DesktopPlayerWindowInput;
+
+/// 播放器可加载的一条受控字幕资源。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackSubtitle {
+    pub id: String,
+    pub label: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub language: Option<String>,
+    #[serde(rename = "type")]
+    pub subtitle_type: PlayerSubtitleType,
+    pub url: String,
+    pub default: bool,
+}
+
+/// Renderer 获取的受控播放会话，不泄漏真实本地路径。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackSession {
+    pub id: String,
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_index: Option<u32>,
+    pub file_name: String,
+    pub mode: PlayerMediaMode,
+    pub stream_url: String,
+    pub expires_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub duration_seconds: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_position_seconds: Option<f64>,
+    pub subtitles: Vec<PlaybackSubtitle>,
 }
 
 #[cfg(test)]
@@ -343,8 +518,9 @@ mod tests {
 
     use super::{
         ContractFixture, DesktopMediaToolsStatus, DownloadServiceMode, DownloadServiceState,
-        DownloadServiceStatus, EmbeddedTorrentCoreStatus, PlayerHostPlatform, PlayerSnapshot,
-        PlayerStatus, QbittorrentManagedStatus, TorrentConnectionTestResult,
+        DownloadServiceStatus, EmbeddedTorrentCoreStatus, PlaybackSession, PlayerCommand,
+        PlayerCommandAction, PlayerCommandResult, PlayerHostPlatform, PlayerSnapshot, PlayerStatus,
+        QbittorrentManagedStatus, TorrentConnectionTestResult,
     };
 
     #[derive(Deserialize)]
@@ -369,6 +545,14 @@ mod tests {
         ios_status: EmbeddedTorrentCoreStatus,
         execute_request: serde_json::Value,
         execute_response: serde_json::Value,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct PlayerCommandFixture {
+        load_command: PlayerCommand,
+        rejected_result: PlayerCommandResult,
+        playback_session: PlaybackSession,
     }
 
     /// 验证 Rust 能严格解码前端共用的播放器快照金样。
@@ -450,5 +634,26 @@ mod tests {
         assert_eq!(decoded.payload.ios_status.foreground_service, Some(false));
         assert_eq!(decoded.payload.execute_request["method"], "listTasks");
         assert_eq!(decoded.payload.execute_response["ok"], "true");
+    }
+
+    /// 验证 Rust 与 TypeScript 共用平铺播放器命令和受控会话字段。
+    #[test]
+    fn decodes_player_command_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p5-player-command.v1.json"
+        ));
+        let decoded: ContractFixture<PlayerCommandFixture> =
+            serde_json::from_str(fixture).expect("player command fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p5-player-command");
+        assert!(matches!(
+            &decoded.payload.load_command.action,
+            PlayerCommandAction::Load { .. }
+        ));
+        assert_eq!(decoded.payload.load_command.action_name(), "load");
+        assert!(!decoded.payload.rejected_result.accepted);
+        assert_eq!(decoded.payload.playback_session.file_index, Some(0));
     }
 }

@@ -7,6 +7,7 @@ mod automation;
 mod commands;
 mod downloads;
 mod media;
+mod player;
 mod qbittorrent_managed;
 mod source_sync;
 mod sources;
@@ -21,6 +22,7 @@ pub fn run() {
                 .level(LevelFilter::Info)
                 .build(),
         )
+        .plugin(tauri_plugin_ani_player::init())
         .plugin(tauri_plugin_ani_torrent::init())
         .setup(|app| {
             let storage_state = storage::initialize(app.handle())?;
@@ -42,6 +44,8 @@ pub fn run() {
                 Arc::clone(storage_state.storage()),
                 storage_state.platform_defaults().clone(),
             );
+            let player_state =
+                player::AppPlayerState::new(app.handle(), Arc::clone(storage_state.storage()));
             let automation_state = automation::AppAutomationState::new(
                 Arc::clone(storage_state.storage()),
                 storage_state.platform_defaults().clone(),
@@ -78,6 +82,7 @@ pub fn run() {
             app.manage(source_sync_state);
             app.manage(download_state);
             app.manage(media_state);
+            app.manage(player_state);
             app.manage(automation_state);
             log::info!(
                 "Tauri 宿主初始化完成 platform={} arch={}",
@@ -146,13 +151,23 @@ pub fn run() {
             commands::media::list_media_files,
             commands::media::scan_download_media,
             commands::media::get_desktop_media_tools_status,
+            commands::player::open_desktop_player_window,
+            commands::player::close_desktop_player_window,
+            commands::player::drag_desktop_player_window,
+            commands::player::create_desktop_playback_session,
+            commands::player::close_desktop_playback_session,
+            commands::player::get_desktop_player_capabilities,
+            commands::player::dispatch_desktop_player_command,
             commands::window::get_window_state,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,
             commands::window::close_window,
             commands::external::open_external
         ])
-        .on_window_event(commands::handle_window_event);
+        .on_window_event(|window, event| {
+            commands::handle_window_event(window, event);
+            player::AppPlayerState::handle_window_event(window, event);
+        });
 
     let app = match builder.build(tauri::generate_context!()) {
         Ok(app) => app,
@@ -163,9 +178,13 @@ pub fn run() {
     };
     app.run(|app_handle, event| {
         if matches!(event, tauri::RunEvent::Exit) {
-            log::info!("Tauri 宿主退出，开始关闭下载引擎");
-            let state = app_handle.state::<downloads::AppDownloadState>();
-            tauri::async_runtime::block_on(state.shutdown());
+            log::info!("Tauri 宿主退出，开始关闭播放器和下载引擎");
+            let player_state = app_handle.state::<player::AppPlayerState>();
+            let download_state = app_handle.state::<downloads::AppDownloadState>();
+            tauri::async_runtime::block_on(async {
+                player_state.shutdown().await;
+                download_state.shutdown().await;
+            });
         }
     });
 }

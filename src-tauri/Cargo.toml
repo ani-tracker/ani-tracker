@@ -28,11 +28,13 @@ log = "0.4"
 regex = "1"
 serde.workspace = true
 serde_json.workspace = true
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["macos-private-api", "unstable"] }
 tauri-plugin-log = "2"
+tauri-plugin-ani-player = { path = "../crates/tauri-plugin-ani-player" }
 tauri-plugin-ani-torrent = { path = "../crates/tauri-plugin-ani-torrent" }
 tokio = { version = "1", features = ["fs", "macros", "net", "process", "sync", "time"] }
 url = "2"
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
 open = "5"
+raw-window-handle = "0.6"

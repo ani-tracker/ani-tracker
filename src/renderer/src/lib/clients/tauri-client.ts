@@ -13,12 +13,16 @@ import type {
   AutomationSchedulerStatus,
   AppWindowState,
   ConfirmAnimeSourceBindingInput,
+  DesktopPlaybackSessionInput,
+  DesktopPlayerWindowDragInput,
+  DesktopPlayerWindowInput,
   DesktopMediaToolsStatus,
   DownloadServiceStatus,
   EmbeddedTorrentCoreStatus,
   MediaScanResult,
   PlaybackCheckpoint,
   QbittorrentManagedStatus,
+  RemotePlaybackSession,
   ReleaseQuery,
   ReleaseSearchResult,
   RemoveAnimeSourceCandidateMismatchInput,
@@ -46,9 +50,16 @@ import type {
   NotificationRecord,
   ReleaseSourceConfig
 } from "@shared/domain";
+import type {
+  PlayerCapabilities,
+  PlayerCommand,
+  PlayerCommandResult,
+  PlayerSnapshot
+} from "@shared/player-contract";
 
 const WINDOW_STATE_CHANGED_EVENT = "window-state-changed";
 const DOWNLOAD_SERVICE_STATUS_CHANGED_EVENT = "download-service-status-changed";
+const PLAYER_SNAPSHOT_EVENT = "player-snapshot";
 
 interface TauriCommandError {
   code?: string;
@@ -440,6 +451,71 @@ class TauriClientCore {
     return invoke<DesktopMediaToolsStatus>("get_desktop_media_tools_status").catch((error) => {
       throw normalizeTauriError("get_desktop_media_tools_status", error);
     });
+  }
+
+  /** 打开 Tauri 桌面 libVLC 双窗口。 */
+  async openDesktopPlayerWindow(input: DesktopPlayerWindowInput): Promise<void> {
+    return invoke<void>("open_desktop_player_window", { input }).catch((error) => {
+      throw normalizeTauriError("open_desktop_player_window", error);
+    });
+  }
+
+  /** 关闭 Tauri 桌面 libVLC 双窗口。 */
+  closeDesktopPlayerWindow(): void {
+    void invoke<void>("close_desktop_player_window").catch((error) => {
+      console.error("[tauri-client] 关闭播放器窗口失败", normalizeTauriError("close_desktop_player_window", error));
+    });
+  }
+
+  /** 将播放器拖动开始阶段交给 Tauri 原生窗口。 */
+  dragDesktopPlayerWindow(input: DesktopPlayerWindowDragInput): void {
+    void invoke<void>("drag_desktop_player_window", { input }).catch((error) => {
+      console.error("[tauri-client] 拖动播放器窗口失败", normalizeTauriError("drag_desktop_player_window", error));
+    });
+  }
+
+  /** 创建不暴露真实路径的桌面播放会话。 */
+  async createDesktopPlaybackSession(input: DesktopPlaybackSessionInput): Promise<RemotePlaybackSession> {
+    return invoke<RemotePlaybackSession>("create_desktop_playback_session", { input }).catch((error) => {
+      throw normalizeTauriError("create_desktop_playback_session", error);
+    });
+  }
+
+  /** 关闭桌面播放会话并清理路径映射。 */
+  async closeDesktopPlaybackSession(sessionId: string): Promise<void> {
+    return invoke<void>("close_desktop_playback_session", { sessionId }).catch((error) => {
+      throw normalizeTauriError("close_desktop_playback_session", error);
+    });
+  }
+
+  /** 读取 Tauri libVLC 后端能力。 */
+  async getDesktopPlayerCapabilities(): Promise<PlayerCapabilities> {
+    return invoke<PlayerCapabilities>("get_desktop_player_capabilities").catch((error) => {
+      throw normalizeTauriError("get_desktop_player_capabilities", error);
+    });
+  }
+
+  /** 向 Tauri libVLC 后端发送统一命令。 */
+  async dispatchDesktopPlayerCommand(command: PlayerCommand): Promise<PlayerCommandResult> {
+    return invoke<PlayerCommandResult>("dispatch_desktop_player_command", { command }).catch((error) => {
+      throw normalizeTauriError("dispatch_desktop_player_command", error);
+    });
+  }
+
+  /** 订阅 Tauri libVLC 完整快照。 */
+  onDesktopPlayerSnapshot(listener: (snapshot: PlayerSnapshot) => void): () => void {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    void listen<PlayerSnapshot>(PLAYER_SNAPSHOT_EVENT, (event) => listener(event.payload)).then((dispose) => {
+      if (disposed) dispose();
+      else unlisten = dispose;
+    }).catch((error) => {
+      console.error("[tauri-client] 播放器快照订阅失败", error);
+    });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }
 
   /** 从公共 Repository 端口读取下载源配置。 */

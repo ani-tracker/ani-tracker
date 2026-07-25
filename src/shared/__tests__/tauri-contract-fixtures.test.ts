@@ -2,7 +2,7 @@ import { strict as assert } from "node:assert";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import type { PlayerSnapshot } from "../player-contract";
+import type { PlayerCommand, PlayerCommandResult, PlayerSnapshot } from "../player-contract";
 import { acceptPlayerSnapshot } from "../player-contract";
 import type {
   AnimeDetailResult,
@@ -29,7 +29,8 @@ import type {
   SetAnimeWatchProgressInput,
   SourceSyncRunResult,
   SourceSyncSchedulerStatus,
-  TorrentConnectionTestResult
+  TorrentConnectionTestResult,
+  RemotePlaybackSession
 } from "../contracts";
 import type {
   AnimeSourceBinding,
@@ -266,4 +267,24 @@ test("Tauri P4 移动 torrent-core 生命周期金样可被 TypeScript 接受", 
   assert.equal(fixture.payload.iosStatus.foregroundService, false);
   assert.equal(fixture.payload.executeRequest.method, "listTasks");
   assert.equal(fixture.payload.executeResponse.ok, "true");
+});
+
+/** 验证 P5 播放命令、结构化错误和受控会话的跨语言字段。 */
+test("Tauri P5 播放器命令契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p5-player-command.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    loadCommand: PlayerCommand;
+    rejectedResult: PlayerCommandResult;
+    playbackSession: RemotePlaybackSession;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p5-player-command");
+  assert.equal(fixture.payload.loadCommand.type, "load");
+  if (fixture.payload.loadCommand.type !== "load") {
+    assert.fail("播放器金样必须包含 load 命令");
+  }
+  assert.equal(fixture.payload.loadCommand.source.subtitles[0].type, "ass");
+  assert.equal(fixture.payload.rejectedResult.accepted, false);
+  assert.equal(fixture.payload.playbackSession.mode, "direct");
 });

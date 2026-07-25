@@ -20,13 +20,17 @@ if (!asset?.archiveName) throw new Error(`[libvlc] unsupported Windows architect
 const archivePath = resolve(options.cacheRoot, DESKTOP_LIBVLC_VERSION, asset.archiveName);
 const targetDirectory = resolve(options.targetRoot, asset.targetKey);
 
-await ensureWindowsBuildTools();
+if (!options.runtimeOnly) await ensureWindowsBuildTools();
 await downloadArchive(asset, archivePath, options.offline);
 await stageRuntime(asset, archivePath, options.targetRoot);
-rebuildNativeModules(options.arch);
-await verifyNativeBinding();
 verifyRuntime(options.targetRoot, options.arch);
-smokeTestRuntime(targetDirectory);
+if (options.runtimeOnly) {
+  smokeTestTauriRuntime();
+} else {
+  rebuildNativeModules(options.arch);
+  await verifyNativeBinding();
+  smokeTestElectronRuntime(targetDirectory);
+}
 
 console.log(`[libvlc] Windows development runtime ready: ${targetDirectory}`);
 
@@ -132,7 +136,7 @@ function verifyRuntime(targetRoot, arch) {
 }
 
 /** 通过 Electron 加载原生模块和 libVLC，拦截 ABI 或 DLL 错误。 */
-function smokeTestRuntime(runtimeDirectory) {
+function smokeTestElectronRuntime(runtimeDirectory) {
   runPnpm([
     "exec", "electron",
     resolve("scripts/smoke-libvlc-runtime.cjs"),
@@ -142,6 +146,16 @@ function smokeTestRuntime(runtimeDirectory) {
     ELECTRON_RUN_AS_NODE: "1",
     ANI_LIBVLC_DIR: runtimeDirectory
   });
+}
+
+/** 通过 Rust 动态 FFI 创建并释放 libVLC 实例和媒体播放器。 */
+function smokeTestTauriRuntime() {
+  runCommand("cargo.exe", [
+    "test",
+    "-p", "tauri-plugin-ani-player",
+    "loads_prepared_libvlc_runtime_when_available",
+    "--", "--nocapture"
+  ]);
 }
 
 /** 通过当前 pnpm 入口执行命令，避免 Windows 无法直接启动 CMD shim。 */
@@ -191,13 +205,18 @@ function parseArgs(args) {
     arch: process.arch,
     cacheRoot: resolve(".cache", "libvlc"),
     targetRoot: resolve("out", "libvlc"),
-    offline: false
+    offline: false,
+    runtimeOnly: false
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--") continue;
     if (arg === "--offline") {
       parsed.offline = true;
+      continue;
+    }
+    if (arg === "--runtime-only") {
+      parsed.runtimeOnly = true;
       continue;
     }
     if (["--arch", "--cache", "--target"].includes(arg)) {

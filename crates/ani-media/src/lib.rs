@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 use tokio::process::Command;
 
+pub mod player;
+
 const DEFAULT_VIDEO_EXTENSIONS: &[&str] = &[".mkv", ".mp4", ".avi"];
 const MAX_FFPROBE_OUTPUT_BYTES: usize = 10 * 1024 * 1024;
 
