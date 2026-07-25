@@ -190,6 +190,146 @@ pub struct RequestCircuitState {
     pub backoff_until: Option<String>,
 }
 
+/// 番剧来源绑定的建立方式。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AnimeSourceBindingMatchMethod {
+    Manual,
+    ExternalId,
+    Scored,
+}
+
+/// 本地番剧与下载源番剧标识之间的稳定绑定。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeSourceBinding {
+    pub id: String,
+    pub anime_id: String,
+    pub source_id: String,
+    pub source_anime_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anime_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    pub match_method: AnimeSourceBindingMatchMethod,
+    pub confidence: f64,
+    pub confirmed: bool,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 来源候选排除的作用域。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AnimeSourceExclusionScope {
+    Candidate,
+    Source,
+}
+
+/// 用户确认的单候选或整来源排除记录。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeSourceExclusion {
+    pub id: String,
+    pub anime_id: String,
+    pub source_id: String,
+    pub scope: AnimeSourceExclusionScope,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anime_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anime_title: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// 下载源返回的待确认番剧候选。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeSourceCandidate {
+    pub source_id: String,
+    pub source_name: String,
+    pub source_anime_id: String,
+    pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original_title: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub premiere_year: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub premiere_month: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_count: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    pub score: i64,
+    pub reasons: Vec<String>,
+}
+
+/// 来源绑定页展示的已排除来源。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExcludedAnimeSource {
+    pub source_id: String,
+    pub source_name: String,
+}
+
+/// 来源绑定页的完整聚合状态。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeSourceBindingState {
+    pub anime_id: String,
+    pub bindings: Vec<AnimeSourceBinding>,
+    pub candidates: Vec<AnimeSourceCandidate>,
+    pub excluded_sources: Vec<ExcludedAnimeSource>,
+    pub errors: Vec<ReleaseSearchError>,
+}
+
+/// 用户确认来源绑定的输入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfirmAnimeSourceBindingInput {
+    pub anime_id: String,
+    pub source_id: String,
+    pub source_anime_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_anime_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+}
+
+/// 用户确认来源候选不匹配的输入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportAnimeSourceCandidateMismatchInput {
+    pub anime_id: String,
+    pub source_id: String,
+    pub source_anime_id: String,
+    pub source_anime_title: String,
+    pub score: f64,
+    pub reasons: Vec<String>,
+}
+
+/// 设置整来源排除状态的输入。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAnimeSourceExclusionInput {
+    pub anime_id: String,
+    pub source_id: String,
+    pub excluded: bool,
+}
+
+/// 撤销单个错误候选记录的输入。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoveAnimeSourceCandidateMismatchInput {
+    pub anime_id: String,
+    pub source_id: String,
+    pub source_anime_id: String,
+}
+
 /// 资源包含的内容形态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -980,11 +1120,14 @@ mod tests {
     use serde::Deserialize;
 
     use super::{
-        AnimeDetailResult, AnimeDiscoverySearchResult, AnimeStatus, DashboardData, Episode,
-        EpisodePreference, MyAnime, NotificationKind, NotificationRecord, PlaybackCheckpoint,
-        ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSyncState,
+        AnimeDetailResult, AnimeDiscoverySearchResult, AnimeSourceBinding, AnimeSourceBindingState,
+        AnimeSourceCandidate, AnimeSourceExclusion, AnimeStatus, ConfirmAnimeSourceBindingInput,
+        DashboardData, Episode, EpisodePreference, MyAnime, NotificationKind, NotificationRecord,
+        PlaybackCheckpoint, ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSyncState,
+        RemoveAnimeSourceCandidateMismatchInput, ReportAnimeSourceCandidateMismatchInput,
         ReportPlaybackProgressInput, RequestCircuitState, RssSubscriptionReleaseResult,
-        SavePlaybackCheckpointInput, SecretValue, SetAnimeWatchProgressInput,
+        SavePlaybackCheckpointInput, SecretValue, SetAnimeSourceExclusionInput,
+        SetAnimeWatchProgressInput,
     };
 
     #[derive(Debug, Deserialize)]
@@ -1035,6 +1178,19 @@ mod tests {
     struct P3ReleaseSearchModelFixture {
         search_result: ReleaseSearchResult,
         rss_result: RssSubscriptionReleaseResult,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct P3SourceBindingModelFixture {
+        binding: AnimeSourceBinding,
+        exclusion: AnimeSourceExclusion,
+        candidate: AnimeSourceCandidate,
+        state: AnimeSourceBindingState,
+        confirm_input: ConfirmAnimeSourceBindingInput,
+        mismatch_input: ReportAnimeSourceCandidateMismatchInput,
+        set_exclusion_input: SetAnimeSourceExclusionInput,
+        remove_mismatch_input: RemoveAnimeSourceCandidateMismatchInput,
     }
 
     /// 验证领域枚举沿用前端现有的 JSON 字面量。
@@ -1135,6 +1291,34 @@ mod tests {
         assert_eq!(
             decoded.payload.circuit_state.key,
             "release-source:torznab-contract"
+        );
+    }
+
+    /// 验证 P3 来源绑定、候选、排除和命令输入契约可跨语言解码。
+    #[test]
+    fn decodes_p3_source_binding_model_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-source-binding-model.v1.json"
+        ));
+        let decoded: ContractFixture<P3SourceBindingModelFixture> =
+            serde_json::from_str(fixture).expect("p3 source binding fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p3-source-binding-model");
+        assert_eq!(decoded.payload.binding.source_anime_id, "528828");
+        assert_eq!(
+            decoded.payload.exclusion.source_anime_id.as_deref(),
+            Some("999999")
+        );
+        assert_eq!(decoded.payload.candidate.score, 94);
+        assert_eq!(decoded.payload.state.errors[0].source_id, "broken-contract");
+        assert_eq!(decoded.payload.confirm_input.confidence, Some(0.94));
+        assert_eq!(decoded.payload.mismatch_input.score, 21.0);
+        assert!(decoded.payload.set_exclusion_input.excluded);
+        assert_eq!(
+            decoded.payload.remove_mismatch_input.source_anime_id,
+            "999999"
         );
     }
 

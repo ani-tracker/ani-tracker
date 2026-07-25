@@ -5,15 +5,20 @@ import type {
   AnimeReleaseQuery,
   AnimeDetailResult,
   AnimeDiscoverySearchResult,
+  AnimeSourceBindingState,
   AnimeWatchProgress,
   AppWindowState,
+  ConfirmAnimeSourceBindingInput,
   PlaybackCheckpoint,
   ReleaseQuery,
   ReleaseSearchResult,
+  RemoveAnimeSourceCandidateMismatchInput,
   ReportPlaybackProgressInput,
+  ReportAnimeSourceCandidateMismatchInput,
   RssSubscriptionReleaseQuery,
   RssSubscriptionReleaseResult,
   SavePlaybackCheckpointInput,
+  SetAnimeSourceExclusionInput,
   SetAnimeWatchProgressInput
 } from "@shared/contracts";
 import type {
@@ -283,6 +288,56 @@ class TauriClientCore {
   async upsertSource(source: ReleaseSourceConfig): Promise<ReleaseSourceConfig[]> {
     return invoke<ReleaseSourceConfig[]>("upsert_source", { source }).catch((error) => {
       throw normalizeTauriError("upsert_source", error);
+    });
+  }
+
+  /** 读取来源绑定，并按需发现 AniBT/Mikan 候选。 */
+  async getAnimeSourceBindingState(
+    animeId: string,
+    discoverCandidates = true
+  ): Promise<AnimeSourceBindingState> {
+    return invoke<AnimeSourceBindingState>("get_anime_source_binding_state", {
+      animeId,
+      discoverCandidates
+    }).catch((error) => {
+      throw normalizeTauriError("get_anime_source_binding_state", error);
+    });
+  }
+
+  /** 确认并保存一个番剧来源绑定。 */
+  async confirmAnimeSourceBinding(input: ConfirmAnimeSourceBindingInput): Promise<AnimeSourceBindingState> {
+    return invoke<AnimeSourceBindingState>("confirm_anime_source_binding", { input }).catch((error) => {
+      throw normalizeTauriError("confirm_anime_source_binding", error);
+    });
+  }
+
+  /** 记录用户确认的不匹配来源候选。 */
+  async reportAnimeSourceCandidateMismatch(input: ReportAnimeSourceCandidateMismatchInput): Promise<void> {
+    return invoke<void>("report_anime_source_candidate_mismatch", { input }).catch((error) => {
+      throw normalizeTauriError("report_anime_source_candidate_mismatch", error);
+    });
+  }
+
+  /** 撤销一个来源候选的不匹配记录。 */
+  async removeAnimeSourceCandidateMismatch(
+    input: RemoveAnimeSourceCandidateMismatchInput
+  ): Promise<AnimeSourceBindingState> {
+    return invoke<AnimeSourceBindingState>("remove_anime_source_candidate_mismatch", { input }).catch((error) => {
+      throw normalizeTauriError("remove_anime_source_candidate_mismatch", error);
+    });
+  }
+
+  /** 设置或取消当前番剧对整个来源的候选排除。 */
+  async setAnimeSourceExcluded(input: SetAnimeSourceExclusionInput): Promise<AnimeSourceBindingState> {
+    return invoke<AnimeSourceBindingState>("set_anime_source_excluded", { input }).catch((error) => {
+      throw normalizeTauriError("set_anime_source_excluded", error);
+    });
+  }
+
+  /** 取消一个已确认的番剧来源绑定。 */
+  async removeAnimeSourceBinding(animeId: string, sourceId: string): Promise<AnimeSourceBindingState> {
+    return invoke<AnimeSourceBindingState>("remove_anime_source_binding", { animeId, sourceId }).catch((error) => {
+      throw normalizeTauriError("remove_anime_source_binding", error);
     });
   }
 

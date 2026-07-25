@@ -1,12 +1,15 @@
 use std::sync::{Arc, Mutex};
 
-use ani_domain::RequestCircuitState;
+use ani_domain::{
+    AnimeSourceBinding, AnimeSourceExclusion, Episode, MyAnime, ReleaseSourceConfig,
+    RequestCircuitState,
+};
 use ani_repository::{
-    ReleaseSearchCacheEntry, ReleaseSourceRepository, RepositoryError, RepositoryResult,
+    ApplicationRepository, ReleaseSearchCacheEntry, RepositoryError, RepositoryResult,
 };
 use ani_sources::{
-    CircuitStateStore, NativeHttpConfig, ProxyMode, ReleaseSearchStore, SourceError,
-    SourceNetworkService,
+    AnimeSourceBindingStore, CircuitStateStore, NativeHttpConfig, ProxyMode, ReleaseSearchStore,
+    SourceError, SourceNetworkService,
 };
 use ani_storage::Storage;
 use serde_json::Value;
@@ -27,7 +30,7 @@ impl SharedReleaseSearchStore {
     /// 在短临界区内执行来源 Repository 操作。
     fn with_repository<T>(
         &self,
-        operation: impl FnOnce(&dyn ReleaseSourceRepository) -> RepositoryResult<T>,
+        operation: impl FnOnce(&dyn ApplicationRepository) -> RepositoryResult<T>,
     ) -> RepositoryResult<T> {
         let storage = self
             .storage
@@ -71,6 +74,61 @@ impl ReleaseSearchStore for SharedReleaseSearchStore {
         entry: &ReleaseSearchCacheEntry,
     ) -> RepositoryResult<()> {
         self.with_repository(|repository| repository.upsert_release_search_cache(cache_key, entry))
+    }
+}
+
+impl AnimeSourceBindingStore for SharedReleaseSearchStore {
+    /// 读取全部追番。
+    fn list_followed_anime(&self) -> RepositoryResult<Vec<MyAnime>> {
+        self.with_repository(|repository| repository.list_my_anime())
+    }
+
+    /// 读取全部来源配置。
+    fn list_binding_sources(&self) -> RepositoryResult<Vec<ReleaseSourceConfig>> {
+        self.with_repository(|repository| repository.list_sources())
+    }
+
+    /// 读取指定番剧的单集。
+    fn list_binding_episodes(&self, anime_id: &str) -> RepositoryResult<Vec<Episode>> {
+        self.with_repository(|repository| repository.list_episodes(anime_id))
+    }
+
+    /// 读取指定番剧的来源绑定。
+    fn list_bindings(&self, anime_id: &str) -> RepositoryResult<Vec<AnimeSourceBinding>> {
+        self.with_repository(|repository| repository.list_anime_source_bindings(anime_id))
+    }
+
+    /// 保存一条来源绑定。
+    fn save_binding(
+        &self,
+        binding: &AnimeSourceBinding,
+    ) -> RepositoryResult<Vec<AnimeSourceBinding>> {
+        self.with_repository(|repository| repository.upsert_anime_source_binding(binding))
+    }
+
+    /// 读取指定番剧的来源排除记录。
+    fn list_exclusions(&self, anime_id: &str) -> RepositoryResult<Vec<AnimeSourceExclusion>> {
+        self.with_repository(|repository| repository.list_anime_source_exclusions(anime_id))
+    }
+
+    /// 保存一条来源排除记录。
+    fn save_exclusion(
+        &self,
+        exclusion: &AnimeSourceExclusion,
+    ) -> RepositoryResult<Vec<AnimeSourceExclusion>> {
+        self.with_repository(|repository| repository.upsert_anime_source_exclusion(exclusion))
+    }
+
+    /// 删除一条候选或整来源排除记录。
+    fn delete_exclusion(
+        &self,
+        anime_id: &str,
+        source_id: &str,
+        source_anime_id: Option<&str>,
+    ) -> RepositoryResult<Vec<AnimeSourceExclusion>> {
+        self.with_repository(|repository| {
+            repository.remove_anime_source_exclusion(anime_id, source_id, source_anime_id)
+        })
     }
 }
 

@@ -3,18 +3,21 @@ use std::collections::{HashMap, HashSet};
 
 use ani_domain::{
     Anime, AnimeAlias, AnimeAliasLanguage, AnimeDetailPartialError, AnimeDetailResult,
-    AnimeDiscoverySearchResult, AnimeRating, AnimeRssSubscription, AnimeStatus, AnimeWatchProgress,
-    AppSettings, DailyReminderItem, DailyReminderSummary, DashboardData, DownloadStatus,
-    DownloadTask, Episode, EpisodePreference, EpisodeStatus, EpisodeSummary, FansubGroup,
-    MediaFile, MyAnime, NotificationKind, NotificationRecord, NotificationSeverity, PendingAction,
-    PlaybackCheckpoint, ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
-    RequestCircuitState, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput, SourceHealth,
-    SourceKind, TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
+    AnimeDiscoverySearchResult, AnimeRating, AnimeRssSubscription, AnimeSourceBinding,
+    AnimeSourceBindingMatchMethod, AnimeSourceExclusion, AnimeSourceExclusionScope, AnimeStatus,
+    AnimeWatchProgress, AppSettings, DailyReminderItem, DailyReminderSummary, DashboardData,
+    DownloadStatus, DownloadTask, Episode, EpisodePreference, EpisodeStatus, EpisodeSummary,
+    FansubGroup, MediaFile, MyAnime, NotificationKind, NotificationRecord, NotificationSeverity,
+    PendingAction, PlaybackCheckpoint, ReleaseSourceConfig, ReleaseSourceSyncState,
+    ReportPlaybackProgressInput, RequestCircuitState, SavePlaybackCheckpointInput,
+    SetAnimeWatchProgressInput, SourceHealth, SourceKind, TorrentEngineKind, TorrentFile,
+    WeeklyScheduleDay,
 };
 use ani_repository::{
-    AnimeCatalogRepository, AnimeCatalogWriteResult, AnimeTrackingRepository, DashboardRepository,
-    NotificationRepository, PlaybackRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository,
-    RepositoryError, RepositoryResult, SettingsRepository,
+    AnimeCatalogRepository, AnimeCatalogWriteResult, AnimeSourceBindingRepository,
+    AnimeTrackingRepository, DashboardRepository, NotificationRepository, PlaybackRepository,
+    ReleaseSearchCacheEntry, ReleaseSourceRepository, RepositoryError, RepositoryResult,
+    SettingsRepository,
 };
 use chrono::{DateTime, Duration, Local, Utc};
 use log::{debug, info, warn};
@@ -301,6 +304,163 @@ impl<'connection> SqliteRepository<'connection> {
             .map(FansubGroupRow::into_domain)
             .collect(),
         }
+    }
+
+    /// 读取指定番剧的全部来源绑定。
+    pub(crate) fn list_anime_source_bindings(
+        &self,
+        anime_id: &str,
+    ) -> Result<Vec<AnimeSourceBinding>, StorageError> {
+        validate_identifier("animeId", anime_id)?;
+        query_all_with_params(
+            self.connection,
+            "SELECT * FROM anime_source_binding WHERE anime_id = ?1 ORDER BY source_id",
+            [anime_id],
+            map_anime_source_binding_row,
+        )?
+        .into_iter()
+        .map(AnimeSourceBindingRow::into_domain)
+        .collect()
+    }
+
+    /// 保存来源绑定，同一番剧和来源仅保留一项。
+    pub(crate) fn upsert_anime_source_binding(
+        &self,
+        binding: &AnimeSourceBinding,
+    ) -> Result<Vec<AnimeSourceBinding>, StorageError> {
+        validate_identifier("binding.id", &binding.id)?;
+        validate_identifier("binding.animeId", &binding.anime_id)?;
+        validate_identifier("binding.sourceId", &binding.source_id)?;
+        validate_identifier("binding.sourceAnimeId", &binding.source_anime_id)?;
+        validate_optional_http_url("binding.sourceUrl", binding.source_url.as_deref())?;
+        if !binding.confidence.is_finite() {
+            return invalid_input("binding.confidence", "绑定置信度必须是有限数值");
+        }
+        self.connection.execute(
+            "INSERT INTO anime_source_binding (
+               id, anime_id, source_id, source_anime_id, source_anime_title, source_url,
+               match_method, confidence, confirmed, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(anime_id, source_id) DO UPDATE SET
+               id = excluded.id, source_anime_id = excluded.source_anime_id,
+               source_anime_title = excluded.source_anime_title,
+               source_url = excluded.source_url, match_method = excluded.match_method,
+               confidence = excluded.confidence, confirmed = excluded.confirmed,
+               updated_at = excluded.updated_at",
+            params![
+                &binding.id,
+                &binding.anime_id,
+                &binding.source_id,
+                binding.source_anime_id.trim(),
+                binding.source_anime_title.as_deref(),
+                binding.source_url.as_deref(),
+                anime_source_match_method_value(&binding.match_method),
+                binding.confidence.clamp(0.0, 1.0),
+                i64::from(binding.confirmed),
+                &binding.created_at,
+                &binding.updated_at,
+            ],
+        )?;
+        info!(
+            "Rust 番剧来源绑定保存完成：anime_id={}, source_id={}, confirmed={}",
+            binding.anime_id, binding.source_id, binding.confirmed
+        );
+        self.list_anime_source_bindings(&binding.anime_id)
+    }
+
+    /// 删除指定番剧和来源的绑定。
+    pub(crate) fn remove_anime_source_binding(
+        &self,
+        anime_id: &str,
+        source_id: &str,
+    ) -> Result<Vec<AnimeSourceBinding>, StorageError> {
+        validate_identifier("animeId", anime_id)?;
+        validate_identifier("sourceId", source_id)?;
+        self.connection.execute(
+            "DELETE FROM anime_source_binding WHERE anime_id = ?1 AND source_id = ?2",
+            params![anime_id, source_id],
+        )?;
+        self.list_anime_source_bindings(anime_id)
+    }
+
+    /// 读取指定番剧的全部来源排除记录。
+    pub(crate) fn list_anime_source_exclusions(
+        &self,
+        anime_id: &str,
+    ) -> Result<Vec<AnimeSourceExclusion>, StorageError> {
+        validate_identifier("animeId", anime_id)?;
+        query_all_with_params(
+            self.connection,
+            "SELECT * FROM anime_source_exclusion
+             WHERE anime_id = ?1 ORDER BY source_id, source_anime_id",
+            [anime_id],
+            map_anime_source_exclusion_row,
+        )?
+        .into_iter()
+        .map(AnimeSourceExclusionRow::into_domain)
+        .collect()
+    }
+
+    /// 保存单候选或整来源排除记录。
+    pub(crate) fn upsert_anime_source_exclusion(
+        &self,
+        exclusion: &AnimeSourceExclusion,
+    ) -> Result<Vec<AnimeSourceExclusion>, StorageError> {
+        validate_identifier("exclusion.id", &exclusion.id)?;
+        validate_identifier("exclusion.animeId", &exclusion.anime_id)?;
+        validate_identifier("exclusion.sourceId", &exclusion.source_id)?;
+        let source_anime_id = exclusion
+            .source_anime_id
+            .as_deref()
+            .map(str::trim)
+            .unwrap_or_default();
+        if exclusion.scope == AnimeSourceExclusionScope::Candidate && source_anime_id.is_empty() {
+            return invalid_input("exclusion.sourceAnimeId", "候选排除必须包含来源番剧 ID");
+        }
+        self.connection.execute(
+            "INSERT INTO anime_source_exclusion (
+               id, anime_id, source_id, scope, source_anime_id, source_anime_title,
+               created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+             ON CONFLICT(anime_id, source_id, source_anime_id) DO UPDATE SET
+               id = excluded.id, scope = excluded.scope,
+               source_anime_title = excluded.source_anime_title,
+               updated_at = excluded.updated_at",
+            params![
+                &exclusion.id,
+                &exclusion.anime_id,
+                &exclusion.source_id,
+                anime_source_exclusion_scope_value(&exclusion.scope),
+                source_anime_id,
+                exclusion.source_anime_title.as_deref(),
+                &exclusion.created_at,
+                &exclusion.updated_at,
+            ],
+        )?;
+        info!(
+            "Rust 番剧来源排除保存完成：anime_id={}, source_id={}, scope={}",
+            exclusion.anime_id,
+            exclusion.source_id,
+            anime_source_exclusion_scope_value(&exclusion.scope)
+        );
+        self.list_anime_source_exclusions(&exclusion.anime_id)
+    }
+
+    /// 删除单候选或整来源排除记录。
+    pub(crate) fn remove_anime_source_exclusion(
+        &self,
+        anime_id: &str,
+        source_id: &str,
+        source_anime_id: Option<&str>,
+    ) -> Result<Vec<AnimeSourceExclusion>, StorageError> {
+        validate_identifier("animeId", anime_id)?;
+        validate_identifier("sourceId", source_id)?;
+        self.connection.execute(
+            "DELETE FROM anime_source_exclusion
+             WHERE anime_id = ?1 AND source_id = ?2 AND source_anime_id = ?3",
+            params![anime_id, source_id, source_anime_id.unwrap_or_default()],
+        )?;
+        self.list_anime_source_exclusions(anime_id)
     }
 
     /// 按名称读取全部下载源配置。
@@ -1380,6 +1540,63 @@ impl ReleaseSourceRepository for SqliteRepository<'_> {
     }
 }
 
+impl AnimeSourceBindingRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取来源绑定。
+    fn list_anime_source_bindings(
+        &self,
+        anime_id: &str,
+    ) -> RepositoryResult<Vec<AnimeSourceBinding>> {
+        SqliteRepository::list_anime_source_bindings(self, anime_id).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存来源绑定。
+    fn upsert_anime_source_binding(
+        &self,
+        binding: &AnimeSourceBinding,
+    ) -> RepositoryResult<Vec<AnimeSourceBinding>> {
+        SqliteRepository::upsert_anime_source_binding(self, binding).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器删除来源绑定。
+    fn remove_anime_source_binding(
+        &self,
+        anime_id: &str,
+        source_id: &str,
+    ) -> RepositoryResult<Vec<AnimeSourceBinding>> {
+        SqliteRepository::remove_anime_source_binding(self, anime_id, source_id)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取来源排除记录。
+    fn list_anime_source_exclusions(
+        &self,
+        anime_id: &str,
+    ) -> RepositoryResult<Vec<AnimeSourceExclusion>> {
+        SqliteRepository::list_anime_source_exclusions(self, anime_id)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存来源排除记录。
+    fn upsert_anime_source_exclusion(
+        &self,
+        exclusion: &AnimeSourceExclusion,
+    ) -> RepositoryResult<Vec<AnimeSourceExclusion>> {
+        SqliteRepository::upsert_anime_source_exclusion(self, exclusion)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器删除来源排除记录。
+    fn remove_anime_source_exclusion(
+        &self,
+        anime_id: &str,
+        source_id: &str,
+        source_anime_id: Option<&str>,
+    ) -> RepositoryResult<Vec<AnimeSourceExclusion>> {
+        SqliteRepository::remove_anime_source_exclusion(self, anime_id, source_id, source_anime_id)
+            .map_err(RepositoryError::from)
+    }
+}
+
 impl AnimeTrackingRepository for SqliteRepository<'_> {
     /// 通过 SQLite 适配器读取追番。
     fn list_my_anime(&self) -> RepositoryResult<Vec<MyAnime>> {
@@ -2035,6 +2252,46 @@ fn source_kind_value(kind: &SourceKind) -> &'static str {
     }
 }
 
+/// 返回来源绑定方式的 SQLite 字面量。
+fn anime_source_match_method_value(method: &AnimeSourceBindingMatchMethod) -> &'static str {
+    match method {
+        AnimeSourceBindingMatchMethod::Manual => "manual",
+        AnimeSourceBindingMatchMethod::ExternalId => "external_id",
+        AnimeSourceBindingMatchMethod::Scored => "scored",
+    }
+}
+
+/// 解析来源绑定方式。
+fn parse_anime_source_match_method(
+    value: &str,
+) -> Result<AnimeSourceBindingMatchMethod, StorageError> {
+    match value {
+        "manual" => Ok(AnimeSourceBindingMatchMethod::Manual),
+        "external_id" => Ok(AnimeSourceBindingMatchMethod::ExternalId),
+        "scored" => Ok(AnimeSourceBindingMatchMethod::Scored),
+        _ => invalid_value("anime_source_binding.match_method", value),
+    }
+}
+
+/// 返回来源排除作用域的 SQLite 字面量。
+fn anime_source_exclusion_scope_value(scope: &AnimeSourceExclusionScope) -> &'static str {
+    match scope {
+        AnimeSourceExclusionScope::Candidate => "candidate",
+        AnimeSourceExclusionScope::Source => "source",
+    }
+}
+
+/// 解析来源排除作用域。
+fn parse_anime_source_exclusion_scope(
+    value: &str,
+) -> Result<AnimeSourceExclusionScope, StorageError> {
+    match value {
+        "candidate" => Ok(AnimeSourceExclusionScope::Candidate),
+        "source" => Ok(AnimeSourceExclusionScope::Source),
+        _ => invalid_value("anime_source_exclusion.scope", value),
+    }
+}
+
 /// 解析下载源类型。
 fn parse_source_kind(value: &str) -> Result<SourceKind, StorageError> {
     match value {
@@ -2619,6 +2876,66 @@ impl FansubGroupRow {
     }
 }
 
+struct AnimeSourceBindingRow {
+    id: String,
+    anime_id: String,
+    source_id: String,
+    source_anime_id: String,
+    source_anime_title: Option<String>,
+    source_url: Option<String>,
+    match_method: String,
+    confidence: f64,
+    confirmed: bool,
+    created_at: String,
+    updated_at: String,
+}
+
+impl AnimeSourceBindingRow {
+    /// 将 SQLite 来源绑定行转换为领域对象。
+    fn into_domain(self) -> Result<AnimeSourceBinding, StorageError> {
+        Ok(AnimeSourceBinding {
+            id: self.id,
+            anime_id: self.anime_id,
+            source_id: self.source_id,
+            source_anime_id: self.source_anime_id,
+            source_anime_title: self.source_anime_title,
+            source_url: self.source_url,
+            match_method: parse_anime_source_match_method(&self.match_method)?,
+            confidence: self.confidence,
+            confirmed: self.confirmed,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
+struct AnimeSourceExclusionRow {
+    id: String,
+    anime_id: String,
+    source_id: String,
+    scope: String,
+    source_anime_id: Option<String>,
+    source_anime_title: Option<String>,
+    created_at: String,
+    updated_at: String,
+}
+
+impl AnimeSourceExclusionRow {
+    /// 将 SQLite 来源排除行转换为领域对象。
+    fn into_domain(self) -> Result<AnimeSourceExclusion, StorageError> {
+        Ok(AnimeSourceExclusion {
+            id: self.id,
+            anime_id: self.anime_id,
+            source_id: self.source_id,
+            scope: parse_anime_source_exclusion_scope(&self.scope)?,
+            source_anime_id: self.source_anime_id.filter(|value| !value.is_empty()),
+            source_anime_title: self.source_anime_title,
+            created_at: self.created_at,
+            updated_at: self.updated_at,
+        })
+    }
+}
+
 struct ReleaseSourceRow {
     id: String,
     name: String,
@@ -2970,6 +3287,37 @@ fn map_fansub_group_row(row: &Row<'_>) -> rusqlite::Result<FansubGroupRow> {
         name: row.get("name")?,
         aliases_json: row.get("aliases_json")?,
         source_ids_json: row.get("source_ids_json")?,
+    })
+}
+
+/// 映射 SQLite 来源绑定行。
+fn map_anime_source_binding_row(row: &Row<'_>) -> rusqlite::Result<AnimeSourceBindingRow> {
+    Ok(AnimeSourceBindingRow {
+        id: row.get("id")?,
+        anime_id: row.get("anime_id")?,
+        source_id: row.get("source_id")?,
+        source_anime_id: row.get("source_anime_id")?,
+        source_anime_title: row.get("source_anime_title")?,
+        source_url: row.get("source_url")?,
+        match_method: row.get("match_method")?,
+        confidence: row.get("confidence")?,
+        confirmed: row.get::<_, i64>("confirmed")? != 0,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+/// 映射 SQLite 来源排除行。
+fn map_anime_source_exclusion_row(row: &Row<'_>) -> rusqlite::Result<AnimeSourceExclusionRow> {
+    Ok(AnimeSourceExclusionRow {
+        id: row.get("id")?,
+        anime_id: row.get("anime_id")?,
+        source_id: row.get("source_id")?,
+        scope: row.get("scope")?,
+        source_anime_id: row.get("source_anime_id")?,
+        source_anime_title: row.get("source_anime_title")?,
+        created_at: row.get("created_at")?,
+        updated_at: row.get("updated_at")?,
     })
 }
 

@@ -1,0 +1,115 @@
+{
+  "schemaVersion": 1,
+  "kind": "p3-source-binding-model",
+  "payload": {
+    "binding": {
+      "id": "source-binding:anime-binding-contract:anibt-contract",
+      "animeId": "anime-binding-contract",
+      "sourceId": "anibt-contract",
+      "sourceAnimeId": "528828",
+      "sourceAnimeTitle": "来源绑定契约番",
+      "sourceUrl": "https://bgm.tv/subject/528828",
+      "matchMethod": "external_id",
+      "confidence": 1,
+      "confirmed": true,
+      "createdAt": "2026-07-25T00:00:00.000Z",
+      "updatedAt": "2026-07-25T00:00:00.000Z"
+    },
+    "exclusion": {
+      "id": "source-exclusion:anime-binding-contract:anibt-contract:999999",
+      "animeId": "anime-binding-contract",
+      "sourceId": "anibt-contract",
+      "scope": "candidate",
+      "sourceAnimeId": "999999",
+      "sourceAnimeTitle": "错误候选番剧",
+      "createdAt": "2026-07-25T00:05:00.000Z",
+      "updatedAt": "2026-07-25T00:05:00.000Z"
+    },
+    "candidate": {
+      "sourceId": "anibt-contract",
+      "sourceName": "AniBT 契约源",
+      "sourceAnimeId": "528828",
+      "title": "来源绑定契约番",
+      "originalTitle": "Source Binding Contract Anime",
+      "aliases": ["绑定契约番"],
+      "premiereYear": 2026,
+      "premiereMonth": 7,
+      "episodeCount": 12,
+      "sourceUrl": "https://bgm.tv/subject/528828",
+      "score": 94,
+      "reasons": ["标题 100%", "季度 100%", "集数 40%"]
+    },
+    "state": {
+      "animeId": "anime-binding-contract",
+      "bindings": [
+        {
+          "id": "source-binding:anime-binding-contract:anibt-contract",
+          "animeId": "anime-binding-contract",
+          "sourceId": "anibt-contract",
+          "sourceAnimeId": "528828",
+          "sourceAnimeTitle": "来源绑定契约番",
+          "sourceUrl": "https://bgm.tv/subject/528828",
+          "matchMethod": "external_id",
+          "confidence": 1,
+          "confirmed": true,
+          "createdAt": "2026-07-25T00:00:00.000Z",
+          "updatedAt": "2026-07-25T00:00:00.000Z"
+        }
+      ],
+      "candidates": [
+        {
+          "sourceId": "anibt-contract",
+          "sourceName": "AniBT 契约源",
+          "sourceAnimeId": "528828",
+          "title": "来源绑定契约番",
+          "originalTitle": "Source Binding Contract Anime",
+          "aliases": ["绑定契约番"],
+          "premiereYear": 2026,
+          "premiereMonth": 7,
+          "episodeCount": 12,
+          "sourceUrl": "https://bgm.tv/subject/528828",
+          "score": 94,
+          "reasons": ["标题 100%", "季度 100%", "集数 40%"]
+        }
+      ],
+      "excludedSources": [
+        {
+          "sourceId": "mikan-contract",
+          "sourceName": "蜜柑计划契约源"
+        }
+      ],
+      "errors": [
+        {
+          "sourceId": "broken-contract",
+          "message": "候选发现失败"
+        }
+      ]
+    },
+    "confirmInput": {
+      "animeId": "anime-binding-contract",
+      "sourceId": "anibt-contract",
+      "sourceAnimeId": "528828",
+      "sourceAnimeTitle": "来源绑定契约番",
+      "sourceUrl": "https://bgm.tv/subject/528828",
+      "confidence": 0.94
+    },
+    "mismatchInput": {
+      "animeId": "anime-binding-contract",
+      "sourceId": "anibt-contract",
+      "sourceAnimeId": "999999",
+      "sourceAnimeTitle": "错误候选番剧",
+      "score": 21,
+      "reasons": ["季度不匹配"]
+    },
+    "setExclusionInput": {
+      "animeId": "anime-binding-contract",
+      "sourceId": "mikan-contract",
+      "excluded": true
+    },
+    "removeMismatchInput": {
+      "animeId": "anime-binding-contract",
+      "sourceId": "anibt-contract",
+      "sourceAnimeId": "999999"
+    }
+  }
+}

@@ -2,8 +2,8 @@ use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 
 use ani_domain::{
-    Anime, AnimeReleaseQuery, FansubGroup, MyAnime, Release, ReleaseQuery, ReleaseSearchError,
-    ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSearchResult,
+    Anime, AnimeReleaseQuery, AnimeSourceBinding, FansubGroup, MyAnime, Release, ReleaseQuery,
+    ReleaseSearchError, ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSearchResult,
     RssSubscriptionReleaseQuery, RssSubscriptionReleaseResult, SourceKind, SubtitleLanguage,
     SubtitlePreference,
 };
@@ -197,6 +197,7 @@ impl ReleaseSearchService {
         configs: &[ReleaseSourceConfig],
         fansubs: &[FansubGroup],
         anime: &Anime,
+        bindings: &[AnimeSourceBinding],
         query: AnimeReleaseQuery,
     ) -> Result<ReleaseSearchResult, SourceError>
     where
@@ -221,6 +222,7 @@ impl ReleaseSearchService {
                 "kind": "anime",
                 "anime": anime,
                 "terms": terms,
+                "bindings": bindings.iter().filter(|binding| binding.confirmed).collect::<Vec<_>>(),
             })),
         );
         if !query.force_refresh {
@@ -234,16 +236,36 @@ impl ReleaseSearchService {
             .filter(|source| !is_mikan_site_config(source))
             .collect::<Vec<_>>();
         let fetched = join_all(sources.iter().map(|config| async {
-            let result = if config.kind == SourceKind::Rss {
-                self.fetch_source(
-                    store,
-                    config,
-                    &ReleaseQuery {
-                        keyword: String::new(),
-                        ..release_query.clone()
+            let binding = bindings.iter().find(|binding| {
+                binding.anime_id == anime.id && binding.source_id == config.id && binding.confirmed
+            });
+            let (result, anime_scoped) = if is_bindable_anime_source(config) {
+                (
+                    match binding {
+                        Some(binding) => {
+                            self.fetch_bound_anime_source(store, config, binding, &release_query)
+                                .await
+                        }
+                        None => Err(SourceError::Parse(format!(
+                            "下载源无法生成当前番剧的精确 RSS，请先确认{}番剧匹配",
+                            config.name
+                        ))),
                     },
+                    binding.is_some(),
                 )
-                .await
+            } else if config.kind == SourceKind::Rss {
+                (
+                    self.fetch_source(
+                        store,
+                        config,
+                        &ReleaseQuery {
+                            keyword: String::new(),
+                            ..release_query.clone()
+                        },
+                    )
+                    .await,
+                    false,
+                )
             } else {
                 let mut releases = Vec::new();
                 for term in &terms {
@@ -259,9 +281,9 @@ impl ReleaseSearchService {
                         .await?,
                     );
                 }
-                Ok(dedupe_releases(releases))
+                (Ok(dedupe_releases(releases)), false)
             };
-            result.map(|releases| (config.clone(), releases))
+            result.map(|releases| (config.clone(), releases, anime_scoped))
         }))
         .await;
 
@@ -269,13 +291,13 @@ impl ReleaseSearchService {
         let mut per_source = Vec::with_capacity(sources.len());
         for (config, fetched) in sources.iter().zip(fetched) {
             match fetched {
-                Ok((source, releases)) => per_source.push(SourceFetchResult {
+                Ok((source, releases, anime_scoped)) => per_source.push(SourceFetchResult {
                     source,
                     releases: releases
                         .into_iter()
                         .map(|release| enrich_release_from_title(release, fansubs))
                         .filter(|release| {
-                            matches_anime_release_title(&release.title, &terms)
+                            (anime_scoped || matches_anime_release_title(&release.title, &terms))
                                 && classify_anime_release(release, anime)
                                     != AnimeReleaseCompatibility::Mismatch
                                 && release_matches_episode(release, query.episode_no)
@@ -432,6 +454,41 @@ impl ReleaseSearchService {
             }
             SourceKind::SiteAdapter | SourceKind::Manual => Ok(Vec::new()),
         }
+    }
+
+    /// 根据已确认绑定读取 AniBT 或 Mikan 单番精确 RSS。
+    async fn fetch_bound_anime_source<S>(
+        &self,
+        store: &S,
+        config: &ReleaseSourceConfig,
+        binding: &AnimeSourceBinding,
+        query: &ReleaseQuery,
+    ) -> Result<Vec<Release>, SourceError>
+    where
+        S: ReleaseSearchStore + Sync,
+    {
+        let limit = normalize_fetch_limit(query.limit);
+        let url = if is_anibt_config(config) {
+            build_anibt_anime_rss_url(config, &binding.source_anime_id, limit)?
+        } else {
+            build_mikan_anime_rss_url(config, &binding.source_anime_id)?
+        };
+        let headers = if is_anibt_config(config) {
+            create_anibt_headers(config, "application/rss+xml,application/xml,text/xml")
+        } else {
+            BTreeMap::from([(
+                "Accept".to_owned(),
+                "application/rss+xml,application/xml,text/xml".to_owned(),
+            )])
+        };
+        let response = self.get_with_headers(store, config, &url, headers).await?;
+        let mut releases = if is_anibt_config(config) {
+            parse_anibt_rss(&response.text(), config)?
+        } else {
+            parse_rss_releases(&response.text(), config, Some(&url))?
+        };
+        releases.truncate(limit);
+        Ok(releases)
     }
 
     async fn fetch_generic_rss<S>(
@@ -955,6 +1012,25 @@ pub fn build_anibt_anime_rss_url(
     Ok(url.to_string())
 }
 
+/// 生成 Mikan 精确番剧 RSS URL，结果数量由客户端统一截断。
+pub fn build_mikan_anime_rss_url(
+    config: &ReleaseSourceConfig,
+    source_anime_id: &str,
+) -> Result<String, SourceError> {
+    let mut url = Url::parse(
+        config
+            .base_url
+            .as_deref()
+            .or(config.rss_url.as_deref())
+            .unwrap_or("https://mikanani.me/"),
+    )
+    .and_then(|base| base.join("/RSS/Bangumi"))
+    .map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
+    url.query_pairs_mut()
+        .append_pair("bangumiId", source_anime_id);
+    Ok(url.to_string())
+}
+
 /// 根据 AniBT 凭据格式生成 Cookie、Authorization 或 X-API-Key 请求头。
 pub fn create_anibt_headers(
     config: &ReleaseSourceConfig,
@@ -1043,16 +1119,20 @@ fn is_dmhy_config(config: &ReleaseSourceConfig) -> bool {
     value.contains("dmhy") || value.contains("动漫花园") || value.contains("share.dmhy.org")
 }
 
-fn is_mikan_config(config: &ReleaseSourceConfig) -> bool {
+pub(crate) fn is_mikan_config(config: &ReleaseSourceConfig) -> bool {
     let value = config_identity(config);
     value.contains("mikan") || value.contains("蜜柑") || value.contains("mikanani.me")
 }
 
-fn is_mikan_site_config(config: &ReleaseSourceConfig) -> bool {
+pub(crate) fn is_mikan_site_config(config: &ReleaseSourceConfig) -> bool {
     config.kind == SourceKind::SiteAdapter && is_mikan_config(config)
 }
 
-fn is_anibt_config(config: &ReleaseSourceConfig) -> bool {
+fn is_bindable_anime_source(config: &ReleaseSourceConfig) -> bool {
+    is_anibt_config(config) || (config.kind == SourceKind::Rss && is_mikan_config(config))
+}
+
+pub(crate) fn is_anibt_config(config: &ReleaseSourceConfig) -> bool {
     let value = config_identity(config);
     value.contains("anibt") || value.contains("anibt.net")
 }
@@ -1348,15 +1428,19 @@ mod tests {
     use std::collections::BTreeMap;
     use std::sync::{Arc, Mutex};
 
-    use ani_domain::{ReleaseQuery, ReleaseSourceConfig, RequestCircuitState, SourceKind};
+    use ani_domain::{
+        Anime, AnimeReleaseQuery, AnimeSourceBinding, AnimeSourceBindingMatchMethod, ReleaseQuery,
+        ReleaseSourceConfig, RequestCircuitState, SourceKind,
+    };
     use ani_repository::{ReleaseSearchCacheEntry, RepositoryResult};
+    use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     use super::{
         build_acgrip_rss_url, build_anibt_anime_rss_url, build_dmhy_list_url,
-        build_mikan_search_url, build_nyaa_rss_url, create_anibt_headers, ReleaseSearchService,
-        ReleaseSearchStore,
+        build_mikan_anime_rss_url, build_mikan_search_url, build_nyaa_rss_url,
+        create_anibt_headers, ReleaseSearchService, ReleaseSearchStore,
     };
     use crate::{CircuitStateStore, NativeHttpConfig, ProxyMode, SourceNetworkService};
 
@@ -1462,6 +1546,23 @@ mod tests {
             headers.get("Cookie").map(String::as_str),
             Some("anibt.sid=session")
         );
+
+        let mikan = ReleaseSourceConfig {
+            id: "mikan-rss".to_owned(),
+            name: "蜜柑计划".to_owned(),
+            kind: SourceKind::Rss,
+            enabled: true,
+            use_proxy: false,
+            request_interval_ms: 250,
+            base_url: None,
+            api_key: None,
+            rss_url: Some("https://mikanani.me/RSS/Bangumi?legacy=1".to_owned()),
+            tags: Vec::new(),
+        };
+        assert_eq!(
+            build_mikan_anime_rss_url(&mikan, "3941").expect("Mikan exact RSS URL"),
+            "https://mikanani.me/RSS/Bangumi?bangumiId=3941"
+        );
     }
 
     /// 验证单个来源失败不会清空成功结果，缓存可被新服务实例复用。
@@ -1508,6 +1609,59 @@ mod tests {
         assert_eq!(cached, result);
     }
 
+    /// 验证已确认 AniBT 绑定走精确 RSS，绑定变化后不会复用旧缓存。
+    #[tokio::test]
+    async fn uses_bound_anime_rss_and_scopes_cache_by_binding() {
+        let body = r#"<rss xmlns:anibt="x"><channel><item><anibt:releaseId>binding-rel-3</anibt:releaseId><anibt:releaseTitle>[测试组] 来源绑定测试番 - 03 [1080p][CHS]</anibt:releaseTitle><anibt:episode>3</anibt:episode><torrent><infohash>0123456789ABCDEF0123456789ABCDEF01234567</infohash><magneturi>magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567</magneturi></torrent></item></channel></rss>"#;
+        let (base_url, requests) = serve_requests(2, "200 OK", body).await;
+        let config = source("anibt-local", "AniBT Local", &base_url);
+        let store = MemoryReleaseSearchStore::default();
+        let anime = binding_test_anime();
+        let query = AnimeReleaseQuery {
+            anime_id: anime.id.clone(),
+            episode_no: Some(3.0),
+            fansub_group_id: None,
+            preferred_resolution: Some("1080p".to_owned()),
+            limit: Some(10),
+            cache_ttl_ms: Some(60_000),
+            force_refresh: false,
+        };
+        let first_binding = binding(&anime.id, &config.id, "528828");
+
+        let first = ReleaseSearchService::new(test_network())
+            .search_anime(
+                &store,
+                std::slice::from_ref(&config),
+                &[],
+                &anime,
+                std::slice::from_ref(&first_binding),
+                query.clone(),
+            )
+            .await
+            .expect("search first bound anime RSS");
+        assert_eq!(first.releases.len(), 1);
+
+        let second_binding = binding(&anime.id, &config.id, "528829");
+        let second = ReleaseSearchService::new(test_network())
+            .search_anime(
+                &store,
+                std::slice::from_ref(&config),
+                &[],
+                &anime,
+                std::slice::from_ref(&second_binding),
+                query,
+            )
+            .await
+            .expect("search changed bound anime RSS");
+        assert_eq!(second.releases.len(), 1);
+        assert_eq!(store.cache.lock().expect("lock scoped cache").len(), 2);
+
+        let requests = requests.lock().expect("lock captured requests");
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].contains("/rss/anime.xml?bgmId=528828&limit=10"));
+        assert!(requests[1].contains("/rss/anime.xml?bgmId=528829&limit=10"));
+    }
+
     fn source(id: &str, name: &str, base_url: &str) -> ReleaseSourceConfig {
         ReleaseSourceConfig {
             id: id.to_owned(),
@@ -1536,6 +1690,42 @@ mod tests {
             api_key: None,
             rss_url: Some(rss_url),
             tags: Vec::new(),
+        }
+    }
+
+    /// 创建资源搜索绑定测试番剧。
+    fn binding_test_anime() -> Anime {
+        Anime {
+            id: "anime-binding-search".to_owned(),
+            title: "来源绑定测试番".to_owned(),
+            original_title: None,
+            aliases: Vec::new(),
+            premiere_date: Some("2026-07-01".to_owned()),
+            premiere_year: 2026,
+            premiere_month: 7,
+            season: Some("summer".to_owned()),
+            summary: None,
+            cover_url: None,
+            rating: None,
+            external_ids: json!({"bangumi": "528828"}),
+            detail: None,
+        }
+    }
+
+    /// 创建一条已确认来源绑定。
+    fn binding(anime_id: &str, source_id: &str, source_anime_id: &str) -> AnimeSourceBinding {
+        AnimeSourceBinding {
+            id: format!("binding:{anime_id}:{source_id}"),
+            anime_id: anime_id.to_owned(),
+            source_id: source_id.to_owned(),
+            source_anime_id: source_anime_id.to_owned(),
+            source_anime_title: None,
+            source_url: None,
+            match_method: AnimeSourceBindingMatchMethod::Manual,
+            confidence: 1.0,
+            confirmed: true,
+            created_at: "2026-07-25T00:00:00.000Z".to_owned(),
+            updated_at: "2026-07-25T00:00:00.000Z".to_owned(),
         }
     }
 
@@ -1579,5 +1769,53 @@ mod tests {
                 .expect("write local HTTP body");
         });
         format!("http://{address}/source")
+    }
+
+    /// 启动固定次数的本地服务并记录请求首行。
+    async fn serve_requests(
+        count: usize,
+        status: &str,
+        body: &str,
+    ) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind repeated local HTTP listener");
+        let address = listener.local_addr().expect("read repeated HTTP address");
+        let status = status.to_owned();
+        let body = body.as_bytes().to_vec();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&requests);
+        tokio::spawn(async move {
+            for _ in 0..count {
+                let (mut stream, _) = listener.accept().await.expect("accept repeated request");
+                let mut request = [0_u8; 4_096];
+                let bytes = stream
+                    .read(&mut request)
+                    .await
+                    .expect("read repeated request");
+                let first_line = String::from_utf8_lossy(&request[..bytes])
+                    .lines()
+                    .next()
+                    .unwrap_or_default()
+                    .to_owned();
+                captured
+                    .lock()
+                    .expect("lock repeated request capture")
+                    .push(first_line);
+                let response = format!(
+                    "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write repeated HTTP headers");
+                stream
+                    .write_all(&body)
+                    .await
+                    .expect("write repeated HTTP body");
+            }
+        });
+        (format!("http://{address}/"), requests)
     }
 }

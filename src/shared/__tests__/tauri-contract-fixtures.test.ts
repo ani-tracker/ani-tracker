@@ -7,15 +7,23 @@ import { acceptPlayerSnapshot } from "../player-contract";
 import type {
   AnimeDetailResult,
   AnimeDiscoverySearchResult,
+  AnimeSourceBindingState,
+  AnimeSourceCandidate,
   AnimeWatchProgress,
+  ConfirmAnimeSourceBindingInput,
   PlaybackCheckpoint,
   ReleaseSearchResult,
+  RemoveAnimeSourceCandidateMismatchInput,
+  ReportAnimeSourceCandidateMismatchInput,
   ReportPlaybackProgressInput,
   RssSubscriptionReleaseResult,
   SavePlaybackCheckpointInput,
+  SetAnimeSourceExclusionInput,
   SetAnimeWatchProgressInput
 } from "../contracts";
 import type {
+  AnimeSourceBinding,
+  AnimeSourceExclusion,
   DashboardData,
   Episode,
   EpisodePreference,
@@ -125,6 +133,32 @@ test("Tauri P3 来源网络契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.source.requestIntervalMs, 1_750);
   assert.equal(fixture.payload.syncState.requestFailureCount, 2);
   assert.equal(fixture.payload.circuitState.key, `release-source:${fixture.payload.source.id}`);
+});
+
+/** 读取 P3 来源绑定金样，验证绑定、候选、排除和命令输入字段一致。 */
+test("Tauri P3 来源绑定契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p3-source-binding-model.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    binding: AnimeSourceBinding;
+    exclusion: AnimeSourceExclusion;
+    candidate: AnimeSourceCandidate;
+    state: AnimeSourceBindingState;
+    confirmInput: ConfirmAnimeSourceBindingInput;
+    mismatchInput: ReportAnimeSourceCandidateMismatchInput;
+    setExclusionInput: SetAnimeSourceExclusionInput;
+    removeMismatchInput: RemoveAnimeSourceCandidateMismatchInput;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p3-source-binding-model");
+  assert.equal(fixture.payload.binding.matchMethod, "external_id");
+  assert.equal(fixture.payload.exclusion.scope, "candidate");
+  assert.equal(fixture.payload.candidate.score, 94);
+  assert.equal(fixture.payload.state.excludedSources[0].sourceId, "mikan-contract");
+  assert.equal(fixture.payload.confirmInput.confidence, 0.94);
+  assert.equal(fixture.payload.mismatchInput.sourceAnimeId, "999999");
+  assert.equal(fixture.payload.setExclusionInput.excluded, true);
+  assert.equal(fixture.payload.removeMismatchInput.sourceAnimeId, "999999");
 });
 
 /** 读取 P3 资源搜索金样，验证聚合结果、单源错误和 RSS 字段一致。 */

@@ -4,12 +4,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_domain::{
-    AnimeStatus, Episode, EpisodePreference, MyAnime, PlaybackCheckpoint, ReleaseSourceConfig,
-    ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
-    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
+    AnimeSourceExclusionScope, AnimeStatus, Episode, EpisodePreference, MyAnime,
+    PlaybackCheckpoint, ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
+    RequestCircuitState, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use ani_repository::{
-    ReleaseSearchCacheEntry, ReleaseSourceRepository, UnitOfWork, UnitOfWorkFactory,
+    AnimeSourceBindingRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository,
+    RepositoryError, UnitOfWork, UnitOfWorkFactory,
 };
 use rusqlite::{params, Connection, OpenFlags};
 use serde::Deserialize;
@@ -48,6 +50,13 @@ struct P3SourceNetworkModelFixture {
     source: ReleaseSourceConfig,
     sync_state: ReleaseSourceSyncState,
     circuit_state: RequestCircuitState,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct P3SourceBindingModelFixture {
+    binding: AnimeSourceBinding,
+    exclusion: AnimeSourceExclusion,
 }
 
 /// 验证新库在单次启动中完成建表、seed 和版本写入。
@@ -660,6 +669,109 @@ fn persists_p3_source_network_state() {
         .is_none());
 }
 
+/// 验证来源绑定和排除记录通过公共 Repository 端口完整持久化并校验输入。
+#[test]
+fn persists_p3_source_bindings_and_exclusions() {
+    let directory = TestDirectory::new("p3-source-binding");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("open p3 source binding database");
+    let fixture: ContractFixture<P3SourceBindingModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-source-binding-model.v1.json"
+        )))
+        .expect("decode p3 source binding fixture");
+    assert_eq!(fixture.schema_version, 1);
+    assert_eq!(fixture.kind, "p3-source-binding-model");
+    insert_source(
+        &storage.connection,
+        &fixture.payload.binding.source_id,
+        false,
+    );
+    insert_source_binding_anime(&storage.connection, &fixture.payload.binding.anime_id);
+    let repository = storage.repository();
+
+    let bindings = AnimeSourceBindingRepository::upsert_anime_source_binding(
+        &repository,
+        &fixture.payload.binding,
+    )
+    .expect("save source binding");
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0], fixture.payload.binding);
+
+    let mut replacement = fixture.payload.binding.clone();
+    replacement.id = "replacement-binding-id".to_owned();
+    replacement.source_anime_id = "528829".to_owned();
+    replacement.match_method = AnimeSourceBindingMatchMethod::Manual;
+    replacement.confidence = 0.75;
+    replacement.updated_at = "2026-07-25T00:10:00.000Z".to_owned();
+    let bindings =
+        AnimeSourceBindingRepository::upsert_anime_source_binding(&repository, &replacement)
+            .expect("replace source binding");
+    assert_eq!(bindings.len(), 1);
+    assert_eq!(bindings[0].source_anime_id, "528829");
+    assert_eq!(bindings[0].created_at, fixture.payload.binding.created_at);
+
+    let mut invalid_binding = replacement.clone();
+    invalid_binding.source_url = Some("file:///private/source".to_owned());
+    assert!(matches!(
+        AnimeSourceBindingRepository::upsert_anime_source_binding(&repository, &invalid_binding),
+        Err(RepositoryError::InvalidInput { .. })
+    ));
+
+    let exclusions = AnimeSourceBindingRepository::upsert_anime_source_exclusion(
+        &repository,
+        &fixture.payload.exclusion,
+    )
+    .expect("save candidate exclusion");
+    assert_eq!(exclusions, vec![fixture.payload.exclusion.clone()]);
+
+    let mut source_exclusion = fixture.payload.exclusion.clone();
+    source_exclusion.id = "source-exclusion-all".to_owned();
+    source_exclusion.scope = AnimeSourceExclusionScope::Source;
+    source_exclusion.source_anime_id = None;
+    source_exclusion.source_anime_title = None;
+    let exclusions =
+        AnimeSourceBindingRepository::upsert_anime_source_exclusion(&repository, &source_exclusion)
+            .expect("save source exclusion");
+    assert_eq!(exclusions.len(), 2);
+
+    let mut invalid_exclusion = fixture.payload.exclusion.clone();
+    invalid_exclusion.source_anime_id = None;
+    assert!(matches!(
+        AnimeSourceBindingRepository::upsert_anime_source_exclusion(
+            &repository,
+            &invalid_exclusion
+        ),
+        Err(RepositoryError::InvalidInput { .. })
+    ));
+
+    let exclusions = AnimeSourceBindingRepository::remove_anime_source_exclusion(
+        &repository,
+        &fixture.payload.exclusion.anime_id,
+        &fixture.payload.exclusion.source_id,
+        fixture.payload.exclusion.source_anime_id.as_deref(),
+    )
+    .expect("remove candidate exclusion");
+    assert_eq!(exclusions, vec![source_exclusion]);
+    let exclusions = AnimeSourceBindingRepository::remove_anime_source_exclusion(
+        &repository,
+        &fixture.payload.exclusion.anime_id,
+        &fixture.payload.exclusion.source_id,
+        None,
+    )
+    .expect("remove source exclusion");
+    assert!(exclusions.is_empty());
+
+    let bindings = AnimeSourceBindingRepository::remove_anime_source_binding(
+        &repository,
+        &replacement.anime_id,
+        &replacement.source_id,
+    )
+    .expect("remove source binding");
+    assert!(bindings.is_empty());
+}
+
 /// 创建包含固定设置和下载源的测试启动参数。
 fn test_options(directory: &TestDirectory, database_name: &str) -> StorageOptions {
     StorageOptions {
@@ -869,6 +981,19 @@ fn insert_source(connection: &Connection, id: &str, use_proxy: bool) {
             params![id, if use_proxy { 1_i64 } else { 0_i64 }],
         )
         .expect("insert source fixture");
+}
+
+/// 写入来源绑定外键依赖的最小番剧目录记录。
+fn insert_source_binding_anime(connection: &Connection, anime_id: &str) {
+    connection
+        .execute(
+            "INSERT INTO anime_catalog (
+               id, title, premiere_year, premiere_month, external_ids_json, created_at, updated_at
+             ) VALUES (?1, '来源绑定契约番', 2026, 7, '{}',
+               '2026-07-25T00:00:00.000Z', '2026-07-25T00:00:00.000Z')",
+            [anime_id],
+        )
+        .expect("insert source binding anime fixture");
 }
 
 /// 读取一项数据库版本元数据。

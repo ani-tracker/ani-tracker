@@ -2,13 +2,17 @@ use std::sync::{Arc, Mutex};
 
 use ani_contracts::AppCommandError;
 use ani_domain::{
-    AnimeReleaseQuery, AnimeStatus, AppSettings, Episode, EpisodePreference, FansubGroup, MyAnime,
+    AnimeReleaseQuery, AnimeSourceBinding, AnimeSourceBindingState, AnimeStatus, AppSettings,
+    ConfirmAnimeSourceBindingInput, Episode, EpisodePreference, FansubGroup, MyAnime,
     ReleaseMatchContext, ReleaseQuery, ReleaseSearchError, ReleaseSearchResult,
-    ReleaseSourceConfig, RssSubscriptionReleaseQuery, RssSubscriptionReleaseResult, SourceKind,
+    ReleaseSourceConfig, RemoveAnimeSourceCandidateMismatchInput,
+    ReportAnimeSourceCandidateMismatchInput, RssSubscriptionReleaseQuery,
+    RssSubscriptionReleaseResult, SetAnimeSourceExclusionInput, SourceKind,
 };
 use ani_repository::{prelude::*, RepositoryError};
 use ani_sources::{
-    sort_releases_by_rules, ReleaseSearchService, SourceError, COMPLETED_ANIME_RELEASE_CACHE_TTL_MS,
+    sort_releases_by_rules, AnimeSourceBindingService, ReleaseSearchService, SourceError,
+    COMPLETED_ANIME_RELEASE_CACHE_TTL_MS,
 };
 use ani_storage::Storage;
 use tauri::State;
@@ -29,6 +33,7 @@ struct AnimeSearchSnapshot {
     anime: MyAnime,
     episodes: Vec<Episode>,
     preferences: Vec<EpisodePreference>,
+    bindings: Vec<AnimeSourceBinding>,
 }
 
 /// 将来源与仓储错误转换为稳定 Tauri 命令错误。
@@ -138,6 +143,9 @@ async fn load_anime_search_snapshot(
             preferences: repository
                 .list_episode_preferences(&anime_id)
                 .map_err(|error| map_repository_error("读取单集偏好", error))?,
+            bindings: repository
+                .list_anime_source_bindings(&anime_id)
+                .map_err(|error| map_repository_error("读取番剧来源绑定", error))?,
             anime,
         })
     })
@@ -198,6 +206,7 @@ pub(crate) async fn search_anime_releases(
             &snapshot.search.sources,
             &snapshot.search.fansubs,
             &snapshot.anime.anime,
+            &snapshot.bindings,
             query,
         )
         .await
@@ -321,4 +330,169 @@ pub(crate) async fn search_rss_subscription_releases(
             &preferred_languages,
         )
         .await)
+}
+
+/// 读取来源绑定命令需要的当前平台设置。
+async fn load_settings(
+    storage: Arc<Mutex<Storage>>,
+    defaults: AppSettings,
+) -> Result<AppSettings, AppCommandError> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = storage
+            .lock()
+            .map_err(|error| map_runtime_error("读取来源绑定设置", error))?;
+        storage
+            .repository()
+            .get_settings(&defaults)
+            .map_err(|error| map_repository_error("读取设置", error))
+    })
+    .await
+    .map_err(|error| map_runtime_error("读取来源绑定设置", error))?
+}
+
+/// 读取番剧来源绑定状态，并按需发现 AniBT/Mikan 候选。
+#[tauri::command]
+pub(crate) async fn get_anime_source_binding_state(
+    anime_id: String,
+    discover_candidates: Option<bool>,
+    storage_state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<AnimeSourceBindingState, AppCommandError> {
+    let storage = Arc::clone(storage_state.storage());
+    let settings = load_settings(
+        Arc::clone(&storage),
+        storage_state.platform_defaults().clone(),
+    )
+    .await?;
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_source_error("初始化来源绑定网络", error))?;
+    AnimeSourceBindingService::new(network)
+        .get_state(
+            &SharedReleaseSearchStore::new(storage),
+            &anime_id,
+            discover_candidates.unwrap_or(true),
+        )
+        .await
+        .map_err(|error| map_source_error("读取番剧来源绑定", error))
+}
+
+/// 确认一个番剧来源候选并保存稳定绑定。
+#[tauri::command]
+pub(crate) async fn confirm_anime_source_binding(
+    input: ConfirmAnimeSourceBindingInput,
+    storage_state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<AnimeSourceBindingState, AppCommandError> {
+    let storage = Arc::clone(storage_state.storage());
+    let settings = load_settings(
+        Arc::clone(&storage),
+        storage_state.platform_defaults().clone(),
+    )
+    .await?;
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_source_error("初始化来源绑定网络", error))?;
+    AnimeSourceBindingService::new(network)
+        .confirm(&SharedReleaseSearchStore::new(storage), input)
+        .await
+        .map_err(|error| map_source_error("确认番剧来源绑定", error))
+}
+
+/// 保存用户确认的不匹配来源候选。
+#[tauri::command]
+pub(crate) async fn report_anime_source_candidate_mismatch(
+    input: ReportAnimeSourceCandidateMismatchInput,
+    storage_state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<(), AppCommandError> {
+    let storage = Arc::clone(storage_state.storage());
+    let settings = load_settings(
+        Arc::clone(&storage),
+        storage_state.platform_defaults().clone(),
+    )
+    .await?;
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_source_error("初始化来源绑定网络", error))?;
+    AnimeSourceBindingService::new(network)
+        .report_mismatch(&SharedReleaseSearchStore::new(storage), input)
+        .map_err(|error| map_source_error("记录来源候选不匹配", error))
+}
+
+/// 撤销一个来源候选的不匹配记录。
+#[tauri::command]
+pub(crate) async fn remove_anime_source_candidate_mismatch(
+    input: RemoveAnimeSourceCandidateMismatchInput,
+    storage_state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<AnimeSourceBindingState, AppCommandError> {
+    let storage = Arc::clone(storage_state.storage());
+    let settings = load_settings(
+        Arc::clone(&storage),
+        storage_state.platform_defaults().clone(),
+    )
+    .await?;
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_source_error("初始化来源绑定网络", error))?;
+    AnimeSourceBindingService::new(network)
+        .remove_candidate_mismatch(&SharedReleaseSearchStore::new(storage), input)
+        .await
+        .map_err(|error| map_source_error("撤销来源候选不匹配", error))
+}
+
+/// 设置或取消当前番剧对整个来源的候选排除。
+#[tauri::command]
+pub(crate) async fn set_anime_source_excluded(
+    input: SetAnimeSourceExclusionInput,
+    storage_state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<AnimeSourceBindingState, AppCommandError> {
+    let storage = Arc::clone(storage_state.storage());
+    let settings = load_settings(
+        Arc::clone(&storage),
+        storage_state.platform_defaults().clone(),
+    )
+    .await?;
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_source_error("初始化来源绑定网络", error))?;
+    AnimeSourceBindingService::new(network)
+        .set_source_excluded(&SharedReleaseSearchStore::new(storage), input)
+        .await
+        .map_err(|error| map_source_error("更新番剧来源排除", error))
+}
+
+/// 取消一个已确认来源绑定并重新开放候选发现。
+#[tauri::command]
+pub(crate) async fn remove_anime_source_binding(
+    anime_id: String,
+    source_id: String,
+    storage_state: State<'_, AppStorageState>,
+    source_state: State<'_, AppSourceState>,
+) -> Result<AnimeSourceBindingState, AppCommandError> {
+    let storage = Arc::clone(storage_state.storage());
+    let settings = load_settings(
+        Arc::clone(&storage),
+        storage_state.platform_defaults().clone(),
+    )
+    .await?;
+    let network = source_state
+        .network_service(&settings)
+        .await
+        .map_err(|error| map_source_error("初始化来源绑定网络", error))?;
+    AnimeSourceBindingService::new(network)
+        .remove(
+            &SharedReleaseSearchStore::new(storage),
+            &anime_id,
+            &source_id,
+        )
+        .await
+        .map_err(|error| map_source_error("取消番剧来源绑定", error))
 }

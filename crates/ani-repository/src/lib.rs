@@ -1,8 +1,9 @@
 use ani_domain::{
-    Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeWatchProgress, AppSettings,
-    DashboardData, Episode, EpisodePreference, FansubGroup, MyAnime, NotificationRecord,
-    PlaybackCheckpoint, ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
-    RequestCircuitState, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeSourceBinding, AnimeSourceExclusion,
+    AnimeWatchProgress, AppSettings, DashboardData, Episode, EpisodePreference, FansubGroup,
+    MyAnime, NotificationRecord, PlaybackCheckpoint, ReleaseSourceConfig, ReleaseSourceSyncState,
+    ReportPlaybackProgressInput, RequestCircuitState, SavePlaybackCheckpointInput,
+    SetAnimeWatchProgressInput,
 };
 use serde_json::Value;
 
@@ -144,6 +145,48 @@ pub trait ReleaseSourceRepository {
     ) -> RepositoryResult<()>;
 }
 
+/// 番剧来源绑定与人工排除存储端口。
+pub trait AnimeSourceBindingRepository {
+    /// 读取指定番剧的全部来源绑定。
+    fn list_anime_source_bindings(
+        &self,
+        anime_id: &str,
+    ) -> RepositoryResult<Vec<AnimeSourceBinding>>;
+
+    /// 新增或更新一条来源绑定。
+    fn upsert_anime_source_binding(
+        &self,
+        binding: &AnimeSourceBinding,
+    ) -> RepositoryResult<Vec<AnimeSourceBinding>>;
+
+    /// 删除指定番剧和来源的绑定。
+    fn remove_anime_source_binding(
+        &self,
+        anime_id: &str,
+        source_id: &str,
+    ) -> RepositoryResult<Vec<AnimeSourceBinding>>;
+
+    /// 读取指定番剧的候选与整来源排除记录。
+    fn list_anime_source_exclusions(
+        &self,
+        anime_id: &str,
+    ) -> RepositoryResult<Vec<AnimeSourceExclusion>>;
+
+    /// 新增或更新一条来源排除记录。
+    fn upsert_anime_source_exclusion(
+        &self,
+        exclusion: &AnimeSourceExclusion,
+    ) -> RepositoryResult<Vec<AnimeSourceExclusion>>;
+
+    /// 删除一条候选或整来源排除记录。
+    fn remove_anime_source_exclusion(
+        &self,
+        anime_id: &str,
+        source_id: &str,
+        source_anime_id: Option<&str>,
+    ) -> RepositoryResult<Vec<AnimeSourceExclusion>>;
+}
+
 /// 追番、单集、偏好和观看进度存储端口。
 pub trait AnimeTrackingRepository {
     /// 读取我的追番列表。
@@ -220,6 +263,7 @@ pub trait ApplicationRepository:
     + NotificationRepository
     + AnimeCatalogRepository
     + ReleaseSourceRepository
+    + AnimeSourceBindingRepository
     + AnimeTrackingRepository
     + PlaybackRepository
     + DashboardRepository
@@ -231,6 +275,7 @@ impl<T> ApplicationRepository for T where
         + NotificationRepository
         + AnimeCatalogRepository
         + ReleaseSourceRepository
+        + AnimeSourceBindingRepository
         + AnimeTrackingRepository
         + PlaybackRepository
         + DashboardRepository
@@ -266,8 +311,8 @@ pub trait UnitOfWorkFactory {
 /// 常用 Repository traits 的统一导入入口。
 pub mod prelude {
     pub use super::{
-        AnimeCatalogRepository, AnimeTrackingRepository, ApplicationRepository,
-        DashboardRepository, NotificationRepository, PlaybackRepository, ReleaseSourceRepository,
-        SettingsRepository, UnitOfWork, UnitOfWorkFactory,
+        AnimeCatalogRepository, AnimeSourceBindingRepository, AnimeTrackingRepository,
+        ApplicationRepository, DashboardRepository, NotificationRepository, PlaybackRepository,
+        ReleaseSourceRepository, SettingsRepository, UnitOfWork, UnitOfWorkFactory,
     };
 }

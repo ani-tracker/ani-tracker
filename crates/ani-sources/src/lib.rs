@@ -8,9 +8,12 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, Proxy};
 
+mod bindings;
 mod parsers;
 mod release;
 mod search;
+
+pub use bindings::{AnimeSourceBindingService, AnimeSourceBindingStore};
 
 pub use parsers::{
     parse_acgnx_api_response, parse_acgnx_html, parse_anibt_rss, parse_dmhy_list,
