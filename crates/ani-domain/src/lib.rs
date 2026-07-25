@@ -460,11 +460,62 @@ pub struct DashboardData {
 /// 设置保持版本化 JSON 契约，由平台默认值补齐新增字段。
 pub type AppSettings = Value;
 
+/// 标识平台安全存储中的一项凭据，不在 SQLite 保存明文。
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SecretReference {
+    pub namespace: String,
+    pub key: String,
+}
+
+/// 包装敏感字节并阻止调试日志输出明文。
+#[derive(Clone, PartialEq, Eq)]
+pub struct SecretValue(Vec<u8>);
+
+impl SecretValue {
+    /// 从调用方拥有的字节创建敏感值。
+    pub fn new(value: impl Into<Vec<u8>>) -> Self {
+        Self(value.into())
+    }
+
+    /// 仅在调用平台安全 API 时借用敏感字节。
+    pub fn expose(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecretValue {
+    /// 调试输出始终隐藏凭据内容。
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("SecretValue([REDACTED])")
+    }
+}
+
+/// 抽象 DPAPI、Keychain 与 Android Keystore 的平台安全存储端口。
+pub trait SecureStore: Send + Sync {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    /// 读取安全存储中的敏感值。
+    fn read_secret(&self, reference: &SecretReference) -> Result<Option<SecretValue>, Self::Error>;
+
+    /// 写入或覆盖安全存储中的敏感值。
+    fn write_secret(
+        &self,
+        reference: &SecretReference,
+        value: &SecretValue,
+    ) -> Result<(), Self::Error>;
+
+    /// 删除安全存储中的敏感值。
+    fn delete_secret(&self, reference: &SecretReference) -> Result<(), Self::Error>;
+}
+
 #[cfg(test)]
 mod tests {
     use serde::Deserialize;
 
-    use super::{AnimeStatus, DashboardData, MyAnime, NotificationKind, NotificationRecord};
+    use super::{
+        AnimeStatus, DashboardData, MyAnime, NotificationKind, NotificationRecord, SecretValue,
+    };
 
     #[derive(Debug, Deserialize)]
     #[serde(rename_all = "camelCase")]
@@ -513,5 +564,14 @@ mod tests {
         );
         assert_eq!(decoded.payload.my_anime.anime.id, "anime-contract-1");
         assert_eq!(decoded.payload.dashboard.daily_reminder.total, 0);
+    }
+
+    /// 验证敏感值不会通过 Debug 输出泄漏。
+    #[test]
+    fn redacts_secret_value_debug_output() {
+        let secret = SecretValue::new("do-not-log");
+
+        assert_eq!(format!("{secret:?}"), "SecretValue([REDACTED])");
+        assert_eq!(secret.expose(), b"do-not-log");
     }
 }

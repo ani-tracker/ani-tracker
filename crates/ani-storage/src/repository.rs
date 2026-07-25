@@ -42,6 +42,7 @@ impl<'connection> AppRepository<'connection> {
                 settings.insert("players".to_owned(), players);
             }
         }
+        preserve_host_storage_paths(&mut merged, platform_defaults);
         Ok(merged)
     }
 
@@ -354,6 +355,16 @@ fn merge_player_profiles(defaults: Option<&Value>, patch: Option<&Value>) -> Opt
             .cloned(),
     );
     Some(Value::Array(merged))
+}
+
+/// 强制使用当前宿主拥有的数据目录，避免复制旧库后继续暴露 Electron 路径。
+fn preserve_host_storage_paths(settings: &mut Value, platform_defaults: &Value) {
+    let Some(default_storage) = platform_defaults.get("storage").cloned() else {
+        return;
+    };
+    if let Some(settings) = settings.as_object_mut() {
+        settings.insert("storage".to_owned(), default_storage);
+    }
 }
 
 /// 解析数据库 JSON 字段并附带业务上下文。

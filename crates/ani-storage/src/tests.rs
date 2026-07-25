@@ -215,6 +215,7 @@ fn reads_p2_business_views_from_sqlite() {
         .get_settings(&json!({
             "appearance": { "mode": "system", "themePackId": "default" },
             "network": { "metadataProxy": { "mode": "off", "timeoutMs": 15000 } },
+            "storage": { "databasePath": "C:/tauri/ani-tracker.sqlite", "cacheDir": "C:/tauri/cache" },
             "players": [
                 { "id": "built-in", "name": "内置播放器", "executablePath": "", "argumentTemplate": "{file}" },
                 { "id": "system", "name": "系统播放器", "executablePath": "", "argumentTemplate": "{file}" }
@@ -224,6 +225,11 @@ fn reads_p2_business_views_from_sqlite() {
     assert_eq!(settings["appearance"]["mode"], "dark");
     assert_eq!(settings["appearance"]["themePackId"], "default");
     assert_eq!(settings["network"]["metadataProxy"]["timeoutMs"], 15_000);
+    assert_eq!(
+        settings["storage"]["databasePath"],
+        "C:/tauri/ani-tracker.sqlite"
+    );
+    assert_eq!(settings["storage"]["cacheDir"], "C:/tauri/cache");
     assert_eq!(settings["players"][0]["executablePath"], "C:/VLC/vlc.exe");
     assert_eq!(settings["players"][0]["argumentTemplate"], "{file}");
     assert_eq!(settings["players"][1]["id"], "system");

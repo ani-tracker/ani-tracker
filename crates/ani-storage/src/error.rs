@@ -3,6 +3,11 @@ use std::path::PathBuf;
 /// SQLite 数据层启动和迁移错误。
 #[derive(Debug, thiserror::Error)]
 pub enum StorageError {
+    #[error("宿主路径解析失败（{action}）：{detail}")]
+    HostPath {
+        action: &'static str,
+        detail: String,
+    },
     #[error("数据库文件操作失败（{operation}）：{path}：{source}")]
     FileOperation {
         operation: &'static str,

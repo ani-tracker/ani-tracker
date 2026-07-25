@@ -2,6 +2,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppClient } from "@shared/app-client";
 import type { AppWindowState } from "@shared/contracts";
+import type {
+  AppSettings,
+  DashboardData,
+  MyAnime,
+  NotificationRecord
+} from "@shared/domain";
 
 const WINDOW_STATE_CHANGED_EVENT = "window-state-changed";
 
@@ -83,6 +89,41 @@ class TauriClientCore {
   async openExternal(url: string): Promise<void> {
     return invoke<void>("open_external", { url }).catch((error) => {
       throw normalizeTauriError("open_external", error);
+    });
+  }
+
+  /** 从 Rust SQLite Repository 读取首页聚合数据。 */
+  async getDashboard(): Promise<DashboardData> {
+    return invoke<DashboardData>("get_dashboard").catch((error) => {
+      throw normalizeTauriError("get_dashboard", error);
+    });
+  }
+
+  /** 从 Rust SQLite Repository 读取当前平台设置。 */
+  async getSettings(): Promise<AppSettings> {
+    return invoke<AppSettings>("get_settings").catch((error) => {
+      throw normalizeTauriError("get_settings", error);
+    });
+  }
+
+  /** 从 Rust SQLite Repository 读取提醒中心通知。 */
+  async listNotifications(): Promise<NotificationRecord[]> {
+    return invoke<NotificationRecord[]>("list_notifications").catch((error) => {
+      throw normalizeTauriError("list_notifications", error);
+    });
+  }
+
+  /** 从 Rust SQLite Repository 读取未读通知数量。 */
+  async getUnreadNotificationCount(): Promise<number> {
+    return invoke<number>("get_unread_notification_count").catch((error) => {
+      throw normalizeTauriError("get_unread_notification_count", error);
+    });
+  }
+
+  /** 从 Rust SQLite Repository 读取我的追番。 */
+  async listMyAnime(): Promise<MyAnime[]> {
+    return invoke<MyAnime[]>("list_my_anime").catch((error) => {
+      throw normalizeTauriError("list_my_anime", error);
     });
   }
 }

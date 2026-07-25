@@ -1,6 +1,8 @@
 use log::LevelFilter;
+use tauri::Manager;
 
 mod commands;
+mod storage;
 
 /// 装配并启动 Tauri 应用宿主。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -11,7 +13,9 @@ pub fn run() {
                 .level(LevelFilter::Info)
                 .build(),
         )
-        .setup(|_| {
+        .setup(|app| {
+            let storage_state = storage::initialize(app.handle())?;
+            app.manage(storage_state);
             log::info!(
                 "Tauri 宿主初始化完成 platform={} arch={}",
                 std::env::consts::OS,
@@ -20,6 +24,11 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            commands::data::get_dashboard,
+            commands::data::get_settings,
+            commands::data::list_notifications,
+            commands::data::get_unread_notification_count,
+            commands::data::list_my_anime,
             commands::window::get_window_state,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,

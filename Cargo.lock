@@ -104,8 +104,11 @@ name = "ani-tracker-tauri"
 version = "0.1.0"
 dependencies = [
  "ani-contracts",
+ "ani-domain",
+ "ani-storage",
  "log",
  "open",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-log",
