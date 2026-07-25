@@ -169,9 +169,7 @@ pub(crate) async fn mark_notification_read(
         "标记通知已读",
         Arc::clone(state.storage()),
         move |storage| {
-            storage
-                .repository()
-                .mark_notification_read(&notification_id)
+            NotificationRepository::mark_notification_read(&storage.repository(), &notification_id)
         },
     )
     .await
@@ -185,7 +183,7 @@ pub(crate) async fn mark_all_notifications_read(
     run_query(
         "标记全部通知已读",
         Arc::clone(state.storage()),
-        |storage| storage.repository().mark_all_notifications_read(),
+        |storage| NotificationRepository::mark_all_notifications_read(&storage.repository()),
     )
     .await
 }
@@ -196,7 +194,7 @@ pub(crate) async fn clear_notifications(
     state: State<'_, AppStorageState>,
 ) -> Result<Vec<NotificationRecord>, AppCommandError> {
     run_query("清空通知", Arc::clone(state.storage()), |storage| {
-        storage.repository().clear_notifications()
+        NotificationRepository::clear_notifications(&storage.repository())
     })
     .await
 }

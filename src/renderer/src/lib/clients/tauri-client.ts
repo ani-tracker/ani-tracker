@@ -21,6 +21,7 @@ import type {
   EmbeddedTorrentCoreStatus,
   MediaScanResult,
   PlaybackCheckpoint,
+  PlayerDetectionResult,
   QbittorrentManagedStatus,
   RemotePlaybackSession,
   ReleaseQuery,
@@ -31,6 +32,7 @@ import type {
   RssSubscriptionReleaseQuery,
   RssSubscriptionReleaseResult,
   SavePlaybackCheckpointInput,
+  SelectPlayerExecutableInput,
   SetAnimeSourceExclusionInput,
   SetAnimeWatchProgressInput,
   SourceSyncRunResult,
@@ -471,6 +473,35 @@ class TauriClientCore {
   async getDesktopMediaToolsStatus(): Promise<DesktopMediaToolsStatus> {
     return invoke<DesktopMediaToolsStatus>("get_desktop_media_tools_status").catch((error) => {
       throw normalizeTauriError("get_desktop_media_tools_status", error);
+    });
+  }
+
+  /** 探测 Tauri 桌面可用外部播放器。 */
+  async detectPlayers(profiles?: AppSettings["players"]): Promise<PlayerDetectionResult> {
+    return invoke<PlayerDetectionResult>("detect_players", { profiles }).catch((error) => {
+      throw normalizeTauriError("detect_players", error);
+    });
+  }
+
+  /** 使用原生文件选择器选择播放器程序。 */
+  async selectPlayerExecutable(input: SelectPlayerExecutableInput): Promise<string | undefined> {
+    const selected = await invoke<string | null>("select_player_executable", { input }).catch((error) => {
+      throw normalizeTauriError("select_player_executable", error);
+    });
+    return selected ?? undefined;
+  }
+
+  /** 使用 Tauri Rust 外部播放器服务播放媒体。 */
+  async playMedia(filePath: string, profileId?: string): Promise<void> {
+    return invoke<void>("play_media", { filePath, profileId }).catch((error) => {
+      throw normalizeTauriError("play_media", error);
+    });
+  }
+
+  /** 在桌面文件管理器中定位受控媒体。 */
+  async revealMedia(filePath: string): Promise<void> {
+    return invoke<void>("reveal_media", { filePath }).catch((error) => {
+      throw normalizeTauriError("reveal_media", error);
     });
   }
 

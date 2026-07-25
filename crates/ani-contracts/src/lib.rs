@@ -138,6 +138,49 @@ pub struct DesktopMediaToolsStatus {
     pub ffmpeg: MediaToolStatus,
 }
 
+/// 桌面播放器探测使用的稳定平台枚举。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PlayerRuntimePlatform {
+    Windows,
+    Macos,
+    Linux,
+    Other,
+}
+
+/// 一条外部播放器配置的实际可用状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerDetectionCandidate {
+    pub profile_id: String,
+    pub name: String,
+    pub configured_path: String,
+    pub available: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub resolved_path: Option<String>,
+}
+
+/// 当前桌面平台的全部外部播放器探测结果。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlayerDetectionResult {
+    pub platform: PlayerRuntimePlatform,
+    pub candidates: Vec<PlayerDetectionCandidate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected_profile_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detected_executable_path: Option<String>,
+}
+
+/// 原生文件选择器选择播放器程序时使用的最小输入。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SelectPlayerExecutableInput {
+    pub profile_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub current_path: Option<String>,
+}
+
 /// 播放器后端类型。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -532,8 +575,8 @@ mod tests {
     use super::{
         ContractFixture, DesktopMediaToolsStatus, DownloadServiceMode, DownloadServiceState,
         DownloadServiceStatus, EmbeddedTorrentCoreStatus, PlaybackSession, PlayerCommand,
-        PlayerCommandAction, PlayerCommandResult, PlayerHostPlatform, PlayerSnapshot, PlayerStatus,
-        QbittorrentManagedStatus, TorrentConnectionTestResult,
+        PlayerCommandAction, PlayerCommandResult, PlayerDetectionResult, PlayerHostPlatform,
+        PlayerSnapshot, PlayerStatus, QbittorrentManagedStatus, TorrentConnectionTestResult,
     };
 
     #[derive(Deserialize)]
@@ -568,6 +611,18 @@ mod tests {
         android_capabilities: super::PlayerCapabilities,
         ios_capabilities: super::PlayerCapabilities,
         playback_session: PlaybackSession,
+    }
+
+    /// 验证 Rust 可读取 P6 外部播放器探测金样。
+    #[test]
+    fn decodes_external_player_fixture() {
+        let fixture: ContractFixture<PlayerDetectionResult> = serde_json::from_str(include_str!(
+            "../../../fixtures/contracts/p6-external-player.v1.json"
+        ))
+        .expect("external player fixture");
+        assert_eq!(fixture.kind, "p6-external-player");
+        assert_eq!(fixture.payload.candidates.len(), 2);
+        assert_eq!(fixture.payload.detected_profile_id.as_deref(), Some("mpv"));
     }
 
     /// 验证 Rust 能严格解码前端共用的播放器快照金样。

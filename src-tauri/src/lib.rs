@@ -7,6 +7,8 @@ use tauri::Manager;
 mod automation;
 mod commands;
 mod downloads;
+#[cfg(desktop)]
+mod external_player;
 mod media;
 mod player;
 mod qbittorrent_managed;
@@ -24,6 +26,7 @@ pub fn run() {
                 .level(LevelFilter::Info)
                 .build(),
         )
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_ani_player::init())
         .plugin(tauri_plugin_ani_torrent::init());
@@ -196,7 +199,11 @@ pub fn run() {
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,
             commands::window::close_window,
-            commands::external::open_external
+            commands::external::open_external,
+            commands::external::detect_players,
+            commands::external::select_player_executable,
+            commands::external::play_media,
+            commands::external::reveal_media
         ])
         .on_window_event(|window, event| {
             commands::handle_window_event(window, event);

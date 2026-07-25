@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "kind": "p6-external-player",
+  "payload": {
+    "platform": "windows",
+    "candidates": [
+      {
+        "profileId": "mpv",
+        "name": "mpv",
+        "configuredPath": "mpv",
+        "available": true,
+        "resolvedPath": "C:\\Program Files\\mpv\\mpv.exe"
+      },
+      {
+        "profileId": "custom",
+        "name": "自定义播放器",
+        "configuredPath": "C:\\missing\\player.exe",
+        "available": false
+      }
+    ],
+    "detectedProfileId": "mpv",
+    "detectedExecutablePath": "C:\\Program Files\\mpv\\mpv.exe"
+  }
+}

@@ -18,6 +18,7 @@ import type {
   EmbeddedTorrentCoreStatus,
   MediaScanResult,
   PlaybackCheckpoint,
+  PlayerDetectionResult,
   QbittorrentManagedStatus,
   ReleaseSearchResult,
   RemoveAnimeSourceCandidateMismatchInput,
@@ -50,6 +51,18 @@ interface ContractFixture<T> {
   kind: string;
   payload: T;
 }
+
+/** 读取 P6 外部播放器金样，验证 Tauri 探测结构与 TypeScript 契约一致。 */
+test("Tauri P6 外部播放器契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p6-external-player.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<PlayerDetectionResult>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p6-external-player");
+  assert.equal(fixture.payload.platform, "windows");
+  assert.equal(fixture.payload.candidates[0].available, true);
+  assert.equal(fixture.payload.candidates[1].resolvedPath, undefined);
+});
 
 /** 读取版本化播放器快照金样，验证 TypeScript 与 Rust 共用契约。 */
 test("Tauri 播放器快照契约金样可被 TypeScript 接受", () => {

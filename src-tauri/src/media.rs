@@ -4,10 +4,11 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use ani_contracts::{DesktopMediaToolsStatus, MediaToolStatus};
-use ani_domain::{AppSettings, DownloadTask, MediaFile};
+use ani_domain::{AppSettings, DownloadTask, MediaFile, ReportPlaybackProgressInput};
 use ani_media::{DownloadMediaScanner, FfprobeMediaProbe, MediaScanResult};
 use ani_repository::{
-    DownloadRepository, MediaRepository, RepositoryError, RepositoryResult, SettingsRepository,
+    DownloadRepository, MediaRepository, PlaybackRepository, RepositoryError, RepositoryResult,
+    SettingsRepository,
 };
 use ani_storage::Storage;
 use serde_json::Value;
@@ -87,6 +88,81 @@ impl AppMediaState {
         self.repository
             .list_media_files()
             .map_err(|error| error.to_string())
+    }
+
+    /// 校验 Renderer 请求的媒体路径仅来自已登记媒体或应用下载目录。
+    pub(crate) fn authorize_media_path(&self, requested: &str) -> Result<PathBuf, String> {
+        let candidate = std::fs::canonicalize(requested)
+            .map_err(|error| format!("媒体文件不存在：{requested}（{error}）"))?;
+        if !candidate.is_file() {
+            return Err(format!("媒体路径不是普通文件：{}", candidate.display()));
+        }
+        let registered = self
+            .repository
+            .list_media_files()
+            .map_err(|error| format!("读取媒体登记失败：{error}"))?
+            .into_iter()
+            .any(|media| path_key(Path::new(&media.file_path)) == path_key(&candidate));
+        if registered || self.is_in_download_directory(&candidate)? {
+            return Ok(candidate);
+        }
+        Err("媒体路径不属于 Ani Tracker 下载目录或媒体登记".to_owned())
+    }
+
+    /// 将外部播放器百分比映射到下载任务并回写已看状态。
+    pub(crate) fn report_external_playback_progress(
+        &self,
+        file_path: &Path,
+        percent: f64,
+    ) -> Result<bool, String> {
+        if !percent.is_finite() || percent < 90.0 {
+            return Ok(false);
+        }
+        let target_key = path_key(file_path);
+        let storage = self
+            .storage
+            .lock()
+            .map_err(|error| format!("回写外部播放器进度失败：{error}"))?;
+        let repository = storage.repository();
+        let media = repository
+            .list_media_files()
+            .map_err(|error| format!("读取媒体登记失败：{error}"))?
+            .into_iter()
+            .find(|media| path_key(Path::new(&media.file_path)) == target_key);
+        let downloads = repository
+            .list_downloads()
+            .map_err(|error| format!("读取下载任务失败：{error}"))?;
+        let task = media
+            .as_ref()
+            .and_then(|media| media.download_task_id.as_deref())
+            .and_then(|task_id| downloads.iter().find(|task| task.id == task_id))
+            .or_else(|| {
+                downloads.iter().find(|task| {
+                    task.files.iter().any(|file| {
+                        path_key(&Path::new(&task.save_path).join(&file.name)) == target_key
+                    })
+                })
+            })
+            .ok_or_else(|| "外部播放器媒体没有关联下载任务".to_owned())?;
+        let file_index = task
+            .files
+            .iter()
+            .find(|file| path_key(&Path::new(&task.save_path).join(&file.name)) == target_key)
+            .map(|file| file.index);
+        let updated = repository
+            .report_playback_progress(&ReportPlaybackProgressInput {
+                task_id: task.id.clone(),
+                file_index,
+                percent,
+            })
+            .map_err(|error| format!("回写外部播放器进度失败：{error}"))?;
+        if updated {
+            log::info!(
+                "Tauri 外部播放器进度已回写 task_id={} file_index={file_index:?} percent={percent:.2}",
+                task.id
+            );
+        }
+        Ok(updated)
     }
 
     /// 手动扫描指定下载任务并原子写入成功结果。
@@ -241,6 +317,26 @@ impl AppMediaState {
             .repository()
             .get_settings(&self.platform_defaults)
             .map_err(|error| format!("读取媒体设置失败：{error}"))
+    }
+
+    /// 判断媒体是否位于持久化下载根目录或临时下载目录内。
+    fn is_in_download_directory(&self, candidate: &Path) -> Result<bool, String> {
+        let settings = self.settings()?;
+        for pointer in [
+            "/download/defaultDownloadDir",
+            "/download/temporaryDownloadDir",
+        ] {
+            let Some(root) = settings.pointer(pointer).and_then(Value::as_str) else {
+                continue;
+            };
+            let Ok(root) = std::fs::canonicalize(root) else {
+                continue;
+            };
+            if candidate.starts_with(root) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     fn with_download_repository<T>(

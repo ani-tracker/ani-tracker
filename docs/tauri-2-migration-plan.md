@@ -366,6 +366,7 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - 已接入 Tauri 原生托盘、关闭到托盘、主窗口恢复和托盘扫描/退出动作；退出事件继续统一关闭 libVLC、qBittorrent 与 torrent-core。
 - 已接入跨 Windows、macOS、Linux 的开机启动管理，设置保存和恢复默认值后立即同步；浅色、深色、跟随系统会同步到原生窗口与 WebView 背景。
 - 已接入 Tauri 系统通知，自动扫描结果、调度错误和每日提醒同时保留 SQLite 提醒中心记录；补齐单条已读、全部已读和清空通知的公共 Repository 与 Tauri 命令。
+- 已迁移外部播放器探测、原生程序选择、无 shell 参数模板启动和文件管理器定位；媒体路径必须来自 SQLite 登记或应用下载目录，mpv/IINA 通过 JSON IPC、Windows PotPlayer 通过 GSMTC 回写 90% 已看状态。
 
 ### P7：Android 与 iOS 完整应用闭环
 
