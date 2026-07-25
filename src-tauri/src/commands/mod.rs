@@ -1,3 +1,4 @@
+pub(crate) mod automation;
 pub(crate) mod data;
 pub(crate) mod external;
 pub(crate) mod source_sync;

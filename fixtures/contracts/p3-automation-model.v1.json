@@ -1,0 +1,67 @@
+{
+  "schemaVersion": 1,
+  "kind": "p3-automation-model",
+  "payload": {
+    "runResult": {
+      "startedAt": "2026-07-25T12:00:00.000Z",
+      "finishedAt": "2026-07-25T12:00:03.000Z",
+      "checkedEpisodes": 2,
+      "downloaded": [
+        {
+          "animeId": "anime-automation-contract",
+          "animeTitle": "自动扫描契约番",
+          "episodeId": "episode-automation-1",
+          "episodeNo": 1,
+          "releaseId": "release-automation-1",
+          "releaseTitle": "[契约字幕组] 自动扫描契约番 - 01 [1080p]",
+          "downloadTaskId": "download-automation-1"
+        }
+      ],
+      "skipped": [
+        {
+          "animeId": "anime-automation-contract",
+          "animeTitle": "自动扫描契约番",
+          "episodeId": "episode-automation-2",
+          "episodeNo": 2,
+          "reason": "已有下载任务"
+        }
+      ],
+      "errors": []
+    },
+    "schedulerStatus": {
+      "enabled": true,
+      "running": true,
+      "inFlight": false,
+      "intervalMinutes": 30,
+      "nextRunAt": "2026-07-25T12:30:03.000Z",
+      "manualCooldownUntil": "2026-07-25T12:01:03.000Z",
+      "lastRunAt": "2026-07-25T12:00:03.000Z",
+      "lastResult": {
+        "startedAt": "2026-07-25T12:00:00.000Z",
+        "finishedAt": "2026-07-25T12:00:03.000Z",
+        "checkedEpisodes": 2,
+        "downloaded": [
+          {
+            "animeId": "anime-automation-contract",
+            "animeTitle": "自动扫描契约番",
+            "episodeId": "episode-automation-1",
+            "episodeNo": 1,
+            "releaseId": "release-automation-1",
+            "releaseTitle": "[契约字幕组] 自动扫描契约番 - 01 [1080p]",
+            "downloadTaskId": "download-automation-1"
+          }
+        ],
+        "skipped": [
+          {
+            "animeId": "anime-automation-contract",
+            "animeTitle": "自动扫描契约番",
+            "episodeId": "episode-automation-2",
+            "episodeNo": 2,
+            "reason": "已有下载任务"
+          }
+        ],
+        "errors": []
+      }
+    }
+  }
+}

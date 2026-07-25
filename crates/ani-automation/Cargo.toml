@@ -9,10 +9,12 @@ license.workspace = true
 ani-domain = { path = "../ani-domain" }
 ani-repository = { path = "../ani-repository" }
 ani-sources = { path = "../ani-sources" }
+async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
+chrono-tz = "0.10"
 futures-util = "0.3"
 log = "0.4"
+serde_json.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread"] }

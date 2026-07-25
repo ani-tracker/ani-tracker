@@ -15,9 +15,9 @@ use ani_domain::{
 };
 use ani_repository::{
     AnimeCatalogRepository, AnimeCatalogWriteResult, AnimeSourceBindingRepository,
-    AnimeTrackingRepository, CachedReleaseQuery, DashboardRepository, NotificationRepository,
-    PlaybackRepository, ReleaseCacheRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository,
-    RepositoryError, RepositoryResult, SettingsRepository,
+    AnimeTrackingRepository, CachedReleaseQuery, DashboardRepository, DownloadRepository,
+    NotificationRepository, PlaybackRepository, ReleaseCacheRepository, ReleaseSearchCacheEntry,
+    ReleaseSourceRepository, RepositoryError, RepositoryResult, SettingsRepository,
 };
 use chrono::{DateTime, Duration, Local, Utc};
 use log::{debug, info, warn};
@@ -1968,6 +1968,13 @@ impl PlaybackRepository for SqliteRepository<'_> {
         input: &SavePlaybackCheckpointInput,
     ) -> RepositoryResult<PlaybackCheckpoint> {
         SqliteRepository::save_playback_checkpoint(self, input).map_err(RepositoryError::from)
+    }
+}
+
+impl DownloadRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取下载任务及文件快照。
+    fn list_downloads(&self) -> RepositoryResult<Vec<DownloadTask>> {
+        SqliteRepository::list_downloads(self).map_err(RepositoryError::from)
     }
 }
 

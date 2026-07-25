@@ -3,6 +3,7 @@ use std::sync::Arc;
 use log::LevelFilter;
 use tauri::Manager;
 
+mod automation;
 mod commands;
 mod source_sync;
 mod sources;
@@ -26,9 +27,39 @@ pub fn run() {
                 source_state.clone(),
             );
             source_sync_state.start();
+            let automation_state = automation::AppAutomationState::new(
+                Arc::clone(storage_state.storage()),
+                storage_state.platform_defaults().clone(),
+                source_state.clone(),
+                Arc::new(automation::PendingAutomaticDownloadExecutor),
+            );
+            automation_state.start();
+            let reminder_storage = Arc::clone(storage_state.storage());
+            tauri::async_runtime::spawn_blocking(move || {
+                let result = reminder_storage
+                    .lock()
+                    .map_err(|error| error.to_string())
+                    .and_then(|storage| {
+                        ani_automation::DailyReminderService::run_once(
+                            &storage.repository(),
+                            chrono::Utc::now(),
+                        )
+                        .map_err(|error| error.to_string())
+                    });
+                match result {
+                    Ok(Some(record)) => {
+                        log::info!("Tauri 每日追番提醒已写入 id={}", record.id);
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        log::error!("Tauri 每日追番提醒执行失败 error={error}");
+                    }
+                }
+            });
             app.manage(storage_state);
             app.manage(source_state);
             app.manage(source_sync_state);
+            app.manage(automation_state);
             log::info!(
                 "Tauri 宿主初始化完成 platform={} arch={}",
                 std::env::consts::OS,
@@ -73,6 +104,9 @@ pub fn run() {
             commands::sources::remove_anime_source_binding,
             commands::source_sync::get_source_sync_status,
             commands::source_sync::sync_sources_now,
+            commands::automation::get_automation_scheduler_status,
+            commands::automation::run_automation_once,
+            commands::automation::restart_automation_scheduler,
             commands::window::get_window_state,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,

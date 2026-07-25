@@ -12,6 +12,7 @@ use ani_storage::Storage;
 use serde_json::Value;
 use tauri::State;
 
+use crate::automation::AppAutomationState;
 use crate::source_sync::AppSourceSyncState;
 use crate::storage::AppStorageState;
 
@@ -88,6 +89,7 @@ pub(crate) async fn update_settings(
     patch: Value,
     state: State<'_, AppStorageState>,
     source_sync_state: State<'_, AppSourceSyncState>,
+    automation_state: State<'_, AppAutomationState>,
 ) -> Result<AppSettings, AppCommandError> {
     let defaults = state.platform_defaults().clone();
     let settings = run_query("更新设置", Arc::clone(state.storage()), move |storage| {
@@ -95,6 +97,7 @@ pub(crate) async fn update_settings(
     })
     .await?;
     source_sync_state.refresh_from_settings(&settings).await;
+    automation_state.refresh_from_settings(&settings).await;
     Ok(settings)
 }
 
@@ -103,6 +106,7 @@ pub(crate) async fn update_settings(
 pub(crate) async fn reset_settings_to_defaults(
     state: State<'_, AppStorageState>,
     source_sync_state: State<'_, AppSourceSyncState>,
+    automation_state: State<'_, AppAutomationState>,
 ) -> Result<AppSettings, AppCommandError> {
     let defaults = state.platform_defaults().clone();
     let settings = run_query(
@@ -112,6 +116,7 @@ pub(crate) async fn reset_settings_to_defaults(
     )
     .await?;
     source_sync_state.refresh_from_settings(&settings).await;
+    automation_state.refresh_from_settings(&settings).await;
     Ok(settings)
 }
 

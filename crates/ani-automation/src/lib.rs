@@ -17,6 +17,18 @@ use ani_sources::{
 use chrono::{DateTime, Datelike, Duration, Local, SecondsFormat, Utc};
 use futures_util::future::join_all;
 
+mod episode_sync;
+mod reminder;
+mod scan;
+
+pub use episode_sync::{EpisodeSyncResult, EpisodeSyncService, EpisodeSyncStore};
+pub use reminder::{DailyReminderService, DailyReminderStore};
+pub use scan::{
+    build_automation_notifications, AutomaticDownloadExecutor, AutomaticDownloadReceipt,
+    AutomaticDownloadRequest, AutomationDownloadReference, AutomationRunOptions,
+    AutomationRunService, AutomationScanStore,
+};
+
 const CACHE_RETENTION_DAYS: i64 = 90;
 const RELEASE_SOURCE_CIRCUIT_GROUP: &str = "release-source";
 

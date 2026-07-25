@@ -20,6 +20,7 @@ ani-domain = { path = "../crates/ani-domain" }
 ani-repository = { path = "../crates/ani-repository" }
 ani-sources = { path = "../crates/ani-sources" }
 ani-storage = { path = "../crates/ani-storage" }
+async-trait = "0.1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 log = "0.4"
 serde_json.workspace = true

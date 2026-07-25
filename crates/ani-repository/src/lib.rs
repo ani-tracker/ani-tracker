@@ -1,7 +1,7 @@
 use ani_domain::{
     Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeSourceBinding, AnimeSourceExclusion,
-    AnimeWatchProgress, AppSettings, DashboardData, Episode, EpisodePreference, FansubGroup,
-    MyAnime, NotificationRecord, PlaybackCheckpoint, Release, ReleaseSourceConfig,
+    AnimeWatchProgress, AppSettings, DashboardData, DownloadTask, Episode, EpisodePreference,
+    FansubGroup, MyAnime, NotificationRecord, PlaybackCheckpoint, Release, ReleaseSourceConfig,
     ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
     SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
@@ -284,6 +284,12 @@ pub trait PlaybackRepository {
     ) -> RepositoryResult<PlaybackCheckpoint>;
 }
 
+/// 下载任务读取端口；写入和引擎控制在 P4 下载模块中扩展。
+pub trait DownloadRepository {
+    /// 读取全部持久化下载任务及文件快照。
+    fn list_downloads(&self) -> RepositoryResult<Vec<DownloadTask>>;
+}
+
 /// 首页聚合查询存储端口。
 pub trait DashboardRepository {
     /// 从业务数据生成首页实时聚合结果。
@@ -299,6 +305,7 @@ pub trait ApplicationRepository:
     + ReleaseCacheRepository
     + AnimeSourceBindingRepository
     + AnimeTrackingRepository
+    + DownloadRepository
     + PlaybackRepository
     + DashboardRepository
 {
@@ -312,6 +319,7 @@ impl<T> ApplicationRepository for T where
         + ReleaseCacheRepository
         + AnimeSourceBindingRepository
         + AnimeTrackingRepository
+        + DownloadRepository
         + PlaybackRepository
         + DashboardRepository
 {
@@ -347,8 +355,8 @@ pub trait UnitOfWorkFactory {
 pub mod prelude {
     pub use super::{
         AnimeCatalogRepository, AnimeSourceBindingRepository, AnimeTrackingRepository,
-        ApplicationRepository, CachedReleaseQuery, DashboardRepository, NotificationRepository,
-        PlaybackRepository, ReleaseCacheRepository, ReleaseSourceRepository, SettingsRepository,
-        UnitOfWork, UnitOfWorkFactory,
+        ApplicationRepository, CachedReleaseQuery, DashboardRepository, DownloadRepository,
+        NotificationRepository, PlaybackRepository, ReleaseCacheRepository,
+        ReleaseSourceRepository, SettingsRepository, UnitOfWork, UnitOfWorkFactory,
     };
 }

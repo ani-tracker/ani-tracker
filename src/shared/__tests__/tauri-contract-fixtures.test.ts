@@ -10,6 +10,8 @@ import type {
   AnimeSourceBindingState,
   AnimeSourceCandidate,
   AnimeWatchProgress,
+  AutomationRunResult,
+  AutomationSchedulerStatus,
   ConfirmAnimeSourceBindingInput,
   PlaybackCheckpoint,
   ReleaseSearchResult,
@@ -150,6 +152,21 @@ test("Tauri P3 来源同步契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.kind, "p3-source-sync-model");
   assert.equal(fixture.payload.syncState.etag, "\"release-v1\"");
   assert.equal(fixture.payload.runResult.addedReleaseCount, 2);
+  assert.deepEqual(fixture.payload.schedulerStatus.lastResult, fixture.payload.runResult);
+});
+
+/** 读取 P3 自动扫描金样，验证下载、跳过和调度状态字段一致。 */
+test("Tauri P3 自动扫描契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p3-automation-model.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    runResult: AutomationRunResult;
+    schedulerStatus: AutomationSchedulerStatus;
+  }>;
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p3-automation-model");
+  assert.equal(fixture.payload.runResult.downloaded[0].downloadTaskId, "download-automation-1");
+  assert.equal(fixture.payload.runResult.skipped[0].reason, "已有下载任务");
   assert.deepEqual(fixture.payload.schedulerStatus.lastResult, fixture.payload.runResult);
 });
 

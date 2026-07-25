@@ -212,6 +212,79 @@ pub struct SourceSyncSchedulerStatus {
     pub last_error: Option<String>,
 }
 
+/// 自动扫描已加入下载队列的单集摘要。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationDownloadedItem {
+    pub anime_id: String,
+    pub anime_title: String,
+    pub episode_id: String,
+    pub episode_no: f64,
+    pub release_id: String,
+    pub release_title: String,
+    pub download_task_id: String,
+}
+
+/// 自动扫描跳过的番剧或单集摘要。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationSkippedItem {
+    pub anime_id: String,
+    pub anime_title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_no: Option<f64>,
+    pub reason: String,
+}
+
+/// 自动扫描失败摘要。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationRunError {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anime_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anime_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub episode_no: Option<f64>,
+    pub message: String,
+}
+
+/// 一次自动扫描的稳定结果。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationRunResult {
+    pub started_at: String,
+    pub finished_at: String,
+    pub checked_episodes: usize,
+    pub downloaded: Vec<AutomationDownloadedItem>,
+    pub skipped: Vec<AutomationSkippedItem>,
+    pub errors: Vec<AutomationRunError>,
+}
+
+/// 自动扫描调度器的当前状态。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutomationSchedulerStatus {
+    pub enabled: bool,
+    pub running: bool,
+    pub in_flight: bool,
+    pub interval_minutes: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_run_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manual_cooldown_until: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_run_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_result: Option<AutomationRunResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
 /// 通用网络请求熔断状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

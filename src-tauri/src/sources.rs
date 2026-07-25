@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 
-use ani_automation::SourceSyncStore;
+use ani_automation::{
+    AutomationDownloadReference, AutomationScanStore, EpisodeSyncStore, SourceSyncStore,
+};
 use ani_domain::{
     AnimeSourceBinding, AnimeSourceExclusion, Episode, FansubGroup, MyAnime, NotificationRecord,
     Release, ReleaseSourceConfig, ReleaseSourceSyncState, RequestCircuitState,
@@ -186,6 +188,95 @@ impl SourceSyncStore for SharedReleaseSearchStore {
 
     /// 写入同步失败通知。
     fn add_sync_notifications(
+        &self,
+        records: &[NotificationRecord],
+    ) -> RepositoryResult<Vec<NotificationRecord>> {
+        self.with_repository(|repository| repository.add_notifications(records))
+    }
+}
+
+impl EpisodeSyncStore for SharedReleaseSearchStore {
+    /// 读取自动同步所需的单集。
+    fn list_sync_episodes(&self, anime_id: &str) -> RepositoryResult<Vec<Episode>> {
+        self.with_repository(|repository| repository.list_episodes(anime_id))
+    }
+
+    /// 幂等保存自动同步单集。
+    fn save_sync_episode(&self, episode: &Episode) -> RepositoryResult<Vec<Episode>> {
+        self.with_repository(|repository| repository.upsert_episode(episode))
+    }
+
+    /// 读取番剧跨重启资源缓存。
+    fn list_sync_cached_releases(&self, anime_id: &str) -> RepositoryResult<Vec<Release>> {
+        self.with_repository(|repository| {
+            repository.list_cached_releases(&CachedReleaseQuery {
+                source_ids: None,
+                anime_id: Some(anime_id.to_owned()),
+                limit: Some(2_000),
+            })
+        })
+    }
+}
+
+impl AutomationScanStore for SharedReleaseSearchStore {
+    /// 读取全部追番。
+    fn list_automation_anime(&self) -> RepositoryResult<Vec<MyAnime>> {
+        self.with_repository(|repository| repository.list_my_anime())
+    }
+
+    /// 读取指定番剧单集。
+    fn list_automation_episodes(&self, anime_id: &str) -> RepositoryResult<Vec<Episode>> {
+        self.with_repository(|repository| repository.list_episodes(anime_id))
+    }
+
+    /// 读取指定番剧单集偏好。
+    fn list_automation_preferences(
+        &self,
+        anime_id: &str,
+    ) -> RepositoryResult<Vec<ani_domain::EpisodePreference>> {
+        self.with_repository(|repository| repository.list_episode_preferences(anime_id))
+    }
+
+    /// 读取指定番剧来源绑定。
+    fn list_automation_bindings(
+        &self,
+        anime_id: &str,
+    ) -> RepositoryResult<Vec<AnimeSourceBinding>> {
+        self.with_repository(|repository| repository.list_anime_source_bindings(anime_id))
+    }
+
+    /// 读取下载任务判重快照。
+    fn list_automation_downloads(&self) -> RepositoryResult<Vec<AutomationDownloadReference>> {
+        self.with_repository(|repository| {
+            repository.list_downloads().map(|tasks| {
+                tasks
+                    .into_iter()
+                    .map(|task| AutomationDownloadReference {
+                        task_id: task.id,
+                        anime_id: task.anime_id,
+                        episode_id: task.episode_id,
+                    })
+                    .collect()
+            })
+        })
+    }
+
+    /// 保存自动扫描推进后的单集状态。
+    fn save_automation_episode(&self, episode: &Episode) -> RepositoryResult<()> {
+        self.with_repository(|repository| repository.upsert_episode(episode).map(|_| ()))
+    }
+
+    /// 保存自动扫描发现的字幕组。
+    fn observe_automation_fansubs(
+        &self,
+        anime_id: &str,
+        releases: &[Release],
+    ) -> RepositoryResult<Vec<FansubGroup>> {
+        self.with_repository(|repository| repository.observe_anime_fansubs(anime_id, releases))
+    }
+
+    /// 写入自动扫描结果通知。
+    fn add_automation_notifications(
         &self,
         records: &[NotificationRecord],
     ) -> RepositoryResult<Vec<NotificationRecord>> {

@@ -2,9 +2,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use ani_domain::{
-    AnimeSourceBinding, FansubGroup, MyAnime, NotificationRecord, Release, ReleaseSourceConfig,
-    ReleaseSourceSyncState, RequestCircuitState, SourceKind, SourceSyncRunResult,
-    SourceSyncSchedulerStatus,
+    AnimeSourceBinding, AutomationRunResult, AutomationSchedulerStatus, FansubGroup, MyAnime,
+    NotificationRecord, Release, ReleaseSourceConfig, ReleaseSourceSyncState, RequestCircuitState,
+    SourceKind, SourceSyncRunResult, SourceSyncSchedulerStatus,
 };
 use ani_repository::{CachedReleaseQuery, ReleaseSearchCacheEntry, RepositoryResult};
 use ani_sources::{
@@ -36,6 +36,28 @@ fn decodes_source_sync_contract_fixture() {
     assert_eq!(state.source_id, "rss-contract");
     assert_eq!(result.added_release_count, 2);
     assert_eq!(status.last_result, Some(result));
+}
+
+/// 验证 Rust 与 TypeScript 共用自动扫描结果和调度状态金样。
+#[test]
+fn decodes_automation_contract_fixture() {
+    let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../fixtures/contracts/p3-automation-model.v1.json"
+    )))
+    .expect("decode automation fixture");
+    let result: AutomationRunResult =
+        serde_json::from_value(fixture["payload"]["runResult"].clone())
+            .expect("decode automation result");
+    let status: AutomationSchedulerStatus =
+        serde_json::from_value(fixture["payload"]["schedulerStatus"].clone())
+            .expect("decode automation status");
+    assert_eq!(result.checked_episodes, 2);
+    assert_eq!(
+        result.downloaded[0].download_task_id,
+        "download-automation-1"
+    );
+    assert_eq!(status.last_result.as_ref(), Some(&result));
 }
 
 #[derive(Default)]

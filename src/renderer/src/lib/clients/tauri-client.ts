@@ -7,6 +7,8 @@ import type {
   AnimeDiscoverySearchResult,
   AnimeSourceBindingState,
   AnimeWatchProgress,
+  AutomationRunResult,
+  AutomationSchedulerStatus,
   AppWindowState,
   ConfirmAnimeSourceBindingInput,
   PlaybackCheckpoint,
@@ -304,6 +306,27 @@ class TauriClientCore {
   async syncSourcesNow(): Promise<SourceSyncRunResult> {
     return invoke<SourceSyncRunResult>("sync_sources_now").catch((error) => {
       throw normalizeTauriError("sync_sources_now", error);
+    });
+  }
+
+  /** 立即执行一次 Rust 自动扫描。 */
+  async runAutomationOnce(): Promise<AutomationRunResult> {
+    return invoke<AutomationRunResult>("run_automation_once").catch((error) => {
+      throw normalizeTauriError("run_automation_once", error);
+    });
+  }
+
+  /** 读取 Rust 自动扫描调度状态。 */
+  async getAutomationSchedulerStatus(): Promise<AutomationSchedulerStatus> {
+    return invoke<AutomationSchedulerStatus>("get_automation_scheduler_status").catch((error) => {
+      throw normalizeTauriError("get_automation_scheduler_status", error);
+    });
+  }
+
+  /** 按最新设置刷新 Rust 自动扫描调度。 */
+  async restartAutomationScheduler(): Promise<AutomationSchedulerStatus> {
+    return invoke<AutomationSchedulerStatus>("restart_automation_scheduler").catch((error) => {
+      throw normalizeTauriError("restart_automation_scheduler", error);
     });
   }
 
