@@ -191,6 +191,74 @@ pub struct Episode {
     pub status: EpisodeStatus,
 }
 
+/// 单集级字幕组与资源覆盖偏好。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EpisodePreference {
+    pub id: String,
+    pub anime_id: String,
+    pub episode_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fansub_group_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub release_id: Option<String>,
+    pub is_manual_override: bool,
+}
+
+/// 单部追番的连续观看进度。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeWatchProgress {
+    pub anime_id: String,
+    pub watched_episode_count: i64,
+    pub total_episode_count: i64,
+}
+
+/// 原子更新单部追番观看进度的输入。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SetAnimeWatchProgressInput {
+    pub anime_id: String,
+    pub watched_episode_count: i64,
+}
+
+/// 播放器按下载任务上报观看百分比的输入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReportPlaybackProgressInput {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_index: Option<i64>,
+    pub percent: f64,
+}
+
+/// 单个下载任务文件的持久化播放位置。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PlaybackCheckpoint {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_index: Option<i64>,
+    pub position_seconds: f64,
+    pub duration_seconds: f64,
+    pub completed: bool,
+    pub watched_reported: bool,
+    pub updated_at: String,
+}
+
+/// 播放器保存当前位置时使用的最小输入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SavePlaybackCheckpointInput {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_index: Option<i64>,
+    pub position_seconds: f64,
+    pub duration_seconds: f64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed: Option<bool>,
+}
+
 /// 下载任务中的单个文件。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -514,7 +582,9 @@ mod tests {
     use serde::Deserialize;
 
     use super::{
-        AnimeStatus, DashboardData, MyAnime, NotificationKind, NotificationRecord, SecretValue,
+        AnimeStatus, DashboardData, Episode, EpisodePreference, MyAnime, NotificationKind,
+        NotificationRecord, PlaybackCheckpoint, ReportPlaybackProgressInput,
+        SavePlaybackCheckpointInput, SecretValue, SetAnimeWatchProgressInput,
     };
 
     #[derive(Debug, Deserialize)]
@@ -531,6 +601,18 @@ mod tests {
         notification: NotificationRecord,
         my_anime: MyAnime,
         dashboard: DashboardData,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct P3FollowingWriteModelFixture {
+        my_anime: MyAnime,
+        episode: Episode,
+        preference: EpisodePreference,
+        watch_progress_input: SetAnimeWatchProgressInput,
+        report_playback_progress_input: ReportPlaybackProgressInput,
+        save_playback_checkpoint_input: SavePlaybackCheckpointInput,
+        checkpoint: PlaybackCheckpoint,
     }
 
     /// 验证领域枚举沿用前端现有的 JSON 字面量。
@@ -564,6 +646,33 @@ mod tests {
         );
         assert_eq!(decoded.payload.my_anime.anime.id, "anime-contract-1");
         assert_eq!(decoded.payload.dashboard.daily_reminder.total, 0);
+    }
+
+    /// 验证 P3 追番写模型在 Rust 与 TypeScript 间保持字段一致。
+    #[test]
+    fn decodes_p3_following_write_model_fixture() {
+        let fixture = include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        ));
+        let decoded: ContractFixture<P3FollowingWriteModelFixture> =
+            serde_json::from_str(fixture).expect("p3 following fixture must decode");
+
+        assert_eq!(decoded.schema_version, 1);
+        assert_eq!(decoded.kind, "p3-following-write-model");
+        assert_eq!(decoded.payload.my_anime.anime.id, "anime-p3-1");
+        assert_eq!(decoded.payload.episode.episode_no, 1.0);
+        assert!(decoded.payload.preference.is_manual_override);
+        assert_eq!(
+            decoded.payload.watch_progress_input.watched_episode_count,
+            1
+        );
+        assert_eq!(decoded.payload.report_playback_progress_input.percent, 92.0);
+        assert_eq!(
+            decoded.payload.save_playback_checkpoint_input.file_index,
+            Some(0)
+        );
+        assert!(decoded.payload.checkpoint.watched_reported);
     }
 
     /// 验证敏感值不会通过 Debug 输出泄漏。

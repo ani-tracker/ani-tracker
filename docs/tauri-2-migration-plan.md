@@ -2,7 +2,7 @@
 
 最近更新：2026-07-25
 
-状态：P0-P2 已完成；P1 跨平台 CI 与 P2 平台构建待后续统一验证
+状态：P0-P2 已完成；P3 追番与单集切片已完成；跨平台构建待后续统一验证
 
 ## 1. 迁移目标
 
@@ -245,6 +245,12 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - `feat: 迁移自动扫描与提醒服务`
 
 门禁：每个切片的页面在 Tauri 可独立完成；固定 fixture 与 Electron 结果一致；部分来源失败不清空成功结果。
+
+执行记录：
+
+- 已迁移追番 CRUD、单集、单集偏好、连续观看进度、播放进度回写和续播检查点，复合写入使用 SQLite 事务。
+- 已接通对应 Tauri commands 与 `TauriClient`，新增 TypeScript/Rust 共用 P3 写模型金样及事务回滚测试。
+- Rust 测试、Clippy、Tauri Rust check、TypeScript 类型检查及 352 项 Node 测试通过；平台构建按当前安排后续统一验证。
 
 ### P4：下载、torrent-core 与媒体闭环
 

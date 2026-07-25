@@ -25,6 +25,13 @@ pub enum StorageError {
     },
     #[error("数据库字段值不受支持（{field}={value}）")]
     InvalidDomainValue { field: &'static str, value: String },
+    #[error("业务输入无效（{field}）：{message}")]
+    InvalidInput {
+        field: &'static str,
+        message: String,
+    },
+    #[error("{entity}不存在：{id}")]
+    RecordNotFound { entity: &'static str, id: String },
     #[error("数据库不是有效的 SQLite 文件：{path}：{detail}")]
     CorruptDatabase { path: PathBuf, detail: String },
     #[error("数据库结构版本 {actual} 高于当前支持版本 {supported}")]

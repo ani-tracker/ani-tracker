@@ -3,7 +3,12 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use ani_domain::{
+    AnimeStatus, Episode, EpisodePreference, MyAnime, PlaybackCheckpoint,
+    ReportPlaybackProgressInput, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+};
 use rusqlite::{params, Connection, OpenFlags};
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
@@ -12,6 +17,26 @@ use crate::{
 };
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ContractFixture<T> {
+    schema_version: u32,
+    kind: String,
+    payload: T,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct P3FollowingWriteModelFixture {
+    my_anime: MyAnime,
+    episode: Episode,
+    preference: EpisodePreference,
+    watch_progress_input: SetAnimeWatchProgressInput,
+    report_playback_progress_input: ReportPlaybackProgressInput,
+    save_playback_checkpoint_input: SavePlaybackCheckpointInput,
+    checkpoint: PlaybackCheckpoint,
+}
 
 /// 验证新库在单次启动中完成建表、seed 和版本写入。
 #[test]
@@ -270,6 +295,148 @@ fn reads_p2_business_views_from_sqlite() {
     assert_eq!(dashboard.source_health[0].status, "warning");
 }
 
+/// 验证 P3 追番、单集、偏好、观看进度和续播写入形成完整事务闭环。
+#[test]
+fn writes_p3_following_business_transactionally() {
+    let directory = TestDirectory::new("p3-following");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create p3 following database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode p3 following fixture");
+    assert_eq!(fixture.schema_version, 1);
+    assert_eq!(fixture.kind, "p3-following-write-model");
+    let repository = storage.repository();
+
+    let followed = repository
+        .upsert_my_anime(fixture.payload.my_anime.clone())
+        .expect("save my anime");
+    assert_eq!(followed.len(), 1);
+    assert_eq!(followed[0].anime.aliases[0].id, "anime-p3-1-alias-1");
+    assert_eq!(followed[0].rss_subscriptions.len(), 1);
+
+    repository
+        .upsert_episode(&fixture.payload.episode)
+        .expect("save episode one");
+    let episode_two = Episode {
+        id: "episode-anime-p3-1-2".to_owned(),
+        episode_no: 2.0,
+        title: Some("第二集".to_owned()),
+        ..fixture.payload.episode.clone()
+    };
+    repository
+        .upsert_episode(&episode_two)
+        .expect("save episode two");
+    let preferences = repository
+        .upsert_episode_preference(&fixture.payload.preference)
+        .expect("save preference");
+    assert_eq!(preferences.len(), 1);
+    assert_eq!(preferences[0], fixture.payload.preference);
+
+    let progress = repository
+        .set_anime_watch_progress(&fixture.payload.watch_progress_input)
+        .expect("set watch progress");
+    assert_eq!(progress.watched_episode_count, 1);
+    assert_eq!(progress.total_episode_count, 12);
+    assert_eq!(
+        repository
+            .list_episodes("anime-p3-1")
+            .expect("list episodes")[1]
+            .status,
+        ani_domain::EpisodeStatus::Aired
+    );
+
+    insert_p3_playback_download(&storage.connection);
+    assert!(repository
+        .report_playback_progress(&fixture.payload.report_playback_progress_input)
+        .expect("report playback progress"));
+    assert_eq!(
+        repository
+            .list_episodes("anime-p3-1")
+            .expect("list watched episodes")[1]
+            .status,
+        ani_domain::EpisodeStatus::Watched
+    );
+    repository
+        .upsert_episode(&episode_two)
+        .expect("reset episode two for checkpoint assertion");
+    let checkpoint = repository
+        .save_playback_checkpoint(&fixture.payload.save_playback_checkpoint_input)
+        .expect("save playback checkpoint");
+    assert_eq!(checkpoint.task_id, fixture.payload.checkpoint.task_id);
+    assert!(checkpoint.watched_reported);
+    assert_eq!(
+        repository
+            .get_playback_checkpoint("download-p3-1", Some(0))
+            .expect("read checkpoint")
+            .expect("checkpoint exists")
+            .position_seconds,
+        1_380.0
+    );
+
+    assert!(repository
+        .remove_episode_preference("episode-anime-p3-1-1")
+        .expect("remove preference")
+        .is_empty());
+    let mut completed = fixture.payload.my_anime.clone();
+    completed.status = AnimeStatus::Completed;
+    completed.auto_download = true;
+    assert!(
+        !repository
+            .upsert_my_anime(completed)
+            .expect("save completed my anime")[0]
+            .auto_download
+    );
+    assert!(repository
+        .remove_my_anime("my-anime-p3-1")
+        .expect("remove my anime")
+        .is_empty());
+    assert!(repository
+        .list_episodes("anime-p3-1")
+        .expect("episodes removed")
+        .is_empty());
+}
+
+/// 验证追番复合写入失败时番剧目录和追番记录均不落库。
+#[test]
+fn rolls_back_failed_p3_following_write() {
+    let directory = TestDirectory::new("p3-following-rollback");
+    let storage =
+        Storage::open(test_options(&directory, "active.sqlite")).expect("create rollback database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode p3 following fixture");
+    let mut invalid = fixture.payload.my_anime;
+    invalid.default_fansub_group_id = Some("missing-fansub".to_owned());
+
+    assert!(storage.repository().upsert_my_anime(invalid).is_err());
+    assert_eq!(
+        storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM anime_catalog WHERE id = 'anime-p3-1'",
+                [],
+                |row| row.get::<_, i64>(0)
+            )
+            .expect("catalog rollback count"),
+        0
+    );
+    assert_eq!(
+        storage
+            .connection
+            .query_row("SELECT COUNT(*) FROM my_anime", [], |row| row
+                .get::<_, i64>(0))
+            .expect("my anime rollback count"),
+        0
+    );
+}
+
 /// 创建包含固定设置和下载源的测试启动参数。
 fn test_options(directory: &TestDirectory, database_name: &str) -> StorageOptions {
     StorageOptions {
@@ -415,6 +582,35 @@ fn insert_p2_read_model_fixture(connection: &Connection) {
             [],
         )
         .expect("insert unread notification");
+}
+
+/// 写入使用文件级单集关联的 P3 播放任务。
+fn insert_p3_playback_download(connection: &Connection) {
+    let timestamp = "2026-07-25T00:00:00.000Z";
+    connection
+        .execute(
+            "INSERT INTO download_task (
+               id, anime_id, anime_title, engine, name, status, progress,
+               download_speed, upload_speed, save_path, created_at, updated_at
+             ) VALUES (
+               'download-p3-1', 'anime-p3-1', 'P3 契约番剧', 'embedded',
+               'P3 batch', 'downloading', 0.5, 1024, 0, 'C:/video', ?1, ?1
+             )",
+            [timestamp],
+        )
+        .expect("insert p3 download task");
+    connection
+        .execute(
+            "INSERT INTO torrent_file (
+               id, download_task_id, file_index, name, episode_id, episode_no,
+               size, progress, priority, selected
+             ) VALUES (
+               'torrent-file-p3-1', 'download-p3-1', 0, 'episode-2.mkv',
+               'episode-anime-p3-1-2', 2, 1024, 0.5, 1, 1
+             )",
+            [],
+        )
+        .expect("insert p3 torrent file");
 }
 
 /// 写入首页下载状态测试记录。

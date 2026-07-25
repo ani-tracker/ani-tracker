@@ -3,18 +3,19 @@ use std::collections::HashMap;
 
 use ani_domain::{
     Anime, AnimeAlias, AnimeAliasLanguage, AnimeRating, AnimeRssSubscription, AnimeStatus,
-    AppSettings, DailyReminderItem, DailyReminderSummary, DashboardData, DownloadStatus,
-    DownloadTask, Episode, EpisodeStatus, EpisodeSummary, MediaFile, MyAnime, NotificationKind,
-    NotificationRecord, NotificationSeverity, PendingAction, SourceHealth, TorrentEngineKind,
-    TorrentFile, WeeklyScheduleDay,
+    AnimeWatchProgress, AppSettings, DailyReminderItem, DailyReminderSummary, DashboardData,
+    DownloadStatus, DownloadTask, Episode, EpisodePreference, EpisodeStatus, EpisodeSummary,
+    MediaFile, MyAnime, NotificationKind, NotificationRecord, NotificationSeverity, PendingAction,
+    PlaybackCheckpoint, ReportPlaybackProgressInput, SavePlaybackCheckpointInput,
+    SetAnimeWatchProgressInput, SourceHealth, TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
 };
 use chrono::{DateTime, Local, Utc};
-use log::{debug, warn};
-use rusqlite::{Connection, OptionalExtension, Row};
+use log::{debug, info, warn};
+use rusqlite::{params, Connection, OptionalExtension, Params, Row};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::StorageError;
+use crate::{now_iso, StorageError};
 
 /// 提供 P2 首批设置、通知、追番和首页只读查询。
 pub struct AppRepository<'connection> {
@@ -98,6 +99,348 @@ impl<'connection> AppRepository<'connection> {
         Ok(items)
     }
 
+    /// 在单个事务中保存番剧目录、追番规则和 RSS 订阅。
+    pub fn upsert_my_anime(&self, mut item: MyAnime) -> Result<Vec<MyAnime>, StorageError> {
+        validate_identifier("myAnime.id", &item.id)?;
+        validate_identifier("myAnime.anime.id", &item.anime.id)?;
+        if item.anime.title.trim().is_empty() {
+            return invalid_input("myAnime.anime.title", "番剧标题不能为空");
+        }
+
+        let timestamp = now_iso();
+        if item.added_at.trim().is_empty() {
+            item.added_at = timestamp.clone();
+        }
+        item.updated_at = timestamp.clone();
+        if matches!(item.status, AnimeStatus::Completed | AnimeStatus::Dropped) {
+            item.auto_download = false;
+        }
+
+        let transaction = self.connection.unchecked_transaction()?;
+        upsert_anime_row(&transaction, &item.anime, &timestamp)?;
+        upsert_my_anime_row(&transaction, &item, &timestamp)?;
+        transaction.commit()?;
+        info!(
+            "Rust 追番保存完成：item_id={}, anime_id={}, status={}",
+            item.id,
+            item.anime.id,
+            anime_status_value(&item.status)
+        );
+        self.list_my_anime()
+    }
+
+    /// 删除追番及其单集业务数据，保留可复用的番剧目录记录。
+    pub fn remove_my_anime(&self, item_id: &str) -> Result<Vec<MyAnime>, StorageError> {
+        validate_identifier("itemId", item_id)?;
+        let anime_id = self
+            .connection
+            .query_row(
+                "SELECT anime_id FROM my_anime WHERE id = ?1",
+                [item_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute("DELETE FROM my_anime WHERE id = ?1", [item_id])?;
+        if let Some(anime_id) = anime_id.as_deref() {
+            transaction.execute("DELETE FROM episode WHERE anime_id = ?1", [anime_id])?;
+        }
+        transaction.commit()?;
+        info!("Rust 追番删除完成：item_id={item_id}");
+        self.list_my_anime()
+    }
+
+    /// 读取指定番剧的全部单集。
+    pub fn list_episodes(&self, anime_id: &str) -> Result<Vec<Episode>, StorageError> {
+        query_all_with_params(
+            self.connection,
+            "SELECT * FROM episode WHERE anime_id = ?1 ORDER BY episode_no",
+            [anime_id],
+            map_episode_row,
+        )?
+        .into_iter()
+        .map(EpisodeRow::into_domain)
+        .collect()
+    }
+
+    /// 新增或更新一条单集记录。
+    pub fn upsert_episode(&self, episode: &Episode) -> Result<Vec<Episode>, StorageError> {
+        validate_episode(episode)?;
+        upsert_episode_row(self.connection, episode, &now_iso())?;
+        self.list_episodes(&episode.anime_id)
+    }
+
+    /// 汇总全部追番的连续观看进度。
+    pub fn list_my_anime_watch_progress(&self) -> Result<Vec<AnimeWatchProgress>, StorageError> {
+        self.list_my_anime()?
+            .into_iter()
+            .map(|item| {
+                let episodes = self.list_episodes(&item.anime.id)?;
+                Ok(build_anime_watch_progress(&item, &episodes))
+            })
+            .collect()
+    }
+
+    /// 在单个事务中补齐单集并批量调整已看状态。
+    pub fn set_anime_watch_progress(
+        &self,
+        input: &SetAnimeWatchProgressInput,
+    ) -> Result<AnimeWatchProgress, StorageError> {
+        if !(0..=10_000).contains(&input.watched_episode_count) {
+            return invalid_input(
+                "watchedEpisodeCount",
+                "观看进度必须是 0 到 10000 之间的整数",
+            );
+        }
+        let item = self
+            .list_my_anime()?
+            .into_iter()
+            .find(|item| item.anime.id == input.anime_id)
+            .ok_or_else(|| StorageError::RecordNotFound {
+                entity: "追番",
+                id: input.anime_id.clone(),
+            })?;
+        let episodes = self.list_episodes(&input.anime_id)?;
+        let episode_by_number = episodes
+            .iter()
+            .filter(|episode| is_positive_integer(episode.episode_no))
+            .map(|episode| (episode.episode_no as i64, episode.clone()))
+            .collect::<HashMap<_, _>>();
+        let timestamp = now_iso();
+        let transaction = self.connection.unchecked_transaction()?;
+
+        for episode_no in 1..=input.watched_episode_count {
+            let mut episode = episode_by_number
+                .get(&episode_no)
+                .cloned()
+                .unwrap_or_else(|| Episode {
+                    id: create_download_episode_id(&input.anime_id, episode_no),
+                    anime_id: input.anime_id.clone(),
+                    episode_no: episode_no as f64,
+                    title: None,
+                    air_time: None,
+                    status: EpisodeStatus::Aired,
+                });
+            episode.status = EpisodeStatus::Watched;
+            upsert_episode_row(&transaction, &episode, &timestamp)?;
+        }
+
+        for episode in episodes.iter().filter(|episode| {
+            episode.episode_no > input.watched_episode_count as f64
+                && episode.status == EpisodeStatus::Watched
+        }) {
+            let mut episode = episode.clone();
+            episode.status = resolve_episode_status_after_unwatch(&transaction, &episode)?;
+            upsert_episode_row(&transaction, &episode, &timestamp)?;
+        }
+        transaction.execute(
+            "UPDATE my_anime SET updated_at = ?1 WHERE anime_id = ?2",
+            params![&timestamp, &input.anime_id],
+        )?;
+        transaction.commit()?;
+
+        let progress = build_anime_watch_progress(&item, &self.list_episodes(&input.anime_id)?);
+        info!(
+            "Rust 观看进度更新完成：anime_id={}, watched={}, total={}",
+            progress.anime_id, progress.watched_episode_count, progress.total_episode_count
+        );
+        Ok(progress)
+    }
+
+    /// 按下载任务和文件关联将达到阈值的单集标记为已看。
+    pub fn report_playback_progress(
+        &self,
+        input: &ReportPlaybackProgressInput,
+    ) -> Result<bool, StorageError> {
+        if !input.percent.is_finite() || input.percent < 90.0 {
+            return Ok(false);
+        }
+        if input.file_index.is_some_and(|index| index < 0) {
+            return invalid_input("fileIndex", "播放文件索引必须是非负整数");
+        }
+        let task = self
+            .list_downloads()?
+            .into_iter()
+            .find(|task| task.id == input.task_id);
+        let Some(task) = task else {
+            warn!(
+                "Rust 播放进度未找到下载任务：task_id={}, file_index={:?}",
+                input.task_id, input.file_index
+            );
+            return Ok(false);
+        };
+
+        let task_file = input
+            .file_index
+            .and_then(|index| task.files.iter().find(|file| file.index == index));
+        let media_file = self.list_media_files()?.into_iter().find(|media| {
+            media.download_task_id.as_deref() == Some(task.id.as_str())
+                && task_file
+                    .map(|file| {
+                        media.file_name == file.name || media.file_path.ends_with(&file.name)
+                    })
+                    .unwrap_or(true)
+        });
+        let anime_id = media_file
+            .as_ref()
+            .map(|media| media.anime_id.as_str())
+            .or(task.anime_id.as_deref());
+        let Some(anime_id) = anime_id else {
+            warn!("Rust 播放进度缺少番剧关联：task_id={}", input.task_id);
+            return Ok(false);
+        };
+        let episode_id = media_file
+            .as_ref()
+            .and_then(|media| media.episode_id.as_deref())
+            .or_else(|| task_file.and_then(|file| file.episode_id.as_deref()))
+            .or(task.episode_id.as_deref());
+        let episode_no = task_file
+            .and_then(|file| file.episode_no)
+            .or(task.episode_no);
+        let episode = self.list_episodes(anime_id)?.into_iter().find(|episode| {
+            episode_id == Some(episode.id.as_str()) || episode_no == Some(episode.episode_no)
+        });
+        let Some(mut episode) = episode else {
+            warn!(
+                "Rust 播放进度缺少单集关联：task_id={}, anime_id={}",
+                input.task_id, anime_id
+            );
+            return Ok(false);
+        };
+        if episode.status != EpisodeStatus::Watched {
+            episode.status = EpisodeStatus::Watched;
+            upsert_episode_row(self.connection, &episode, &now_iso())?;
+            info!(
+                "Rust 播放进度已标记单集：task_id={}, episode_id={}, percent={}",
+                input.task_id, episode.id, input.percent
+            );
+        }
+        Ok(true)
+    }
+
+    /// 读取指定下载文件最近一次可靠的播放位置。
+    pub fn get_playback_checkpoint(
+        &self,
+        task_id: &str,
+        file_index: Option<i64>,
+    ) -> Result<Option<PlaybackCheckpoint>, StorageError> {
+        let file_index = normalize_checkpoint_file_index(file_index);
+        self.connection
+            .query_row(
+                "SELECT * FROM playback_checkpoint WHERE task_id = ?1 AND file_index = ?2",
+                params![task_id, file_index],
+                map_playback_checkpoint_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    /// 校验并保存续播位置，首次跨过 90% 时同步已看状态。
+    pub fn save_playback_checkpoint(
+        &self,
+        input: &SavePlaybackCheckpointInput,
+    ) -> Result<PlaybackCheckpoint, StorageError> {
+        let normalized = normalize_playback_checkpoint_input(input)?;
+        let existing = self.get_playback_checkpoint(&normalized.task_id, normalized.file_index)?;
+        let percent =
+            calculate_playback_percent(normalized.position_seconds, normalized.duration_seconds);
+        let mut watched_reported = existing
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.watched_reported);
+        if !watched_reported && percent >= 90.0 {
+            watched_reported = self.report_playback_progress(&ReportPlaybackProgressInput {
+                task_id: normalized.task_id.clone(),
+                file_index: normalized.file_index,
+                percent,
+            })?;
+        }
+        let checkpoint = PlaybackCheckpoint {
+            task_id: normalized.task_id,
+            file_index: normalized.file_index,
+            position_seconds: normalized.position_seconds,
+            duration_seconds: normalized.duration_seconds,
+            completed: normalized.completed.unwrap_or(false),
+            watched_reported,
+            updated_at: now_iso(),
+        };
+        self.connection.execute(
+            "INSERT INTO playback_checkpoint (
+               task_id, file_index, position_seconds, duration_seconds, completed, watched_reported, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(task_id, file_index) DO UPDATE SET
+               position_seconds = excluded.position_seconds,
+               duration_seconds = excluded.duration_seconds,
+               completed = excluded.completed,
+               watched_reported = excluded.watched_reported,
+               updated_at = excluded.updated_at",
+            params![
+                &checkpoint.task_id,
+                normalize_checkpoint_file_index(checkpoint.file_index),
+                checkpoint.position_seconds,
+                checkpoint.duration_seconds,
+                i64::from(checkpoint.completed),
+                i64::from(checkpoint.watched_reported),
+                &checkpoint.updated_at,
+            ],
+        )?;
+        info!(
+            "Rust 续播位置保存完成：task_id={}, file_index={:?}, watched_reported={}",
+            checkpoint.task_id, checkpoint.file_index, checkpoint.watched_reported
+        );
+        Ok(checkpoint)
+    }
+
+    /// 读取指定番剧的单集级偏好。
+    pub fn list_episode_preferences(
+        &self,
+        anime_id: &str,
+    ) -> Result<Vec<EpisodePreference>, StorageError> {
+        query_all_with_params(
+            self.connection,
+            "SELECT * FROM episode_preference WHERE anime_id = ?1 ORDER BY episode_id",
+            [anime_id],
+            map_episode_preference_row,
+        )
+    }
+
+    /// 新增或更新一条单集级偏好。
+    pub fn upsert_episode_preference(
+        &self,
+        preference: &EpisodePreference,
+    ) -> Result<Vec<EpisodePreference>, StorageError> {
+        validate_identifier("preference.id", &preference.id)?;
+        validate_identifier("preference.animeId", &preference.anime_id)?;
+        validate_identifier("preference.episodeId", &preference.episode_id)?;
+        let timestamp = now_iso();
+        let transaction = self.connection.unchecked_transaction()?;
+        upsert_episode_preference_row(&transaction, preference, &timestamp)?;
+        transaction.commit()?;
+        self.list_episode_preferences(&preference.anime_id)
+    }
+
+    /// 删除一条单集级偏好并返回同番剧剩余项。
+    pub fn remove_episode_preference(
+        &self,
+        episode_id: &str,
+    ) -> Result<Vec<EpisodePreference>, StorageError> {
+        let anime_id = self
+            .connection
+            .query_row(
+                "SELECT anime_id FROM episode_preference WHERE episode_id = ?1",
+                [episode_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        self.connection.execute(
+            "DELETE FROM episode_preference WHERE episode_id = ?1",
+            [episode_id],
+        )?;
+        match anime_id {
+            Some(anime_id) => self.list_episode_preferences(&anime_id),
+            None => Ok(Vec::new()),
+        }
+    }
+
     /// 从追番、单集、下载和媒体表生成首页实时聚合数据。
     pub fn get_dashboard(&self) -> Result<DashboardData, StorageError> {
         let stored = self
@@ -114,7 +457,7 @@ impl<'connection> AppRepository<'connection> {
                 .unwrap_or_default();
 
         let my_anime = self.list_my_anime()?;
-        let episodes = self.list_episodes()?;
+        let episodes = self.list_all_episodes()?;
         let downloads = self.list_downloads()?;
         let mut media_files = self.list_media_files()?;
         let fansub_names = self.list_fansub_names()?;
@@ -196,8 +539,8 @@ impl<'connection> AppRepository<'connection> {
         Ok(subscriptions)
     }
 
-    /// 读取全部单集供首页聚合。
-    fn list_episodes(&self) -> Result<Vec<Episode>, StorageError> {
+    /// 读取全部单集供跨番剧聚合。
+    fn list_all_episodes(&self) -> Result<Vec<Episode>, StorageError> {
         query_all(
             self.connection,
             "SELECT * FROM episode ORDER BY episode_no",
@@ -298,6 +641,543 @@ fn query_all<T>(
     let rows = statement.query_map([], |row| mapper(row))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(StorageError::from)
+}
+
+/// 读取带参数查询的全部结果。
+fn query_all_with_params<T, P: Params>(
+    connection: &Connection,
+    sql: &str,
+    params: P,
+    mut mapper: impl FnMut(&Row<'_>) -> rusqlite::Result<T>,
+) -> Result<Vec<T>, StorageError> {
+    let mut statement = connection.prepare(sql)?;
+    let rows = statement.query_map(params, |row| mapper(row))?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(StorageError::from)
+}
+
+/// 写入番剧目录和规范化别名。
+fn upsert_anime_row(
+    connection: &Connection,
+    anime: &Anime,
+    timestamp: &str,
+) -> Result<(), StorageError> {
+    let external_ids_json =
+        serde_json::to_string(&anime.external_ids).map_err(|source| StorageError::JsonData {
+            context: "番剧外部标识",
+            source,
+        })?;
+    let detail_json = serde_json::to_string(
+        anime
+            .detail
+            .as_ref()
+            .unwrap_or(&Value::Object(Default::default())),
+    )
+    .map_err(|source| StorageError::JsonData {
+        context: "番剧详情",
+        source,
+    })?;
+    connection.execute(
+        "INSERT INTO anime_catalog (
+           id, title, original_title, premiere_date, premiere_year, premiere_month, season, summary,
+           cover_url, rating_score, rating_count, rating_source, external_ids_json, detail_json,
+           created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?15)
+         ON CONFLICT(id) DO UPDATE SET
+           title = excluded.title, original_title = excluded.original_title,
+           premiere_date = excluded.premiere_date, premiere_year = excluded.premiere_year,
+           premiere_month = excluded.premiere_month, season = excluded.season,
+           summary = excluded.summary, cover_url = excluded.cover_url,
+           rating_score = excluded.rating_score, rating_count = excluded.rating_count,
+           rating_source = excluded.rating_source, external_ids_json = excluded.external_ids_json,
+           detail_json = excluded.detail_json, updated_at = excluded.updated_at",
+        params![
+            &anime.id,
+            anime.title.trim(),
+            anime.original_title.as_deref(),
+            anime.premiere_date.as_deref(),
+            anime.premiere_year,
+            anime.premiere_month,
+            anime.season.as_deref(),
+            anime.summary.as_deref(),
+            anime.cover_url.as_deref(),
+            anime.rating.as_ref().map(|rating| rating.score),
+            anime.rating.as_ref().and_then(|rating| rating.count),
+            anime.rating.as_ref().map(|rating| rating.source.as_str()),
+            external_ids_json,
+            detail_json,
+            timestamp,
+        ],
+    )?;
+
+    connection.execute("DELETE FROM anime_alias WHERE anime_id = ?1", [&anime.id])?;
+    for alias in normalize_anime_aliases(anime) {
+        connection.execute(
+            "INSERT INTO anime_alias (id, anime_id, alias, language, priority)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![
+                alias.id,
+                alias.anime_id,
+                alias.alias,
+                alias_language_value(&alias.language),
+                alias.priority,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// 写入追番规则并以当前草稿替换 RSS 订阅。
+fn upsert_my_anime_row(
+    connection: &Connection,
+    item: &MyAnime,
+    timestamp: &str,
+) -> Result<(), StorageError> {
+    let subtitle_languages = resolve_subtitle_languages(
+        item.preferred_subtitle_languages.clone(),
+        item.preferred_subtitle.as_deref(),
+    );
+    let subtitle_languages_json =
+        serde_json::to_string(&subtitle_languages).map_err(|source| StorageError::JsonData {
+            context: "追番字幕语言",
+            source,
+        })?;
+    connection.execute(
+        "INSERT INTO my_anime (
+           id, anime_id, status, default_fansub_group_id, auto_download, download_dir,
+           preferred_resolution, preferred_codec, preferred_subtitle,
+           preferred_subtitle_languages_json, preferred_bit_depth, added_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+         ON CONFLICT(id) DO UPDATE SET
+           anime_id = excluded.anime_id, status = excluded.status,
+           default_fansub_group_id = excluded.default_fansub_group_id,
+           auto_download = excluded.auto_download, download_dir = excluded.download_dir,
+           preferred_resolution = excluded.preferred_resolution,
+           preferred_codec = excluded.preferred_codec,
+           preferred_subtitle = excluded.preferred_subtitle,
+           preferred_subtitle_languages_json = excluded.preferred_subtitle_languages_json,
+           preferred_bit_depth = excluded.preferred_bit_depth, updated_at = excluded.updated_at",
+        params![
+            &item.id,
+            &item.anime.id,
+            anime_status_value(&item.status),
+            item.default_fansub_group_id.as_deref(),
+            i64::from(item.auto_download),
+            item.download_dir.as_deref(),
+            item.preferred_resolution.as_deref(),
+            item.preferred_codec.as_deref(),
+            to_legacy_subtitle_preference(&subtitle_languages),
+            subtitle_languages_json,
+            item.preferred_bit_depth,
+            &item.added_at,
+            &item.updated_at,
+        ],
+    )?;
+    if let Some(fansub_group_id) = item.default_fansub_group_id.as_deref() {
+        connection.execute(
+            "INSERT INTO anime_fansub_group (
+               anime_id, fansub_group_id, first_seen_at, last_seen_at
+             ) VALUES (?1, ?2, ?3, ?3)
+             ON CONFLICT(anime_id, fansub_group_id) DO UPDATE SET last_seen_at = excluded.last_seen_at",
+            params![&item.anime.id, fansub_group_id, timestamp],
+        )?;
+    }
+
+    connection.execute(
+        "DELETE FROM my_anime_rss_subscription WHERE my_anime_id = ?1",
+        [&item.id],
+    )?;
+    for subscription in &item.rss_subscriptions {
+        validate_identifier("rssSubscription.id", &subscription.id)?;
+        let languages = resolve_subtitle_languages(
+            subscription.preferred_subtitle_languages.clone(),
+            subscription.preferred_subtitle.as_deref(),
+        );
+        let languages_json =
+            serde_json::to_string(&languages).map_err(|source| StorageError::JsonData {
+                context: "RSS 字幕语言",
+                source,
+            })?;
+        let created_at = if subscription.created_at.trim().is_empty() {
+            timestamp
+        } else {
+            &subscription.created_at
+        };
+        let updated_at = if subscription.updated_at.trim().is_empty() {
+            timestamp
+        } else {
+            &subscription.updated_at
+        };
+        connection.execute(
+            "INSERT INTO my_anime_rss_subscription (
+               id, my_anime_id, name, url, enabled, preferred_subtitle,
+               preferred_subtitle_languages_json, refresh_interval_minutes, last_fetched_at,
+               created_at, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                &subscription.id,
+                &item.id,
+                subscription.name.trim(),
+                subscription.url.trim(),
+                i64::from(subscription.enabled),
+                to_legacy_subtitle_preference(&languages),
+                languages_json,
+                subscription.refresh_interval_minutes,
+                subscription.last_fetched_at.as_deref(),
+                created_at,
+                updated_at,
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+/// 写入一条单集记录并保留首次创建时间。
+fn upsert_episode_row(
+    connection: &Connection,
+    episode: &Episode,
+    timestamp: &str,
+) -> Result<(), StorageError> {
+    validate_episode(episode)?;
+    connection.execute(
+        "INSERT INTO episode (
+           id, anime_id, episode_no, title, air_time, status, created_at, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?7)
+         ON CONFLICT(id) DO UPDATE SET
+           anime_id = excluded.anime_id, episode_no = excluded.episode_no,
+           title = excluded.title, air_time = excluded.air_time,
+           status = excluded.status, updated_at = excluded.updated_at",
+        params![
+            &episode.id,
+            &episode.anime_id,
+            episode.episode_no,
+            episode.title.as_deref(),
+            episode.air_time.as_deref(),
+            episode_status_value(&episode.status),
+            timestamp,
+        ],
+    )?;
+    Ok(())
+}
+
+/// 写入单集偏好并维护番剧与字幕组的发现关联。
+fn upsert_episode_preference_row(
+    connection: &Connection,
+    preference: &EpisodePreference,
+    timestamp: &str,
+) -> Result<(), StorageError> {
+    connection.execute(
+        "INSERT INTO episode_preference (
+           id, anime_id, episode_id, fansub_group_id, release_id, is_manual_override, updated_at
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(episode_id) DO UPDATE SET
+           id = excluded.id, anime_id = excluded.anime_id,
+           fansub_group_id = excluded.fansub_group_id, release_id = excluded.release_id,
+           is_manual_override = excluded.is_manual_override, updated_at = excluded.updated_at",
+        params![
+            &preference.id,
+            &preference.anime_id,
+            &preference.episode_id,
+            preference.fansub_group_id.as_deref(),
+            preference.release_id.as_deref(),
+            i64::from(preference.is_manual_override),
+            timestamp,
+        ],
+    )?;
+    if let Some(fansub_group_id) = preference.fansub_group_id.as_deref() {
+        connection.execute(
+            "INSERT INTO anime_fansub_group (
+               anime_id, fansub_group_id, first_seen_at, last_seen_at
+             ) VALUES (?1, ?2, ?3, ?3)
+             ON CONFLICT(anime_id, fansub_group_id) DO UPDATE SET last_seen_at = excluded.last_seen_at",
+            params![&preference.anime_id, fansub_group_id, timestamp],
+        )?;
+    }
+    Ok(())
+}
+
+/// 将 SQLite 单集偏好行映射为领域对象。
+fn map_episode_preference_row(row: &Row<'_>) -> rusqlite::Result<EpisodePreference> {
+    Ok(EpisodePreference {
+        id: row.get("id")?,
+        anime_id: row.get("anime_id")?,
+        episode_id: row.get("episode_id")?,
+        fansub_group_id: row.get("fansub_group_id")?,
+        release_id: row.get("release_id")?,
+        is_manual_override: row.get::<_, i64>("is_manual_override")? != 0,
+    })
+}
+
+/// 将 SQLite 续播位置行映射为领域对象。
+fn map_playback_checkpoint_row(row: &Row<'_>) -> rusqlite::Result<PlaybackCheckpoint> {
+    let file_index = row.get::<_, i64>("file_index")?;
+    Ok(PlaybackCheckpoint {
+        task_id: row.get("task_id")?,
+        file_index: (file_index >= 0).then_some(file_index),
+        position_seconds: row.get("position_seconds")?,
+        duration_seconds: row.get("duration_seconds")?,
+        completed: row.get::<_, i64>("completed")? != 0,
+        watched_reported: row.get::<_, i64>("watched_reported")? != 0,
+        updated_at: row.get("updated_at")?,
+    })
+}
+
+/// 根据单集状态和元数据生成观看进度摘要。
+fn build_anime_watch_progress(item: &MyAnime, episodes: &[Episode]) -> AnimeWatchProgress {
+    let known_episode_count = episodes
+        .iter()
+        .filter(|episode| is_positive_integer(episode.episode_no))
+        .map(|episode| episode.episode_no as i64)
+        .max()
+        .unwrap_or_default();
+    let watched_episode_count = episodes
+        .iter()
+        .filter(|episode| {
+            episode.status == EpisodeStatus::Watched && is_positive_integer(episode.episode_no)
+        })
+        .map(|episode| episode.episode_no as i64)
+        .max()
+        .unwrap_or_default();
+    let metadata_episode_count = item
+        .anime
+        .detail
+        .as_ref()
+        .and_then(|detail| detail.get("episodeCount"))
+        .and_then(Value::as_i64)
+        .filter(|count| *count > 0)
+        .unwrap_or_default();
+    AnimeWatchProgress {
+        anime_id: item.anime.id.clone(),
+        watched_episode_count,
+        total_episode_count: metadata_episode_count
+            .max(known_episode_count)
+            .max(watched_episode_count),
+    }
+}
+
+/// 取消已看时根据下载关联和放送时间恢复单集状态。
+fn resolve_episode_status_after_unwatch(
+    connection: &Connection,
+    episode: &Episode,
+) -> Result<EpisodeStatus, StorageError> {
+    let rows = query_all_with_params(
+        connection,
+        "SELECT download_task.status, download_task.progress,
+                torrent_file.progress AS file_progress
+         FROM download_task
+         LEFT JOIN torrent_file
+           ON torrent_file.download_task_id = download_task.id
+          AND torrent_file.selected = 1
+          AND (torrent_file.episode_id = ?1 OR torrent_file.episode_no = ?2)
+         WHERE download_task.anime_id = ?3
+           AND (download_task.episode_id = ?1 OR download_task.episode_no = ?2 OR torrent_file.id IS NOT NULL)",
+        params![&episode.id, episode.episode_no, &episode.anime_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, f64>(1)?,
+                row.get::<_, Option<f64>>(2)?,
+            ))
+        },
+    )?;
+    if rows.iter().any(|(status, progress, file_progress)| {
+        !matches!(status.as_str(), "error" | "missing_files")
+            && (matches!(status.as_str(), "completed" | "seeding")
+                || progress.max(file_progress.unwrap_or_default()) >= 1.0)
+    }) {
+        return Ok(EpisodeStatus::Downloaded);
+    }
+    if rows.iter().any(|(status, progress, file_progress)| {
+        matches!(
+            status.as_str(),
+            "queued"
+                | "fetching_metadata"
+                | "downloading"
+                | "stalled"
+                | "paused"
+                | "checking"
+                | "moving"
+        ) && progress.max(file_progress.unwrap_or_default()) < 1.0
+    }) {
+        return Ok(EpisodeStatus::Downloading);
+    }
+    if episode
+        .air_time
+        .as_deref()
+        .and_then(parse_timestamp)
+        .is_some_and(|air_time| air_time > Utc::now())
+    {
+        return Ok(EpisodeStatus::Upcoming);
+    }
+    Ok(EpisodeStatus::Aired)
+}
+
+/// 校验并规范化续播写入参数。
+fn normalize_playback_checkpoint_input(
+    input: &SavePlaybackCheckpointInput,
+) -> Result<SavePlaybackCheckpointInput, StorageError> {
+    let task_id = input.task_id.trim();
+    if task_id.is_empty()
+        || task_id.len() > 160
+        || !task_id
+            .bytes()
+            .all(|value| value.is_ascii_alphanumeric() || b"._:-".contains(&value))
+    {
+        return invalid_input("taskId", "下载任务标识格式无效");
+    }
+    if input.file_index.is_some_and(|index| index < 0) {
+        return invalid_input("fileIndex", "播放文件索引必须是非负整数");
+    }
+    if !is_playback_seconds(input.position_seconds) || !is_playback_seconds(input.duration_seconds)
+    {
+        return invalid_input("playbackSeconds", "播放位置和时长必须是有效的非负秒数");
+    }
+    let position_seconds = if input.duration_seconds > 0.0 {
+        input.position_seconds.min(input.duration_seconds)
+    } else {
+        input.position_seconds
+    };
+    Ok(SavePlaybackCheckpointInput {
+        task_id: task_id.to_owned(),
+        file_index: input.file_index,
+        position_seconds,
+        duration_seconds: input.duration_seconds,
+        completed: Some(input.completed == Some(true)),
+    })
+}
+
+/// 将播放位置换算为受限百分比。
+fn calculate_playback_percent(position_seconds: f64, duration_seconds: f64) -> f64 {
+    if !position_seconds.is_finite() || !duration_seconds.is_finite() || duration_seconds <= 0.0 {
+        return 0.0;
+    }
+    (position_seconds / duration_seconds * 100.0).clamp(0.0, 100.0)
+}
+
+/// 判断秒数是否处于播放器允许持久化的范围。
+fn is_playback_seconds(value: f64) -> bool {
+    const MAX_PLAYBACK_SECONDS: f64 = 31.0 * 24.0 * 60.0 * 60.0;
+    value.is_finite() && (0.0..=MAX_PLAYBACK_SECONDS).contains(&value)
+}
+
+/// 使用 -1 表示未指定文件索引，确保复合主键稳定去重。
+fn normalize_checkpoint_file_index(file_index: Option<i64>) -> i64 {
+    file_index.unwrap_or(-1)
+}
+
+/// 写库前按别名文本去重并重建番剧内稳定标识。
+fn normalize_anime_aliases(anime: &Anime) -> Vec<AnimeAlias> {
+    let mut aliases = Vec::<AnimeAlias>::new();
+    let mut index_by_key = HashMap::<String, usize>::new();
+    for alias in &anime.aliases {
+        let value = alias.alias.trim();
+        if value.is_empty() {
+            continue;
+        }
+        let key = value.to_lowercase();
+        if let Some(index) = index_by_key.get(&key).copied() {
+            if alias.priority > aliases[index].priority {
+                aliases[index] = AnimeAlias {
+                    alias: value.to_owned(),
+                    ..alias.clone()
+                };
+            }
+            continue;
+        }
+        index_by_key.insert(key, aliases.len());
+        aliases.push(AnimeAlias {
+            alias: value.to_owned(),
+            ..alias.clone()
+        });
+    }
+    aliases
+        .into_iter()
+        .enumerate()
+        .map(|(index, alias)| AnimeAlias {
+            id: format!("{}-alias-{}", anime.id, index + 1),
+            anime_id: anime.id.clone(),
+            ..alias
+        })
+        .collect()
+}
+
+/// 将字幕语言集合转换为旧单值字段。
+fn to_legacy_subtitle_preference(values: &[String]) -> Option<&str> {
+    match values {
+        [] => None,
+        [value] => Some(value.as_str()),
+        _ => Some("multi"),
+    }
+}
+
+/// 校验业务标识符不为空且长度受限。
+fn validate_identifier(field: &'static str, value: &str) -> Result<(), StorageError> {
+    if value.trim().is_empty() || value.len() > 200 {
+        return invalid_input(field, "标识不能为空且不能超过 200 个字符");
+    }
+    Ok(())
+}
+
+/// 校验单集标识、番剧关联和集数。
+fn validate_episode(episode: &Episode) -> Result<(), StorageError> {
+    validate_identifier("episode.id", &episode.id)?;
+    validate_identifier("episode.animeId", &episode.anime_id)?;
+    if !episode.episode_no.is_finite() || episode.episode_no <= 0.0 {
+        return invalid_input("episode.episodeNo", "单集编号必须是正数");
+    }
+    Ok(())
+}
+
+/// 创建统一的业务输入错误。
+fn invalid_input<T>(field: &'static str, message: &str) -> Result<T, StorageError> {
+    Err(StorageError::InvalidInput {
+        field,
+        message: message.to_owned(),
+    })
+}
+
+/// 判断集数是否为正整数。
+fn is_positive_integer(value: f64) -> bool {
+    value.is_finite() && value > 0.0 && value.fract() == 0.0
+}
+
+/// 为观看进度补建单集生成稳定标识。
+fn create_download_episode_id(anime_id: &str, episode_no: i64) -> String {
+    format!("episode-{anime_id}-{episode_no}")
+}
+
+/// 返回追番状态的 SQLite 字面量。
+fn anime_status_value(status: &AnimeStatus) -> &'static str {
+    match status {
+        AnimeStatus::Watching => "watching",
+        AnimeStatus::Planned => "planned",
+        AnimeStatus::Completed => "completed",
+        AnimeStatus::Paused => "paused",
+        AnimeStatus::Dropped => "dropped",
+    }
+}
+
+/// 返回单集状态的 SQLite 字面量。
+fn episode_status_value(status: &EpisodeStatus) -> &'static str {
+    match status {
+        EpisodeStatus::Upcoming => "upcoming",
+        EpisodeStatus::Aired => "aired",
+        EpisodeStatus::Matched => "matched",
+        EpisodeStatus::Downloading => "downloading",
+        EpisodeStatus::Downloaded => "downloaded",
+        EpisodeStatus::Watched => "watched",
+    }
+}
+
+/// 返回番剧别名语言的 SQLite 字面量。
+fn alias_language_value(language: &AnimeAliasLanguage) -> &'static str {
+    match language {
+        AnimeAliasLanguage::Zh => "zh",
+        AnimeAliasLanguage::Ja => "ja",
+        AnimeAliasLanguage::En => "en",
+        AnimeAliasLanguage::Romaji => "romaji",
+        AnimeAliasLanguage::Custom => "custom",
+    }
 }
 
 /// 将持久化设置递归覆盖到平台默认设置。

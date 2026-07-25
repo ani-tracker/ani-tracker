@@ -4,7 +4,20 @@ import { resolve } from "node:path";
 import { test } from "node:test";
 import type { PlayerSnapshot } from "../player-contract";
 import { acceptPlayerSnapshot } from "../player-contract";
-import type { DashboardData, MyAnime, NotificationRecord } from "../domain";
+import type {
+  AnimeWatchProgress,
+  PlaybackCheckpoint,
+  ReportPlaybackProgressInput,
+  SavePlaybackCheckpointInput,
+  SetAnimeWatchProgressInput
+} from "../contracts";
+import type {
+  DashboardData,
+  Episode,
+  EpisodePreference,
+  MyAnime,
+  NotificationRecord
+} from "../domain";
 
 interface ContractFixture<T> {
   schemaVersion: number;
@@ -44,4 +57,32 @@ test("Tauri P2 只读数据契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.myAnime.anime.externalIds.bangumi, "1");
   assert.deepEqual(fixture.payload.myAnime.preferredSubtitleLanguages, ["chs", "cht"]);
   assert.equal(fixture.payload.dashboard.dailyReminder.total, 0);
+});
+
+/** 读取 P3 追番写模型金样，验证 Tauri 命令输入输出与前端契约一致。 */
+test("Tauri P3 追番写模型契约金样可被 TypeScript 接受", () => {
+  const fixturePath = resolve("fixtures/contracts/p3-following-write-model.v1.json");
+  const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
+    myAnime: MyAnime;
+    episode: Episode;
+    preference: EpisodePreference;
+    watchProgressInput: SetAnimeWatchProgressInput;
+    reportPlaybackProgressInput: ReportPlaybackProgressInput;
+    savePlaybackCheckpointInput: SavePlaybackCheckpointInput;
+    checkpoint: PlaybackCheckpoint;
+  }>;
+  const progress: AnimeWatchProgress = {
+    animeId: fixture.payload.myAnime.anime.id,
+    watchedEpisodeCount: fixture.payload.watchProgressInput.watchedEpisodeCount,
+    totalEpisodeCount: fixture.payload.myAnime.anime.detail?.episodeCount ?? 0
+  };
+
+  assert.equal(fixture.schemaVersion, 1);
+  assert.equal(fixture.kind, "p3-following-write-model");
+  assert.equal(fixture.payload.episode.animeId, fixture.payload.myAnime.anime.id);
+  assert.equal(fixture.payload.preference.episodeId, fixture.payload.episode.id);
+  assert.equal(fixture.payload.reportPlaybackProgressInput.percent, 92);
+  assert.equal(fixture.payload.savePlaybackCheckpointInput.fileIndex, 0);
+  assert.equal(fixture.payload.checkpoint.watchedReported, true);
+  assert.equal(progress.totalEpisodeCount, 12);
 });

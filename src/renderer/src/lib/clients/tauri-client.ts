@@ -1,10 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { AppClient } from "@shared/app-client";
-import type { AppWindowState } from "@shared/contracts";
+import type {
+  AnimeWatchProgress,
+  AppWindowState,
+  PlaybackCheckpoint,
+  ReportPlaybackProgressInput,
+  SavePlaybackCheckpointInput,
+  SetAnimeWatchProgressInput
+} from "@shared/contracts";
 import type {
   AppSettings,
   DashboardData,
+  Episode,
+  EpisodePreference,
   MyAnime,
   NotificationRecord
 } from "@shared/domain";
@@ -124,6 +133,83 @@ class TauriClientCore {
   async listMyAnime(): Promise<MyAnime[]> {
     return invoke<MyAnime[]>("list_my_anime").catch((error) => {
       throw normalizeTauriError("list_my_anime", error);
+    });
+  }
+
+  /** 通过 Rust 事务新增或更新追番规则。 */
+  async upsertMyAnime(item: MyAnime): Promise<MyAnime[]> {
+    return invoke<MyAnime[]>("upsert_my_anime", { item }).catch((error) => {
+      throw normalizeTauriError("upsert_my_anime", error);
+    });
+  }
+
+  /** 删除追番及其单集业务数据。 */
+  async removeMyAnime(itemId: string): Promise<MyAnime[]> {
+    return invoke<MyAnime[]>("remove_my_anime", { itemId }).catch((error) => {
+      throw normalizeTauriError("remove_my_anime", error);
+    });
+  }
+
+  /** 读取全部追番观看进度。 */
+  async listMyAnimeWatchProgress(): Promise<AnimeWatchProgress[]> {
+    return invoke<AnimeWatchProgress[]>("list_my_anime_watch_progress").catch((error) => {
+      throw normalizeTauriError("list_my_anime_watch_progress", error);
+    });
+  }
+
+  /** 原子调整一部追番的已看集数。 */
+  async setAnimeWatchProgress(input: SetAnimeWatchProgressInput): Promise<AnimeWatchProgress> {
+    return invoke<AnimeWatchProgress>("set_anime_watch_progress", { input }).catch((error) => {
+      throw normalizeTauriError("set_anime_watch_progress", error);
+    });
+  }
+
+  /** 将达到阈值的播放进度回写为单集已看状态。 */
+  async reportPlaybackProgress(input: ReportPlaybackProgressInput): Promise<boolean> {
+    return invoke<boolean>("report_playback_progress", { input }).catch((error) => {
+      throw normalizeTauriError("report_playback_progress", error);
+    });
+  }
+
+  /** 保存当前下载文件的续播检查点。 */
+  async savePlaybackCheckpoint(input: SavePlaybackCheckpointInput): Promise<PlaybackCheckpoint> {
+    return invoke<PlaybackCheckpoint>("save_playback_checkpoint", { input }).catch((error) => {
+      throw normalizeTauriError("save_playback_checkpoint", error);
+    });
+  }
+
+  /** 读取指定番剧单集。 */
+  async listEpisodes(animeId: string): Promise<Episode[]> {
+    return invoke<Episode[]>("list_episodes", { animeId }).catch((error) => {
+      throw normalizeTauriError("list_episodes", error);
+    });
+  }
+
+  /** 新增或更新单集。 */
+  async upsertEpisode(episode: Episode): Promise<Episode[]> {
+    return invoke<Episode[]>("upsert_episode", { episode }).catch((error) => {
+      throw normalizeTauriError("upsert_episode", error);
+    });
+  }
+
+  /** 读取指定番剧的单集级规则。 */
+  async listEpisodePreferences(animeId: string): Promise<EpisodePreference[]> {
+    return invoke<EpisodePreference[]>("list_episode_preferences", { animeId }).catch((error) => {
+      throw normalizeTauriError("list_episode_preferences", error);
+    });
+  }
+
+  /** 新增或更新单集级规则。 */
+  async upsertEpisodePreference(preference: EpisodePreference): Promise<EpisodePreference[]> {
+    return invoke<EpisodePreference[]>("upsert_episode_preference", { preference }).catch((error) => {
+      throw normalizeTauriError("upsert_episode_preference", error);
+    });
+  }
+
+  /** 删除单集级规则。 */
+  async removeEpisodePreference(episodeId: string): Promise<EpisodePreference[]> {
+    return invoke<EpisodePreference[]>("remove_episode_preference", { episodeId }).catch((error) => {
+      throw normalizeTauriError("remove_episode_preference", error);
     });
   }
 }
