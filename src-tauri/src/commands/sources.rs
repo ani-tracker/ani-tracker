@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex};
 use ani_contracts::AppCommandError;
 use ani_domain::{
     AnimeReleaseQuery, AnimeSourceBinding, AnimeSourceBindingState, AnimeStatus, AppSettings,
-    ConfirmAnimeSourceBindingInput, Episode, EpisodePreference, FansubGroup, MyAnime,
+    ConfirmAnimeSourceBindingInput, Episode, EpisodePreference, FansubGroup, MyAnime, Release,
     ReleaseMatchContext, ReleaseQuery, ReleaseSearchError, ReleaseSearchResult,
     ReleaseSourceConfig, RemoveAnimeSourceCandidateMismatchInput,
     ReportAnimeSourceCandidateMismatchInput, RssSubscriptionReleaseQuery,
@@ -153,6 +153,36 @@ async fn load_anime_search_snapshot(
     .map_err(|error| map_runtime_error("读取番剧资源上下文", error))?
 }
 
+/// 在线程池持久化搜索中观察到的番剧字幕组。
+async fn observe_search_fansubs(
+    storage: Arc<Mutex<Storage>>,
+    anime_id: String,
+    releases: Vec<Release>,
+) -> Result<(), AppCommandError> {
+    if releases.is_empty() {
+        return Ok(());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let storage = storage
+            .lock()
+            .map_err(|error| map_runtime_error("保存搜索字幕组", error))?;
+        let repository = storage.repository();
+        let followed = repository
+            .list_my_anime()
+            .map_err(|error| map_repository_error("读取我的追番", error))?
+            .iter()
+            .any(|item| item.anime.id == anime_id);
+        if followed {
+            repository
+                .observe_anime_fansubs(&anime_id, &releases)
+                .map_err(|error| map_repository_error("保存搜索字幕组", error))?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| map_runtime_error("保存搜索字幕组", error))?
+}
+
 /// 按任意关键词搜索全部启用下载源。
 #[tauri::command]
 pub(crate) async fn search_releases(
@@ -161,6 +191,7 @@ pub(crate) async fn search_releases(
     source_state: State<'_, AppSourceState>,
 ) -> Result<ReleaseSearchResult, AppCommandError> {
     let storage = Arc::clone(storage_state.storage());
+    let anime_id = query.anime_id.clone();
     let snapshot = load_search_snapshot(
         Arc::clone(&storage),
         storage_state.platform_defaults().clone(),
@@ -171,11 +202,15 @@ pub(crate) async fn search_releases(
         .network_service(&snapshot.settings)
         .await
         .map_err(|error| map_source_error("初始化来源网络", error))?;
-    let store = SharedReleaseSearchStore::new(storage);
-    ReleaseSearchService::new(network)
+    let store = SharedReleaseSearchStore::new(Arc::clone(&storage));
+    let result = ReleaseSearchService::new(network)
         .search(&store, &snapshot.sources, &snapshot.fansubs, query)
         .await
-        .map_err(|error| map_source_error("搜索资源", error))
+        .map_err(|error| map_source_error("搜索资源", error))?;
+    if let Some(anime_id) = anime_id {
+        observe_search_fansubs(storage, anime_id, result.releases.clone()).await?;
+    }
+    Ok(result)
 }
 
 /// 按追番上下文搜索资源并应用字幕组、清晰度和编码偏好排序。
@@ -199,7 +234,7 @@ pub(crate) async fn search_anime_releases(
         .network_service(&snapshot.search.settings)
         .await
         .map_err(|error| map_source_error("初始化来源网络", error))?;
-    let store = SharedReleaseSearchStore::new(storage);
+    let store = SharedReleaseSearchStore::new(Arc::clone(&storage));
     let mut result = ReleaseSearchService::new(network)
         .search_anime(
             &store,
@@ -241,6 +276,12 @@ pub(crate) async fn search_anime_releases(
         },
         &snapshot.search.fansubs,
     );
+    observe_search_fansubs(
+        Arc::clone(&storage),
+        snapshot.anime.anime.id.clone(),
+        result.releases.clone(),
+    )
+    .await?;
     Ok(result)
 }
 
@@ -319,8 +360,8 @@ pub(crate) async fn search_rss_subscription_releases(
         .network_service(&snapshot.search.settings)
         .await
         .map_err(|error| map_source_error("初始化来源网络", error))?;
-    let store = SharedReleaseSearchStore::new(storage);
-    Ok(ReleaseSearchService::new(network)
+    let store = SharedReleaseSearchStore::new(Arc::clone(&storage));
+    let result = ReleaseSearchService::new(network)
         .search_rss_subscription(
             &store,
             &source,
@@ -329,7 +370,9 @@ pub(crate) async fn search_rss_subscription_releases(
             query,
             &preferred_languages,
         )
-        .await)
+        .await;
+    observe_search_fansubs(storage, snapshot.anime.anime.id, result.releases.clone()).await?;
+    Ok(result)
 }
 
 /// 读取来源绑定命令需要的当前平台设置。

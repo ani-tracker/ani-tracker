@@ -6,12 +6,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use ani_domain::{
     AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
     AnimeSourceExclusionScope, AnimeStatus, Episode, EpisodePreference, MyAnime,
-    PlaybackCheckpoint, ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
-    RequestCircuitState, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    PlaybackCheckpoint, ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSyncState,
+    ReportPlaybackProgressInput, RequestCircuitState, SavePlaybackCheckpointInput,
+    SetAnimeWatchProgressInput,
 };
 use ani_repository::{
-    AnimeSourceBindingRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository,
-    RepositoryError, UnitOfWork, UnitOfWorkFactory,
+    AnimeCatalogRepository, AnimeSourceBindingRepository, CachedReleaseQuery,
+    ReleaseCacheRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository, RepositoryError,
+    UnitOfWork, UnitOfWorkFactory,
 };
 use rusqlite::{params, Connection, OpenFlags};
 use serde::Deserialize;
@@ -57,6 +59,12 @@ struct P3SourceNetworkModelFixture {
 struct P3SourceBindingModelFixture {
     binding: AnimeSourceBinding,
     exclusion: AnimeSourceExclusion,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct P3ReleaseSearchModelFixture {
+    search_result: ReleaseSearchResult,
 }
 
 /// 验证新库在单次启动中完成建表、seed 和版本写入。
@@ -770,6 +778,97 @@ fn persists_p3_source_bindings_and_exclusions() {
     )
     .expect("remove source binding");
     assert!(bindings.is_empty());
+}
+
+/// 验证原始资源缓存与动态字幕组观察通过公共 Repository 端口持久化。
+#[test]
+fn persists_p3_release_cache_and_observed_fansubs() {
+    let directory = TestDirectory::new("p3-release-cache");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("open p3 release cache database");
+    let fixture: ContractFixture<P3ReleaseSearchModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-release-search-model.v1.json"
+        )))
+        .expect("decode p3 release search fixture");
+    let release = fixture.payload.search_result.releases[0].clone();
+    insert_source(&storage.connection, &release.source_id, false);
+    insert_source_binding_anime(
+        &storage.connection,
+        release.anime_id.as_deref().expect("fixture anime id"),
+    );
+    let repository = storage.repository();
+
+    let mut alias_release = release.clone();
+    alias_release.fansub_name = Some("契约字幕组别名".to_owned());
+    alias_release.source_id = "other-contract".to_owned();
+    let observed = AnimeCatalogRepository::observe_anime_fansubs(
+        &repository,
+        release.anime_id.as_deref().expect("fixture anime id"),
+        &[release.clone(), alias_release],
+    )
+    .expect("observe release fansubs");
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].id, "fansub-contract");
+    assert_eq!(observed[0].name, "契约字幕组");
+    assert_eq!(observed[0].aliases, vec!["契约字幕组别名"]);
+    assert_eq!(
+        observed[0].source_ids,
+        vec!["other-contract", "rss-contract"]
+    );
+
+    assert_eq!(
+        ReleaseCacheRepository::upsert_cached_releases(&repository, std::slice::from_ref(&release))
+            .expect("save first cached release"),
+        1
+    );
+    assert_eq!(
+        ReleaseCacheRepository::upsert_cached_releases(&repository, std::slice::from_ref(&release))
+            .expect("save duplicate cached release"),
+        0
+    );
+    let query = CachedReleaseQuery {
+        source_ids: Some(vec![release.source_id.clone()]),
+        anime_id: release.anime_id.clone(),
+        limit: Some(10),
+    };
+    assert_eq!(
+        ReleaseCacheRepository::list_cached_releases(&repository, &query)
+            .expect("list cached release"),
+        vec![release.clone()]
+    );
+
+    let mut refreshed = release.clone();
+    refreshed.anime_id = None;
+    refreshed.seeders = Some(48);
+    ReleaseCacheRepository::upsert_cached_releases(&repository, &[refreshed])
+        .expect("refresh cached release without anime id");
+    let cached = ReleaseCacheRepository::list_cached_releases(&repository, &query)
+        .expect("list refreshed cached release");
+    assert_eq!(cached.len(), 1);
+    assert_eq!(cached[0].anime_id, release.anime_id);
+    assert_eq!(cached[0].seeders, Some(48));
+    assert!(ReleaseCacheRepository::list_cached_releases(
+        &repository,
+        &CachedReleaseQuery {
+            source_ids: Some(Vec::new()),
+            ..CachedReleaseQuery::default()
+        }
+    )
+    .expect("list empty source cache")
+    .is_empty());
+
+    assert_eq!(
+        ReleaseCacheRepository::prune_cached_releases(&repository, "2026-07-26T00:00:00.000Z")
+            .expect("prune cached releases"),
+        1
+    );
+    assert!(
+        ReleaseCacheRepository::list_cached_releases(&repository, &query)
+            .expect("list pruned cache")
+            .is_empty()
+    );
 }
 
 /// 创建包含固定设置和下载源的测试启动参数。

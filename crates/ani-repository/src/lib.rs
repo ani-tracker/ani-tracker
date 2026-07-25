@@ -1,9 +1,9 @@
 use ani_domain::{
     Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeSourceBinding, AnimeSourceExclusion,
     AnimeWatchProgress, AppSettings, DashboardData, Episode, EpisodePreference, FansubGroup,
-    MyAnime, NotificationRecord, PlaybackCheckpoint, ReleaseSourceConfig, ReleaseSourceSyncState,
-    ReportPlaybackProgressInput, RequestCircuitState, SavePlaybackCheckpointInput,
-    SetAnimeWatchProgressInput,
+    MyAnime, NotificationRecord, PlaybackCheckpoint, Release, ReleaseSourceConfig,
+    ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
+    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use serde_json::Value;
 
@@ -36,6 +36,14 @@ pub struct AnimeCatalogWriteResult {
 pub struct ReleaseSearchCacheEntry {
     pub result: Value,
     pub expires_at: String,
+}
+
+/// 持久化资源缓存的来源、番剧和返回数量约束。
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CachedReleaseQuery {
+    pub source_ids: Option<Vec<String>>,
+    pub anime_id: Option<String>,
+    pub limit: Option<usize>,
 }
 
 /// 应用设置存储端口。
@@ -94,6 +102,13 @@ pub trait AnimeCatalogRepository {
 
     /// 读取全部或指定番剧已观察到的字幕组。
     fn list_fansubs(&self, anime_id: Option<&str>) -> RepositoryResult<Vec<FansubGroup>>;
+
+    /// 合并资源中识别到的字幕组，并记录其所属番剧。
+    fn observe_anime_fansubs(
+        &self,
+        anime_id: &str,
+        releases: &[Release],
+    ) -> RepositoryResult<Vec<FansubGroup>>;
 }
 
 /// 下载源配置、游标、缓存和熔断存储端口。
@@ -143,6 +158,18 @@ pub trait ReleaseSourceRepository {
         cache_key: &str,
         entry: &ReleaseSearchCacheEntry,
     ) -> RepositoryResult<()>;
+}
+
+/// 来源增量同步和跨重启搜索使用的原始资源缓存端口。
+pub trait ReleaseCacheRepository {
+    /// 按来源和番剧读取最近采集的资源。
+    fn list_cached_releases(&self, query: &CachedReleaseQuery) -> RepositoryResult<Vec<Release>>;
+
+    /// 按稳定资源 ID 增量写入，并返回首次出现的数量。
+    fn upsert_cached_releases(&self, releases: &[Release]) -> RepositoryResult<usize>;
+
+    /// 删除发布时间早于指定时间的资源，并返回删除数量。
+    fn prune_cached_releases(&self, before: &str) -> RepositoryResult<usize>;
 }
 
 /// 番剧来源绑定与人工排除存储端口。
@@ -263,6 +290,7 @@ pub trait ApplicationRepository:
     + NotificationRepository
     + AnimeCatalogRepository
     + ReleaseSourceRepository
+    + ReleaseCacheRepository
     + AnimeSourceBindingRepository
     + AnimeTrackingRepository
     + PlaybackRepository
@@ -275,6 +303,7 @@ impl<T> ApplicationRepository for T where
         + NotificationRepository
         + AnimeCatalogRepository
         + ReleaseSourceRepository
+        + ReleaseCacheRepository
         + AnimeSourceBindingRepository
         + AnimeTrackingRepository
         + PlaybackRepository
@@ -312,7 +341,8 @@ pub trait UnitOfWorkFactory {
 pub mod prelude {
     pub use super::{
         AnimeCatalogRepository, AnimeSourceBindingRepository, AnimeTrackingRepository,
-        ApplicationRepository, DashboardRepository, NotificationRepository, PlaybackRepository,
-        ReleaseSourceRepository, SettingsRepository, UnitOfWork, UnitOfWorkFactory,
+        ApplicationRepository, CachedReleaseQuery, DashboardRepository, NotificationRepository,
+        PlaybackRepository, ReleaseCacheRepository, ReleaseSourceRepository, SettingsRepository,
+        UnitOfWork, UnitOfWorkFactory,
     };
 }

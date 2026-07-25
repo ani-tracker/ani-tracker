@@ -7,7 +7,10 @@ use ani_domain::{
     RssSubscriptionReleaseQuery, RssSubscriptionReleaseResult, SourceKind, SubtitleLanguage,
     SubtitlePreference,
 };
-use ani_repository::{ReleaseSearchCacheEntry, ReleaseSourceRepository, RepositoryResult};
+use ani_repository::{
+    CachedReleaseQuery, ReleaseCacheRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository,
+    RepositoryResult,
+};
 use chrono::{Duration, SecondsFormat, Utc};
 use futures_util::future::join_all;
 use serde_json::{json, Value};
@@ -49,11 +52,17 @@ pub trait ReleaseSearchStore: CircuitStateStore {
         cache_key: &str,
         entry: &ReleaseSearchCacheEntry,
     ) -> RepositoryResult<()>;
+
+    /// 按来源和番剧读取跨重启原始资源缓存。
+    fn list_release_cache(&self, query: &CachedReleaseQuery) -> RepositoryResult<Vec<Release>>;
+
+    /// 增量保存网络返回的原始资源。
+    fn save_release_cache(&self, releases: &[Release]) -> RepositoryResult<usize>;
 }
 
 impl<T> ReleaseSearchStore for T
 where
-    T: ReleaseSourceRepository,
+    T: ReleaseSourceRepository + ReleaseCacheRepository,
 {
     /// 将完整来源 Repository 适配为搜索缓存端口。
     fn get_search_cache(
@@ -71,6 +80,16 @@ where
         entry: &ReleaseSearchCacheEntry,
     ) -> RepositoryResult<()> {
         ReleaseSourceRepository::upsert_release_search_cache(self, cache_key, entry)
+    }
+
+    /// 将完整缓存 Repository 适配为搜索原始资源读取端口。
+    fn list_release_cache(&self, query: &CachedReleaseQuery) -> RepositoryResult<Vec<Release>> {
+        ReleaseCacheRepository::list_cached_releases(self, query)
+    }
+
+    /// 将完整缓存 Repository 适配为搜索原始资源写入端口。
+    fn save_release_cache(&self, releases: &[Release]) -> RepositoryResult<usize> {
+        ReleaseCacheRepository::upsert_cached_releases(self, releases)
     }
 }
 
@@ -150,11 +169,28 @@ impl ReleaseSearchService {
                 && matches_keyword(release, &query.keyword)
         };
         let limit = normalize_result_limit(query.limit);
-        let releases = sort_releases(dedupe_releases(
+        let live_releases = dedupe_releases(
             source_results
                 .iter()
                 .flat_map(|result| result.releases.iter().cloned())
-                .filter(matches_query)
+                .collect(),
+        );
+        store.save_release_cache(&live_releases)?;
+        let cached_releases = store
+            .list_release_cache(&CachedReleaseQuery {
+                source_ids: Some(sources.iter().map(|source| source.id.clone()).collect()),
+                anime_id: None,
+                limit: Some(2_000),
+            })?
+            .into_iter()
+            .map(|release| enrich_release_from_title(release, fansubs))
+            .collect::<Vec<_>>();
+        let releases = sort_releases(dedupe_releases(
+            live_releases
+                .iter()
+                .chain(cached_releases.iter())
+                .filter(|release| matches_query(release))
+                .cloned()
                 .collect(),
         ))
         .into_iter()
@@ -165,15 +201,30 @@ impl ReleaseSearchService {
             releases,
             source_results: source_results
                 .into_iter()
-                .map(|result| ReleaseSourceSearchResult {
-                    source_id: result.source.id,
-                    source_name: result.source.name,
-                    releases: sort_releases(dedupe_releases(
-                        result.releases.into_iter().filter(matches_query).collect(),
+                .map(|result| {
+                    let source_id = result.source.id;
+                    let source_name = result.source.name;
+                    let releases = sort_releases(dedupe_releases(
+                        result
+                            .releases
+                            .into_iter()
+                            .chain(
+                                cached_releases
+                                    .iter()
+                                    .filter(|release| release.source_id == source_id)
+                                    .cloned(),
+                            )
+                            .filter(matches_query)
+                            .collect(),
                     ))
                     .into_iter()
                     .take(limit)
-                    .collect(),
+                    .collect();
+                    ReleaseSourceSearchResult {
+                        source_id,
+                        source_name,
+                        releases,
+                    }
                 })
                 .collect(),
             searched_source_ids: sources.iter().map(|source| source.id.clone()).collect(),
@@ -321,10 +372,31 @@ impl ReleaseSearchService {
             }
         }
         let limit = normalize_result_limit(query.limit);
-        let releases = sort_releases(dedupe_releases(
+        let live_releases = dedupe_releases(
             per_source
                 .iter()
                 .flat_map(|result| result.releases.iter().cloned())
+                .collect(),
+        );
+        store.save_release_cache(&live_releases)?;
+        let cached_releases = store
+            .list_release_cache(&CachedReleaseQuery {
+                source_ids: Some(sources.iter().map(|source| source.id.clone()).collect()),
+                anime_id: Some(anime.id.clone()),
+                limit: Some(2_000),
+            })?
+            .into_iter()
+            .map(|release| enrich_release_from_title(release, fansubs))
+            .filter(|release| {
+                classify_anime_release(release, anime) != AnimeReleaseCompatibility::Mismatch
+                    && release_matches_episode(release, query.episode_no)
+            })
+            .collect::<Vec<_>>();
+        let releases = sort_releases(dedupe_releases(
+            live_releases
+                .iter()
+                .chain(cached_releases.iter())
+                .cloned()
                 .collect(),
         ))
         .into_iter()
@@ -335,13 +407,29 @@ impl ReleaseSearchService {
             releases,
             source_results: per_source
                 .into_iter()
-                .map(|result| ReleaseSourceSearchResult {
-                    source_id: result.source.id,
-                    source_name: result.source.name,
-                    releases: sort_releases(dedupe_releases(result.releases))
-                        .into_iter()
-                        .take(limit)
-                        .collect(),
+                .map(|result| {
+                    let source_id = result.source.id;
+                    let source_name = result.source.name;
+                    let releases = sort_releases(dedupe_releases(
+                        result
+                            .releases
+                            .into_iter()
+                            .chain(
+                                cached_releases
+                                    .iter()
+                                    .filter(|release| release.source_id == source_id)
+                                    .cloned(),
+                            )
+                            .collect(),
+                    ))
+                    .into_iter()
+                    .take(limit)
+                    .collect();
+                    ReleaseSourceSearchResult {
+                        source_id,
+                        source_name,
+                        releases,
+                    }
                 })
                 .collect(),
             searched_source_ids: sources.iter().map(|source| source.id.clone()).collect(),
@@ -1429,10 +1517,10 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use ani_domain::{
-        Anime, AnimeReleaseQuery, AnimeSourceBinding, AnimeSourceBindingMatchMethod, ReleaseQuery,
-        ReleaseSourceConfig, RequestCircuitState, SourceKind,
+        Anime, AnimeReleaseQuery, AnimeSourceBinding, AnimeSourceBindingMatchMethod, Release,
+        ReleaseQuery, ReleaseSourceConfig, RequestCircuitState, SourceKind,
     };
-    use ani_repository::{ReleaseSearchCacheEntry, RepositoryResult};
+    use ani_repository::{CachedReleaseQuery, ReleaseSearchCacheEntry, RepositoryResult};
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
@@ -1448,6 +1536,7 @@ mod tests {
     struct MemoryReleaseSearchStore {
         circuits: Mutex<BTreeMap<String, RequestCircuitState>>,
         cache: Mutex<BTreeMap<String, ReleaseSearchCacheEntry>>,
+        releases: Mutex<BTreeMap<String, Release>>,
     }
 
     impl CircuitStateStore for MemoryReleaseSearchStore {
@@ -1498,6 +1587,41 @@ mod tests {
                 .expect("lock search cache")
                 .insert(cache_key.to_owned(), entry.clone());
             Ok(())
+        }
+
+        /// 按测试查询条件读取内存原始资源缓存。
+        fn list_release_cache(&self, query: &CachedReleaseQuery) -> RepositoryResult<Vec<Release>> {
+            let mut releases = self
+                .releases
+                .lock()
+                .expect("lock raw release cache")
+                .values()
+                .filter(|release| {
+                    query.source_ids.as_ref().map_or(true, |source_ids| {
+                        source_ids
+                            .iter()
+                            .any(|source_id| source_id == &release.source_id)
+                    }) && query
+                        .anime_id
+                        .as_ref()
+                        .map_or(true, |anime_id| release.anime_id.as_ref() == Some(anime_id))
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            releases.sort_by(|left, right| right.published_at.cmp(&left.published_at));
+            releases.truncate(query.limit.unwrap_or(2_000));
+            Ok(releases)
+        }
+
+        /// 增量保存测试内存中的原始资源。
+        fn save_release_cache(&self, releases: &[Release]) -> RepositoryResult<usize> {
+            let mut cache = self.releases.lock().expect("lock raw release cache");
+            let mut added = 0;
+            for release in releases {
+                added += usize::from(!cache.contains_key(&release.id));
+                cache.insert(release.id.clone(), release.clone());
+            }
+            Ok(added)
         }
     }
 
@@ -1603,10 +1727,26 @@ mod tests {
         assert_eq!(store.cache.lock().expect("lock saved cache").len(), 1);
 
         let cached = ReleaseSearchService::new(test_network())
-            .search(&store, &configs, &[], query)
+            .search(&store, &configs, &[], query.clone())
             .await
             .expect("load persisted release cache");
         assert_eq!(cached, result);
+
+        let recovered = ReleaseSearchService::new(test_network())
+            .search(
+                &store,
+                &configs,
+                &[],
+                ReleaseQuery {
+                    episode_no: None,
+                    cache_ttl_ms: None,
+                    ..query
+                },
+            )
+            .await
+            .expect("recover from raw release cache");
+        assert_eq!(recovered.releases.len(), 1);
+        assert_eq!(recovered.releases[0].source_id, "working");
     }
 
     /// 验证已确认 AniBT 绑定走精确 RSS，绑定变化后不会复用旧缓存。

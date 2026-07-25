@@ -1,11 +1,12 @@
 use std::sync::{Arc, Mutex};
 
 use ani_domain::{
-    AnimeSourceBinding, AnimeSourceExclusion, Episode, MyAnime, ReleaseSourceConfig,
+    AnimeSourceBinding, AnimeSourceExclusion, Episode, MyAnime, Release, ReleaseSourceConfig,
     RequestCircuitState,
 };
 use ani_repository::{
-    ApplicationRepository, ReleaseSearchCacheEntry, RepositoryError, RepositoryResult,
+    ApplicationRepository, CachedReleaseQuery, ReleaseSearchCacheEntry, RepositoryError,
+    RepositoryResult,
 };
 use ani_sources::{
     AnimeSourceBindingStore, CircuitStateStore, NativeHttpConfig, ProxyMode, ReleaseSearchStore,
@@ -74,6 +75,16 @@ impl ReleaseSearchStore for SharedReleaseSearchStore {
         entry: &ReleaseSearchCacheEntry,
     ) -> RepositoryResult<()> {
         self.with_repository(|repository| repository.upsert_release_search_cache(cache_key, entry))
+    }
+
+    /// 读取跨重启原始资源缓存。
+    fn list_release_cache(&self, query: &CachedReleaseQuery) -> RepositoryResult<Vec<Release>> {
+        self.with_repository(|repository| repository.list_cached_releases(query))
+    }
+
+    /// 保存网络返回的原始资源缓存。
+    fn save_release_cache(&self, releases: &[Release]) -> RepositoryResult<usize> {
+        self.with_repository(|repository| repository.upsert_cached_releases(releases))
     }
 }
 

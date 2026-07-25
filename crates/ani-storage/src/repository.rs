@@ -7,21 +7,23 @@ use ani_domain::{
     AnimeSourceBindingMatchMethod, AnimeSourceExclusion, AnimeSourceExclusionScope, AnimeStatus,
     AnimeWatchProgress, AppSettings, DailyReminderItem, DailyReminderSummary, DashboardData,
     DownloadStatus, DownloadTask, Episode, EpisodePreference, EpisodeStatus, EpisodeSummary,
-    FansubGroup, MediaFile, MyAnime, NotificationKind, NotificationRecord, NotificationSeverity,
-    PendingAction, PlaybackCheckpoint, ReleaseSourceConfig, ReleaseSourceSyncState,
-    ReportPlaybackProgressInput, RequestCircuitState, SavePlaybackCheckpointInput,
-    SetAnimeWatchProgressInput, SourceHealth, SourceKind, TorrentEngineKind, TorrentFile,
-    WeeklyScheduleDay,
+    FansubGroup, MediaFile, MyAnime, NormalizedVideoCodec, NotificationKind, NotificationRecord,
+    NotificationSeverity, PendingAction, PlaybackCheckpoint, Release, ReleaseResolution,
+    ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
+    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput, SourceHealth, SourceKind,
+    SubtitleLanguage, SubtitlePreference, TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
 };
 use ani_repository::{
     AnimeCatalogRepository, AnimeCatalogWriteResult, AnimeSourceBindingRepository,
-    AnimeTrackingRepository, DashboardRepository, NotificationRepository, PlaybackRepository,
-    ReleaseSearchCacheEntry, ReleaseSourceRepository, RepositoryError, RepositoryResult,
-    SettingsRepository,
+    AnimeTrackingRepository, CachedReleaseQuery, DashboardRepository, NotificationRepository,
+    PlaybackRepository, ReleaseCacheRepository, ReleaseSearchCacheEntry, ReleaseSourceRepository,
+    RepositoryError, RepositoryResult, SettingsRepository,
 };
 use chrono::{DateTime, Duration, Local, Utc};
 use log::{debug, info, warn};
-use rusqlite::{params, Connection, OptionalExtension, Params, Row};
+use rusqlite::{
+    params, params_from_iter, types::Value as SqlValue, Connection, OptionalExtension, Params, Row,
+};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
@@ -304,6 +306,90 @@ impl<'connection> SqliteRepository<'connection> {
             .map(FansubGroupRow::into_domain)
             .collect(),
         }
+    }
+
+    /// 合并资源中识别到的字幕组，并刷新番剧关联的最近发现时间。
+    pub(crate) fn observe_anime_fansubs(
+        &self,
+        anime_id: &str,
+        releases: &[Release],
+    ) -> Result<Vec<FansubGroup>, StorageError> {
+        validate_identifier("animeId", anime_id)?;
+        let discovered = collect_discovered_fansubs(releases);
+        if discovered.is_empty() {
+            return self.list_fansubs(Some(anime_id));
+        }
+        let existing_by_id = self
+            .list_fansubs(None)?
+            .into_iter()
+            .map(|group| (group.id.clone(), group))
+            .collect::<HashMap<_, _>>();
+        let timestamp = now_iso();
+        self.with_transaction(|connection| {
+            for candidate in &discovered {
+                let existing = existing_by_id.get(&candidate.id);
+                let aliases = merge_unique_strings(
+                    existing
+                        .into_iter()
+                        .flat_map(|group| group.aliases.iter().cloned())
+                        .chain(candidate.aliases.iter().cloned())
+                        .chain(
+                            existing
+                                .filter(|group| group.name != candidate.name)
+                                .map(|_| candidate.name.clone()),
+                        ),
+                );
+                let source_ids = merge_unique_strings(
+                    existing
+                        .into_iter()
+                        .flat_map(|group| group.source_ids.iter().cloned())
+                        .chain(candidate.source_ids.iter().cloned()),
+                );
+                let name = existing.map_or(candidate.name.as_str(), |group| group.name.as_str());
+                let aliases_json = serde_json::to_string(&aliases).map_err(|source| {
+                    StorageError::JsonData {
+                        context: "字幕组别名",
+                        source,
+                    }
+                })?;
+                let source_ids_json = serde_json::to_string(&source_ids).map_err(|source| {
+                    StorageError::JsonData {
+                        context: "字幕组来源",
+                        source,
+                    }
+                })?;
+                connection.execute(
+                    "INSERT INTO fansub_group (
+                       id, name, aliases_json, source_ids_json, created_at, updated_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?5)
+                     ON CONFLICT(id) DO UPDATE SET
+                       name = excluded.name, aliases_json = excluded.aliases_json,
+                       source_ids_json = excluded.source_ids_json, updated_at = excluded.updated_at",
+                    params![
+                        &candidate.id,
+                        name,
+                        aliases_json,
+                        source_ids_json,
+                        &timestamp
+                    ],
+                )?;
+                connection.execute(
+                    "INSERT INTO anime_fansub_group (
+                       anime_id, fansub_group_id, first_seen_at, last_seen_at
+                     ) VALUES (?1, ?2, ?3, ?3)
+                     ON CONFLICT(anime_id, fansub_group_id) DO UPDATE SET
+                       last_seen_at = excluded.last_seen_at",
+                    params![anime_id, &candidate.id, &timestamp],
+                )?;
+            }
+            Ok(())
+        })?;
+        info!(
+            "Rust 番剧字幕组观察完成：anime_id={}, group_count={}",
+            anime_id,
+            discovered.len()
+        );
+        self.list_fansubs(Some(anime_id))
     }
 
     /// 读取指定番剧的全部来源绑定。
@@ -700,6 +786,124 @@ impl<'connection> SqliteRepository<'connection> {
             )?;
             Ok(())
         })
+    }
+
+    /// 按来源和番剧读取最近采集的原始资源缓存。
+    pub(crate) fn list_cached_releases(
+        &self,
+        query: &CachedReleaseQuery,
+    ) -> Result<Vec<Release>, StorageError> {
+        let limit = query.limit.unwrap_or(2_000).clamp(1, 10_000);
+        let mut conditions = Vec::new();
+        let mut values = Vec::<SqlValue>::new();
+        if let Some(source_ids) = query.source_ids.as_ref() {
+            let source_ids = merge_unique_strings(
+                source_ids
+                    .iter()
+                    .map(|source_id| source_id.trim().to_owned())
+                    .filter(|source_id| !source_id.is_empty()),
+            );
+            if source_ids.is_empty() {
+                return Ok(Vec::new());
+            }
+            let placeholders = source_ids
+                .into_iter()
+                .map(|source_id| {
+                    values.push(SqlValue::Text(source_id));
+                    format!("?{}", values.len())
+                })
+                .collect::<Vec<_>>();
+            conditions.push(format!("source_id IN ({})", placeholders.join(", ")));
+        }
+        if let Some(anime_id) = query.anime_id.as_deref() {
+            let anime_id = anime_id.trim();
+            if anime_id.is_empty() {
+                return Ok(Vec::new());
+            }
+            values.push(SqlValue::Text(anime_id.to_owned()));
+            conditions.push(format!("anime_id = ?{}", values.len()));
+        }
+        values.push(SqlValue::Integer(limit as i64));
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!(" WHERE {}", conditions.join(" AND "))
+        };
+        let sql = format!(
+            "SELECT * FROM release{where_clause} ORDER BY published_at DESC LIMIT ?{}",
+            values.len()
+        );
+        query_all_with_params(
+            self.connection,
+            &sql,
+            params_from_iter(values.iter()),
+            map_cached_release_row,
+        )?
+        .into_iter()
+        .map(CachedReleaseRow::into_domain)
+        .collect()
+    }
+
+    /// 按稳定资源 ID 增量写入缓存，并返回首次出现数量。
+    pub(crate) fn upsert_cached_releases(
+        &self,
+        releases: &[Release],
+    ) -> Result<usize, StorageError> {
+        let mut unique = HashMap::<String, Release>::new();
+        for release in releases {
+            validate_identifier("release.id", &release.id)?;
+            validate_identifier("release.sourceId", &release.source_id)?;
+            if release.title.trim().is_empty() {
+                return invalid_input("release.title", "资源标题不能为空");
+            }
+            if release.published_at.trim().is_empty() {
+                return invalid_input("release.publishedAt", "资源发布时间不能为空");
+            }
+            unique.insert(release.id.clone(), release.clone());
+        }
+        if unique.is_empty() {
+            return Ok(0);
+        }
+        let mut added_count = 0;
+        for release_id in unique.keys() {
+            if !self
+                .connection
+                .query_row("SELECT 1 FROM release WHERE id = ?1", [release_id], |_| {
+                    Ok(())
+                })
+                .optional()?
+                .is_some()
+            {
+                added_count += 1;
+            }
+        }
+        self.with_transaction(|connection| {
+            for release in unique.values() {
+                upsert_cached_release_row(connection, release)?;
+            }
+            Ok(())
+        })?;
+        info!(
+            "Rust 资源缓存写入完成：total={}, added={}",
+            unique.len(),
+            added_count
+        );
+        Ok(added_count)
+    }
+
+    /// 清理指定发布时间之前的资源缓存。
+    pub(crate) fn prune_cached_releases(&self, before: &str) -> Result<usize, StorageError> {
+        if before.trim().is_empty() {
+            return invalid_input("before", "资源缓存清理时间不能为空");
+        }
+        let deleted = self
+            .connection
+            .execute("DELETE FROM release WHERE published_at < ?1", [before])?;
+        info!(
+            "Rust 过期资源缓存清理完成：before={}, deleted={}",
+            before, deleted
+        );
+        Ok(deleted)
     }
 
     /// 读取并按季度、标题排序我的追番。
@@ -1465,6 +1669,16 @@ impl AnimeCatalogRepository for SqliteRepository<'_> {
     fn list_fansubs(&self, anime_id: Option<&str>) -> RepositoryResult<Vec<FansubGroup>> {
         SqliteRepository::list_fansubs(self, anime_id).map_err(RepositoryError::from)
     }
+
+    /// 通过 SQLite 适配器观察并合并番剧字幕组。
+    fn observe_anime_fansubs(
+        &self,
+        anime_id: &str,
+        releases: &[Release],
+    ) -> RepositoryResult<Vec<FansubGroup>> {
+        SqliteRepository::observe_anime_fansubs(self, anime_id, releases)
+            .map_err(RepositoryError::from)
+    }
 }
 
 impl ReleaseSourceRepository for SqliteRepository<'_> {
@@ -1537,6 +1751,23 @@ impl ReleaseSourceRepository for SqliteRepository<'_> {
     ) -> RepositoryResult<()> {
         SqliteRepository::upsert_release_search_cache(self, cache_key, entry)
             .map_err(RepositoryError::from)
+    }
+}
+
+impl ReleaseCacheRepository for SqliteRepository<'_> {
+    /// 通过 SQLite 适配器读取原始资源缓存。
+    fn list_cached_releases(&self, query: &CachedReleaseQuery) -> RepositoryResult<Vec<Release>> {
+        SqliteRepository::list_cached_releases(self, query).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器增量保存原始资源缓存。
+    fn upsert_cached_releases(&self, releases: &[Release]) -> RepositoryResult<usize> {
+        SqliteRepository::upsert_cached_releases(self, releases).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器清理过期资源缓存。
+    fn prune_cached_releases(&self, before: &str) -> RepositoryResult<usize> {
+        SqliteRepository::prune_cached_releases(self, before).map_err(RepositoryError::from)
     }
 }
 
@@ -1716,6 +1947,161 @@ fn query_all_with_params<T, P: Params>(
     let rows = statement.query_map(params, |row| mapper(row))?;
     rows.collect::<Result<Vec<_>, _>>()
         .map_err(StorageError::from)
+}
+
+/// 写入一条跨重启复用的原始资源缓存。
+fn upsert_cached_release_row(
+    connection: &Connection,
+    release: &Release,
+) -> Result<(), StorageError> {
+    let anime_id = match release.anime_id.as_deref() {
+        Some(anime_id) if record_exists(connection, "anime_catalog", anime_id)? => Some(anime_id),
+        _ => None,
+    };
+    let fansub_group_id = match release.fansub_group_id.as_deref() {
+        Some(fansub_group_id) if record_exists(connection, "fansub_group", fansub_group_id)? => {
+            Some(fansub_group_id)
+        }
+        _ => None,
+    };
+    let subtitle_languages_json =
+        serde_json::to_string(&release.subtitle_languages).map_err(|source| {
+            StorageError::JsonData {
+                context: "资源字幕语言",
+                source,
+            }
+        })?;
+    let raw_json = serde_json::to_string(release).map_err(|source| StorageError::JsonData {
+        context: "资源原始数据",
+        source,
+    })?;
+    connection.execute(
+        "INSERT INTO release (
+           id, title, anime_id, episode_no, fansub_group_id, source_id, source_name,
+           magnet_url, torrent_url, info_hash, size, resolution, declared_video_codec,
+           normalized_video_codec, bit_depth, subtitle, subtitle_languages_json,
+           published_at, seeders, raw_json
+         ) VALUES (
+           ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10,
+           ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
+         ) ON CONFLICT(id) DO UPDATE SET
+           title = excluded.title,
+           anime_id = COALESCE(excluded.anime_id, release.anime_id),
+           episode_no = excluded.episode_no,
+           fansub_group_id = excluded.fansub_group_id,
+           source_name = excluded.source_name,
+           magnet_url = excluded.magnet_url,
+           torrent_url = excluded.torrent_url,
+           info_hash = excluded.info_hash,
+           size = excluded.size,
+           resolution = excluded.resolution,
+           declared_video_codec = excluded.declared_video_codec,
+           normalized_video_codec = excluded.normalized_video_codec,
+           bit_depth = excluded.bit_depth,
+           subtitle = excluded.subtitle,
+           subtitle_languages_json = excluded.subtitle_languages_json,
+           published_at = excluded.published_at,
+           seeders = excluded.seeders,
+           raw_json = excluded.raw_json",
+        params![
+            &release.id,
+            release.title.trim(),
+            anime_id,
+            release.episode_no,
+            fansub_group_id,
+            &release.source_id,
+            &release.source_name,
+            release.magnet_url.as_deref(),
+            release.torrent_url.as_deref(),
+            release.info_hash.as_deref(),
+            release.size,
+            release.resolution.as_ref().map(ReleaseResolution::as_str),
+            release.declared_video_codec.as_deref(),
+            release
+                .normalized_video_codec
+                .as_ref()
+                .map(NormalizedVideoCodec::as_str),
+            release.bit_depth,
+            release.subtitle.as_ref().map(subtitle_preference_value),
+            subtitle_languages_json,
+            &release.published_at,
+            release.seeders,
+            raw_json,
+        ],
+    )?;
+    Ok(())
+}
+
+/// 判断指定业务表中是否存在稳定标识。
+fn record_exists(
+    connection: &Connection,
+    table: &'static str,
+    id: &str,
+) -> Result<bool, StorageError> {
+    debug_assert!(matches!(table, "anime_catalog" | "fansub_group"));
+    Ok(connection
+        .query_row(
+            &format!("SELECT 1 FROM {table} WHERE id = ?1"),
+            [id],
+            |_| Ok(()),
+        )
+        .optional()?
+        .is_some())
+}
+
+/// 从归一化资源汇总可持久化的字幕组。
+fn collect_discovered_fansubs(releases: &[Release]) -> Vec<FansubGroup> {
+    let mut groups = HashMap::<String, FansubGroup>::new();
+    for release in releases {
+        let Some(id) = release
+            .fansub_group_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let Some(name) = release
+            .fansub_name
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        else {
+            continue;
+        };
+        let group = groups.entry(id.to_owned()).or_insert_with(|| FansubGroup {
+            id: id.to_owned(),
+            name: name.to_owned(),
+            aliases: Vec::new(),
+            source_ids: Vec::new(),
+        });
+        if group.name != name && !group.aliases.iter().any(|alias| alias == name) {
+            group.aliases.push(name.to_owned());
+        }
+        if !group
+            .source_ids
+            .iter()
+            .any(|source_id| source_id == &release.source_id)
+        {
+            group.source_ids.push(release.source_id.clone());
+        }
+    }
+    let mut groups = groups.into_values().collect::<Vec<_>>();
+    groups.sort_by(|left, right| left.id.cmp(&right.id));
+    groups
+}
+
+/// 去重并稳定排序一组非空文本。
+fn merge_unique_strings(values: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut values = values
+        .into_iter()
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
+        .collect::<HashSet<_>>()
+        .into_iter()
+        .collect::<Vec<_>>();
+    values.sort();
+    values
 }
 
 /// 写入番剧目录和规范化别名。
@@ -2249,6 +2635,51 @@ fn source_kind_value(kind: &SourceKind) -> &'static str {
         SourceKind::Torznab => "torznab",
         SourceKind::SiteAdapter => "site_adapter",
         SourceKind::Manual => "manual",
+    }
+}
+
+/// 返回资源字幕偏好的 SQLite 字面量。
+fn subtitle_preference_value(preference: &SubtitlePreference) -> &'static str {
+    match preference {
+        SubtitlePreference::Chs => "chs",
+        SubtitlePreference::Cht => "cht",
+        SubtitlePreference::Jpn => "jpn",
+        SubtitlePreference::Eng => "eng",
+        SubtitlePreference::Multi => "multi",
+    }
+}
+
+/// 解析资源分辨率字面量。
+fn parse_release_resolution(value: &str) -> Result<ReleaseResolution, StorageError> {
+    match value {
+        "720p" => Ok(ReleaseResolution::P720),
+        "1080p" => Ok(ReleaseResolution::P1080),
+        "2160p" => Ok(ReleaseResolution::P2160),
+        _ => invalid_value("release.resolution", value),
+    }
+}
+
+/// 解析资源标准视频编码字面量。
+fn parse_normalized_video_codec(value: &str) -> Result<NormalizedVideoCodec, StorageError> {
+    match value {
+        "H.264/AVC" => Ok(NormalizedVideoCodec::H264Avc),
+        "H.265/HEVC" => Ok(NormalizedVideoCodec::H265Hevc),
+        "AV1" => Ok(NormalizedVideoCodec::Av1),
+        "VP9" => Ok(NormalizedVideoCodec::Vp9),
+        "Unknown" => Ok(NormalizedVideoCodec::Unknown),
+        _ => invalid_value("release.normalized_video_codec", value),
+    }
+}
+
+/// 解析资源字幕偏好字面量。
+fn parse_subtitle_preference(value: &str) -> Result<SubtitlePreference, StorageError> {
+    match value {
+        "chs" => Ok(SubtitlePreference::Chs),
+        "cht" => Ok(SubtitlePreference::Cht),
+        "jpn" => Ok(SubtitlePreference::Jpn),
+        "eng" => Ok(SubtitlePreference::Eng),
+        "multi" => Ok(SubtitlePreference::Multi),
+        _ => invalid_value("release.subtitle", value),
     }
 }
 
@@ -2876,6 +3307,69 @@ impl FansubGroupRow {
     }
 }
 
+struct CachedReleaseRow {
+    id: String,
+    title: String,
+    anime_id: Option<String>,
+    episode_no: Option<f64>,
+    fansub_group_id: Option<String>,
+    source_id: String,
+    source_name: String,
+    magnet_url: Option<String>,
+    torrent_url: Option<String>,
+    info_hash: Option<String>,
+    size: Option<i64>,
+    resolution: Option<String>,
+    declared_video_codec: Option<String>,
+    normalized_video_codec: Option<String>,
+    bit_depth: Option<i64>,
+    subtitle: Option<String>,
+    subtitle_languages_json: String,
+    published_at: String,
+    seeders: Option<i64>,
+    raw_json: String,
+}
+
+impl CachedReleaseRow {
+    /// 将 SQLite 资源缓存行与完整原始字段合并为领域对象。
+    fn into_domain(self) -> Result<Release, StorageError> {
+        let mut release: Release = parse_json(&self.raw_json, "资源原始数据")?;
+        release.id = self.id;
+        release.title = self.title;
+        release.anime_id = self.anime_id.or(release.anime_id);
+        release.episode_no = self.episode_no.or(release.episode_no);
+        release.fansub_group_id = self.fansub_group_id.or(release.fansub_group_id);
+        release.source_id = self.source_id;
+        release.source_name = self.source_name;
+        release.magnet_url = self.magnet_url;
+        release.torrent_url = self.torrent_url;
+        release.info_hash = self.info_hash;
+        release.size = self.size;
+        release.resolution = self
+            .resolution
+            .as_deref()
+            .map(parse_release_resolution)
+            .transpose()?;
+        release.declared_video_codec = self.declared_video_codec;
+        release.normalized_video_codec = self
+            .normalized_video_codec
+            .as_deref()
+            .map(parse_normalized_video_codec)
+            .transpose()?;
+        release.bit_depth = self.bit_depth;
+        release.subtitle = self
+            .subtitle
+            .as_deref()
+            .map(parse_subtitle_preference)
+            .transpose()?;
+        release.subtitle_languages =
+            parse_json::<Vec<SubtitleLanguage>>(&self.subtitle_languages_json, "资源字幕语言")?;
+        release.published_at = self.published_at;
+        release.seeders = self.seeders;
+        Ok(release)
+    }
+}
+
 struct AnimeSourceBindingRow {
     id: String,
     anime_id: String,
@@ -3287,6 +3781,32 @@ fn map_fansub_group_row(row: &Row<'_>) -> rusqlite::Result<FansubGroupRow> {
         name: row.get("name")?,
         aliases_json: row.get("aliases_json")?,
         source_ids_json: row.get("source_ids_json")?,
+    })
+}
+
+/// 映射 SQLite 原始资源缓存行。
+fn map_cached_release_row(row: &Row<'_>) -> rusqlite::Result<CachedReleaseRow> {
+    Ok(CachedReleaseRow {
+        id: row.get("id")?,
+        title: row.get("title")?,
+        anime_id: row.get("anime_id")?,
+        episode_no: row.get("episode_no")?,
+        fansub_group_id: row.get("fansub_group_id")?,
+        source_id: row.get("source_id")?,
+        source_name: row.get("source_name")?,
+        magnet_url: row.get("magnet_url")?,
+        torrent_url: row.get("torrent_url")?,
+        info_hash: row.get("info_hash")?,
+        size: row.get("size")?,
+        resolution: row.get("resolution")?,
+        declared_video_codec: row.get("declared_video_codec")?,
+        normalized_video_codec: row.get("normalized_video_codec")?,
+        bit_depth: row.get("bit_depth")?,
+        subtitle: row.get("subtitle")?,
+        subtitle_languages_json: row.get("subtitle_languages_json")?,
+        published_at: row.get("published_at")?,
+        seeders: row.get("seeders")?,
+        raw_json: row.get("raw_json")?,
     })
 }
 
