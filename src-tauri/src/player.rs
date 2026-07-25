@@ -5,9 +5,10 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use ani_contracts::{
-    DesktopPlaybackSessionInput, DesktopPlayerWindowInput, PlaybackSession, PlaybackSubtitle,
-    PlayerAvailability, PlayerBackend, PlayerCapabilities, PlayerCommand, PlayerCommandAction,
-    PlayerCommandResult, PlayerHostPlatform, PlayerMediaMode, PlayerSubtitleType,
+    DesktopPlaybackSessionInput, DesktopPlayerWindowDragInput, DesktopPlayerWindowInput,
+    PlaybackSession, PlaybackSubtitle, PlayerAvailability, PlayerBackend, PlayerCapabilities,
+    PlayerCommand, PlayerCommandAction, PlayerCommandResult, PlayerHostPlatform, PlayerMediaMode,
+    PlayerSubtitleType,
 };
 use ani_domain::{DownloadTask, TorrentFile};
 use ani_media::player::PlayerService;
@@ -15,6 +16,8 @@ use ani_repository::{DownloadRepository, MediaRepository, PlaybackRepository};
 use ani_storage::Storage;
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use tauri::window::{Color, WindowBuilder};
+#[cfg(target_os = "macos")]
+use tauri::LogicalPosition;
 use tauri::{
     AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Runtime, WebviewUrl,
     WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
@@ -37,6 +40,15 @@ struct ResolvedPlaybackSession {
     expires_at: SystemTime,
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy)]
+struct DesktopWindowDragState {
+    pointer_start_x: f64,
+    pointer_start_y: f64,
+    window_start_x: f64,
+    window_start_y: f64,
+}
+
 /// Tauri 生命周期内共享的播放窗口、受控会话和平台 transport。
 #[derive(Clone)]
 pub(crate) struct AppPlayerState {
@@ -46,6 +58,8 @@ pub(crate) struct AppPlayerState {
     sessions: Arc<Mutex<HashMap<String, ResolvedPlaybackSession>>>,
     id_sequence: Arc<AtomicU64>,
     poll_generation: Arc<AtomicU64>,
+    #[cfg(target_os = "macos")]
+    drag_state: Arc<Mutex<Option<DesktopWindowDragState>>>,
 }
 
 impl AppPlayerState {
@@ -58,6 +72,8 @@ impl AppPlayerState {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             id_sequence: Arc::new(AtomicU64::new(0)),
             poll_generation: Arc::new(AtomicU64::new(0)),
+            #[cfg(target_os = "macos")]
+            drag_state: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -138,6 +154,10 @@ impl AppPlayerState {
     /// 关闭桌面播放器窗口并幂等释放 libVLC。
     pub(crate) async fn close_desktop_window(&self) -> Result<(), String> {
         self.poll_generation.fetch_add(1, Ordering::SeqCst);
+        #[cfg(target_os = "macos")]
+        if let Ok(mut drag_state) = self.drag_state.lock() {
+            *drag_state = None;
+        }
         if let Some(service) = self.service.write().await.take() {
             service
                 .shutdown()
@@ -157,8 +177,27 @@ impl AppPlayerState {
         Ok(())
     }
 
-    /// 将播放器控制层拖动委托给当前 Tauri 窗口。
-    pub(crate) fn start_dragging(&self) -> Result<(), String> {
+    /// 按当前平台处理透明控制层的窗口拖动。
+    pub(crate) fn drag_desktop_window(
+        &self,
+        input: DesktopPlayerWindowDragInput,
+    ) -> Result<(), String> {
+        #[cfg(target_os = "macos")]
+        {
+            return self.drag_macos_window(input);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            if !matches!(input, DesktopPlayerWindowDragInput::Start { .. }) {
+                return Ok(());
+            }
+            self.start_native_dragging()
+        }
+    }
+
+    /// 将非 macOS 播放器控制层拖动委托给 Tauri 原生窗口。
+    #[cfg(not(target_os = "macos"))]
+    fn start_native_dragging(&self) -> Result<(), String> {
         let window = self
             .app
             .get_webview_window(PLAYER_CONTROL_WINDOW_LABEL)
@@ -166,6 +205,82 @@ impl AppPlayerState {
         window
             .start_dragging()
             .map_err(|error| format!("拖动播放器窗口失败：{error}"))
+    }
+
+    /// 在 macOS 透明窗口上使用逻辑坐标同步移动视频窗和控制层。
+    #[cfg(target_os = "macos")]
+    fn drag_macos_window(&self, input: DesktopPlayerWindowDragInput) -> Result<(), String> {
+        if matches!(input, DesktopPlayerWindowDragInput::End) {
+            *self
+                .drag_state
+                .lock()
+                .map_err(|error| format!("结束播放器拖动失败：{error}"))? = None;
+            log::debug!("macOS Tauri 播放器窗口拖动结束");
+            return Ok(());
+        }
+        let (screen_x, screen_y) = drag_screen_point(input)
+            .filter(|(x, y)| valid_screen_point(*x, *y))
+            .ok_or_else(|| "播放器拖动坐标无效".to_owned())?;
+        let controls = self
+            .app
+            .get_webview_window(PLAYER_CONTROL_WINDOW_LABEL)
+            .ok_or_else(|| "播放器控制层不存在".to_owned())?;
+        if controls
+            .is_fullscreen()
+            .map_err(|error| format!("读取播放器全屏状态失败：{error}"))?
+            || controls
+                .is_maximized()
+                .map_err(|error| format!("读取播放器最大化状态失败：{error}"))?
+        {
+            if let Ok(mut drag_state) = self.drag_state.lock() {
+                *drag_state = None;
+            }
+            return Ok(());
+        }
+
+        match input {
+            DesktopPlayerWindowDragInput::Start { .. } => {
+                let scale_factor = controls
+                    .scale_factor()
+                    .map_err(|error| format!("读取播放器缩放比例失败：{error}"))?;
+                let position = controls
+                    .outer_position()
+                    .map_err(|error| format!("读取播放器窗口位置失败：{error}"))?
+                    .to_logical::<f64>(scale_factor);
+                *self
+                    .drag_state
+                    .lock()
+                    .map_err(|error| format!("开始播放器拖动失败：{error}"))? =
+                    Some(DesktopWindowDragState {
+                        pointer_start_x: screen_x,
+                        pointer_start_y: screen_y,
+                        window_start_x: position.x,
+                        window_start_y: position.y,
+                    });
+                log::debug!("macOS Tauri 播放器窗口拖动开始");
+            }
+            DesktopPlayerWindowDragInput::Move { .. } => {
+                let drag_state = *self
+                    .drag_state
+                    .lock()
+                    .map_err(|error| format!("读取播放器拖动状态失败：{error}"))?;
+                let Some(drag_state) = drag_state else {
+                    return Ok(());
+                };
+                let (x, y) = next_drag_position(drag_state, screen_x, screen_y);
+                let position = LogicalPosition::new(x, y);
+                if let Some(video) = self.app.get_window(PLAYER_VIDEO_WINDOW_LABEL) {
+                    video
+                        .set_position(position)
+                        .map_err(|error| format!("移动播放器视频窗口失败：{error}"))?;
+                }
+                controls
+                    .set_position(position)
+                    .map_err(|error| format!("移动播放器控制层失败：{error}"))?;
+            }
+            DesktopPlayerWindowDragInput::End => {}
+        }
+        Ok(())
     }
 }
 
@@ -338,6 +453,31 @@ fn is_video_path(value: &str) -> bool {
     [".mkv", ".mp4", ".avi", ".mov", ".webm"]
         .iter()
         .any(|extension| value.ends_with(extension))
+}
+
+#[cfg(target_os = "macos")]
+fn drag_screen_point(input: DesktopPlayerWindowDragInput) -> Option<(f64, f64)> {
+    match input {
+        DesktopPlayerWindowDragInput::Start { screen_x, screen_y }
+        | DesktopPlayerWindowDragInput::Move { screen_x, screen_y } => Some((screen_x, screen_y)),
+        DesktopPlayerWindowDragInput::End => None,
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn valid_screen_point(screen_x: f64, screen_y: f64) -> bool {
+    screen_x.is_finite()
+        && screen_y.is_finite()
+        && screen_x.abs() <= 1_000_000.0
+        && screen_y.abs() <= 1_000_000.0
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn next_drag_position(state: DesktopWindowDragState, screen_x: f64, screen_y: f64) -> (f64, f64) {
+    (
+        state.window_start_x + screen_x - state.pointer_start_x,
+        state.window_start_y + screen_y - state.pointer_start_y,
+    )
 }
 
 fn sync_window_bounds<R: Runtime>(
@@ -566,6 +706,13 @@ impl AppPlayerState {
                     }
                 }
             }
+            WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
+                if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
+                    if let Err(error) = video.set_size(*new_inner_size) {
+                        log::warn!("同步 libVLC 视频窗口 DPI 尺寸失败 error={error}");
+                    }
+                }
+            }
             WindowEvent::Destroyed => {
                 let app = window.app_handle().clone();
                 tauri::async_runtime::spawn(async move {
@@ -750,5 +897,20 @@ mod tests {
             1
         );
         assert!(select_playable_file(&task, Some(2)).is_err());
+    }
+
+    /// macOS 拖动使用逻辑坐标差值，Retina 缩放下不会重复放大位移。
+    #[test]
+    fn calculates_logical_macos_drag_position() {
+        let state = DesktopWindowDragState {
+            pointer_start_x: 320.0,
+            pointer_start_y: 180.0,
+            window_start_x: 100.0,
+            window_start_y: 80.0,
+        };
+
+        assert_eq!(next_drag_position(state, 410.0, 235.0), (190.0, 135.0));
+        assert!(valid_screen_point(410.0, 235.0));
+        assert!(!valid_screen_point(f64::NAN, 235.0));
     }
 }

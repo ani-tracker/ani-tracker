@@ -1,17 +1,11 @@
 use ani_contracts::{
-    AppCommandError, DesktopPlaybackSessionInput, DesktopPlayerWindowInput, PlaybackSession,
-    PlayerCapabilities, PlayerCommand, PlayerCommandResult,
+    AppCommandError, DesktopPlaybackSessionInput, DesktopPlayerWindowDragInput,
+    DesktopPlayerWindowInput, PlaybackSession, PlayerCapabilities, PlayerCommand,
+    PlayerCommandResult,
 };
-use serde::Deserialize;
 use tauri::State;
 
 use crate::player::AppPlayerState;
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct DesktopPlayerWindowDragInput {
-    phase: String,
-}
 
 fn command_error(code: &str, message: String) -> AppCommandError {
     AppCommandError {
@@ -43,17 +37,14 @@ pub(crate) async fn close_desktop_player_window(
         .map_err(|message| command_error("player_window_close_failed", message))
 }
 
-/// 在指针开始阶段调用 Tauri 原生窗口拖动。
+/// 将桌面播放器拖动阶段交给平台窗口协调器。
 #[tauri::command]
 pub(crate) fn drag_desktop_player_window(
     input: DesktopPlayerWindowDragInput,
     state: State<'_, AppPlayerState>,
 ) -> Result<(), AppCommandError> {
-    if input.phase != "start" {
-        return Ok(());
-    }
     state
-        .start_dragging()
+        .drag_desktop_window(input)
         .map_err(|message| command_error("player_window_drag_failed", message))
 }
 

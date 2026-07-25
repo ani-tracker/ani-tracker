@@ -1000,6 +1000,10 @@ mod tests {
         assert!(!options.iter().any(|value| value.contains("plugin-path")));
         #[cfg(target_os = "windows")]
         assert!(options.iter().any(|value| value == "--avcodec-hw=d3d11va"));
+        #[cfg(target_os = "macos")]
+        assert!(options
+            .iter()
+            .any(|value| value == "--avcodec-hw=videotoolbox"));
     }
 
     /// VLC 状态码必须稳定映射到跨平台快照状态。

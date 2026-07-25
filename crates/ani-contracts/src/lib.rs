@@ -476,6 +476,19 @@ pub struct DesktopPlayerWindowInput {
     pub file_index: Option<u32>,
 }
 
+/// 桌面透明控制层发送的受限窗口拖动阶段。
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "phase",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase"
+)]
+pub enum DesktopPlayerWindowDragInput {
+    Start { screen_x: f64, screen_y: f64 },
+    Move { screen_x: f64, screen_y: f64 },
+    End,
+}
+
 /// 创建受控播放会话时使用的下载文件目标。
 pub type DesktopPlaybackSessionInput = DesktopPlayerWindowInput;
 

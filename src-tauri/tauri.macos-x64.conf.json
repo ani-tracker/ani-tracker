@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "bundle": {
+    "resources": {
+      "../out/libvlc/darwin-x64/": "libvlc/darwin-x64/"
+    }
+  }
+}

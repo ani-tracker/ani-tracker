@@ -49,6 +49,7 @@
     "prepare:mac-libvlc-dev": "node scripts/prepare-mac-libvlc-dev.mjs",
     "prepare:win-libvlc-dev": "node scripts/prepare-windows-libvlc-dev.mjs",
     "prepare:tauri:win-libvlc": "node scripts/prepare-windows-libvlc-dev.mjs --runtime-only",
+    "prepare:tauri:mac-libvlc": "node scripts/prepare-mac-libvlc-dev.mjs --runtime-only",
     "verify:libvlc": "node scripts/prepare-libvlc-resources.mjs --required --verify-only",
     "verify:libvlc:package": "node scripts/verify-libvlc-package.mjs",
     "smoke:libvlc": "electron scripts/smoke-libvlc-runtime.cjs",
