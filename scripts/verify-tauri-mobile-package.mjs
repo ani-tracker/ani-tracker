@@ -2,6 +2,7 @@
 import { open, readdir, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 const ARCHIVE_EXTENSIONS = {
   android: new Set([".apk", ".aab"]),
@@ -20,21 +21,29 @@ const FORBIDDEN_ENTRIES = [
   { name: "桌面远程网关证书", pattern: /(?:^|\/)(?:server\.(?:pem|key)|ani-remote-ca\.(?:pem|key))$/i }
 ];
 
-const options = parseArgs(process.argv.slice(2));
-const archives = options.archives.length > 0
-  ? options.archives
-  : await discoverArchives(options.platform, options.roots);
-
-if (archives.length === 0) {
-  throw new Error(`[mobile-package] 未找到 ${options.platform} 安装包；可使用 --archive 指定路径`);
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  await main(process.argv.slice(2));
 }
 
-for (const archive of archives) {
-  const entries = await readZipEntryNames(archive);
-  verifyEntries(options.platform, archive, entries);
-}
+/** 执行移动安装包发现、内容边界和签名策略检查。 */
+async function main(args) {
+  const options = parseArgs(args);
+  const archives = options.archives.length > 0
+    ? options.archives
+    : await discoverArchives(options.platform, options.roots);
 
-console.log(`[mobile-package] ${options.platform} 安装包内容检查通过：${archives.length} 个产物`);
+  if (archives.length === 0) {
+    throw new Error(`[mobile-package] 未找到 ${options.platform} 安装包；可使用 --archive 指定路径`);
+  }
+
+  for (const archive of archives) {
+    const entries = await readZipEntryNames(archive);
+    verifyEntries(options.platform, archive, entries);
+    if (options.requireUnsigned) verifyUnsignedIosPackage(options.platform, archive, entries);
+  }
+
+  console.log(`[mobile-package] ${options.platform} 安装包内容检查通过：${archives.length} 个产物`);
+}
 
 /** 检查移动安装包不得包含桌面专属资源。 */
 export function verifyEntries(platform, archive, entries) {
@@ -47,6 +56,24 @@ export function verifyEntries(platform, archive, entries) {
     if (forbidden) {
       throw new Error(`[mobile-package] ${platform} 安装包包含${forbidden.name}：${normalized}`);
     }
+  }
+  if (platform === "ios" && !entries.some((entry) => /^Payload\/[^/]+\.app\//i.test(entry.replaceAll("\\", "/")))) {
+    throw new Error(`[mobile-package] iOS IPA 缺少 Payload/*.app：${archive}`);
+  }
+}
+
+/** 验证 iOS 用户重签包不携带签名目录或描述文件。 */
+export function verifyUnsignedIosPackage(platform, archive, entries) {
+  if (platform !== "ios") {
+    throw new Error("[mobile-package] --require-unsigned 仅适用于 iOS IPA");
+  }
+  const signedEntry = entries.find((entry) => {
+    const normalized = entry.replaceAll("\\", "/");
+    return /(?:^|\/)_CodeSignature(?:\/|$)/i.test(normalized)
+      || /(?:^|\/)embedded\.mobileprovision$/i.test(normalized);
+  });
+  if (signedEntry) {
+    throw new Error(`[mobile-package] iOS 用户重签包仍包含签名材料：${signedEntry}`);
   }
 }
 
@@ -149,10 +176,14 @@ async function collectFiles(root, extensions) {
 
 /** 解析平台、安装包路径和自定义搜索根目录。 */
 function parseArgs(args) {
-  const parsed = { platform: "", archives: [], roots: [] };
+  const parsed = { platform: "", archives: [], roots: [], requireUnsigned: false };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--") continue;
+    if (arg === "--require-unsigned") {
+      parsed.requireUnsigned = true;
+      continue;
+    }
     if (arg === "--platform" || arg === "--archive" || arg === "--root") {
       const value = args[index + 1];
       if (!value) throw new Error(`${arg} requires a value`);

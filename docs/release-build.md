@@ -7,31 +7,22 @@
 | 工作流 | 目标 | 正式产物 |
 | --- | --- | --- |
 | `actions-lint.yml` | 全部 GitHub Actions 配置 | actionlint 静态门禁 |
-| `tauri-release-desktop.yml` | Windows x64 | 签名 NSIS `.exe`、MSI `.msi` |
-| `tauri-release-desktop.yml` | macOS x64/arm64 | 签名、公证 `.dmg` |
+| `tauri-release-desktop.yml` | Windows x64 | 自签 NSIS `.exe`、MSI `.msi` |
+| `tauri-release-desktop.yml` | macOS x64/arm64 | 临时签名 `.dmg` |
 | `tauri-release-desktop.yml` | Linux x64 | `.deb`、`.AppImage` |
-| `tauri-release-android.yml` | Android arm64 | 签名 `.apk`、`.aab` |
-| `tauri-release-ios.yml` | iOS arm64 | 签名归档/IPA 产物 |
+| `tauri-release-android.yml` | Android arm64 | 自签 `.apk` |
+| `tauri-release-ios.yml` | iOS arm64 | 未签名 `.ipa`，由用户重签 |
 
 发布工作流支持 `workflow_dispatch` 和 `v*` 标签。版本必须符合语义版本，发布脚本会同步 `package.json`、Tauri 配置与 Cargo 包版本，并为每组产物生成 SHA-256 和版本化 `manifest.json`。任何 `.github/workflows` 修改都会触发固定版本及摘要的 actionlint 门禁。
 
 ## 签名凭据
 
-仓库不保存证书、私钥或密码。正式发布必须配置对应 GitHub Actions Secrets；非 Linux 任务缺少任一必需值都会失败。
+仓库不保存证书、私钥或密码。Windows 与 Android 使用项目自行生成并长期保存的证书；macOS 使用临时签名且不公证；iOS 通过 Tauri `--no-sign` 输出可重签的 IPA。
 
 ### Windows
 
 - `WINDOWS_CERTIFICATE_BASE64`
 - `WINDOWS_CERTIFICATE_PASSWORD`
-
-### macOS
-
-- `MACOS_CERTIFICATE_BASE64`
-- `MACOS_CERTIFICATE_PASSWORD`
-- `APPLE_SIGNING_IDENTITY`
-- `APPLE_ID`
-- `APPLE_APP_SPECIFIC_PASSWORD`
-- `APPLE_TEAM_ID`
 
 ### Android
 
@@ -40,12 +31,26 @@
 - `ANDROID_KEY_ALIAS`
 - `ANDROID_KEY_PASSWORD`
 
-### iOS
+macOS 与 iOS 不需要 GitHub 签名 Secrets。
 
-- `IOS_CERTIFICATE_BASE64`
-- `IOS_CERTIFICATE_PASSWORD`
-- `IOS_PROVISIONING_PROFILE_BASE64`
-- `IOS_KEYCHAIN_PASSWORD`
+## 自签名材料
+
+Windows 使用 PowerShell 生成可导出的代码签名证书：
+
+```powershell
+$aniCertificate = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=Ani Tracker" -CertStoreLocation Cert:\CurrentUser\My -KeyAlgorithm RSA -KeyLength 3072 -HashAlgorithm SHA256 -KeyExportPolicy Exportable -NotAfter (Get-Date).AddYears(10)
+$aniCertificatePassword = Read-Host "PFX password" -AsSecureString
+Export-PfxCertificate -Cert $aniCertificate -FilePath .\ani-tracker-windows.pfx -Password $aniCertificatePassword
+Export-Certificate -Cert $aniCertificate -FilePath .\ani-tracker-windows.cer
+```
+
+Android 使用 JDK `keytool` 生成长期发布密钥：
+
+```powershell
+keytool -genkeypair -v -keystore ani-tracker-android.jks -alias ani-tracker -keyalg RSA -keysize 4096 -validity 10000
+```
+
+将 `.pfx` 与 `.jks` 的原始文件内容编码为 Base64 后分别写入 `WINDOWS_CERTIFICATE_BASE64` 和 `ANDROID_KEYSTORE_BASE64`；密码和 Android alias 写入同组 Secrets。私钥文件必须离线备份，不能提交到仓库。Windows 发布产物会自动附带不含私钥的 `.cer`，供目标机器建立信任。
 
 ## 资源边界
 
@@ -79,12 +84,14 @@ pnpm.cmd run package:tauri:android
 pnpm.cmd run package:tauri:ios
 ```
 
+Android 正式命令只生成 ARM64 自签 APK，不再生成应用市场使用的 AAB。iOS 命令生成 ARM64 设备版未签名 IPA，并强制检查包内不存在 `_CodeSignature` 或 `embedded.mobileprovision`。
+
 桌面正式打包前需按目标平台准备资源。CI 使用固定版本和摘要完成该步骤；本地可分别执行 `prepare:desktop-torrent-core-dev`、`prepare:qbittorrent`、`prepare:ffmpeg` 和对应 `prepare:tauri:*:libvlc` 命令。
 
 ## 发布验收
 
 1. 校验 `manifest.json` 中版本、目标、文件大小和 SHA-256。
-2. 验证 Windows/macOS 签名与 macOS 公证；Android/iOS 验证签名、应用标识和权限。
+2. 验证 Windows 自签证书、macOS 临时签名、Android 自签证书，以及 iOS IPA 保持未签名且可由用户重签。
 3. 从上一公开版本升级，确认旧 SQLite 只复制迁移、备份存在且追番/下载/播放进度不丢失。
 4. 桌面包确认 torrent-core、qBittorrent-nox、libVLC、FFmpeg/FFprobe、远程 PWA 和许可证完整。
 5. 移动包确认 torrent-core、libVLC、主题与本地通知完整，并通过禁止内容检查。
@@ -94,6 +101,8 @@ pnpm.cmd run package:tauri:ios
 9. 复核第三方许可证、源码获取说明、病毒扫描和 Release 文件列表后再公开版本。
 
 Windows 之外的桌面平台以及 Android/iOS 原生功能由项目负责人手动验收；CI 构建和产物校验只提供验收输入，不替代签名安装、真机生命周期与媒体矩阵签收。
+
+Windows 目标机器需先信任随发布提供的 `.cer` 公钥证书；Android 允许未知来源安装且升级必须沿用同一 JKS。macOS 包首次运行可能需要移除隔离属性或在系统设置中确认。iOS IPA 不能直接安装，用户需使用自己的 Apple ID 或证书通过 AltStore、Sideloadly、Xcode 等工具重签。
 
 ## 回退
 

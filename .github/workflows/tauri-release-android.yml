@@ -79,13 +79,13 @@ jobs:
           VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
         run: bash scripts/prepare-android-torrent-dependencies.sh
 
-      - name: Configure optional release signing
+      - name: Import self-signed Android keystore
         id: signing
         shell: bash
         run: |
           for name in ANI_ANDROID_KEYSTORE_BASE64 ANI_ANDROID_KEYSTORE_PASSWORD ANI_ANDROID_KEY_ALIAS ANI_ANDROID_KEY_PASSWORD; do
             if [[ -z "${!name}" ]]; then
-              echo "Missing required Android signing secret: ${name}" >&2
+              echo "Missing required Android self-signing secret: ${name}" >&2
               exit 1
             fi
           done
@@ -93,11 +93,11 @@ jobs:
           echo "ANI_ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/ani-tracker-release.jks" >> "${GITHUB_ENV}"
           echo "enabled=true" >> "${GITHUB_OUTPUT}"
 
-      - name: Build Tauri APK and AAB
+      - name: Build self-signed Tauri APK
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
           ANI_ANDROID_NATIVE_PREFIX: ${{ github.workspace }}/.cache/android-torrent/vcpkg_installed/arm64-android
-        run: pnpm exec tauri android build --apk --aab --ci
+        run: pnpm exec tauri android build --target aarch64 --apk --ci
 
       - name: Verify mobile package boundaries
         run: pnpm run verify:tauri:android-package
@@ -107,7 +107,7 @@ jobs:
         run: |
           mkdir -p release-assets/android-arm64
           find src-tauri/gen/android/app/build/outputs -type f \
-            \( -name '*.apk' -o -name '*.aab' \) \
+            -name '*.apk' \
             -exec cp {} release-assets/android-arm64/ \;
           pnpm run release:manifest -- \
             --root release-assets/android-arm64 \

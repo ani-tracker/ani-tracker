@@ -19,6 +19,8 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "rust-toolchain.toml"
+      - "scripts/verify-tauri-mobile-package.mjs"
+      - "scripts/verify-tauri-mobile-package.test.mjs"
       - "vite.tauri.config.ts"
   pull_request:
     paths:
@@ -33,6 +35,8 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "rust-toolchain.toml"
+      - "scripts/verify-tauri-mobile-package.mjs"
+      - "scripts/verify-tauri-mobile-package.test.mjs"
       - "vite.tauri.config.ts"
 
 permissions:
@@ -109,7 +113,9 @@ jobs:
         run: pnpm run prepare:tauri:linux-libvlc
 
       - name: Check TypeScript contracts and Renderer
-        run: pnpm run typecheck
+        run: |
+          pnpm run typecheck
+          pnpm run test:mobile-package
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check

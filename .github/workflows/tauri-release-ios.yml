@@ -1,4 +1,4 @@
-name: Tauri iOS Release
+name: Tauri iOS Unsigned Package
 
 on:
   workflow_dispatch:
@@ -21,11 +21,6 @@ env:
 jobs:
   ios:
     runs-on: macos-15
-    env:
-      IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
-      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
-      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
-      IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
 
@@ -41,7 +36,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: 1.97.1
-          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+          targets: aarch64-apple-ios
 
       - uses: actions/checkout@v4
         with:
@@ -59,6 +54,7 @@ jobs:
         run: |
           pnpm run release:set-version -- "${RELEASE_VERSION}"
           pnpm run typecheck
+          pnpm run test:mobile-package
           cargo fmt --all -- --check
 
       - name: Prepare iOS torrent-core and MobileVLCKit
@@ -71,38 +67,11 @@ jobs:
       - name: Generate Tauri iOS project
         run: pnpm run init:tauri:ios
 
-      - name: Require release signing secrets
-        shell: bash
-        run: |
-          for name in IOS_CERTIFICATE_BASE64 IOS_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 IOS_KEYCHAIN_PASSWORD; do
-            if [[ -z "${!name}" ]]; then
-              echo "Missing required iOS signing secret: ${name}" >&2
-              exit 1
-            fi
-          done
-
-      - name: Install signing certificate and provisioning profile
-        shell: bash
-        run: |
-          certificate_path="${RUNNER_TEMP}/ani-tracker-ios.p12"
-          profile_path="${RUNNER_TEMP}/ani-tracker.mobileprovision"
-          keychain_path="${RUNNER_TEMP}/ani-tracker-signing.keychain-db"
-          echo "${IOS_CERTIFICATE_BASE64}" | base64 --decode > "${certificate_path}"
-          echo "${IOS_PROVISIONING_PROFILE_BASE64}" | base64 --decode > "${profile_path}"
-          security create-keychain -p "${IOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
-          security set-keychain-settings -lut 21600 "${keychain_path}"
-          security unlock-keychain -p "${IOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
-          security import "${certificate_path}" -P "${IOS_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12 -k "${keychain_path}"
-          security list-keychain -d user -s "${keychain_path}" login.keychain-db
-          security set-key-partition-list -S apple-tool:,apple: -k "${IOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
-          mkdir -p "${HOME}/Library/MobileDevice/Provisioning Profiles"
-          cp "${profile_path}" "${HOME}/Library/MobileDevice/Provisioning Profiles/"
-
-      - name: Build signed Tauri IPA
-        run: pnpm exec tauri ios build --ci --export-method app-store-connect
+      - name: Build unsigned Tauri IPA for user re-signing
+        run: pnpm exec tauri ios build --target aarch64 --ci --no-sign
 
       - name: Verify mobile package boundaries
-        run: pnpm run verify:tauri:ios-package
+        run: pnpm run verify:tauri:ios-package -- --require-unsigned
 
       - name: Collect iOS assets and checksums
         shell: bash

@@ -44,7 +44,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 - Android 生命周期、前台下载服务、WorkManager、Keystore、通知导航、文件导入导出和低存储保护。
 - iOS 生命周期、BGTask 补跑、Keychain、安全作用域文件、通知导航和备份恢复。
 - 移动设置保留完整业务与主题；隐藏并强制关闭 FFmpeg/FFprobe、转码、远程网关和桌面进程能力。
-- Windows、macOS、Linux、Android、iOS 发布工作流，签名凭据门禁、SHA-256、JSON 产物清单及独立 actionlint 门禁。
+- Windows/Android 自签、macOS 临时签名、iOS 未签名可重签包的发布工作流，以及 SHA-256、JSON 产物清单和独立 actionlint 门禁。
 - 全平台 Logo 已替换，Tauri 与生成的 Android/iOS 工程使用统一品牌资源。
 
 ## 验证结果
@@ -56,6 +56,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 | `pnpm.cmd run typecheck` | 通过 |
 | `pnpm.cmd run test:parsers` | 40/40 通过；退役 Node 主进程测试不再进入活跃入口 |
 | `pnpm.cmd run test:theme` | 浅色/深色各 38 个令牌通过 |
+| `pnpm.cmd run test:mobile-package` | iOS 未签名可重签包策略 4/4 通过 |
 | Tauri 主 Renderer | 生产构建通过 |
 | 桌面远程 Renderer | 生产构建通过 |
 | Rust workspace 测试 | 通过 |
@@ -64,8 +65,8 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 
 ## 后续统一验证
 
-- Windows、macOS、Linux 的签名安装包、升级、资源内容和实际 libVLC 播放。
-- Android APK/AAB 与 iOS IPA 的原生编译、签名、负向内容检查和真机生命周期。
+- Windows、macOS、Linux 的安装包、升级、资源内容和实际 libVLC 播放。
+- Android 自签 APK 与 iOS 未签名 IPA 的原生编译、用户重签、负向内容检查和真机生命周期。
 - H.264、HEVC 10bit、HDR、ASS、外挂字幕、多音轨、横竖屏和自动下一集媒体矩阵。
 - 公网 BT、网络切换、磁盘满、损坏恢复数据和移动后台限制。
 - Linux 原生 Wayland 嵌入；首期正式范围为 X11/XWayland。

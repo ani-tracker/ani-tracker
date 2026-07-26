@@ -59,12 +59,7 @@ jobs:
             arch: x64
             bundles: deb,appimage
     env:
-      MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
-      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
-      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'darwin' && '-' || '' }}
       WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
@@ -134,18 +129,14 @@ jobs:
       - name: Set release version
         run: pnpm run release:set-version -- "${{ env.RELEASE_VERSION }}"
 
-      - name: Require desktop signing secrets
-        if: matrix.platform != 'linux'
+      - name: Require Windows self-signing secrets
+        if: matrix.platform == 'win32'
         shell: bash
         run: |
-          if [[ "${{ matrix.platform }}" == "win32" ]]; then
-            required=(WINDOWS_CERTIFICATE_BASE64 WINDOWS_CERTIFICATE_PASSWORD)
-          else
-            required=(MACOS_CERTIFICATE_BASE64 MACOS_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
-          fi
+          required=(WINDOWS_CERTIFICATE_BASE64 WINDOWS_CERTIFICATE_PASSWORD)
           for name in "${required[@]}"; do
             if [[ -z "${!name}" ]]; then
-              echo "Missing required desktop signing secret: ${name}" >&2
+              echo "Missing required Windows self-signing secret: ${name}" >&2
               exit 1
             fi
           done
@@ -199,12 +190,6 @@ jobs:
         if: matrix.platform != 'linux'
         run: pnpm run prepare:ffmpeg -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
 
-      - uses: apple-actions/import-codesign-certs@v3
-        if: matrix.platform == 'darwin' && env.MACOS_CERTIFICATE_BASE64 != ''
-        with:
-          p12-file-base64: ${{ env.MACOS_CERTIFICATE_BASE64 }}
-          p12-password: ${{ env.MACOS_CERTIFICATE_PASSWORD }}
-
       - name: Import Windows signing certificate
         if: matrix.platform == 'win32' && env.WINDOWS_CERTIFICATE_BASE64 != ''
         id: windows-signing
@@ -225,7 +210,7 @@ jobs:
           $config = '{"bundle":{"windows":{"certificateThumbprint":"' + $thumbprint + '","digestAlgorithm":"sha256","timestampUrl":"http://timestamp.digicert.com"}}}'
           pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}" --config $config
 
-      - name: Build macOS and Linux bundles
+      - name: Build macOS ad-hoc and Linux bundles
         if: matrix.platform != 'win32'
         shell: bash
         run: |
@@ -253,6 +238,8 @@ jobs:
           Get-ChildItem out/cargo-target/release/bundle -Recurse -File |
             Where-Object { $_.Extension -in @('.exe', '.msi') } |
             Copy-Item -Destination $destination
+          $certificate = Get-Item "Cert:\CurrentUser\My\${{ steps.windows-signing.outputs.thumbprint }}"
+          Export-Certificate -Cert $certificate -FilePath "$destination/ani-tracker-windows-self-signed.cer" | Out-Null
           pnpm run release:manifest -- --root $destination --target "${{ matrix.target }}" --output "$destination/manifest.json"
 
       - uses: actions/upload-artifact@v4

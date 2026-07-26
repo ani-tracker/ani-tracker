@@ -434,7 +434,7 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 
 - `dev`、`build` 和 `package:desktop` 已切换为 Tauri 唯一正式入口，Electron/Capacitor 命令已从活跃脚本移除。
 - 已建立 Windows、macOS x64/arm64、Linux、Android 和 iOS Tauri 发布工作流；发布版本由标签注入，安装包同时生成 SHA-256 与版本化 JSON 产物清单。
-- Windows、macOS、Android 和 iOS 发布任务要求 CI 签名凭据；缺失时拒绝发布，避免将未签名安装包写入正式 Release。
+- Windows 与 Android 发布任务要求项目自签凭据；macOS 使用临时签名，iOS 输出供用户自行重签的未签名 IPA，不依赖应用市场证书。
 - 桌面资源按平台配置打包 torrent-core、libVLC、托管 qBittorrent、FFmpeg/FFprobe、远程 Renderer 和许可证；移动配置仅保留本地核心、原生播放器和许可证边界。
 - 已由新版 Ani Tracker 标识重新生成 Tauri Windows/macOS/Linux/Android/iOS 图标，并替换 Android Tauri 工程残留的旧启动图标。
 - Electron 主进程、preload、客户端、配置与 Node 原生依赖，以及 Capacitor Android/iOS 宿主和桥接已移入 `archive/legacy-hosts`；回退提交固定为 `6caf060`。
