@@ -18,11 +18,16 @@ console.log(`[tauri-runtime] 桌面运行资源已准备：${process.platform}-$
 
 /** 执行项目脚本并透传日志，失败时返回稳定错误。 */
 function runPnpm(script) {
-  const command = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
-  const result = spawnSync(command, ["run", script], {
+  const isWindows = process.platform === "win32";
+  const command = isWindows ? process.env.ComSpec ?? "cmd.exe" : "pnpm";
+  const args = isWindows
+    ? ["/d", "/s", "/c", `"pnpm.cmd run ${script}"`]
+    : ["run", script];
+  const result = spawnSync(command, args, {
     cwd: process.cwd(),
     env: process.env,
-    stdio: "inherit"
+    stdio: "inherit",
+    windowsVerbatimArguments: isWindows
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
