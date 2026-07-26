@@ -263,7 +263,7 @@ impl AppPlayerState {
     ) -> Result<(), String> {
         #[cfg(target_os = "macos")]
         {
-            return self.drag_macos_window(input);
+            self.drag_macos_window(input)
         }
         #[cfg(not(target_os = "macos"))]
         {
