@@ -40,7 +40,7 @@ import {
   REMOTE_AUTH_CHANGED_EVENT
 } from "@/lib/api";
 import { getAppCapabilities, getAppRuntime } from "@/lib/runtime";
-import type { DownloadServiceStatus } from "@shared/contracts";
+import type { DownloadServiceStatus, MobilePlatformStatus } from "@shared/contracts";
 import type { Anime } from "@shared/domain";
 import type { MyAnimePageIntent } from "@/features/my-anime/MyAnimePage";
 import {
@@ -115,6 +115,43 @@ function toDownloadShellStatus(status: DownloadServiceStatus): AppShellStatus {
     return { state: "idle", label: "下载服务待机", detail };
   }
   return { state: "error", label: "下载服务异常", detail };
+}
+
+/** 移动端资源约束优先覆盖下载服务状态，避免继续触发不可恢复操作。 */
+function applyMobileShellStatus(
+  status: AppShellStatus,
+  mobileStatus: MobilePlatformStatus | null
+): AppShellStatus {
+  if (!mobileStatus) return status;
+  if (mobileStatus.storage === "critical") {
+    return {
+      state: "error",
+      label: "存储空间不足",
+      detail: "可用空间低于 256 MiB，新增和恢复下载已暂停"
+    };
+  }
+  if (mobileStatus.network === "offline") {
+    return {
+      state: "idle",
+      label: "当前离线",
+      detail: "本地数据可用，下载任务等待网络恢复"
+    };
+  }
+  if (mobileStatus.network === "limited") {
+    return {
+      state: "idle",
+      label: "网络待验证",
+      detail: "联网操作将等待系统确认网络可用"
+    };
+  }
+  if (mobileStatus.storage === "low") {
+    return {
+      state: "idle",
+      label: "存储空间偏低",
+      detail: "建议清理空间后再添加大型下载"
+    };
+  }
+  return status;
 }
 
 /** 根据导航标识渲染对应业务页面。 */
@@ -205,6 +242,7 @@ function MainApplication() {
     label: "状态读取中",
     detail: "正在连接服务"
   });
+  const [mobileStatus, setMobileStatus] = useState<MobilePlatformStatus | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
   const detailViewRef = useRef<AnimeDetailState | null>(null);
   const discoveryScheduleRef = useRef<DiscoveryScheduleState | null>(null);
@@ -464,6 +502,43 @@ function MainApplication() {
     };
   }, [localClient, pairingState.needsPairing, runtime]);
 
+  useEffect(() => {
+    if (runtime !== "android" && runtime !== "ios") return;
+    let active = true;
+
+    /** 刷新移动运行约束，并消费通知要求打开的页面。 */
+    async function refreshMobileRuntime() {
+      try {
+        const status = await appApi.getMobilePlatformStatus?.();
+        if (active && status) setMobileStatus(status);
+        const intent = await appApi.consumeMobileNavigation?.();
+        if (active && intent) navigatePage(intent.pageId);
+      } catch (error) {
+        console.warn("[mobile-runtime] 移动平台状态刷新失败", error);
+      }
+    }
+
+    void refreshMobileRuntime();
+    const timer = window.setInterval(() => void refreshMobileRuntime(), 30_000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") void refreshMobileRuntime();
+    };
+    window.addEventListener("focus", refreshMobileRuntime);
+    window.addEventListener("online", refreshMobileRuntime);
+    window.addEventListener("offline", refreshMobileRuntime);
+    window.addEventListener("orientationchange", refreshMobileRuntime);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshMobileRuntime);
+      window.removeEventListener("online", refreshMobileRuntime);
+      window.removeEventListener("offline", refreshMobileRuntime);
+      window.removeEventListener("orientationchange", refreshMobileRuntime);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [runtime]);
+
   if (remotePlayerTaskId) {
     return <RemotePlayerPage taskId={remotePlayerTaskId} />;
   }
@@ -483,7 +558,7 @@ function MainApplication() {
         : discoverySchedule
           ? { title: "新番时间表", onBack: () => window.history.back() }
           : undefined}
-      status={shellStatus}
+      status={applyMobileShellStatus(shellStatus, mobileStatus)}
       unreadCount={unreadCount}
       framelessWindow={framelessWindow}
       windowControls={framelessWindow ? <WindowControls /> : undefined}

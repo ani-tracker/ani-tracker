@@ -59,8 +59,14 @@ class AniTorrentPlugin(private val activity: Activity) : Plugin(activity) {
 
     /** 插件加载后立即启动并绑定前台服务。 */
     override fun load(webView: WebView) {
+        TorrentRecoveryWorker.schedule(activity)
         requestBinding()
         Log.i(LOG_TAG, "Tauri torrent plugin loaded")
+    }
+
+    /** 应用进入后台时确认恢复任务仍由 WorkManager 托管。 */
+    override fun onPause() {
+        TorrentRecoveryWorker.schedule(activity)
     }
 
     /** 执行完整 NDJSON 请求；原生句柄不会暴露给 WebView。 */

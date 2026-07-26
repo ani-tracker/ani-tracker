@@ -11,6 +11,7 @@ members = [
   "crates/ani-remote",
   "crates/tauri-plugin-ani-player",
   "crates/tauri-plugin-ani-torrent",
+  "crates/tauri-plugin-ani-mobile",
   "src-tauri"
 ]
 resolver = "2"

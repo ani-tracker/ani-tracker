@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -31,6 +31,7 @@ use crate::qbittorrent_managed::{managed_credentials, AppManagedQbittorrentState
 use crate::sources::native_http_config;
 
 static TORRENT_IMPORT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+const MAX_TORRENT_FILE_BYTES: u64 = 32 * 1024 * 1024;
 
 #[derive(Default)]
 struct EmbeddedLifecycle {
@@ -598,6 +599,48 @@ impl AppDownloadState {
         if response.body.first() != Some(&b'd') {
             return Err("远程响应不是有效的 torrent 元信息".to_owned());
         }
+        let path = self.next_torrent_import_path().await?;
+        tokio::fs::write(&path, response.body)
+            .await
+            .map_err(|error| format!("写入种子临时文件失败：{error}"))?;
+        Ok(PreparedDownloadSource {
+            source: DownloadSource::TorrentFile(path.clone()),
+            temporary_file: Some(path),
+        })
+    }
+
+    /// 校验用户选择的本地 torrent，并复制到应用私有临时目录。
+    pub(crate) async fn prepare_local_torrent(
+        &self,
+        source: &Path,
+    ) -> Result<PreparedDownloadSource, String> {
+        let metadata = tokio::fs::metadata(source)
+            .await
+            .map_err(|error| format!("读取本地种子文件失败：{error}"))?;
+        if !metadata.is_file() {
+            return Err("所选 torrent 不是普通文件".to_owned());
+        }
+        if metadata.len() == 0 || metadata.len() > MAX_TORRENT_FILE_BYTES {
+            return Err("torrent 文件为空或超过 32 MiB 限制".to_owned());
+        }
+        let bytes = tokio::fs::read(source)
+            .await
+            .map_err(|error| format!("读取本地种子文件失败：{error}"))?;
+        if bytes.first() != Some(&b'd') {
+            return Err("所选文件不是有效的 torrent 元信息".to_owned());
+        }
+        let path = self.next_torrent_import_path().await?;
+        tokio::fs::write(&path, bytes)
+            .await
+            .map_err(|error| format!("复制本地种子文件失败：{error}"))?;
+        Ok(PreparedDownloadSource {
+            source: DownloadSource::TorrentFile(path.clone()),
+            temporary_file: Some(path),
+        })
+    }
+
+    /// 在应用私有缓存中分配不冲突的 torrent 临时路径。
+    async fn next_torrent_import_path(&self) -> Result<PathBuf, String> {
         tokio::fs::create_dir_all(&self.torrent_import_directory)
             .await
             .map_err(|error| format!("创建种子临时目录失败：{error}"))?;
@@ -606,16 +649,9 @@ impl AppDownloadState {
             .unwrap_or_default()
             .as_millis();
         let sequence = TORRENT_IMPORT_SEQUENCE.fetch_add(1, Ordering::Relaxed);
-        let path = self
+        Ok(self
             .torrent_import_directory
-            .join(format!("import-{timestamp}-{sequence}.torrent"));
-        tokio::fs::write(&path, response.body)
-            .await
-            .map_err(|error| format!("写入种子临时文件失败：{error}"))?;
-        Ok(PreparedDownloadSource {
-            source: DownloadSource::TorrentFile(path.clone()),
-            temporary_file: Some(path),
-        })
+            .join(format!("import-{timestamp}-{sequence}.torrent")))
     }
 
     /// 请求全部已注册引擎保存状态并关闭。

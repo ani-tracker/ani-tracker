@@ -32,6 +32,12 @@ pub enum StorageError {
         field: &'static str,
         message: String,
     },
+    #[error("安全存储操作失败（{action}, {key}）：{detail}")]
+    SecureStoreOperation {
+        action: &'static str,
+        key: String,
+        detail: String,
+    },
     #[error("{entity}不存在：{id}")]
     RecordNotFound { entity: &'static str, id: String },
     #[error("数据库不是有效的 SQLite 文件：{path}：{detail}")]
@@ -52,7 +58,22 @@ pub enum StorageError {
         migration: Box<StorageError>,
         restore: Box<StorageError>,
     },
+    #[error("用户数据恢复失败，已恢复操作前快照：{source}")]
+    DataRestoreRolledBack {
+        #[source]
+        source: Box<StorageError>,
+    },
+    #[error("用户数据恢复失败且回滚快照恢复失败；恢复错误：{restore}; 回滚错误：{rollback}")]
+    DataRestoreFailed {
+        restore: Box<StorageError>,
+        rollback: Box<StorageError>,
+    },
 }
+
+/// 平台 SecureStore 适配器统一返回的稳定错误。
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct SecureStoreError(pub String);
 
 impl StorageError {
     /// 创建带操作名和路径的文件系统错误。

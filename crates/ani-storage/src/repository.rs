@@ -10,8 +10,9 @@ use ani_domain::{
     FansubGroup, MediaFile, MyAnime, NormalizedVideoCodec, NotificationKind, NotificationRecord,
     NotificationSeverity, PendingAction, PlaybackCheckpoint, Release, ReleaseResolution,
     ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
-    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput, SourceHealth, SourceKind,
-    SubtitleLanguage, SubtitlePreference, TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
+    SavePlaybackCheckpointInput, SecretReference, SecretValue, SecureStore,
+    SetAnimeWatchProgressInput, SourceHealth, SourceKind, SubtitleLanguage, SubtitlePreference,
+    TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
 };
 use ani_repository::{
     AnimeCatalogRepository, AnimeCatalogWriteResult, AnimeSourceBindingRepository,
@@ -28,28 +29,61 @@ use rusqlite::{
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::{now_iso, StorageError};
+use crate::{now_iso, SecureStoreError, StorageError};
+
+const SECURE_MARKER_PREFIX: &str = "secure-store:v1:";
+const SETTINGS_QBITTORRENT_PASSWORD_KEY: &str = "settings.download.qbittorrent.password";
+
+/// 为平台安全存储生成稳定命名空间与键。
+fn secure_reference(key: &str) -> SecretReference {
+    SecretReference {
+        namespace: "ani-tracker".to_owned(),
+        key: key.to_owned(),
+    }
+}
+
+/// 将平台安全存储错误转换为带字段上下文的数据层错误。
+fn secure_store_error(
+    action: &'static str,
+    key: &str,
+    error: impl std::fmt::Display,
+) -> StorageError {
+    StorageError::SecureStoreOperation {
+        action,
+        key: key.to_owned(),
+        detail: error.to_string(),
+    }
+}
 
 /// 基于单个 SQLite 连接实现公共业务 Repository 端口。
 pub struct SqliteRepository<'connection> {
     connection: &'connection Connection,
     transaction_active: bool,
+    secure_store: Option<&'connection dyn SecureStore<Error = SecureStoreError>>,
 }
 
 impl<'connection> SqliteRepository<'connection> {
     /// 使用已完成迁移的 SQLite 连接创建 Repository。
-    pub(crate) fn new(connection: &'connection Connection) -> Self {
+    pub(crate) fn new(
+        connection: &'connection Connection,
+        secure_store: Option<&'connection dyn SecureStore<Error = SecureStoreError>>,
+    ) -> Self {
         Self {
             connection,
             transaction_active: false,
+            secure_store,
         }
     }
 
     /// 创建绑定外层工作单元的 Repository，内部原子操作复用同一事务。
-    pub(crate) fn in_unit_of_work(connection: &'connection Connection) -> Self {
+    pub(crate) fn in_unit_of_work(
+        connection: &'connection Connection,
+        secure_store: Option<&'connection dyn SecureStore<Error = SecureStoreError>>,
+    ) -> Self {
         Self {
             connection,
             transaction_active: true,
+            secure_store,
         }
     }
 
@@ -69,6 +103,10 @@ impl<'connection> SqliteRepository<'connection> {
             }
         }
         preserve_host_storage_paths(&mut merged, platform_defaults);
+        if self.hydrate_settings_secrets(&mut merged) {
+            self.save_settings(&merged)?;
+            info!("Rust 应用设置敏感字段已迁移到平台安全存储");
+        }
         Ok(merged)
     }
 
@@ -631,14 +669,37 @@ impl<'connection> SqliteRepository<'connection> {
 
     /// 按名称读取全部下载源配置。
     pub(crate) fn list_sources(&self) -> Result<Vec<ReleaseSourceConfig>, StorageError> {
-        query_all(
+        let mut sources = query_all(
             self.connection,
             "SELECT * FROM release_source ORDER BY name",
             map_release_source_row,
         )?
         .into_iter()
         .map(ReleaseSourceRow::into_domain)
-        .collect()
+        .collect::<Result<Vec<_>, _>>()?;
+        for source in &mut sources {
+            let Some(stored) = source.api_key.clone() else {
+                continue;
+            };
+            let key = format!("sources.{}.api-key", source.id);
+            let (hydrated, migrated) = self.hydrate_secret_value(&key, &stored);
+            source.api_key = (!hydrated.is_empty()).then_some(hydrated);
+            if migrated {
+                self.connection.execute(
+                    "UPDATE release_source SET api_key = ?1, updated_at = ?2 WHERE id = ?3",
+                    params![
+                        format!("{SECURE_MARKER_PREFIX}{key}"),
+                        now_iso(),
+                        &source.id
+                    ],
+                )?;
+                info!(
+                    "Rust 下载源 API Key 已迁移到平台安全存储 source_id={}",
+                    source.id
+                );
+            }
+        }
+        Ok(sources)
     }
 
     /// 启用或停用一个下载源。
@@ -673,6 +734,9 @@ impl<'connection> SqliteRepository<'connection> {
         }
         validate_optional_http_url("source.baseUrl", source.base_url.as_deref())?;
         validate_optional_http_url("source.rssUrl", source.rss_url.as_deref())?;
+        let secret_key = format!("sources.{}.api-key", source.id);
+        let persisted_api_key =
+            self.protect_secret_value(&secret_key, source.api_key.as_deref().unwrap_or_default())?;
         let timestamp = now_iso();
         let tags_json =
             serde_json::to_string(&source.tags).map_err(|source| StorageError::JsonData {
@@ -698,7 +762,7 @@ impl<'connection> SqliteRepository<'connection> {
                 i64::from(source.use_proxy),
                 normalize_source_request_interval(source.request_interval_ms),
                 source.base_url.as_deref(),
-                source.api_key.as_deref(),
+                persisted_api_key.as_deref(),
                 source.rss_url.as_deref(),
                 tags_json,
                 timestamp,
@@ -1778,10 +1842,107 @@ impl<'connection> SqliteRepository<'connection> {
         raw.map(|value| parse_json(&value, context)).transpose()
     }
 
+    /// 将设置中的安全引用解析为明文，并尽力迁移历史明文字段。
+    fn hydrate_settings_secrets(&self, settings: &mut AppSettings) -> bool {
+        let Some(value) = settings
+            .pointer_mut("/download/qbittorrent/password")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+        else {
+            return false;
+        };
+        let (hydrated, migrated) =
+            self.hydrate_secret_value(SETTINGS_QBITTORRENT_PASSWORD_KEY, &value);
+        if let Some(target) = settings.pointer_mut("/download/qbittorrent/password") {
+            *target = Value::String(hydrated);
+        }
+        migrated
+    }
+
+    /// 将设置中的敏感明文写入平台安全存储，并仅持久化引用。
+    fn protect_settings_secrets(&self, settings: &mut AppSettings) -> Result<(), StorageError> {
+        let Some(value) = settings
+            .pointer_mut("/download/qbittorrent/password")
+            .and_then(|value| value.as_str())
+            .map(str::to_owned)
+        else {
+            return Ok(());
+        };
+        let protected = self.protect_secret_value(SETTINGS_QBITTORRENT_PASSWORD_KEY, &value)?;
+        if let Some(target) = settings.pointer_mut("/download/qbittorrent/password") {
+            *target = protected.map_or(Value::Null, Value::String);
+        }
+        Ok(())
+    }
+
+    /// 从安全存储读取引用；历史明文会尽力写入安全存储后标记迁移。
+    fn hydrate_secret_value(&self, key: &str, stored: &str) -> (String, bool) {
+        let Some(secure_store) = self.secure_store else {
+            return (stored.to_owned(), false);
+        };
+        let reference = secure_reference(key);
+        if let Some(marker_key) = stored.strip_prefix(SECURE_MARKER_PREFIX) {
+            if marker_key != key {
+                warn!("安全存储引用与字段不匹配 key={key} marker={marker_key}");
+                return (String::new(), false);
+            }
+            return match secure_store.read_secret(&reference) {
+                Ok(Some(secret)) => match String::from_utf8(secret.expose().to_vec()) {
+                    Ok(value) => (value, false),
+                    Err(error) => {
+                        warn!("安全存储值不是 UTF-8 key={key} error={error}");
+                        (String::new(), false)
+                    }
+                },
+                Ok(None) => {
+                    warn!("安全存储引用不存在 key={key}");
+                    (String::new(), false)
+                }
+                Err(error) => {
+                    warn!("安全存储读取失败 key={key} error={error}");
+                    (String::new(), false)
+                }
+            };
+        }
+        if stored.is_empty() {
+            return (String::new(), false);
+        }
+        match secure_store.write_secret(&reference, &SecretValue::new(stored.as_bytes())) {
+            Ok(()) => (stored.to_owned(), true),
+            Err(error) => {
+                warn!("历史敏感字段迁移失败 key={key} error={error}");
+                (stored.to_owned(), false)
+            }
+        }
+    }
+
+    /// 保存敏感值并生成引用；空值会同步删除安全存储记录。
+    fn protect_secret_value(&self, key: &str, value: &str) -> Result<Option<String>, StorageError> {
+        let Some(secure_store) = self.secure_store else {
+            return Ok(Some(value.to_owned()));
+        };
+        if value.strip_prefix(SECURE_MARKER_PREFIX) == Some(key) {
+            return Ok(Some(value.to_owned()));
+        }
+        let reference = secure_reference(key);
+        if value.is_empty() {
+            secure_store
+                .delete_secret(&reference)
+                .map_err(|error| secure_store_error("删除", key, error))?;
+            return Ok(None);
+        }
+        secure_store
+            .write_secret(&reference, &SecretValue::new(value.as_bytes()))
+            .map_err(|error| secure_store_error("写入", key, error))?;
+        Ok(Some(format!("{SECURE_MARKER_PREFIX}{key}")))
+    }
+
     /// 将完整设置 JSON 原子写入固定设置记录。
     fn save_settings(&self, settings: &AppSettings) -> Result<(), StorageError> {
+        let mut persisted = settings.clone();
+        self.protect_settings_secrets(&mut persisted)?;
         let value_json =
-            serde_json::to_string(settings).map_err(|source| StorageError::JsonData {
+            serde_json::to_string(&persisted).map_err(|source| StorageError::JsonData {
                 context: "应用设置",
                 source,
             })?;

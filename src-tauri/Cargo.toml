@@ -34,6 +34,7 @@ tauri-plugin-dialog = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-ani-player = { path = "../crates/tauri-plugin-ani-player" }
 tauri-plugin-ani-torrent = { path = "../crates/tauri-plugin-ani-torrent" }
+tauri-plugin-ani-mobile = { path = "../crates/tauri-plugin-ani-mobile" }
 tokio = { version = "1", features = ["fs", "macros", "net", "process", "sync", "time"] }
 url = "2"
 

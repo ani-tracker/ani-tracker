@@ -5,14 +5,16 @@ mod repository;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use ani_domain::SecureStore;
 use ani_repository::{RepositoryError, RepositoryResult, UnitOfWork, UnitOfWorkFactory};
 use chrono::{SecondsFormat, Utc};
 use log::{error, info, warn};
 use rusqlite::{backup::Backup, Connection, OpenFlags, Transaction};
 use serde_json::Value;
 
-pub use error::StorageError;
+pub use error::{SecureStoreError, StorageError};
 use migration::{initialize_database, read_database_versions};
 pub use repository::SqliteRepository;
 
@@ -78,12 +80,16 @@ pub struct StorageOpenReport {
 pub struct Storage {
     connection: Connection,
     database_path: PathBuf,
+    backup_directory: PathBuf,
+    seed: StorageSeed,
+    secure_store: Option<Arc<dyn SecureStore<Error = SecureStoreError>>>,
     report: StorageOpenReport,
 }
 
 /// SQLite 事务实现的工作单元，未提交即按 rusqlite 语义回滚。
 pub struct SqliteUnitOfWork<'connection> {
     transaction: Option<Transaction<'connection>>,
+    secure_store: Option<&'connection dyn SecureStore<Error = SecureStoreError>>,
 }
 
 impl Storage {
@@ -182,6 +188,9 @@ impl Storage {
         Ok(Self {
             connection,
             database_path: options.database_path,
+            backup_directory: options.backup_directory,
+            seed: options.seed,
+            secure_store: None,
             report,
         })
     }
@@ -203,8 +212,121 @@ impl Storage {
 
     /// 创建仅在当前连接生命周期内有效的业务 Repository。
     pub fn repository(&self) -> SqliteRepository<'_> {
-        SqliteRepository::new(&self.connection)
+        SqliteRepository::new(&self.connection, self.secure_store.as_deref())
     }
+
+    /// 装配平台安全存储；后续 Repository 会透明迁移并解析敏感字段。
+    pub fn set_secure_store(
+        &mut self,
+        secure_store: Arc<dyn SecureStore<Error = SecureStoreError>>,
+    ) {
+        self.secure_store = Some(secure_store);
+    }
+
+    /// 创建包含当前 WAL 内容的手动一致性备份。
+    pub fn create_manual_backup(&self) -> Result<PathBuf, StorageError> {
+        let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+        let file_name = format!("ani-tracker.manual-{timestamp}.sqlite");
+        let path = unique_path(&self.backup_directory, &file_name);
+        snapshot_database(&self.connection, &path)?;
+        info!("SQLite 手动备份完成：backup={}", path.display());
+        Ok(path)
+    }
+
+    /// 将当前数据库导出到指定路径，目标存在时原子替换其内容。
+    pub fn export_to(&self, target: &Path) -> Result<(), StorageError> {
+        ensure_not_active_database(target, &self.database_path, "backupPath")?;
+        ensure_parent_directory(target)?;
+        snapshot_database(&self.connection, target)
+    }
+
+    /// 迁移并校验外部备份，再以操作前快照保护活动数据库恢复。
+    pub fn restore_from(&mut self, source: &Path) -> Result<PathBuf, StorageError> {
+        if !source.is_file() {
+            return Err(StorageError::InvalidInput {
+                field: "backupPath",
+                message: "备份文件不存在".to_owned(),
+            });
+        }
+        ensure_not_active_database(source, &self.database_path, "backupPath")?;
+        let timestamp = Utc::now().format("%Y%m%dT%H%M%S%.3fZ");
+        let staging_path = unique_path(
+            &self.backup_directory,
+            &format!("ani-tracker.restore-staging-{timestamp}.sqlite"),
+        );
+        fs::copy(source, &staging_path)
+            .map_err(|error| StorageError::file("复制待恢复备份", source, error))?;
+
+        let migrated = Storage::open(StorageOptions {
+            database_path: staging_path.clone(),
+            backup_directory: self.backup_directory.clone(),
+            legacy_database_paths: Vec::new(),
+            seed: self.seed.clone(),
+        });
+        let migrated = match migrated {
+            Ok(storage) => storage,
+            Err(error) => {
+                remove_database_files(&staging_path);
+                return Err(error);
+            }
+        };
+        let rollback_path = unique_path(
+            &self.backup_directory,
+            &format!("ani-tracker.pre-restore-{timestamp}.sqlite"),
+        );
+        snapshot_database(&self.connection, &rollback_path)?;
+
+        let restore_result = replace_database(&mut self.connection, &migrated.connection)
+            .and_then(|_| configure_connection(&self.connection))
+            .and_then(|_| verify_integrity(&self.connection, &self.database_path));
+        drop(migrated);
+        remove_database_files(&staging_path);
+
+        if let Err(restore_error) = restore_result {
+            let rollback_result = Connection::open_with_flags(
+                &rollback_path,
+                OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
+            )
+            .map_err(StorageError::from)
+            .and_then(|rollback| replace_database(&mut self.connection, &rollback))
+            .and_then(|_| configure_connection(&self.connection))
+            .and_then(|_| verify_integrity(&self.connection, &self.database_path));
+            return match rollback_result {
+                Ok(()) => Err(StorageError::DataRestoreRolledBack {
+                    source: Box::new(restore_error),
+                }),
+                Err(rollback_error) => Err(StorageError::DataRestoreFailed {
+                    restore: Box::new(restore_error),
+                    rollback: Box::new(rollback_error),
+                }),
+            };
+        }
+
+        info!(
+            "SQLite 用户备份恢复完成：source={}, rollback={}",
+            source.display(),
+            rollback_path.display()
+        );
+        Ok(rollback_path)
+    }
+}
+
+/// 防止导出或恢复操作覆盖当前正在使用的数据库文件。
+fn ensure_not_active_database(
+    candidate: &Path,
+    database_path: &Path,
+    field: &'static str,
+) -> Result<(), StorageError> {
+    let candidate = fs::canonicalize(candidate).unwrap_or_else(|_| candidate.to_path_buf());
+    let database_path =
+        fs::canonicalize(database_path).unwrap_or_else(|_| database_path.to_path_buf());
+    if candidate == database_path {
+        return Err(StorageError::InvalidInput {
+            field,
+            message: "不能选择当前正在使用的数据库文件".to_owned(),
+        });
+    }
+    Ok(())
 }
 
 impl UnitOfWorkFactory for Storage {
@@ -219,6 +341,7 @@ impl UnitOfWorkFactory for Storage {
             .map_err(RepositoryError::from)?;
         Ok(SqliteUnitOfWork {
             transaction: Some(transaction),
+            secure_store: self.secure_store.as_deref(),
         })
     }
 }
@@ -235,7 +358,7 @@ impl UnitOfWork for SqliteUnitOfWork<'_> {
             .transaction
             .as_ref()
             .expect("unit of work transaction must exist before completion");
-        SqliteRepository::in_unit_of_work(transaction)
+        SqliteRepository::in_unit_of_work(transaction, self.secure_store)
     }
 
     /// 提交 SQLite 工作单元。
@@ -367,6 +490,14 @@ fn snapshot_database(connection: &Connection, target: &Path) -> Result<(), Stora
     destination
         .close()
         .map_err(|(_, error)| StorageError::Sqlite(error))?;
+    Ok(())
+}
+
+/// 使用 SQLite 在线备份 API 将来源完整覆盖到现有活动连接。
+fn replace_database(destination: &mut Connection, source: &Connection) -> Result<(), StorageError> {
+    let backup = Backup::new(source, destination)?;
+    backup.run_to_completion(128, std::time::Duration::from_millis(10), None)?;
+    drop(backup);
     Ok(())
 }
 

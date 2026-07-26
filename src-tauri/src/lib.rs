@@ -14,6 +14,8 @@ mod player;
 mod qbittorrent_managed;
 #[cfg(desktop)]
 mod remote;
+#[cfg(target_os = "android")]
+mod secure_store;
 mod source_sync;
 mod sources;
 mod storage;
@@ -30,6 +32,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_ani_mobile::init())
         .plugin(tauri_plugin_ani_player::init())
         .plugin(tauri_plugin_ani_torrent::init());
     #[cfg(desktop)]
@@ -174,6 +177,8 @@ pub fn run() {
             commands::data::list_sources,
             commands::data::set_source_enabled,
             commands::data::upsert_source,
+            commands::backup::export_database_backup,
+            commands::backup::restore_database_backup,
             commands::sources::search_releases,
             commands::sources::search_anime_releases,
             commands::sources::search_rss_subscription_releases,
@@ -205,10 +210,14 @@ pub fn run() {
             commands::downloads::remove_download,
             commands::downloads::set_download_file_priority,
             commands::downloads::add_download_url,
+            commands::downloads::import_torrent_file,
             commands::downloads::add_release_download,
             commands::media::list_media_files,
             commands::media::scan_download_media,
             commands::media::get_desktop_media_tools_status,
+            commands::mobile::get_mobile_platform_status,
+            commands::mobile::consume_mobile_navigation,
+            commands::mobile::request_mobile_notification_permission,
             commands::player::open_desktop_player_window,
             commands::player::close_desktop_player_window,
             commands::player::drag_desktop_player_window,

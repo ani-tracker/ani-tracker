@@ -26,6 +26,9 @@ import type {
   EpisodeReleasePreview,
   ImageCacheResolveResult,
   MediaScanResult,
+  MobileNavigationIntent,
+  MobileNotificationPermission,
+  MobilePlatformStatus,
   PlaybackCheckpoint,
   PlayerDetectionResult,
   QbittorrentManagedStatus,
@@ -145,6 +148,29 @@ class TauriClientCore implements AppClient {
     };
   }
 
+  /** 读取移动宿主的网络、存储、方向、权限和生命周期状态。 */
+  async getMobilePlatformStatus(): Promise<MobilePlatformStatus> {
+    return invoke<MobilePlatformStatus>("get_mobile_platform_status").catch((error) => {
+      throw normalizeTauriError("get_mobile_platform_status", error);
+    });
+  }
+
+  /** 原子读取并清除原生通知导航。 */
+  async consumeMobileNavigation(): Promise<MobileNavigationIntent | undefined> {
+    return invoke<MobileNavigationIntent | null>("consume_mobile_navigation")
+      .then((intent) => intent ?? undefined)
+      .catch((error) => {
+        throw normalizeTauriError("consume_mobile_navigation", error);
+      });
+  }
+
+  /** 由用户操作请求移动通知权限。 */
+  async requestMobileNotificationPermission(): Promise<MobileNotificationPermission> {
+    return invoke<MobileNotificationPermission>("request_mobile_notification_permission").catch((error) => {
+      throw normalizeTauriError("request_mobile_notification_permission", error);
+    });
+  }
+
   /** 使用系统默认程序打开外部 HTTP 或 HTTPS 链接。 */
   async openExternal(url: string): Promise<void> {
     return invoke<void>("open_external", { url }).catch((error) => {
@@ -205,6 +231,20 @@ class TauriClientCore implements AppClient {
   async resetSettingsToDefaults(): Promise<AppSettings> {
     return invoke<AppSettings>("reset_settings_to_defaults").catch((error) => {
       throw normalizeTauriError("reset_settings_to_defaults", error);
+    });
+  }
+
+  /** 导出包含 WAL 内容的一致性 SQLite 备份。 */
+  async exportDatabaseBackup(): Promise<string | null> {
+    return invoke<string | null>("export_database_backup").catch((error) => {
+      throw normalizeTauriError("export_database_backup", error);
+    });
+  }
+
+  /** 恢复用户选择的 SQLite 备份并重新装配运行设置。 */
+  async restoreDatabaseBackup(): Promise<string | null> {
+    return invoke<string | null>("restore_database_backup").catch((error) => {
+      throw normalizeTauriError("restore_database_backup", error);
     });
   }
 
@@ -429,6 +469,13 @@ class TauriClientCore implements AppClient {
   async addDownloadUrl(input: AddDownloadUrlInput): Promise<DownloadTask[]> {
     return invoke<DownloadTask[]>("add_download_url", { input }).catch((error) => {
       throw normalizeTauriError("add_download_url", error);
+    });
+  }
+
+  /** 通过原生文件选择器导入本地 torrent。 */
+  async importTorrentFile(): Promise<DownloadTask[] | null> {
+    return invoke<DownloadTask[] | null>("import_torrent_file").catch((error) => {
+      throw normalizeTauriError("import_torrent_file", error);
     });
   }
 

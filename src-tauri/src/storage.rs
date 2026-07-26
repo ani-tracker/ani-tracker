@@ -40,6 +40,18 @@ impl AppStorageState {
 /// 解析平台目录并完成 SQLite 复制、迁移和状态装配。
 pub(crate) fn initialize(app: &AppHandle) -> Result<AppStorageState, StorageError> {
     let directories = resolve_directories(app)?;
+    for directory in [
+        &directories.app_data,
+        &directories.cache,
+        &directories.logs,
+        &directories.downloads,
+    ] {
+        std::fs::create_dir_all(directory).map_err(|source| StorageError::FileOperation {
+            operation: "创建 Tauri 应用目录",
+            path: directory.clone(),
+            source,
+        })?;
+    }
     let database_path = directories.app_data.join(DATABASE_FILE_NAME);
     let backup_directory = directories.app_data.join("backups");
     let platform_defaults = build_default_settings(&directories, &database_path, &backup_directory);
@@ -55,6 +67,14 @@ pub(crate) fn initialize(app: &AppHandle) -> Result<AppStorageState, StorageErro
         legacy_database_paths,
         seed,
     })?;
+    #[cfg(target_os = "android")]
+    let storage = {
+        let mut storage = storage;
+        storage.set_secure_store(Arc::new(crate::secure_store::PlatformSecureStore::new(
+            app.clone(),
+        )));
+        storage
+    };
 
     log::info!(
         "Tauri SQLite 状态装配完成 database={} schema={} app_data={} copied_from={:?}",
@@ -83,10 +103,13 @@ fn resolve_directories(app: &AppHandle) -> Result<AppDirectories, StorageError> 
         .path()
         .app_log_dir()
         .unwrap_or_else(|_| app_data.join("logs"));
+    #[cfg(desktop)]
     let downloads = app
         .path()
         .download_dir()
         .unwrap_or_else(|_| app_data.join("downloads"));
+    #[cfg(mobile)]
+    let downloads = app_data.join("downloads");
     let config = app
         .path()
         .app_config_dir()
@@ -165,7 +188,7 @@ fn build_default_settings(
             "backupDir": path_text(backup_directory)
         },
         "players": default_player_profiles(),
-        "defaultPlayerProfileId": "auto",
+        "defaultPlayerProfileId": if mobile { "builtin" } else { "auto" },
         "automation": {
             "scheduledCheckEnabled": true,
             "checkIntervalMinutes": 30,
@@ -198,6 +221,64 @@ fn build_default_settings(
             }
         }
     })
+}
+
+/// 返回宿主必须覆盖的设置片段，避免移动备份恢复桌面专属能力。
+pub(crate) fn platform_settings_constraints() -> Value {
+    platform_settings_constraints_for(cfg!(mobile))
+}
+
+/// 生成可测试的平台约束，移动宿主不得启用桌面进程和路径能力。
+fn platform_settings_constraints_for(mobile: bool) -> Value {
+    if mobile {
+        json!({
+            "defaultPlayerProfileId": "builtin",
+            "players": [],
+            "download": {
+                "qbittorrent": {
+                    "autoConnect": false,
+                    "managed": {
+                        "enabled": false
+                    }
+                }
+            },
+            "media": {
+                "ffprobePath": ""
+            },
+            "desktop": {
+                "minimizeToTray": false,
+                "launchAtLogin": false
+            },
+            "network": {
+                "remoteAccess": {
+                    "lanEnabled": false
+                }
+            }
+        })
+    } else {
+        json!({})
+    }
+}
+
+/// 将平台强制设置递归覆盖到 Renderer 提交的补丁。
+pub(crate) fn constrain_settings_patch(patch: &mut Value) {
+    merge_settings_value(patch, platform_settings_constraints());
+}
+
+/// 递归合并 JSON 对象；非对象节点由平台约束直接替换。
+fn merge_settings_value(target: &mut Value, constraints: Value) {
+    match (target, constraints) {
+        (Value::Object(target), Value::Object(constraints)) => {
+            for (key, value) in constraints {
+                if let Some(existing) = target.get_mut(&key) {
+                    merge_settings_value(existing, value);
+                } else {
+                    target.insert(key, value);
+                }
+            }
+        }
+        (target, constraints) => *target = constraints,
+    }
 }
 
 /// 返回默认的关闭做种限制。
@@ -448,8 +529,10 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{
-        build_default_settings, default_release_sources, legacy_database_candidates, AppDirectories,
+        build_default_settings, default_release_sources, legacy_database_candidates,
+        merge_settings_value, platform_settings_constraints_for, AppDirectories,
     };
+    use serde_json::json;
 
     /// 验证 Tauri 默认设置保留主题、内置下载和真实数据库路径。
     #[test]
@@ -488,6 +571,40 @@ mod tests {
         unique.sort();
         unique.dedup();
         assert_eq!(unique.len(), candidates.len());
+    }
+
+    /// 验证移动设置约束会关闭桌面进程能力并保留外部 qBittorrent 配置。
+    #[test]
+    fn constrains_restored_mobile_settings() {
+        let mut settings = json!({
+            "defaultPlayerProfileId": "mpv",
+            "players": [{ "id": "mpv" }],
+            "download": {
+                "qbittorrent": {
+                    "baseUrl": "https://qb.example.test",
+                    "managed": { "enabled": true }
+                }
+            },
+            "media": { "ffprobePath": "/usr/bin/ffprobe" },
+            "desktop": { "minimizeToTray": true },
+            "network": { "remoteAccess": { "lanEnabled": true } }
+        });
+
+        merge_settings_value(&mut settings, platform_settings_constraints_for(true));
+
+        assert_eq!(settings["defaultPlayerProfileId"], "builtin");
+        assert_eq!(settings["players"], json!([]));
+        assert_eq!(
+            settings["download"]["qbittorrent"]["managed"]["enabled"],
+            false
+        );
+        assert_eq!(
+            settings["download"]["qbittorrent"]["baseUrl"],
+            "https://qb.example.test"
+        );
+        assert_eq!(settings["media"]["ffprobePath"], "");
+        assert_eq!(settings["desktop"]["minimizeToTray"], false);
+        assert_eq!(settings["network"]["remoteAccess"]["lanEnabled"], false);
     }
 
     /// 创建不依赖宿主环境的路径样本。

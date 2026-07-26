@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { ErrorBoundary } from "./components/error-boundary";
 import { ThemeProvider, ThemeToaster } from "./components/theme-provider";
-import { appApi, isElectronClient } from "./lib/api";
+import { appApi } from "./lib/api";
 import { isLocalAppRuntime } from "./lib/runtime";
 import type { AppearanceSettings } from "@shared/theme";
 import "./styles/globals.css";
@@ -24,9 +24,9 @@ async function registerWebServiceWorker(): Promise<void> {
 
 void registerWebServiceWorker();
 
-/** Electron 桌面入口按需读取持久化外观，远程网页继续使用本地缓存。 */
+/** 所有本地宿主从 SQLite 读取持久化外观，远程网页继续使用浏览器缓存。 */
 async function loadRuntimeAppearance(): Promise<AppearanceSettings | undefined> {
-  if (!isElectronClient()) {
+  if (!isLocalAppRuntime()) {
     return undefined;
   }
   return (await appApi.getSettings()).appearance;

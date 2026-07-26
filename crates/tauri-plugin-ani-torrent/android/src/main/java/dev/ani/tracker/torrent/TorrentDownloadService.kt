@@ -3,6 +3,7 @@ package dev.ani.tracker.torrent
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
+import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
@@ -74,6 +75,11 @@ class TorrentDownloadService : Service() {
                     "无法持久化 Android 下载配置"
                 }
             }
+            if (isSuccessfulResponse(response)) {
+                runCatching(::refreshRecoveryState).onFailure { error ->
+                    Log.w(LOG_TAG, "torrent recovery state refresh failed", error)
+                }
+            }
             response
         }).get(REQUEST_TIMEOUT_SECONDS, TimeUnit.SECONDS)
     }
@@ -125,6 +131,26 @@ class TorrentDownloadService : Service() {
         }
     }
 
+    /** 查询核心任务数并保存 WorkManager 是否需要恢复前台服务。 */
+    private fun refreshRecoveryState() {
+        val statusRequest = JSONObject().apply {
+            put("id", "android-recovery-status")
+            put("method", "status")
+            put("params", JSONObject())
+        }.toString()
+        val status = JSONObject(NativeTorrentCore.nativeExecute(nativeHandle, statusRequest))
+        val result = status.optJSONObject("result")
+        val rawCount = result?.opt("taskCount")
+        val taskCount = when (rawCount) {
+            is Number -> rawCount.toInt()
+            is String -> rawCount.toIntOrNull() ?: 0
+            else -> 0
+        }
+        check(preferences().edit().putBoolean(ACTIVE_TASKS_KEY, taskCount > 0).commit()) {
+            "无法持久化 Android 下载恢复状态"
+        }
+    }
+
     /** 创建低打扰下载通知渠道。 */
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
@@ -143,12 +169,25 @@ class TorrentDownloadService : Service() {
 
     /** 启动 dataSync 类型前台通知。 */
     private fun startCoreForeground() {
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
+            action = ACTION_OPEN_DOWNLOADS
+            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+        }
+        val contentIntent = launchIntent?.let {
+            PendingIntent.getActivity(
+                this,
+                NOTIFICATION_ID,
+                it,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+        }
         val notification = Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(getString(R.string.ani_torrent_notification_title))
             .setContentText(getString(R.string.ani_torrent_notification_text))
             .setOngoing(true)
             .setCategory(Notification.CATEGORY_PROGRESS)
+            .setContentIntent(contentIntent)
             .build()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
@@ -169,6 +208,9 @@ class TorrentDownloadService : Service() {
         /** 保存恢复数据并停止当前核心实例。 */
         fun shutdownCore() {
             executor.submit { stopCore() }.get(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+            check(preferences().edit().putBoolean(ACTIVE_TASKS_KEY, false).commit()) {
+                "无法清除 Android 下载恢复状态"
+            }
         }
 
         /** 查询当前核心，不为状态查询隐式启动。 */
@@ -184,6 +226,8 @@ class TorrentDownloadService : Service() {
         private const val DATA_DIRECTORY_NAME = "torrent-core"
         private const val PREFERENCES_NAME = "ani_torrent_core"
         private const val CONFIGURE_REQUEST_KEY = "configure_request_v1"
+        private const val ACTIVE_TASKS_KEY = "has_active_tasks_v1"
+        private const val ACTION_OPEN_DOWNLOADS = "com.ani.tracker.OPEN_DOWNLOADS"
         private const val NOTIFICATION_CHANNEL_ID = "ani_torrent_downloads"
         private const val NOTIFICATION_ID = 20021
         private const val REQUEST_TIMEOUT_SECONDS = 30L
@@ -203,5 +247,10 @@ class TorrentDownloadService : Service() {
         fun stop(context: Context) {
             context.stopService(Intent(context, TorrentDownloadService::class.java))
         }
+
+        /** 判断进程重建后是否仍需恢复包含任务的下载核心。 */
+        fun hasActiveTasks(context: Context): Boolean = context
+            .getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .getBoolean(ACTIVE_TASKS_KEY, false)
     }
 }

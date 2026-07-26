@@ -2,7 +2,7 @@
 
 最近更新：2026-07-26
 
-状态：P0-P6 代码实现已完成；P7 Android/iOS 完整应用闭环待执行，跨平台完整构建门禁按计划后续统一验证
+状态：P0-P6 已完成；P7 Android 本地业务闭环已完成，iOS Tauri 宿主与本地闭环进行中；跨平台完整构建门禁按计划后续统一验证
 
 ## 1. 迁移目标
 
@@ -397,6 +397,15 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 4. `feat: 完成 iOS 本地业务闭环`
 
 门禁：Android/iOS 在桌面端离线状态下，使用应用内置 torrent-core 完成确定性种子的添加、下载、暂停、恢复、文件选择和重启恢复，再使用内置 libVLC 播放下载文件并回写进度；浅色、深色、跟随系统和用户主题持久化通过；横竖屏、网络切换、后台恢复、低存储和权限拒绝有确定状态。
+
+执行记录：
+
+- Android 已接通前后台生命周期、横竖屏、网络状态、低存储状态、通知权限与通知页面导航；低于 256 MiB 时 Rust 下载命令拒绝新增和恢复任务。
+- Android 内置 torrent-core 已接通前台下载服务与唯一 WorkManager 恢复任务，任务状态变化会持久化恢复标识，Activity 重建不终止下载。
+- 已接入 Android Keystore AES-GCM 安全存储；qBittorrent 密码与来源 API Key 在 SQLite 中仅保存版本化引用。
+- 已接通系统文档选择器的本地 torrent 导入、SQLite 一致性备份导出、恢复前快照、损坏备份拒绝和失败保护。
+- 移动设置页已保留主题、外部 qBittorrent Web API、内置下载与 libVLC，隐藏桌面集成、FFprobe、外部播放器路径和托管 qBittorrent-nox；Rust 同时强制关闭恢复数据中的桌面专属能力。
+- Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、Android Renderer 构建及 365 项 Node 回归通过，其中 364 项通过、1 项跳过。Kotlin、APK/AAB 内容和 Android 真机门禁按当前安排后续统一验证。
 
 ### P8：默认切换、发布与旧宿主退役
 

@@ -23,6 +23,28 @@ export interface AppWindowState {
   maximized: boolean;
 }
 
+export type MobileLifecycleState = "foreground" | "background" | "inactive";
+export type MobileNetworkState = "online" | "limited" | "offline" | "unknown";
+export type MobileStorageState = "ok" | "low" | "critical";
+export type MobileOrientation = "portrait" | "landscape" | "unknown";
+export type MobileNotificationPermission = "granted" | "denied" | "prompt" | "prompt-with-rationale" | "not-required";
+
+/** 移动宿主提供的生命周期与系统资源确定状态。 */
+export interface MobilePlatformStatus {
+  lifecycle: MobileLifecycleState;
+  network: MobileNetworkState;
+  metered: boolean;
+  storage: MobileStorageState;
+  availableBytes: number;
+  orientation: MobileOrientation;
+  notificationPermission: MobileNotificationPermission;
+}
+
+/** 原生通知或系统入口要求打开的应用内页面。 */
+export interface MobileNavigationIntent {
+  pageId: "home" | "downloads" | "notifications";
+}
+
 export interface AnimeSearchQuery {
   keyword: string;
   includeAliases?: boolean;

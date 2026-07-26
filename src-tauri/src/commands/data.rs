@@ -112,13 +112,14 @@ pub(crate) async fn get_settings(
 /// 递归合并应用设置，并保护宿主路径字段。
 #[tauri::command]
 pub(crate) async fn update_settings(
-    patch: Value,
+    mut patch: Value,
     app: AppHandle,
     state: State<'_, AppStorageState>,
     source_sync_state: State<'_, AppSourceSyncState>,
     automation_state: State<'_, AppAutomationState>,
     download_state: State<'_, AppDownloadState>,
 ) -> Result<AppSettings, AppCommandError> {
+    crate::storage::constrain_settings_patch(&mut patch);
     let defaults = state.platform_defaults().clone();
     let settings = run_query("更新设置", Arc::clone(state.storage()), move |storage| {
         storage.repository().update_settings(&patch, &defaults)

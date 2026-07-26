@@ -1,6 +1,8 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_domain::{
@@ -9,7 +11,8 @@ use ani_domain::{
     EpisodePreference, EpisodeStatus, MediaFile, MyAnime, NotificationKind, NotificationRecord,
     NotificationSeverity, PlaybackCheckpoint, ReleaseSearchResult, ReleaseSourceConfig,
     ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
-    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput, TorrentEngineKind, TorrentFile,
+    SavePlaybackCheckpointInput, SecretReference, SecretValue, SecureStore,
+    SetAnimeWatchProgressInput, TorrentEngineKind, TorrentFile,
 };
 use ani_repository::{
     AnimeCatalogRepository, AnimeSourceBindingRepository, CachedReleaseQuery, DownloadRepository,
@@ -21,8 +24,8 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
-    ReleaseSourceSeed, Storage, StorageError, StorageOptions, StorageSeed, APP_DATA_VERSION,
-    SQLITE_SCHEMA_VERSION,
+    ReleaseSourceSeed, SecureStoreError, Storage, StorageError, StorageOptions, StorageSeed,
+    APP_DATA_VERSION, SQLITE_SCHEMA_VERSION,
 };
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -133,6 +136,70 @@ fn updates_and_resets_settings_through_repository() {
     assert_eq!(reset, defaults);
 }
 
+/// 验证敏感设置和来源 API Key 仅在 SQLite 保存安全引用。
+#[test]
+fn stores_sensitive_fields_through_secure_store() {
+    let directory = TestDirectory::new("secure-store");
+    let mut storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("open secure store database");
+    let secure_store = Arc::new(MemorySecureStore::default());
+    storage.set_secure_store(secure_store.clone());
+    let defaults = json!({
+        "download": { "qbittorrent": { "password": "" } },
+        "appearance": { "mode": "system" }
+    });
+    let settings = storage
+        .repository()
+        .update_settings(
+            &json!({ "download": { "qbittorrent": { "password": "qbit-secret" } } }),
+            &defaults,
+        )
+        .expect("save secure settings");
+    assert_eq!(
+        settings["download"]["qbittorrent"]["password"],
+        "qbit-secret"
+    );
+    let raw_settings: String = storage
+        .connection
+        .query_row(
+            "SELECT value_json FROM app_settings WHERE key = 'settings'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read raw settings");
+    assert!(!raw_settings.contains("qbit-secret"));
+    assert!(raw_settings.contains("secure-store:v1:settings.download.qbittorrent.password"));
+
+    let mut source = storage
+        .repository()
+        .list_sources()
+        .expect("list seeded sources")
+        .remove(0);
+    source.api_key = Some("source-secret".to_owned());
+    let sources = storage
+        .repository()
+        .upsert_source(&source)
+        .expect("save secure source");
+    assert_eq!(sources[0].api_key.as_deref(), Some("source-secret"));
+    let raw_api_key: String = storage
+        .connection
+        .query_row(
+            "SELECT api_key FROM release_source WHERE id = 'anibt'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read raw source api key");
+    assert_eq!(raw_api_key, "secure-store:v1:sources.anibt.api-key");
+    assert_eq!(
+        secure_store.read_text("settings.download.qbittorrent.password"),
+        Some("qbit-secret".to_owned())
+    );
+    assert_eq!(
+        secure_store.read_text("sources.anibt.api-key"),
+        Some("source-secret".to_owned())
+    );
+}
+
 /// 验证旧库升级前保留一致性备份，并执行结构与应用数据迁移。
 #[test]
 fn backs_up_and_migrates_legacy_versions() {
@@ -221,6 +288,102 @@ fn copies_legacy_database_without_modifying_source() {
         .query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0))
         .map(|result| assert_eq!(result, "ok"))
         .expect("source database remains valid");
+}
+
+/// 验证手动备份包含 WAL 数据，并可恢复为当前活动连接。
+#[test]
+fn exports_and_restores_manual_backup() {
+    let directory = TestDirectory::new("manual-backup");
+    let mut storage =
+        Storage::open(test_options(&directory, "active.sqlite")).expect("open active database");
+    let defaults = json!({ "appearance": { "mode": "system" } });
+    storage
+        .repository()
+        .update_settings(&json!({ "appearance": { "mode": "dark" } }), &defaults)
+        .expect("write backup settings");
+    let backup = storage
+        .create_manual_backup()
+        .expect("create manual backup");
+
+    storage
+        .repository()
+        .update_settings(&json!({ "appearance": { "mode": "light" } }), &defaults)
+        .expect("write active settings");
+    let rollback = storage
+        .restore_from(&backup)
+        .expect("restore manual backup");
+
+    assert!(rollback.is_file());
+    assert_eq!(
+        storage
+            .repository()
+            .get_settings(&defaults)
+            .expect("read restored settings")["appearance"]["mode"],
+        "dark"
+    );
+    let rollback_storage = Storage::open(StorageOptions {
+        database_path: rollback,
+        backup_directory: directory.path().join("rollback-backups"),
+        legacy_database_paths: Vec::new(),
+        seed: StorageSeed::default(),
+    })
+    .expect("open rollback snapshot");
+    assert_eq!(
+        rollback_storage
+            .repository()
+            .get_settings(&defaults)
+            .expect("read rollback settings")["appearance"]["mode"],
+        "light"
+    );
+}
+
+/// 验证导出快照可独立打开，并拒绝当前活动数据库作为目标或来源。
+#[test]
+fn exports_consistent_snapshot_and_rejects_active_database_path() {
+    let directory = TestDirectory::new("manual-export");
+    let mut storage =
+        Storage::open(test_options(&directory, "active.sqlite")).expect("open active database");
+    let exported = directory.path().join("exported.sqlite");
+    storage.export_to(&exported).expect("export database");
+    Storage::open(StorageOptions {
+        database_path: exported,
+        backup_directory: directory.path().join("export-backups"),
+        legacy_database_paths: Vec::new(),
+        seed: StorageSeed::default(),
+    })
+    .expect("open exported database")
+    .verify()
+    .expect("verify exported database");
+
+    assert!(matches!(
+        storage.export_to(storage.database_path()),
+        Err(StorageError::InvalidInput {
+            field: "backupPath",
+            ..
+        })
+    ));
+    let active_path = storage.database_path().to_path_buf();
+    assert!(matches!(
+        storage.restore_from(&active_path),
+        Err(StorageError::InvalidInput {
+            field: "backupPath",
+            ..
+        })
+    ));
+}
+
+/// 验证损坏备份在写入活动连接前被拒绝，现有数据保持不变。
+#[test]
+fn rejects_corrupt_manual_restore_without_mutating_active_database() {
+    let directory = TestDirectory::new("manual-restore-corrupt");
+    let mut storage =
+        Storage::open(test_options(&directory, "active.sqlite")).expect("open active database");
+    let corrupt = directory.path().join("corrupt.sqlite");
+    fs::write(&corrupt, b"not-a-sqlite-database").expect("write corrupt backup");
+
+    assert!(storage.restore_from(&corrupt).is_err());
+    storage.verify().expect("active database remains valid");
+    assert_eq!(read_meta(&storage.connection, "schema_version"), "18");
 }
 
 /// 验证迁移事务失败后恢复原始版本和表结构。
@@ -1445,6 +1608,63 @@ fn open_read_only(path: &Path) -> Connection {
         OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX,
     )
     .expect("open read-only database")
+}
+
+/// 测试专用内存安全存储，模拟 Keystore/Keychain 的引用读写。
+#[derive(Default)]
+struct MemorySecureStore {
+    values: Mutex<HashMap<SecretReference, SecretValue>>,
+}
+
+impl MemorySecureStore {
+    /// 读取 UTF-8 文本，便于断言真实值没有落入 SQLite。
+    fn read_text(&self, key: &str) -> Option<String> {
+        let reference = SecretReference {
+            namespace: "ani-tracker".to_owned(),
+            key: key.to_owned(),
+        };
+        self.values
+            .lock()
+            .expect("lock memory secure store")
+            .get(&reference)
+            .map(|value| String::from_utf8_lossy(value.expose()).into_owned())
+    }
+}
+
+impl SecureStore for MemorySecureStore {
+    type Error = SecureStoreError;
+
+    /// 读取内存中的敏感值。
+    fn read_secret(&self, reference: &SecretReference) -> Result<Option<SecretValue>, Self::Error> {
+        Ok(self
+            .values
+            .lock()
+            .map_err(|error| SecureStoreError(error.to_string()))?
+            .get(reference)
+            .cloned())
+    }
+
+    /// 写入内存中的敏感值。
+    fn write_secret(
+        &self,
+        reference: &SecretReference,
+        value: &SecretValue,
+    ) -> Result<(), Self::Error> {
+        self.values
+            .lock()
+            .map_err(|error| SecureStoreError(error.to_string()))?
+            .insert(reference.clone(), value.clone());
+        Ok(())
+    }
+
+    /// 删除内存中的敏感值。
+    fn delete_secret(&self, reference: &SecretReference) -> Result<(), Self::Error> {
+        self.values
+            .lock()
+            .map_err(|error| SecureStoreError(error.to_string()))?
+            .remove(reference);
+        Ok(())
+    }
 }
 
 /// 自动清理的独立测试目录。

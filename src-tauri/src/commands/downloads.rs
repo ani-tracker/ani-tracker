@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use ani_contracts::{
     AppCommandError, DownloadServiceStatus, EmbeddedTorrentCoreStatus, QbittorrentManagedStatus,
     TorrentConnectionTestResult,
@@ -9,6 +11,9 @@ use ani_downloads::{
 use serde::Deserialize;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, State};
+#[cfg(mobile)]
+use tauri_plugin_ani_mobile::AniMobileExt;
+use tauri_plugin_dialog::{DialogExt, FilePath};
 
 use crate::downloads::{release_download_context, AppDownloadState};
 use crate::media::AppMediaState;
@@ -260,8 +265,10 @@ pub(crate) async fn pause_download(
 #[tauri::command]
 pub(crate) async fn resume_download(
     task_id: String,
+    app: AppHandle,
     state: State<'_, AppDownloadState>,
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
+    ensure_mobile_storage_available(&app)?;
     state
         .service()
         .resume(&task_id)
@@ -302,8 +309,10 @@ pub(crate) async fn set_download_file_priority(
 #[tauri::command]
 pub(crate) async fn add_download_url(
     input: AddDownloadUrlInput,
+    app: AppHandle,
     state: State<'_, AppDownloadState>,
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
+    ensure_mobile_storage_available(&app)?;
     let settings = state
         .settings()
         .map_err(|error| runtime_error("添加下载任务", error))?;
@@ -333,12 +342,72 @@ pub(crate) async fn add_download_url(
         .map_err(|error| map_download_error("添加下载任务", error))
 }
 
+/// 通过系统文件选择器导入本地 torrent，并加入当前默认引擎。
+#[tauri::command]
+pub(crate) async fn import_torrent_file(
+    app: AppHandle,
+    state: State<'_, AppDownloadState>,
+) -> Result<Option<Vec<DownloadTask>>, AppCommandError> {
+    ensure_mobile_storage_available(&app)?;
+    let dialog_app = app.clone();
+    let selected = tauri::async_runtime::spawn_blocking(move || {
+        dialog_app
+            .dialog()
+            .file()
+            .set_title("导入 torrent 文件")
+            .add_filter("BitTorrent 元信息", &["torrent"])
+            .blocking_pick_file()
+    })
+    .await
+    .map_err(|error| runtime_error("打开 torrent 文件选择器", error))?;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let (source_path, imported_document) = resolve_selected_document(&app, selected, "torrent")?;
+    let settings = state
+        .settings()
+        .map_err(|error| runtime_error("导入 torrent 文件", error))?;
+    let engine = state
+        .default_engine(&settings)
+        .map_err(|error| map_download_error("导入 torrent 文件", error))?;
+    let prepared = state
+        .prepare_local_torrent(&source_path)
+        .await
+        .map_err(|error| runtime_error("准备本地 torrent 文件", error))?;
+    let name = source_path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    let tasks = state
+        .service()
+        .add(DownloadAddRequest {
+            engine,
+            source: prepared.source(),
+            options: AddTorrentOptions {
+                save_path: resolve_save_path(None, &settings)?,
+                ..AddTorrentOptions::default()
+            },
+            context: DownloadTaskContext {
+                name,
+                ..DownloadTaskContext::default()
+            },
+        })
+        .await
+        .map_err(|error| map_download_error("导入 torrent 文件", error))?;
+    drop(imported_document);
+    log::info!("Tauri 本地 torrent 已导入 task_count={}", tasks.len());
+    Ok(Some(tasks))
+}
+
 /// 将已选择资源加入下载引擎并持久化番剧和单集关联。
 #[tauri::command]
 pub(crate) async fn add_release_download(
     input: AddReleaseDownloadInput,
+    app: AppHandle,
     state: State<'_, AppDownloadState>,
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
+    ensure_mobile_storage_available(&app)?;
     let settings = state
         .settings()
         .map_err(|error| runtime_error("添加资源下载", error))?;
@@ -411,6 +480,71 @@ fn resolve_save_path(requested: Option<&str>, settings: &Value) -> Result<String
             code: "invalid_input".to_owned(),
             message: "添加下载任务失败：保存路径不能为空".to_owned(),
         })
+}
+
+/// 移动设备空间临界时拒绝新增写入，桌面端保持原有行为。
+fn ensure_mobile_storage_available(app: &AppHandle) -> Result<(), AppCommandError> {
+    #[cfg(mobile)]
+    {
+        let status = app
+            .ani_mobile()
+            .status()
+            .map_err(|error| runtime_error("读取移动存储状态", error))?;
+        if status.storage == "critical" {
+            return Err(AppCommandError {
+                code: "insufficient_storage".to_owned(),
+                message: "可用存储空间不足 256 MiB，已暂停新增或恢复下载".to_owned(),
+            });
+        }
+    }
+    #[cfg(not(mobile))]
+    let _ = app;
+    Ok(())
+}
+
+/// 将文件选择结果转换为 Rust 可读取路径；Android content URI 先复制到私有缓存。
+pub(super) fn resolve_selected_document(
+    app: &AppHandle,
+    selected: FilePath,
+    kind: &str,
+) -> Result<(PathBuf, Option<TemporaryImportedDocument>), AppCommandError> {
+    #[cfg(not(target_os = "android"))]
+    let _ = (app, kind);
+    match selected {
+        FilePath::Path(path) => Ok((path, None)),
+        FilePath::Url(url) if url.scheme() == "file" => url
+            .to_file_path()
+            .map(|path| (path, None))
+            .map_err(|_| runtime_error("读取系统文件选择结果", "file URL 无法转换为本地路径")),
+        #[cfg(target_os = "android")]
+        FilePath::Url(url) if url.scheme() == "content" => {
+            let path = app
+                .ani_mobile()
+                .import_document(url.as_str(), kind)
+                .map_err(|error| runtime_error("复制 Android 系统文档", error))?;
+            Ok((path.clone(), Some(TemporaryImportedDocument(path))))
+        }
+        FilePath::Url(url) => Err(runtime_error(
+            "读取系统文件选择结果",
+            format!("不支持的文档协议：{}", url.scheme()),
+        )),
+    }
+}
+
+/// 在命令结束时清理从移动系统文档提供器复制的临时文件。
+pub(super) struct TemporaryImportedDocument(PathBuf);
+
+impl Drop for TemporaryImportedDocument {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.0) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                log::warn!(
+                    "清理移动导入文档失败 path={} error={error}",
+                    self.0.display()
+                );
+            }
+        }
+    }
 }
 
 /// 为首次占位任务与引擎真实哈希建立稳定弱关联。

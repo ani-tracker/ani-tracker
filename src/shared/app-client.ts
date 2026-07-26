@@ -37,6 +37,9 @@ import type {
   EpisodeReleasePreview,
   ImageCacheResolveResult,
   MediaScanResult,
+  MobileNavigationIntent,
+  MobileNotificationPermission,
+  MobilePlatformStatus,
   PlaybackCheckpoint,
   PlayerDetectionResult,
   QbittorrentManagedStatus,
@@ -79,6 +82,13 @@ export interface AppClient {
   closeWindow(): Promise<void>;
   /** 订阅桌面窗口状态变化。 */
   onWindowStateChanged(listener: (state: AppWindowState) => void): () => void;
+
+  /** 读取移动宿主的生命周期与系统约束。 */
+  getMobilePlatformStatus?(): Promise<MobilePlatformStatus>;
+  /** 读取并清除原生通知导航。 */
+  consumeMobileNavigation?(): Promise<MobileNavigationIntent | undefined>;
+  /** 由用户操作请求移动通知权限。 */
+  requestMobileNotificationPermission?(): Promise<MobileNotificationPermission>;
 
   /** 解析当前平台可读取的缓存图片地址。 */
   resolveCachedImageUrl(sourceUrl: string): Promise<ImageCacheResolveResult>;
@@ -158,6 +168,8 @@ export interface AppClient {
   setDownloadFilePriority(taskId: string, fileIndexes: number[], priority: number): Promise<DownloadTask[]>;
   /** 通过磁链或 torrent 地址添加任务。 */
   addDownloadUrl(input: AddDownloadUrlInput): Promise<DownloadTask[]>;
+  /** 通过系统文件选择器导入本地 torrent。 */
+  importTorrentFile?(): Promise<DownloadTask[] | null>;
   /** 从资源搜索结果添加任务。 */
   addReleaseDownload(input: AddReleaseDownloadInput): Promise<DownloadTask[]>;
 
@@ -200,6 +212,10 @@ export interface AppClient {
   updateSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   /** 恢复当前平台默认设置。 */
   resetSettingsToDefaults(): Promise<AppSettings>;
+  /** 通过系统文件面板导出 SQLite 数据备份。 */
+  exportDatabaseBackup?(): Promise<string | null>;
+  /** 通过系统文件面板恢复 SQLite 数据备份。 */
+  restoreDatabaseBackup?(): Promise<string | null>;
 
   /** 探测桌面外部播放器。 */
   detectPlayers(profiles?: PlayerProfile[]): Promise<PlayerDetectionResult>;

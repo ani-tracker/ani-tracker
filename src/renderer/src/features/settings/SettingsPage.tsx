@@ -3,6 +3,7 @@ import { useEffect, useId, useState } from "react";
 import { toast } from "sonner";
 import {
   Activity,
+  Bell,
   ChevronDown,
   Clock3,
   Copy,
@@ -56,7 +57,7 @@ import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
-import { getAppCapabilities } from "@/lib/runtime";
+import { getAppCapabilities, getAppRuntime } from "@/lib/runtime";
 import { useAsyncData } from "@/lib/use-async-data";
 import { useTheme } from "@/components/theme-provider";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
@@ -65,6 +66,7 @@ import { AppearanceSettingsSection } from "./AppearanceSettingsSection";
 import type {
   AutomationSchedulerStatus,
   EmbeddedTorrentCoreStatus,
+  MobileNotificationPermission,
   PlayerDetectionResult,
   QbittorrentManagedStatus,
   RemoteGatewayStatus,
@@ -99,9 +101,13 @@ const settingsCategories: Array<{
 
 export function SettingsPage() {
   const capabilities = getAppCapabilities();
-  const visibleSettingsCategories = capabilities.remoteGateway
-    ? settingsCategories
-    : settingsCategories.filter((category) => category.id !== "remote");
+  const runtime = getAppRuntime();
+  const mobileRuntime = runtime === "android" || runtime === "ios";
+  const visibleSettingsCategories = settingsCategories
+    .filter((category) => capabilities.remoteGateway || category.id !== "remote")
+    .map((category) => category.id === "interface" && mobileRuntime
+      ? { ...category, label: "语言" }
+      : category);
   const { commitAppearance } = useTheme();
   const { data, loading } = useAsyncData(appApi.getSettings, []);
   const [draft, setDraft] = useState<AppSettings | null>(null);
@@ -110,6 +116,8 @@ export function SettingsPage() {
   const [saveState, setSaveState] = useState<"idle" | "saving" | "saved">("idle");
   const [resetState, setResetState] = useState<"idle" | "resetting" | "reset">("idle");
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
+  const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
+  const [backupAction, setBackupAction] = useState<"idle" | "exporting" | "restoring">("idle");
   const [schedulerStatus, setSchedulerStatus] = useState<AutomationSchedulerStatus | null>(null);
   const [qbManagedStatus, setQbManagedStatus] = useState<QbittorrentManagedStatus | null>(null);
   const [qbManagedAction, setQbManagedAction] = useState<"idle" | "starting" | "stopping" | "restarting">("idle");
@@ -127,6 +135,8 @@ export function SettingsPage() {
   const [playerDetection, setPlayerDetection] = useState<PlayerDetectionResult | null>(null);
   const [playerDetectionState, setPlayerDetectionState] = useState<"idle" | "detecting" | "error">("idle");
   const [playerDetectionError, setPlayerDetectionError] = useState<string | null>(null);
+  const [notificationPermission, setNotificationPermission] = useState<MobileNotificationPermission | null>(null);
+  const [requestingNotificationPermission, setRequestingNotificationPermission] = useState(false);
   const settingsReady = !loading && Boolean(data && draft);
 
   useEffect(() => {
@@ -170,13 +180,40 @@ export function SettingsPage() {
     if (capabilities.remoteGateway) {
       void refreshRemoteStatus();
     }
+    if (mobileRuntime) {
+      void appApi.getMobilePlatformStatus?.()
+        .then((status) => setNotificationPermission(status.notificationPermission))
+        .catch((error) => console.warn("[settings] 移动通知权限读取失败", error));
+    }
   }, []);
+
+  /** 由用户操作触发移动系统通知授权。 */
+  async function requestNotificationPermission() {
+    setRequestingNotificationPermission(true);
+    try {
+      const result = await appApi.requestMobileNotificationPermission?.();
+      if (result) setNotificationPermission(result);
+      if (result === "granted") {
+        toast.success("系统通知已允许");
+      } else {
+        toast.warning("系统通知未获授权");
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "请求系统通知权限失败");
+    } finally {
+      setRequestingNotificationPermission(false);
+    }
+  }
 
   async function refreshSchedulerStatus() {
     setSchedulerStatus(await appApi.getAutomationSchedulerStatus());
   }
 
   async function refreshQbittorrentManagedStatus() {
+    if (!capabilities.managedQbittorrent) {
+      setQbManagedStatus(null);
+      return;
+    }
     try {
       setQbManagedStatus(await appApi.getQbittorrentManagedStatus());
     } catch (error) {
@@ -329,6 +366,47 @@ export function SettingsPage() {
       setResetState("idle");
       toast.error(error instanceof Error ? error.message : "恢复默认设置失败");
       throw error;
+    }
+  }
+
+  /** 使用系统保存面板导出一致性 SQLite 备份。 */
+  async function exportDatabaseBackup() {
+    if (!appApi.exportDatabaseBackup) return;
+    setBackupAction("exporting");
+    try {
+      const fileName = await appApi.exportDatabaseBackup();
+      if (fileName) toast.success(`数据备份已导出：${fileName}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "数据备份导出失败");
+    } finally {
+      setBackupAction("idle");
+    }
+  }
+
+  /** 恢复用户选择的备份，并重新载入主题与运行设置。 */
+  async function restoreDatabaseBackup() {
+    if (!appApi.restoreDatabaseBackup) return;
+    setBackupAction("restoring");
+    try {
+      const rollbackFileName = await appApi.restoreDatabaseBackup();
+      if (!rollbackFileName) return;
+      const restored = await appApi.getSettings();
+      setDraft(restored);
+      setPersistedSettings(restored);
+      commitAppearance(restored.appearance);
+      await Promise.all([
+        refreshSchedulerStatus(),
+        refreshQbittorrentManagedStatus(),
+        refreshEmbeddedTorrentStatus(),
+        capabilities.remoteGateway ? refreshRemoteStatus() : Promise.resolve(null),
+        refreshPlayerDetection(restored.players)
+      ]);
+      toast.success(`数据已恢复，恢复前快照：${rollbackFileName}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "数据备份恢复失败");
+      throw error;
+    } finally {
+      setBackupAction("idle");
     }
   }
 
@@ -527,7 +605,9 @@ export function SettingsPage() {
 
   /** 探测当前系统可用的播放器路径并刷新状态。 */
   async function refreshPlayerDetection(players = draft?.players, notify = false) {
-    if (!players) {
+    if (!capabilities.externalPlayerConfiguration || !players) {
+      setPlayerDetection(null);
+      setPlayerDetectionError(null);
       return;
     }
     setPlayerDetectionState("detecting");
@@ -625,7 +705,7 @@ export function SettingsPage() {
   const autoCandidate = playerDetection?.candidates.find((candidate) => candidate.profileId === playerDetection.detectedProfileId);
   const torrentEngineMode = draft.download.defaultTorrentEngine === "embedded"
     ? "embedded"
-    : draft.download.qbittorrent.managed.enabled ? "managed" : "external";
+    : capabilities.managedQbittorrent && draft.download.qbittorrent.managed.enabled ? "managed" : "external";
   const embeddedSeedingLimits = draft.download.embedded.seedingLimits
     ?? draft.download.qbittorrent.seedingLimits;
   const hasUnsavedChanges = persistedSettings ? !areSettingsEqual(draft, persistedSettings) : false;
@@ -768,6 +848,32 @@ export function SettingsPage() {
             <SettingRow label="数据库" value={draft.storage.databasePath} />
             <SettingRow label="缓存" value={draft.storage.cacheDir} />
             <SettingRow label="日志" value={draft.storage.logDir} />
+            {(appApi.exportDatabaseBackup || appApi.restoreDatabaseBackup) && (
+              <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
+                {appApi.exportDatabaseBackup && (
+                  <Button
+                    disabled={backupAction !== "idle"}
+                    onClick={() => void exportDatabaseBackup()}
+                    type="button"
+                    variant="outline"
+                  >
+                    <Save data-icon="inline-start" />
+                    {backupAction === "exporting" ? "导出中" : "导出数据备份"}
+                  </Button>
+                )}
+                {appApi.restoreDatabaseBackup && (
+                  <Button
+                    disabled={backupAction !== "idle"}
+                    onClick={() => setRestoreDialogOpen(true)}
+                    type="button"
+                    variant="outline"
+                  >
+                    <RotateCcw data-icon="inline-start" />
+                    {backupAction === "restoring" ? "恢复中" : "恢复数据备份"}
+                  </Button>
+                )}
+              </div>
+            )}
           </div>
         </SettingsSection>
       </div>
@@ -775,9 +881,9 @@ export function SettingsPage() {
           </SettingsCategory>
 
           <SettingsCategory
-            description="语言、标题显示规则和桌面端后台行为。"
+            description={mobileRuntime ? "界面语言和番剧标题显示规则。" : "语言、标题显示规则和桌面端后台行为。"}
             id="interface"
-            title="语言与桌面集成"
+            title={mobileRuntime ? "语言" : "语言与桌面集成"}
           >
             <div className="flex flex-col gap-5">
 
@@ -789,6 +895,7 @@ export function SettingsPage() {
         </div>
       </SettingsSection>
 
+      {!mobileRuntime && (
       <SettingsSection title="桌面集成" description="控制后台运行、系统登录启动等本地桌面行为。">
         <div className="grid gap-4 lg:grid-cols-2">
           <ToggleSetting
@@ -823,6 +930,7 @@ export function SettingsPage() {
           />
         </div>
       </SettingsSection>
+      )}
             </div>
           </SettingsCategory>
 
@@ -1003,12 +1111,13 @@ export function SettingsPage() {
           )}
 
           <SettingsCategory
-            description="默认播放器、可执行文件路径与媒体文件扫描参数。"
+            description={mobileRuntime ? "移动端统一使用应用内置 libVLC。" : "默认播放器、可执行文件路径与媒体文件扫描参数。"}
             id="media"
             title="播放器与媒体"
           >
             <div className="flex flex-col gap-5">
 
+      {capabilities.externalPlayerConfiguration ? (
       <SettingsSection title="播放器配置" description="按当前操作系统提供播放器选项。">
         <div className="flex flex-col gap-4">
           <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
@@ -1088,7 +1197,17 @@ export function SettingsPage() {
           )}
         </div>
       </SettingsSection>
+      ) : (
+      <SettingsSection title="播放器配置" description="本地文件和网络媒体均由平台原生 libVLC 播放器处理。">
+        <Alert>
+          <PlayCircle />
+          <AlertTitle>应用内置 libVLC</AlertTitle>
+          <AlertDescription>播放器随应用提供，不使用外部可执行文件路径。</AlertDescription>
+        </Alert>
+      </SettingsSection>
+      )}
 
+      {capabilities.mediaScan && (
       <SettingsSection title="媒体探测" description="用于读取已下载视频的编码、分辨率、音轨和字幕轨。">
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
           <TextSetting
@@ -1137,6 +1256,7 @@ export function SettingsPage() {
           />
         </div>
       </SettingsSection>
+      )}
 
             </div>
           </SettingsCategory>
@@ -1161,7 +1281,7 @@ export function SettingsPage() {
           </div>
           <ToggleGroup
             aria-label="下载引擎"
-            className="grid w-full shrink-0 grid-cols-3 sm:w-auto"
+            className={cn("grid w-full shrink-0 sm:w-auto", capabilities.managedQbittorrent ? "grid-cols-3" : "grid-cols-2")}
             onValueChange={(value) => value && updateTorrentEngineMode(value as "embedded" | "managed" | "external")}
             type="single"
             value={torrentEngineMode}
@@ -1170,9 +1290,11 @@ export function SettingsPage() {
             <ToggleGroupItem className="h-auto min-h-9 whitespace-normal px-2" value="embedded">
               内置引擎
             </ToggleGroupItem>
-            <ToggleGroupItem className="h-auto min-h-9 whitespace-normal px-2" value="managed">
-              内置 qBittorrent-nox
-            </ToggleGroupItem>
+            {capabilities.managedQbittorrent && (
+              <ToggleGroupItem className="h-auto min-h-9 whitespace-normal px-2" value="managed">
+                内置 qBittorrent-nox
+              </ToggleGroupItem>
+            )}
             <ToggleGroupItem className="h-auto min-h-9 whitespace-normal px-2" value="external">
               外部 qBittorrent WebUI
             </ToggleGroupItem>
@@ -1298,6 +1420,7 @@ export function SettingsPage() {
                       {torrentEngineMode === "managed" ? "内置 qBittorrent-nox" : "外部 WebUI"}
                     </span>
                   </Field>
+                  {capabilities.managedQbittorrent && (
                   <Field data-disabled={torrentEngineMode !== "managed"} orientation="horizontal">
                     <FieldLabel htmlFor="qbittorrent-auto-start">随应用启动</FieldLabel>
                     <Switch
@@ -1313,6 +1436,7 @@ export function SettingsPage() {
                       })}
                     />
                   </Field>
+                  )}
                   <Button onClick={() => void testQbittorrent()} disabled={qbTest.state === "testing"}>
                     {qbTest.state === "testing" ? "测试并保存中" : "测试连接并保存"}
                   </Button>
@@ -1703,6 +1827,26 @@ export function SettingsPage() {
                   }
                 />
               </Field>
+              {mobileRuntime && (
+                <Field className="items-center justify-between gap-3" orientation="horizontal">
+                  <FieldLabel>系统通知权限</FieldLabel>
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Badge>{formatNotificationPermission(notificationPermission)}</Badge>
+                    {notificationPermission !== "granted" && (
+                      <Button
+                        disabled={requestingNotificationPermission}
+                        onClick={() => void requestNotificationPermission()}
+                        size="compact"
+                        type="button"
+                        variant="outline"
+                      >
+                        <Bell data-icon="inline-start" />
+                        {requestingNotificationPermission ? "请求中" : "允许"}
+                      </Button>
+                    )}
+                  </div>
+                </Field>
+              )}
               {draft.automation.fallbackWhenDefaultFansubMissing === "candidate" && (
                 <Field>
                   <FieldLabel className="sr-only" htmlFor="automation-candidate-fansubs">候补字幕组</FieldLabel>
@@ -1766,6 +1910,14 @@ export function SettingsPage() {
         onOpenChange={setResetDialogOpen}
         open={resetDialogOpen}
         title="确认恢复默认设置？"
+      />
+      <ConfirmActionDialog
+        confirmLabel="选择备份并恢复"
+        description="播放器与下载引擎会安全停止，所选备份通过完整性检查后覆盖当前数据；操作前会自动保留回滚快照。"
+        onConfirm={restoreDatabaseBackup}
+        onOpenChange={setRestoreDialogOpen}
+        open={restoreDialogOpen}
+        title="确认恢复数据备份？"
       />
     </div>
   );
@@ -2004,6 +2156,24 @@ function formatSchedulerState(status: AutomationSchedulerStatus | null): string 
 
 function formatDateTime(value?: string): string {
   return value ? new Date(value).toLocaleString() : "--";
+}
+
+/** 将移动通知权限映射为简短状态文本。 */
+function formatNotificationPermission(value: MobileNotificationPermission | null): string {
+  switch (value) {
+    case "granted":
+      return "已允许";
+    case "denied":
+      return "已拒绝";
+    case "prompt-with-rationale":
+      return "需要说明";
+    case "prompt":
+      return "未请求";
+    case "not-required":
+      return "无需授权";
+    default:
+      return "读取中";
+  }
 }
 
 /** 在自动化面板底部紧凑展示单项调度状态。 */

@@ -1,8 +1,10 @@
 pub(crate) mod automation;
+pub(crate) mod backup;
 pub(crate) mod data;
 pub(crate) mod downloads;
 pub(crate) mod external;
 pub(crate) mod media;
+pub(crate) mod mobile;
 pub(crate) mod player;
 pub(crate) mod remote;
 pub(crate) mod source_sync;

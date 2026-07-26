@@ -3,6 +3,7 @@ import {
   ChevronRight,
   Clock3,
   Download as DownloadIcon,
+  FileUp,
   FileSearch,
   Files,
   Folder,
@@ -68,6 +69,7 @@ export function DownloadsPage() {
   const [downloadUrl, setDownloadUrl] = useState("");
   const [downloadUrlError, setDownloadUrlError] = useState<string | null>(null);
   const [addingDownload, setAddingDownload] = useState(false);
+  const [importingTorrent, setImportingTorrent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const downloadUrlInputRef = useRef<HTMLInputElement>(null);
@@ -134,6 +136,24 @@ export function DownloadsPage() {
       setError(caught instanceof Error ? caught.message : "添加下载失败");
     } finally {
       setAddingDownload(false);
+    }
+  }
+
+  /** 使用系统文件选择器导入本地 torrent 文件。 */
+  async function importTorrentFile() {
+    if (!appApi.importTorrentFile) return;
+    setImportingTorrent(true);
+    try {
+      const updated = await appApi.importTorrentFile();
+      if (!updated) return;
+      setTasks(updated);
+      setView("active");
+      setError(null);
+      toast.success("torrent 文件已加入下载队列");
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "torrent 文件导入失败");
+    } finally {
+      setImportingTorrent(false);
     }
   }
 
@@ -258,6 +278,22 @@ export function DownloadsPage() {
                 {addingDownload ? "添加中" : "添加下载"}
               </Button>
             </Field>
+            {appApi.importTorrentFile && (
+              <Field className="w-full md:w-auto">
+                <FieldLabel className="sr-only" htmlFor="import-torrent">导入 torrent 文件</FieldLabel>
+                <Button
+                  className="w-full md:w-auto"
+                  disabled={addingDownload || importingTorrent}
+                  id="import-torrent"
+                  onClick={() => void importTorrentFile()}
+                  type="button"
+                  variant="outline"
+                >
+                  <FileUp data-icon="inline-start" />
+                  {importingTorrent ? "导入中" : "导入文件"}
+                </Button>
+              </Field>
+            )}
           </FieldGroup>
         </form>
       </section>
