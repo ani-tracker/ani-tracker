@@ -1,282 +1,139 @@
 # Ani Tracker
 
-Ani Tracker 是一个本地桌面追番工具，围绕新番发现、追番规则、资源搜索、BT 下载、媒体扫描、内置播放、远程播放和自动提醒构建完整追番闭环。
+Ani Tracker 是基于 Tauri 2 的本地优先追番、资源搜索、BT 下载与媒体播放应用，支持 Windows、macOS、Linux、Android 和 iOS/iPadOS。
 
-项目优先面向本地使用场景：业务数据保存在本机 SQLite，下载可使用内置 libtorrent、连接外部 qBittorrent，或使用随应用托管的 qBittorrent-nox。局域网设备通过 HTTPS PWA 配对访问，不开放裸 HTTP 或公网接口。
-
-> **重要功能：本地优先数据、自动追番下载、内置 libtorrent 下载、内置 libVLC 播放、局域网远程播放、图片生成特色主题。**
+桌面端提供完整业务、媒体扫描、转码、远程 HTTPS 网关和系统集成；移动端保留发现、追番、来源、搜索、内置下载、原生 libVLC 播放、提醒、设置与主题，仅排除远程 Web/网关、FFmpeg/FFprobe、转码和无移动语义的桌面能力。
 
 > Copyright (c) 2026 Ani Tracker contributors. 本项目源码免费公开，仅限个人及其他非商业用途；未经版权所有者书面许可，禁止商业使用。
 
 ## 核心能力
 
-- **新番发现**：按年份、季度和月份采集番剧，合并 Bangumi、AniList、Mikan 等元数据，并处理跨来源标识与字段冲突。
-- **我的追番**：管理状态、集数、字幕组、自动下载、分辨率、编码、位深、字幕语言和目录偏好。
-- **资源搜索**：内置 RSS、Torznab、DMHY、Mikan、AniBT、ACGNX、Nyaa、ACG.RIP 等专用适配器，自动补全集数并关联我的追番。
-- **来源保护**：每个下载源可独立选择代理和采集间隔，同域名串行请求并对 403/429 自动熔断。
-- **增量同步**：默认每天 09:00 同步启用来源，错过后在当天首次启动时补跑，结果跨重启复用。
-- **候选评分**：综合番剧、集数、字幕组、分辨率、编码、位深、字幕语言和 seeders 选择资源。
-- **内置 BT 下载**：使用 libtorrent 2.1 sidecar，也支持 qBittorrent Web API、多平台托管 qBittorrent-nox、进度和文件优先级。
-- **媒体扫描**：通过标题、文件名和 ffprobe 提取容器、分辨率、编码、位深、音轨和字幕轨。
-- **内置与外部播放器**：内置 libVLC 播放；Windows 支持 Pure Codec PotPlayer、PotPlayer、mpv 及播放进度监控，macOS 支持 IINA。
-- **远程 PWA**：通过局域网 HTTPS 配对访问追番和下载，支持浏览器原文件播放、实时转码、字幕和播放列表。
-- **外部远程播放**：Windows 可调用 PotPlayer，macOS 可调用 IINA，从桌面主机安全拉取媒体。
-- **图片缓存**：桌面端与远程端共用磁盘缓存，默认上限 5GB，应用重启后继续命中。
-- **特色主题**：提供三套内置主题、自定义编辑、导入导出，并可将参考图片转换为主题包。
-- **自动化提醒**：定时扫描新集、自动下载、桌面通知、通知中心、托盘和开机启动。
-
-## 特色主题
-
-Ani Tracker 内置青岚、珊瑚海岸、莓青三套主题，并将“跟随系统 / 浅色 / 深色”外观模式与主题风格分开保存。内置主题和自定义主题都同时提供浅色、深色配色，切换外观模式时不需要重新选择主题。
-
-### 使用内置或自定义主题
-
-1. 打开“设置 -> 外观”。
-2. 选择外观模式和内置主题；自定义主题可先复制再编辑，并支持导入、导出、重置和删除。
-3. 保存设置后，应用界面、Electron 窗口和系统外观会同步更新。
-
-### 从参考图片生成主题
-
-1. 向支持图片理解的模型上传一张参考图片。
-2. 将[图片取色主题生成提示词](docs/自定义主题提示词/image-to-ani-theme-prompt.md)与图片一起发送；需要固定名称时，额外附上“主题名称：名称”。
-3. 确认模型只返回 JSON，将内容保存为 `<id>.ani-theme.json`。
-4. 在“设置 -> 外观 -> 导入”中选择该文件，预览并保存主题。
-
-生成过程由外部图片理解模型完成，Ani Tracker 本身不连接 AI 服务。主题包仅接受白名单颜色令牌和受控圆角，不允许 JavaScript、任意 CSS 或远程资源；可先使用[可导入示例](docs/自定义主题提示词/image-palette-example.ani-theme.json)检查文件结构。
+- 新番发现：合并 Bangumi、AniList、Mikan 元数据，支持季度、月份、搜索与详情刷新。
+- 追番管理：状态、单集、字幕组、自动下载、画质、编码、字幕语言和目录偏好。
+- 资源搜索：RSS、Torznab、DMHY、Mikan、AniBT、ACGNX、Nyaa、ACG.RIP，含限流、缓存、熔断和候选评分。
+- 下载：内置 libtorrent `torrent-core`、外部 qBittorrent Web API；桌面额外支持托管 qBittorrent-nox。
+- 播放：桌面 Rust libVLC、Android LibVLC、iOS MobileVLCKit，支持字幕、音轨、倍速、比例、续播、已看与自动下一集。
+- 自动化：来源增量同步、自动扫描、自动下载、本地通知和提醒中心。
+- 主题：跟随系统、浅色、深色、内置主题及自定义主题导入导出，桌面和移动共用语义令牌。
+- 桌面专属：FFmpeg/FFprobe、媒体扫描、远程 HTTPS 网关、ArtPlayer/HLS、托盘、开机启动、外部播放器和文件管理器。
 
 ## 架构
 
 ```text
-Desktop Renderer / Remote PWA
-  -> Preload IPC / Remote HTTPS RPC
-  -> Main Process Services
-  -> Metadata / Source / Download / Media / Platform Adapters
-  -> SQLite / qBittorrent / ffprobe / Local Player
+React / TypeScript / Tailwind / shadcn UI
+                  |
+               AppClient
+                  |
+          Tauri invoke / events
+                  |
+ani-contracts / ani-domain / ani-repository
+ani-storage / ani-sources / ani-downloads
+ani-media / ani-automation / ani-remote
+                  |
+SQLite / torrent-core / libVLC / platform adapters
 ```
 
-主要服务边界：
+业务服务依赖 `ani-repository` 中的 Repository Ports 与 UnitOfWork，不依赖 SQLite 类型。SQLite 是桌面与移动的默认本地 Adapter；未来 MySQL 应作为独立 Adapter 或服务端存储接入，不改变 Tauri commands、`AppClient` 或页面。
 
-- `MetadataProvider`：Bangumi、AniList、Mikan 等番剧元数据来源。
-- `ReleaseSource`：RSS、Torznab 和站点资源适配器。
-- `SourceRequestScheduler`：下载源代理选择、域名限速、请求合并、退避和熔断。
-- `SourceSyncScheduler`：每日增量采集、启动补跑和持久化资源缓存。
-- `TorrentEngine`：qBittorrent 兼容引擎和 libtorrent 内置引擎。
-- `RemoteHttpGateway`：配对、RPC、远程静态页面、媒体和图片缓存路由。
-- `ImageCacheService`：桌面协议与远程 HTTP 共用的持久图片缓存。
-- `MediaProbeService`：文件名和 ffprobe 媒体探测。
-- `PlayerService`：播放器探测、启动和播放进度回写。
-- `AppearanceService`：主题、窗口背景和系统外观同步。
-- `PlatformService`：托盘、开机启动、通知和平台路径。
+React 页面只通过 `AppClient` 访问业务能力。移动端不会回退到桌面远程页面，桌面远程 PWA 也不会获得本地命令权限。
 
 ## 技术栈
 
-- Electron、React、TypeScript、Vite / electron-vite
-- Tailwind CSS、shadcn/ui、lucide-react
-- SQLite、better-sqlite3
-- qBittorrent Web API、qBittorrent-nox
-- ffprobe、FFmpeg、ArtPlayer、hls.js
-- pnpm、Node.js `node:test`
+- Tauri 2、Rust 1.97、React 18、TypeScript、Vite
+- Tailwind CSS、shadcn/ui 风格组件、lucide-react
+- SQLite、Repository Ports、版本化迁移与备份
+- libtorrent-rasterbar、qBittorrent Web API、qBittorrent-nox
+- libVLC 3、LibVLC for Android、MobileVLCKit
+- 桌面 FFmpeg/FFprobe、ArtPlayer、hls.js
+- pnpm、Cargo、Node.js `node:test`
 
 ## 关键目录
 
 ```text
-src/main/core/automation       自动扫描、自动下载和候选评分
-src/main/core/cache            统一图片缓存
-src/main/core/downloads        qBittorrent 和下载任务管理
-src/main/core/media            媒体扫描、播放器和转码
-src/main/core/metadata         番剧元数据采集
-src/main/core/remote           HTTPS 网关、配对、RPC 和远程媒体
-src/main/core/sources          RSS、Torznab 和站点资源适配器
-src/main/core/storage          SQLite repository、schema 和 seed
-src/preload                    Electron preload bridge
-src/renderer/src               桌面与远程 React UI
-src/shared                     共享领域模型和契约
-resources/qbittorrent          内置 qBittorrent-nox 资源
-resources/ffmpeg               三平台 FFmpeg 预构建资源
-native/torrent-core            桌面 sidecar 与 Android JNI 共用的 C++ 运行时
-android                        Android 前台服务、AAR 与宿主 APK 工程
-docs                           设计、进度、启动和专项计划
+src-tauri                         Tauri 宿主、commands、生命周期与平台装配
+crates/ani-*                     Rust 契约、领域、仓库、存储、来源、下载和媒体核心
+crates/tauri-plugin-ani-*        Android/iOS torrent、播放器和移动平台插件
+src/renderer/src                 桌面与移动 React UI，以及桌面远程 PWA 页面
+src/shared                       TypeScript 共享领域模型与契约
+native/torrent-core              桌面 sidecar 与移动原生核心共用的 C++ 运行时
+resources                        libVLC、FFmpeg、qBittorrent 和许可证资源
+archive/legacy-hosts             已退役 Electron/Capacitor 宿主，只读归档
+docs                             架构、启动、发布、进度和专项计划
 ```
 
 ## 环境准备
 
-推荐 Node.js 20 或 22，并使用 pnpm。
+推荐 Node.js 22、pnpm 10.34.5、Rust 1.97.1。桌面原生依赖和移动工具链见 [启动说明](docs/startup.md)。
 
 ```powershell
-pnpm.cmd install
+pnpm.cmd install --frozen-lockfile
 ```
 
-## 运行模式
-
-| 命令 | 桌面端 | 远程 PWA | 说明 |
-| --- | --- | --- | --- |
-| `pnpm.cmd dev` | Vite HMR | `.remote-pwa/renderer` | 推荐开发方式，启动前自动生成远程静态页面 |
-| `pnpm.cmd dev:desktop` | Vite HMR | 不保证可用 | 仅调试桌面端，启动更快 |
-| `pnpm.cmd preview` | 生产构建 | `out/renderer` | 自动重新构建后启动 Electron |
-| `pnpm.cmd build` | 生成产物 | `out/renderer` | 同时准备目标平台 qBittorrent 与 FFmpeg 资源，不启动应用 |
-| `pnpm.cmd package:desktop` | 安装包 | `release/` | 生成当前平台 Electron 安装包并内置 torrent-core |
-
-### 日常开发
+## 常用命令
 
 ```powershell
+# 桌面开发与构建
 pnpm.cmd dev
-```
+pnpm.cmd build
+pnpm.cmd run package:desktop
 
-该命令先执行 `prepare:remote-renderer`，生成：
+# Renderer
+pnpm.cmd run dev:tauri:renderer
+pnpm.cmd run build:tauri:desktop-renderers
 
-```text
-.remote-pwa/renderer/index.html
-.remote-pwa/renderer/assets/*
-```
+# Android / iOS
+pnpm.cmd run dev:tauri:android
+pnpm.cmd run package:tauri:android
+pnpm.cmd run dev:tauri:ios
+pnpm.cmd run package:tauri:ios
 
-随后启动 Electron、主进程和桌面 renderer 的 Vite dev server。桌面端继续使用 `http://localhost:5173` 热更新；远程设备读取独立静态快照，避免 `electron-vite dev` 清理 `out/renderer` 后出现 `PWA_NOT_BUILT`。
-
-修改远程界面后，可重新生成快照并刷新远程浏览器：
-
-```powershell
-pnpm.cmd run prepare:remote-renderer
-```
-
-### 生产预览
-
-```powershell
-pnpm.cmd preview
-```
-
-`electron-vite preview` 会先重新构建主进程、preload 和 `out/renderer`，再启动 Electron。修改主进程代码后必须重启应用，运行中的 Electron 不会热加载新 HTTP 路由。
-
-### 类型检查、测试和构建
-
-```powershell
+# 门禁
 pnpm.cmd run typecheck
 pnpm.cmd run test:parsers
-pnpm.cmd build
+pnpm.cmd run test:theme
+pnpm.cmd run test:rust
+pnpm.cmd run lint:rust
 ```
 
-完整构建会更新 `out/qbittorrent`，并从仓库内的 `resources/ffmpeg` 校验、复制当前平台 FFmpeg/FFprobe 到 `out/ffmpeg`，构建过程不访问网络。交叉构建可向 `prepare:ffmpeg` 传入 `--platform` 和 `--arch`。若 qBittorrent-nox 正在从输出目录运行，应先正常退出 Ani Tracker，否则 Windows 可能返回 `EBUSY` 文件占用错误。
+`dev`、`build` 和 `package:desktop` 均以 Tauri 为唯一正式宿主。Electron/Capacitor 源码与依赖不参与当前构建；最后回退点和依赖清单见 [旧宿主归档](archive/legacy-hosts/README.md)。
 
-FFmpeg/FFprobe 版本升级属于显式资源维护：执行 `pnpm run download:ffmpeg` 可更新三平台预构建文件，执行 `pnpm run verify:ffmpeg` 可离线校验全部资源。维护下载命令支持标准 HTTP(S) 代理环境变量，以及 `FFMPEG_BINARIES_URL`、`FFPROBE_PACKAGES_URL` 镜像地址。
+## 平台边界
 
-## 下载源网络与同步
+| 能力 | 桌面 | Android / iOS |
+| --- | --- | --- |
+| 本地 SQLite、追番、来源和搜索 | 支持 | 支持 |
+| 内置 torrent-core | 支持 | 支持 |
+| 外部 qBittorrent Web API | 支持 | 支持 |
+| 托管 qBittorrent-nox | 支持 | 不适用 |
+| 内置 libVLC 播放 | 支持 | 支持 |
+| 主题与本地通知 | 支持 | 支持 |
+| FFmpeg、FFprobe、扫描与转码 | 支持 | 不打包 |
+| 远程 HTTPS 网关与远程 PWA | 支持 | 不打包 |
+| 托盘、开机启动和外部播放器路径 | 支持 | 不适用 |
 
-- “下载源”页面为每个来源提供“使用全局代理”和最小采集间隔设置，范围为 250ms 到 60 秒；AniBT 固定不低于 3000ms。
-- AniBT 是唯一默认启用的下载源，固定直连且采集间隔不低于 3000ms。
-- Mikan、DMHY、蜜柑计划站点、ACGNX、Nyaa 和 ACG.RIP 默认停用，但默认使用全局代理；自定义来源默认使用全局代理、间隔 1500ms。
-- Prowlarr Torznab 不再作为内置默认源；仍可手动添加其他 RSS、Torznab 或站点来源。
-- 来源代理依赖页面顶部的全局代理配置；全局模式为“关闭”时，即使来源开关已开启也会直连。
-- 同一域名最多执行一个请求，实际间隔会增加最多 20% 随机抖动；相同并发请求只访问源站一次。AniBT 适配器与追番 RSS 共用队列，每分钟最多约 20 次。
-- 403 按 10、20、30 分钟逐级熔断；429 按 1、5、15、30 分钟保护并遵守服务端 `Retry-After`。连续失败 3 次后至少暂停 30 分钟，状态保存在 SQLite，重启不会清空。
-- 每日增量同步默认在本地时间 09:00 执行，可修改时间或关闭；当天尚未成功的来源会在应用启动后立即补跑。
-- RSS 使用 `ETag`、`Last-Modified` 条件请求；其他来源按资源稳定 ID 增量写入。已完结追番的资源搜索结果在 SQLite 缓存 7 天，重启后仍可直接命中；资源明细保留 90 天，并作为来源临时不可用时的搜索兜底。
+移动应用在桌面离线时仍可独立完成发现、追番、搜索、下载、播放和进度回写。iOS 下载遵循系统后台限制，不承诺应用被挂起后持续传输。
 
-## 远程 PWA
+## 远程访问
 
-1. 使用 `pnpm.cmd dev` 或 `pnpm.cmd preview` 启动完整应用。
-2. 打开“设置 -> 远程设备”，启用“局域网 HTTPS”并保存。
-3. 复制设置页显示的局域网地址，例如 `https://192.168.1.20:18083`。
-4. 首次连接先下载并信任 `https://<主机IP>:<端口>/ani-tracker-ca.crt`。
-5. 在桌面端生成六位一次性配对码，在远程页面完成配对。
+远程 PWA 仅由桌面 Tauri 应用托管。启用“设置 -> 远程设备”后，使用本地 CA、一次性配对码和设备令牌建立 HTTPS 连接。远程播放支持 Range、字幕、播放列表和 FFmpeg HLS 回退；移动安装包不会携带这套页面或网关。
 
-远程设备令牌保存在浏览器本地存储；桌面端仅持久化令牌摘要，并使用 Electron `safeStorage` 加密。正常重启后无需重新配对，清除浏览器数据或在桌面端吊销设备后需要重新配对。
+## 发布
 
-远程播放支持：
+`.github/workflows` 提供 Windows x64、macOS x64/arm64、Linux x64、Android arm64 和 iOS arm64 发布工作流。正式发布要求对应签名凭据，并为每组产物生成 SHA-256 与 JSON 清单。详见 [发布说明](docs/release-build.md)。
 
-- 浏览器直接播放原文件，失败时可切换 FFmpeg HLS 实时转码。
-- 读取内嵌或外置字幕，并按同番剧生成播放列表。
-- Windows 远程设备可通过 `potplayer:` 调用 PotPlayer。
-- macOS 远程设备可通过 `iina://weblink` 调用 IINA。
+## 当前验证边界
 
-## 图片缓存
+Rust 工作区、Clippy、格式、TypeScript、共享契约测试、主题检查和两个 Renderer 构建已纳入门禁。原生 Android/iOS 编译、签名安装包和真机媒体矩阵按计划在对应平台统一验证，不能用 Windows 结果替代。
 
-- 首次加载下载到设置中的 `storage.cacheDir/images`。
-- 桌面 `ani-image://` 与远程 `/api/images/*` 共用同一份磁盘缓存。
-- 默认上限 5GB，单图上限 20MB，超限按最近访问时间淘汰。
-- 支持 JPEG、PNG、WebP、GIF、AVIF。
-- 拒绝 localhost、私网目标、异常端口、非法 MIME 和篡改签名。
-- 远程图片响应支持 `ETag`、`304` 和浏览器私有缓存。
+## 文档
 
-`/api/images/resolve` 是需要配对令牌的签名解析接口，只接受 `POST`，不能直接在浏览器地址栏打开：
-
-```powershell
-curl.exe -k -X POST "https://<主机IP>:18083/api/images/resolve" `
-  -H "Content-Type: application/json" `
-  -H "Authorization: Bearer <设备令牌>" `
-  --data '{"url":"https://example.com/poster.png"}'
-```
-
-接口返回 `/api/images/<签名令牌>`，该地址才是图片的 `GET` 路径。
-
-## 数据与资源来源致谢
-
-感谢以下网站和社区服务持续提供动漫元数据与资源索引，使 Ani Tracker 能够完成新番发现、信息补全和资源检索。
-
-### 新番与元数据来源
-
-- [Bangumi 番组计划](https://bgm.tv/)：提供番剧条目、别名、播出信息、评分和详情元数据。
-- [AniList](https://anilist.co/)：提供季度番剧、播出状态、演职员、排名和详情元数据。
-- [Mikan Project](https://mikanani.me/)：提供季度番组、番剧详情和资源发布信息。
-
-### 下载资源索引来源
-
-- [AniBT](https://anibt.net/)
-- [Mikan Project](https://mikanani.me/)
-- [动漫花园](https://share.dmhy.org/)
-- [ACGNX](https://share.acgnx.se/)
-- [Nyaa](https://nyaa.si/)
-- [ACG.RIP](https://acg.rip/)
-
-Mikan Project 同时用于新番元数据和下载资源索引。Ani Tracker 与上述网站不存在隶属、授权或背书关系，不托管或重新分发其资源；使用者应遵守所在地法律、网站条款及内容版权要求。
-
-## 常见问题
-
-### `PWA_NOT_BUILT`
-
-- 开发模式确认 `.remote-pwa/renderer/index.html` 存在。
-- 执行 `pnpm.cmd run prepare:remote-renderer` 后刷新远程页面。
-- 生产预览执行 `pnpm.cmd preview`，不要只运行旧的 Electron 进程。
-
-### `/api/images/resolve` 返回 404
-
-- 地址栏访问是 `GET`，该接口只接受 `POST`。
-- 若 `POST` 仍返回 404，说明 Electron 主进程仍是旧版本，应完全退出并重新启动。
-
-### HTTPS 证书警告
-
-- 确认移动设备已安装并信任设置页提供的本地 CA。
-- 使用设置页列出的 IP 地址访问，不要使用未写入证书的其他主机名。
-
-### 端口占用
-
-- 远程 HTTPS 默认端口为 `18083`，可在设置页修改。
-- 托管 qBittorrent 默认使用 `18080`，被占用时会选择其他高位端口。
-- 切换开发和预览进程前应正常退出已有 Ani Tracker 实例。
-
-### 下载源返回 403 或 429
-
-- 先在“下载源”顶部配置系统代理或手动代理，再为对应公网来源开启“使用全局代理”。
-- 查看来源是否显示熔断状态；保护期内不要反复强制刷新，应用会在到期后以单个请求探测恢复。
-- AniBT、DMHY 等公网来源可能启用 Cloudflare，频繁多关键词搜索会触发临时风控；应用会合并请求并持久化熔断状态，但不能绕过站点访问规则。
-- AniBT 应保持单一稳定出口；应用不会使用代理池、轮换 IP 或模拟 Cloudflare Cookie。
-
-## 项目文档
-
-- `docs/design-plan.md`：总体设计。
-- `docs/progress.md`：当前实现进度与验证结果。
-- `docs/startup.md`：启动链路和环境说明。
-- `docs/theme-system-progress.md`：主题系统专项计划。
-- `docs/自定义主题提示词/image-to-ani-theme-prompt.md`：参考图片生成主题的完整提示词和导入说明。
-- `docs/自定义主题提示词/image-palette-example.ani-theme.json`：可直接导入的主题包示例。
-- `AGENTS.md`：协作和编码约束。
+- [总体设计](docs/design-plan.md)
+- [实现进度](docs/progress.md)
+- [启动与故障排查](docs/startup.md)
+- [跨平台发布](docs/release-build.md)
+- [Tauri 2 迁移记录](docs/tauri-2-migration-plan.md)
+- [主题系统](docs/theme-system-progress.md)
 
 ## 版权与许可
 
-Ani Tracker 原创源码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)：
-
-- 允许个人学习、研究、娱乐及其他非商业用途免费使用、修改和分发。
-- 未经版权所有者事先书面许可，不得销售、收费提供、商业集成、广告变现或用于其他商业目的。
-- 必须保留 [NOTICE](NOTICE) 中的版权声明和本许可证文本。
-- 项目使用或随包分发的第三方组件继续遵循各自许可证，不受本项目非商业许可证重新授权。
-
-## 尚未完成
-
-- madVR 播放链路。
+Ani Tracker 原创源码采用 [PolyForm Noncommercial License 1.0.0](LICENSE)。允许个人学习、研究、娱乐及其他非商业用途使用、修改和分发；必须保留 [NOTICE](NOTICE) 与许可证。第三方组件继续遵循各自许可证。

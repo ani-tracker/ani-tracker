@@ -1,6 +1,6 @@
 # Ani Tracker 文档索引
 
-最近核对：2026-07-24
+最近核对：2026-07-26
 
 本目录按“现行文档、参考资料、历史归档”分层。现行文档描述当前代码；历史归档只保存决策过程，不作为实现依据。
 
@@ -10,10 +10,11 @@
 | --- | --- |
 | [架构与设计](design-plan.md) | 当前进程边界、服务职责、数据流和扩展边界 |
 | [实现状态](progress.md) | 已实现能力、明确限制和后续工作 |
+| [Tauri 2 迁移记录](tauri-2-migration-plan.md) | P0-P8 决策、实施记录、平台边界与验收状态 |
 | [Android 完整应用适配计划](android-application-plan.md) | React 页面复用、Android 平台适配、阶段、测试与验收 |
 | [iOS 原生完整应用计划](ios-native-app-plan.md) | iOS/iPadOS 原生完整应用的边界、架构、阶段、CI 与验收 |
-| [跨平台打包与发布](release-build.md) | 桌面安装包、Android APK/AAB、CI 与签名前置数据 |
-| [启动说明](startup.md) | 安装、开发、测试、构建和排障 |
+| [跨平台打包与发布](release-build.md) | 五平台 Tauri 产物、资源边界、签名和验收 |
+| [启动与故障排查](startup.md) | 安装、开发、测试、构建和排障 |
 | [界面设计规范](DESIGN.md) | 当前应用壳、设计令牌、组件和响应式约束 |
 
 ## 参考资料
@@ -32,11 +33,13 @@
 
 文档与实现冲突时，按以下顺序核对并修正文档：
 
-1. `src/shared` 中的领域模型、持久化版本和 IPC 契约。
-2. `src/main`、`src/preload`、`src/renderer/src` 的当前实现。
-3. `package.json`、`pnpm-workspace.yaml` 和资源准备脚本。
+1. `crates/ani-*`、`crates/tauri-plugin-ani-*` 与 `src-tauri` 的正式实现。
+2. `src/shared`、`src/renderer/src` 中的契约和页面实现。
+3. `package.json`、`Cargo.toml`、发布工作流和资源准备脚本。
 4. 本目录的现行文档。
 5. `docs/archive` 中的历史记录。
+
+仓库根目录的 `archive/legacy-hosts` 保存退役 Electron/Capacitor 实现，也只作为历史证据。
 
 ## 维护规则
 

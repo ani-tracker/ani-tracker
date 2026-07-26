@@ -2,7 +2,7 @@
 
 最近更新：2026-07-26
 
-状态：P0-P7 已完成；P8 默认切换、发布与旧宿主退役进行中；跨平台完整构建门禁按计划后续统一验证
+状态：P0-P8 代码实施已完成；跨平台签名安装包和真机门禁按计划后续统一验证
 
 ## 1. 迁移目标
 
@@ -432,11 +432,16 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 
 执行记录：
 
-- `dev`、`build` 和 `package:desktop` 已切换为 Tauri 默认入口，旧 Electron/Capacitor 命令仅保留为待归档的 `legacy:*` 入口。
+- `dev`、`build` 和 `package:desktop` 已切换为 Tauri 唯一正式入口，Electron/Capacitor 命令已从活跃脚本移除。
 - 已建立 Windows、macOS x64/arm64、Linux、Android 和 iOS Tauri 发布工作流；发布版本由标签注入，安装包同时生成 SHA-256 与版本化 JSON 产物清单。
 - Windows、macOS、Android 和 iOS 发布任务要求 CI 签名凭据；缺失时拒绝发布，避免将未签名安装包写入正式 Release。
 - 桌面资源按平台配置打包 torrent-core、libVLC、托管 qBittorrent、FFmpeg/FFprobe、远程 Renderer 和许可证；移动配置仅保留本地核心、原生播放器和许可证边界。
 - 已由新版 Ani Tracker 标识重新生成 Tauri Windows/macOS/Linux/Android/iOS 图标，并替换 Android Tauri 工程残留的旧启动图标。
+- Electron 主进程、preload、客户端、配置与 Node 原生依赖，以及 Capacitor Android/iOS 宿主和桥接已移入 `archive/legacy-hosts`；回退提交固定为 `6caf060`。
+- Android libVLC 播放器源码已迁入正式 Tauri 插件目录，插件构建不再引用旧 `android/` 工程。
+- 活跃 Renderer 已移除 Electron/Capacitor 探测与回退；本地能力只接受 Tauri bridge，移动端追番操作、自动扫描、播放和主题不再被旧 Electron 判断错误隐藏。
+- 根依赖与锁文件已移除 Electron、Capacitor、better-sqlite3、electron-vlc-player、node-forge 和旧 XML 解析依赖；共享契约测试改由 Node 直接执行。
+- README、架构、启动、发布、进度、脚本和归档清单已按 Tauri 正式架构更新。
 
 ## 5. 每阶段统一验证
 
@@ -447,7 +452,7 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 3. 对应 Rust workspace 测试与 Clippy
 4. `cargo fmt --check`
 5. Tauri 目标平台 build/check
-6. 旧 Electron 或移动宿主回归，直到 P8 正式退役
+6. 活跃源码与依赖不得重新引用已归档旧宿主
 7. `git diff --check`
 8. 提交前检查 `git diff --cached --stat` 和 `git diff --cached`
 
@@ -530,4 +535,4 @@ P0 执行记录：
 6. 同意 P0 安装 Rust 工具链并增加 Tauri/Cargo 依赖。
 7. 同意业务存储依赖公共 Repository Ports 与 UnitOfWork，SQLite 为默认本地 Adapter，并为未来 MySQL Adapter 保持可替换边界。
 
-P0 已按上述决策执行；后续阶段继续逐阶段实现、验证并提交。
+P0-P8 已按上述决策执行并分阶段提交；剩余工作是对应平台的签名安装包和真机发布验收。

@@ -15,4 +15,3 @@
 - `legacy-dependencies.json`：退役时从根依赖清单移除的宿主依赖。
 
 Android libVLC 播放器源码已作为正式实现迁至 `crates/tauri-plugin-ani-player/android/src/main/java/dev/ani/tracker/android/player`，不在归档中保留重复副本。旧宿主的完整可构建状态以回退提交为准。
-

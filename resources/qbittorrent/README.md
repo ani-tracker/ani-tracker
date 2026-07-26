@@ -43,6 +43,6 @@ artifacts/qbittorrent-packages/qbittorrent-nox-<platform>-<arch>.tar.gz
 
 ## 应用打包
 
-Actions 将当前 runner 生成的 bundle 复制到 `out/qbittorrent`，electron-builder 再写入最终应用的 `resources/qbittorrent/<platform>-<arch>`。设置中的“内置 qBittorrent-nox”仍按原有逻辑启动本地 WebUI；默认端口为 `127.0.0.1:18080`，冲突时自动选择 `10000` 以上端口。
+Actions 将当前 runner 生成的 bundle 复制到 `out/qbittorrent`，Tauri 再写入最终桌面应用的 `resources/qbittorrent/<platform>-<arch>`。设置中的“内置 qBittorrent-nox”启动受控本地 WebUI；默认端口为 `127.0.0.1:18080`，冲突时自动选择 `10000` 以上端口。
 
 仓库中已有的 `resources/qbittorrent` 仅供本地开发和兼容现有 macOS x64、Windows x64 包；CI 最终包始终使用本次源码构建产物。`prepare:qbittorrent` 只复制当前目标，`--all` 仅用于显式资源维护，并会先清理输出目录以避免混入其他平台文件。

@@ -194,7 +194,6 @@ pub enum PlayerBackend {
 #[serde(rename_all = "kebab-case")]
 pub enum PlayerHostPlatform {
     RemoteWeb,
-    Electron,
     TauriDesktop,
     Android,
     Ios,

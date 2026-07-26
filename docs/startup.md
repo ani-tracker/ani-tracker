@@ -1,169 +1,154 @@
-# Ani Tracker 启动说明
+# Ani Tracker 启动与故障排查
 
-最近核对：2026-07-21
+最近核对：2026-07-26
 
 ## 环境要求
 
-- Node.js 20 或 22。
-- pnpm；仓库当前按 pnpm 11 配置依赖构建许可。
-- 运行 Electron 桌面窗口的图形环境。
+- Node.js 22、pnpm 10.34.5。
+- Rust 1.97.1，以及当前平台的 Tauri 2 系统依赖。
+- Windows：Visual Studio 2022 C++ Build Tools、WebView2、CMake/Ninja。
+- macOS：Xcode Command Line Tools；iOS 还需要完整 Xcode、CocoaPods 和签名环境。
+- Linux：WebKitGTK 4.1、AppIndicator、X11、OpenSSL 和构建工具。
+- Android：JDK 17+、Android SDK 35、NDK `27.2.12479018`、Rust Android targets。
 
-安装依赖：
-
-```bash
-pnpm install
-```
-
-Windows PowerShell：
+安装 JavaScript 依赖：
 
 ```powershell
-pnpm.cmd install
+pnpm.cmd install --frozen-lockfile
 ```
 
-`pnpm-workspace.yaml` 已允许 Electron、esbuild 和 better-sqlite3 执行安装脚本。FFprobe 已随仓库资源内置，安装依赖时不会再下载平台包；根目录 `postinstall` 会按当前 Electron ABI 重建 better-sqlite3。
+`pnpm-workspace.yaml` 只允许 `esbuild` 执行安装脚本。SQLite、libVLC 和 torrent-core 均由 Rust/原生构建链负责，不存在 Node 原生 ABI 重建步骤。
 
-## 开发模式
+## 桌面开发
 
-完整开发启动：
-
-```bash
-pnpm dev
+```powershell
+pnpm.cmd dev
 ```
 
-该命令先离线校验并复制当前平台的 FFmpeg/FFprobe，再执行 `prepare:remote-renderer`，将远程静态页面写入 `.remote-pwa/renderer`，最后启动 Electron、主进程、preload 和桌面 Renderer 的 Vite 热更新服务。
+`dev` 先构建桌面远程 Renderer、准备当前平台 libVLC，再启动 `tauri dev`。torrent-core、托管 qBittorrent 与 FFmpeg/FFprobe 使用已有开发资源；首次启用对应能力前按“资源维护”准备并校验。libVLC 步骤可能联网下载固定摘要的官方归档。
 
-只调试桌面端：
+只调试 React Renderer：
 
-```bash
-pnpm dev:desktop
+```powershell
+pnpm.cmd run dev:tauri:renderer
 ```
 
-该模式跳过远程静态页面预构建，远程 PWA 不保证可用。远程界面修改后可单独刷新：
+此入口没有 Tauri command，业务调用会失败，仅适合布局和静态状态调试。
 
-```bash
-pnpm run prepare:remote-renderer
+## 移动开发
+
+```powershell
+# Android
+pnpm.cmd run dev:tauri:android
+pnpm.cmd run package:tauri:android:debug
+
+# iOS，仅 macOS
+pnpm.cmd run init:tauri:ios
+pnpm.cmd run dev:tauri:ios
 ```
+
+Android/iOS 正式构建会先准备移动 torrent-core；iOS 同时准备 MobileVLCKit。移动包不生成远程 Renderer，也不复制 FFmpeg/FFprobe、HLS 转码或 qBittorrent-nox。
 
 ## 检查与测试
 
-```bash
-pnpm run typecheck
-pnpm run test:theme
-pnpm run test:parsers
+```powershell
+pnpm.cmd run typecheck
+pnpm.cmd run test:parsers
+pnpm.cmd run test:theme
+pnpm.cmd run build:tauri:desktop-renderers
+pnpm.cmd run test:rust
+pnpm.cmd run lint:rust
 ```
 
-- `typecheck` 分别检查 Node 和 Web TypeScript 配置，不应在源码目录生成 JS、声明文件或 tsbuildinfo。
-- `test:theme` 校验内置主题令牌和对比度。
-- `test:parsers` 先编译 Node 测试到被忽略的 `out/test-node`，再使用 Electron 的 Node 运行模式执行测试。
+- `typecheck` 使用 `noEmit`，不应生成 `.js`、`.d.ts` 或 `*.tsbuildinfo`。
+- `test:parsers` 使用当前 Node 运行共享契约测试，输出目录为 `out/test-node`。
+- `test:theme` 校验浅色与深色主题令牌和对比度。
+- `lint:rust` 同时执行 rustfmt 检查和 Clippy `-D warnings`。
 
-如果源码区出现 `electron.vite.config.js`、`electron.vite.config.d.ts` 或 `*.tsbuildinfo`，说明运行了会 emit 的 TypeScript 命令，应先确认来源，再清理对应生成物。
+## 构建与输出
 
-## 构建与预览
+```powershell
+# 当前桌面平台，不生成安装器
+pnpm.cmd build
 
-生产构建：
+# 当前桌面平台安装包
+pnpm.cmd run package:desktop
 
-```bash
-pnpm build
+# 两个 Renderer
+pnpm.cmd run build:tauri:desktop-renderers
 ```
 
-实际步骤：
-
-1. `electron-vite build` 生成 main、preload 和 renderer。
-2. `prepare:qbittorrent` 校验并复制当前目标平台的托管 qBittorrent 资源。
-3. `prepare:ffmpeg` 校验并复制当前目标平台的 FFmpeg/FFprobe 资源。
-
-交叉构建时可通过 npm 目标变量选择平台，CLI 参数优先级更高：
-
-```bash
-npm_config_platform=win32 npm_config_arch=x64 pnpm build
-pnpm run prepare:qbittorrent -- --platform win32 --arch x64
-```
-
-qBittorrent 仅在显式执行 `node scripts/prepare-qbittorrent-resources.mjs --all` 时准备全部已有平台资源。每次准备前会清空 `out/qbittorrent`，避免混入上一次构建的平台目录。
-
-主要输出：
+主要生成目录：
 
 ```text
-out/main/index.js
-out/preload/index.mjs
-out/renderer/
-out/qbittorrent/<platform>-<arch>/
-out/ffmpeg/<platform>-<arch>/
+out/tauri/                         本地主 Renderer
+.tauri-remote-pwa/                 桌面远程 Renderer
+out/cargo-target/release/          Tauri/Rust 二进制
+out/cargo-target/release/bundle/   桌面安装包
+out/torrent-core/                  桌面原生下载核心
+out/qbittorrent/                   桌面托管 qBittorrent
+out/ffmpeg/                        桌面 FFmpeg/FFprobe
+out/libvlc/                        桌面 libVLC
+src-tauri/gen/android/             Tauri Android 工程与产物
+src-tauri/gen/apple/               Tauri iOS 工程与产物
 ```
-
-预览生产构建：
-
-```bash
-pnpm preview
-```
-
-预览模式从 `out/renderer` 提供桌面和远程页面。修改主进程代码后必须完整重启 Electron。
 
 ## 资源维护
 
-离线校验仓库中的全部 FFmpeg/FFprobe 资源：
-
-```bash
-pnpm run verify:ffmpeg
+```powershell
+pnpm.cmd run verify:torrent-core:all
+pnpm.cmd run verify:qbittorrent
+pnpm.cmd run verify:ffmpeg
+pnpm.cmd run verify:libvlc
 ```
 
-显式更新三平台 FFmpeg/FFprobe 资源：
+`download:ffmpeg`、`download:libvlc` 和原生依赖准备脚本属于显式资源维护或发布步骤。正式发布应校验固定版本、SHA-256、依赖闭合和许可证。
 
-```bash
-pnpm run download:ffmpeg
-```
+## 故障排查
 
-校验当前目标平台 qBittorrent 资源：
+### Tauri 开发模式白屏
 
-```bash
-pnpm run verify:qbittorrent
-```
+1. 确认 `pnpm.cmd run build:tauri:renderer` 可完成。
+2. 检查 WebView 开发者工具中的首个运行时错误。
+3. 检查终端中 Tauri command、资源路径或 SQLite 初始化错误。
+4. 确认 `window.__TAURI_INTERNALS__` 存在；普通浏览器不会获得本地能力。
+5. 若只有业务数据失败，检查应用日志而不是仅检查页面资源。
 
-构建过程默认不下载 qBittorrent、FFmpeg 或 FFprobe。`download:ffmpeg` 是显式联网维护命令，不属于日常安装或构建。
+### 下载或播放器运行时缺失
 
-## 远程 PWA
-
-1. 使用 `pnpm dev` 或 `pnpm preview` 启动完整应用。
-2. 在“设置 -> 远程设备”中启用局域网 HTTPS。
-3. 使用设置页显示的私网地址安装并信任本地 CA。
-4. 在桌面端生成六位配对码，再由远程设备完成配对。
-
-开发模式远程页面来自 `.remote-pwa/renderer`，生产预览来自 `out/renderer`。出现 `PWA_NOT_BUILT` 时，重新执行 `pnpm run prepare:remote-renderer` 或完整预览构建。
-
-## 常见问题
-
-### better-sqlite3 加载失败
-
-重新执行安装脚本或 Electron rebuild，确保原生模块 ABI 与当前 Electron 一致：
-
-```bash
-pnpm install
-pnpm exec electron-rebuild -f -w better-sqlite3
-```
-
-### 开发模式白屏
-
-依次检查：
-
-- `out/preload/index.mjs` 是否存在。
-- `window.aniBridge` 是否暴露。
-- Renderer 控制台是否有组件或图标运行时错误。
-- 主进程日志中的页面地址与 `ELECTRON_RENDERER_URL` 是否一致。
+- 执行 `prepare:tauri:desktop-runtime`，确认 `out/torrent-core`、`out/qbittorrent`、`out/ffmpeg` 和 `out/libvlc` 对应当前平台架构。
+- 使用 `verify:torrent-core`、`verify:qbittorrent`、`verify:ffmpeg`、`verify:libvlc` 定位缺失资源。
+- Windows DLL、macOS dylib 或 Linux so 必须与当前 CPU 架构匹配；不要混用其他平台缓存。
 
 ### 构建资源被占用
 
-运行中的托管 qBittorrent 可能占用 `out/qbittorrent`。确认没有进行中的下载后，从应用正常退出，再重新构建；不要通过强制终止破坏下载任务。
+托管 qBittorrent、torrent-core 或 Ani Tracker 可能占用 `out` 下资源。确认没有活动下载，优先从应用正常退出，再运行：
 
-### HTTPS 无法连接
+```powershell
+pwsh -NoProfile -File scripts/stop-workspace-processes.ps1 -Root .
+```
 
-- 确认设置页已开启局域网 HTTPS，访问地址使用证书包含的私网 IP。
-- 确认远程端已安装并信任当前本地 CA。
-- 默认远程端口为 `18083`；托管 qBittorrent 默认端口为 `18080`，两者用途不同。
+该脚本只处理可执行路径位于当前工作区内的进程。
+
+### 远程 HTTPS 无法连接
+
+- 远程网关仅在桌面设置中显式启用。
+- 使用设置页列出的私网 IP，并在客户端安装、信任当前本地 CA。
+- 默认远程端口为 `18083`；托管 qBittorrent 默认端口为 `18080`。
+- 重新构建远程页面：`pnpm.cmd run build:tauri:remote-renderer`。
+
+### Android/iOS 本地能力被识别为桌面
+
+- 确认使用 `tauri android/ios` 构建，而不是直接打开 Renderer URL。
+- 检查构建日志中的 `TAURI_ENV_PLATFORM`。
+- 移动 WebView 必须存在 Tauri bridge；未知 WebView 会被安全地识别为远程页面。
 
 ### 站点返回 403 或 429
 
-检查全局代理、来源代理开关和来源熔断状态。保护期内不要高频强制刷新；AniBT 应使用单一稳定出口，应用不会轮换 IP 或模拟 Cloudflare Cookie。
+检查全局代理、来源代理开关和熔断状态。保护期内不要高频强制刷新；应用不会轮换 IP 或模拟 Cloudflare Cookie。
 
 ## 产物约束
 
-`out/`、`.remote-pwa/`、`out/test-node/`、`*.tsbuildinfo` 和临时 JS/声明文件均为生成物，不应提交到源码区。
+`out/`、`.tauri-remote-pwa/`、`out/test-node/`、Rust `target/`、Tauri 生成的构建目录、`*.tsbuildinfo` 和临时 JS/声明文件均不得提交。
+
+Electron/Capacitor 故障排查已随旧宿主归档；当前代码不再支持其启动、构建或原生模块修复。
