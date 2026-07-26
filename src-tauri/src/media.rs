@@ -94,7 +94,7 @@ impl AppMediaState {
 
     /// 校验 Renderer 请求的媒体路径仅来自已登记媒体或应用下载目录。
     pub(crate) fn authorize_media_path(&self, requested: &str) -> Result<PathBuf, String> {
-        let candidate = std::fs::canonicalize(requested)
+        let candidate = crate::path_utils::canonicalize(requested)
             .map_err(|error| format!("媒体文件不存在：{requested}（{error}）"))?;
         if !candidate.is_file() {
             return Err(format!("媒体路径不是普通文件：{}", candidate.display()));
@@ -349,7 +349,7 @@ impl AppMediaState {
             let Some(root) = settings.pointer(pointer).and_then(Value::as_str) else {
                 continue;
             };
-            let Ok(root) = std::fs::canonicalize(root) else {
+            let Ok(root) = crate::path_utils::canonicalize(root) else {
                 continue;
             };
             if candidate.starts_with(root) {
@@ -525,7 +525,8 @@ fn unique_paths(groups: Vec<Option<PathBuf>>) -> Vec<PathBuf> {
 }
 
 fn path_key(path: &Path) -> String {
-    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let path =
+        crate::path_utils::canonicalize(path).unwrap_or_else(|_| crate::path_utils::simplify(path));
     let value = path.to_string_lossy().into_owned();
     if cfg!(target_os = "windows") {
         value.to_lowercase()

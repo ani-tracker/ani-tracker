@@ -11,6 +11,7 @@ mod downloads;
 mod external_player;
 mod image_cache;
 mod media;
+mod path_utils;
 mod player;
 mod qbittorrent_managed;
 #[cfg(desktop)]

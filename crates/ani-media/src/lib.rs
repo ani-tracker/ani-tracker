@@ -395,10 +395,12 @@ async fn resolve_torrent_file_path(
     let resolved = tokio::fs::canonicalize(&unresolved)
         .await
         .map_err(|error| MediaProbeError::File(error.to_string()))?;
+    let resolved = dunce::simplified(&resolved).to_path_buf();
     if !Path::new(&file.name).is_absolute() {
         let save_root = tokio::fs::canonicalize(&task.save_path)
             .await
             .map_err(|error| MediaProbeError::File(error.to_string()))?;
+        let save_root = dunce::simplified(&save_root).to_path_buf();
         if !resolved.starts_with(&save_root) {
             return Err(MediaProbeError::File(
                 "下载文件路径超出任务保存目录".to_owned(),

@@ -459,7 +459,12 @@ impl VlcRuntime {
         source: PlayerMediaSource,
         start_position_seconds: Option<f64>,
     ) -> Result<(), PlayerTransportError> {
-        let uri = CString::new(source.uri.as_bytes())
+        let media_uri = if source.uri.contains("://") {
+            source.uri.clone()
+        } else {
+            local_path_string(&source.uri)
+        };
+        let uri = CString::new(media_uri.as_bytes())
             .map_err(|_| PlayerTransportError::InvalidResponse("媒体地址包含空字符".to_owned()))?;
         let media = unsafe {
             if source.uri.contains("://") {
@@ -870,9 +875,16 @@ fn subtitle_uri(value: &str) -> Result<String, PlayerTransportError> {
     if value.contains("://") {
         return Ok(value.to_owned());
     }
-    url::Url::from_file_path(value)
+    url::Url::from_file_path(local_path_string(value))
         .map(|url| url.to_string())
         .map_err(|_| PlayerTransportError::InvalidResponse("外挂字幕路径无效".to_owned()))
+}
+
+/// 将本地媒体路径转换为 libVLC 可识别的系统常规形式。
+fn local_path_string(value: &str) -> String {
+    dunce::simplified(Path::new(value))
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn bind_video_target(
@@ -1031,6 +1043,15 @@ fn ms_to_seconds(value: i64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn removes_verbatim_prefix_before_calling_libvlc() {
+        let local_path = r"\\?\C:\Anime\Episode 01.ass";
+        assert_eq!(local_path_string(local_path), r"C:\Anime\Episode 01.ass");
+        let uri = subtitle_uri(local_path).expect("subtitle URI");
+        assert!(uri.starts_with("file:///C:/Anime/Episode%2001.ass"));
+    }
 
     /// 桌面端使用平台硬解策略，且不传递已被 libVLC 移除的插件参数。
     #[test]

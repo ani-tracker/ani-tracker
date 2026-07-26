@@ -451,10 +451,10 @@ fn resolve_task_file_path(task: &DownloadTask, file: &TorrentFile) -> Result<Pat
     } else {
         Path::new(&task.save_path).join(file_path)
     };
-    let resolved =
-        std::fs::canonicalize(&unresolved).map_err(|error| format!("播放文件不可访问：{error}"))?;
+    let resolved = crate::path_utils::canonicalize(&unresolved)
+        .map_err(|error| format!("播放文件不可访问：{error}"))?;
     if !file_path.is_absolute() {
-        let root = std::fs::canonicalize(&task.save_path)
+        let root = crate::path_utils::canonicalize(&task.save_path)
             .map_err(|error| format!("下载目录不可访问：{error}"))?;
         if !resolved.starts_with(root) {
             return Err("播放文件路径超出任务保存目录".to_owned());
@@ -521,8 +521,10 @@ fn discover_sidecar_subtitles(
 }
 
 fn same_path(left: &Path, right: &Path) -> bool {
-    let left = std::fs::canonicalize(left).unwrap_or_else(|_| left.to_path_buf());
-    let right = std::fs::canonicalize(right).unwrap_or_else(|_| right.to_path_buf());
+    let left =
+        crate::path_utils::canonicalize(left).unwrap_or_else(|_| crate::path_utils::simplify(left));
+    let right = crate::path_utils::canonicalize(right)
+        .unwrap_or_else(|_| crate::path_utils::simplify(right));
     if cfg!(target_os = "windows") {
         left.to_string_lossy()
             .eq_ignore_ascii_case(&right.to_string_lossy())
@@ -860,13 +862,17 @@ impl AppPlayerState {
         {
             return Err("播放媒体与受控会话不匹配".to_owned());
         }
-        source.uri = session.media_path.to_string_lossy().into_owned();
+        source.uri = crate::path_utils::simplify(&session.media_path)
+            .to_string_lossy()
+            .into_owned();
         for subtitle in &mut source.subtitles {
             let path = session
                 .subtitle_paths
                 .get(&subtitle.id)
                 .ok_or_else(|| "外挂字幕不属于当前播放会话".to_owned())?;
-            subtitle.uri = path.to_string_lossy().into_owned();
+            subtitle.uri = crate::path_utils::simplify(path)
+                .to_string_lossy()
+                .into_owned();
         }
         Ok(())
     }

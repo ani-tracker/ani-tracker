@@ -101,7 +101,8 @@ pub(crate) async fn select_player_executable(
         if !path.is_file() {
             return Err(format!("播放器程序不存在：{}", path.display()));
         }
-        let canonical = std::fs::canonicalize(&path).unwrap_or(path);
+        let canonical = crate::path_utils::canonicalize(&path)
+            .unwrap_or_else(|_| crate::path_utils::simplify(path));
         log::info!(
             "Tauri 播放器程序已选择 profile_id={} path={}",
             input.profile_id,
@@ -262,7 +263,10 @@ fn resolve_executable(profile: &ExternalPlayerProfile) -> Option<PathBuf> {
     unique_paths(candidates)
         .into_iter()
         .find(|path| path.is_file())
-        .map(|path| std::fs::canonicalize(&path).unwrap_or(path))
+        .map(|path| {
+            crate::path_utils::canonicalize(&path)
+                .unwrap_or_else(|_| crate::path_utils::simplify(path))
+        })
 }
 
 /// 将绝对路径或命令名展开为可验证的文件候选。

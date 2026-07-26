@@ -20,5 +20,6 @@ tauri = "2"
 thiserror.workspace = true
 
 [target.'cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))'.dependencies]
+dunce = "1"
 libloading = "0.8"
 url = "2"
