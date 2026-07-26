@@ -68,6 +68,22 @@ validate_dependencies() {
   echo "iOS torrent-core 依赖已就绪 triplet=${triplet} prefix=${prefix}"
 }
 
+# 归一化缓存恢复后的 framework 公开头文件和模块声明。
+package_framework_slice() {
+  local framework_path="$1"
+  cmake -E make_directory "${framework_path}/Headers" "${framework_path}/Modules"
+  cmake -E copy_if_different \
+    "${source_root}/include/AniTorrentCore.h" \
+    "${framework_path}/Headers/AniTorrentCore.h"
+  cmake -E copy_if_different \
+    "${source_root}/include/ani/torrent_core_c.h" \
+    "${framework_path}/Headers/torrent_core_c.h"
+  cmake -E copy_if_different \
+    "${source_root}/apple/AniTorrentCore.modulemap" \
+    "${framework_path}/Modules/module.modulemap"
+  echo "iOS torrent-core framework 结构已归一化 path=${framework_path}"
+}
+
 build_slice() {
   local name="$1"
   local sdk="$2"
@@ -91,6 +107,7 @@ build_slice() {
     -DANI_BUILD_ANDROID_JNI=OFF \
     -DANI_BUILD_APPLE_FRAMEWORK=ON
   cmake --build "${build_root}" --config Release --target AniTorrentCore
+  package_framework_slice "${build_root}/Release-${sdk}/AniTorrentCore.framework"
 }
 
 mkdir -p "${dependency_root}" "${framework_root}"

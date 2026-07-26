@@ -80,6 +80,9 @@ test("iOS torrent-core 隔离设备与模拟器依赖并在构建前校验", () 
   assert.match(iosTorrentScript, /printf '%s\/device' "\$\{dependency_root\}"/);
   assert.match(iosTorrentScript, /printf '%s\/simulator' "\$\{dependency_root\}"/);
   assert.match(iosTorrentScript, /validate_dependencies "\$\{triplet\}"/);
+  assert.match(iosTorrentScript, /package_framework_slice "\$\{build_root\}\/Release-\$\{sdk\}\/AniTorrentCore\.framework"/);
+  assert.match(iosTorrentScript, /Headers\/AniTorrentCore\.h/);
+  assert.match(iosTorrentScript, /Modules\/module\.modulemap/);
   assert.match(iosTorrentScript, /include\/boost\/version\.hpp/);
   assert.match(iosTorrentScript, /lib\/libcrypto\.a/);
 });
