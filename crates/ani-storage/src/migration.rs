@@ -1,10 +1,13 @@
+use log::info;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use sha2::{Digest, Sha256};
 
 use crate::{
     now_iso, ReleaseSourceSeed, StorageError, StorageSeed, APP_DATA_VERSION, SQLITE_SCHEMA_VERSION,
 };
 
 const CURRENT_SCHEMA: &str = include_str!("schema_v18.sql");
+const MAX_RELEASE_ID_BYTES: usize = 200;
 
 /// 数据库中记录的结构和应用数据版本。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -262,7 +265,7 @@ fn migrate_schema_data(
     Ok(())
 }
 
-/// 执行应用数据版本 22 的默认下载源清理。
+/// 按应用数据版本顺序执行幂等业务数据迁移。
 fn migrate_app_data(
     transaction: &Transaction<'_>,
     current_app_data_version: u32,
@@ -279,7 +282,142 @@ fn migrate_app_data(
             [now_iso()],
         )?;
     }
+    if current_app_data_version < 23 {
+        let stats = migrate_historical_release_ids(transaction)?;
+        info!(
+            "SQLite 历史资源标识迁移完成：references={}, releases={}, removed_releases={}, cleared_cache={}",
+            stats.updated_references,
+            stats.updated_releases,
+            stats.removed_releases,
+            stats.cleared_cache
+        );
+    }
     Ok(())
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ReleaseIdMigrationStats {
+    updated_references: usize,
+    updated_releases: usize,
+    removed_releases: usize,
+    cleared_cache: usize,
+}
+
+/// 修复历史空值和超长资源标识，并保持下载任务、单集偏好与资源记录的关联。
+fn migrate_historical_release_ids(
+    transaction: &Transaction<'_>,
+) -> Result<ReleaseIdMigrationStats, StorageError> {
+    let legacy_ids = {
+        let mut statement = transaction.prepare(
+            "SELECT release_id FROM download_task WHERE release_id IS NOT NULL
+             UNION SELECT release_id FROM episode_preference WHERE release_id IS NOT NULL
+             UNION SELECT id FROM release",
+        )?;
+        let values = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?
+            .into_iter()
+            .filter(|value| value.trim().is_empty() || value.len() > MAX_RELEASE_ID_BYTES)
+            .collect::<Vec<_>>();
+        values
+    };
+    let source_ids = {
+        let mut statement = transaction.prepare("SELECT id FROM release_source")?;
+        let mut values = statement
+            .query_map([], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        values.sort_by_key(|value| std::cmp::Reverse(value.len()));
+        values
+    };
+    let mut stats = ReleaseIdMigrationStats::default();
+
+    for legacy_id in legacy_ids {
+        let source_hint = transaction
+            .query_row(
+                "SELECT source_id FROM release WHERE id = ?1",
+                [&legacy_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()?;
+        let replacement = repair_release_id(&legacy_id, source_hint.as_deref(), &source_ids);
+
+        stats.updated_references += transaction.execute(
+            "UPDATE download_task SET release_id = ?1 WHERE release_id = ?2",
+            params![replacement.as_deref(), &legacy_id],
+        )?;
+        stats.updated_references += transaction.execute(
+            "UPDATE episode_preference SET release_id = ?1 WHERE release_id = ?2",
+            params![replacement.as_deref(), &legacy_id],
+        )?;
+
+        let Some(replacement) = replacement else {
+            stats.removed_releases +=
+                transaction.execute("DELETE FROM release WHERE id = ?1", [&legacy_id])?;
+            continue;
+        };
+        let replacement_exists = transaction
+            .query_row(
+                "SELECT 1 FROM release WHERE id = ?1",
+                [&replacement],
+                |_| Ok(()),
+            )
+            .optional()?
+            .is_some();
+        if replacement_exists {
+            stats.removed_releases +=
+                transaction.execute("DELETE FROM release WHERE id = ?1", [&legacy_id])?;
+        } else {
+            stats.updated_releases += transaction.execute(
+                "UPDATE release SET id = ?1 WHERE id = ?2",
+                params![&replacement, &legacy_id],
+            )?;
+        }
+    }
+
+    stats.cleared_cache = transaction.execute("DELETE FROM release_search_cache", [])?;
+    Ok(stats)
+}
+
+/// 以来源原始身份生成与解析器一致的稳定 ID；无法还原来源时仍保证固定长度。
+fn repair_release_id(
+    legacy_id: &str,
+    source_hint: Option<&str>,
+    source_ids: &[String],
+) -> Option<String> {
+    if legacy_id.trim().is_empty() {
+        return None;
+    }
+    if legacy_id.len() <= MAX_RELEASE_ID_BYTES {
+        return Some(legacy_id.to_owned());
+    }
+
+    let source_and_identity = source_hint
+        .and_then(|source_id| strip_release_source_prefix(legacy_id, source_id))
+        .or_else(|| {
+            source_ids
+                .iter()
+                .find_map(|source_id| strip_release_source_prefix(legacy_id, source_id))
+        });
+    let mut digest = Sha256::new();
+    if let Some((source_id, identity)) = source_and_identity {
+        digest.update(source_id.as_bytes());
+        digest.update([0]);
+        digest.update(identity.as_bytes());
+    } else {
+        digest.update(b"legacy-release-id");
+        digest.update([0]);
+        digest.update(legacy_id.as_bytes());
+    }
+    Some(format!("release:{:x}", digest.finalize()))
+}
+
+/// 从旧版 `sourceId:identity` 标识中剥离精确来源前缀。
+fn strip_release_source_prefix<'legacy, 'source>(
+    legacy_id: &'legacy str,
+    source_id: &'source str,
+) -> Option<(&'source str, &'legacy str)> {
+    let identity = legacy_id.strip_prefix(source_id)?.strip_prefix(':')?;
+    (!source_id.trim().is_empty() && !identity.trim().is_empty()).then_some((source_id, identity))
 }
 
 /// 空库首次启动时写入设置、首页空状态和默认下载源。

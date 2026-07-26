@@ -82,7 +82,7 @@ fn initializes_new_database_with_seed() {
     assert_eq!(storage.report().schema_version, SQLITE_SCHEMA_VERSION);
     assert_eq!(storage.report().app_data_version, APP_DATA_VERSION);
     assert_eq!(read_meta(&storage.connection, "schema_version"), "18");
-    assert_eq!(read_meta(&storage.connection, "app_data_version"), "22");
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "23");
     assert_eq!(
         storage
             .connection
@@ -233,7 +233,7 @@ fn backs_up_and_migrates_legacy_versions() {
         "detail_json"
     ));
     assert_eq!(read_meta(&storage.connection, "schema_version"), "18");
-    assert_eq!(read_meta(&storage.connection, "app_data_version"), "22");
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "23");
     assert_eq!(source_count(&storage.connection, "prowlarr"), 0);
     assert_eq!(source_proxy(&storage.connection, "anibt"), 0);
     storage.verify().expect("migrated database integrity");
@@ -243,6 +243,149 @@ fn backs_up_and_migrates_legacy_versions() {
     assert_eq!(read_meta(&backup, "app_data_version"), "21");
     assert!(!column_exists(&backup, "anime_catalog", "detail_json"));
     assert_eq!(source_count(&backup, "prowlarr"), 1);
+}
+
+/// 验证版本 23 会修复历史超长资源标识，并保留任务与单集偏好的稳定关联。
+#[test]
+fn migrates_historical_oversized_release_ids() {
+    let directory = TestDirectory::new("oversized-release-id-migration");
+    let options = test_options(&directory, "active.sqlite");
+    let database_path = options.database_path.clone();
+    drop(Storage::open(options.clone()).expect("create current database"));
+
+    let legacy_id = format!("anibt:{}", "oversized-identity-".repeat(16));
+    let legacy = Connection::open(&database_path).expect("open oversized release fixture");
+    legacy
+        .execute(
+            "UPDATE app_meta SET value = '22' WHERE key = 'app_data_version'",
+            [],
+        )
+        .expect("downgrade app data version");
+    legacy
+        .execute_batch(
+            "INSERT INTO anime_catalog (
+               id, title, premiere_year, premiere_month, created_at, updated_at
+             ) VALUES (
+               'anime-release-id', '资源标识迁移番', 2026, 7,
+               '2026-07-26T00:00:00.000Z', '2026-07-26T00:00:00.000Z'
+             );
+             INSERT INTO episode (
+               id, anime_id, episode_no, status, created_at, updated_at
+             ) VALUES (
+               'episode-release-id', 'anime-release-id', 1, 'aired',
+               '2026-07-26T00:00:00.000Z', '2026-07-26T00:00:00.000Z'
+             );",
+        )
+        .expect("insert release relation fixture");
+    legacy
+        .execute(
+            "INSERT INTO release (
+               id, title, source_id, source_name, published_at
+             ) VALUES (?1, '超长标识资源', 'anibt', 'AniBT', '2026-07-26T00:00:00.000Z')",
+            [&legacy_id],
+        )
+        .expect("insert oversized release");
+    legacy
+        .execute(
+            "INSERT INTO episode_preference (
+               id, anime_id, episode_id, release_id, updated_at
+             ) VALUES (
+               'preference-release-id', 'anime-release-id', 'episode-release-id', ?1,
+               '2026-07-26T00:00:00.000Z'
+             )",
+            [&legacy_id],
+        )
+        .expect("insert oversized episode preference");
+    legacy
+        .execute(
+            "INSERT INTO download_task (
+               id, release_id, engine, name, status, progress, download_speed, upload_speed,
+               save_path, created_at, updated_at
+             ) VALUES (
+               'download-release-id', ?1, 'embedded', '超长标识任务', 'completed', 1, 0, 0,
+               'C:/video', '2026-07-26T00:00:00.000Z', '2026-07-26T00:00:00.000Z'
+             )",
+            [&legacy_id],
+        )
+        .expect("insert oversized download task");
+    legacy
+        .execute_batch(
+            "INSERT INTO download_task (
+               id, release_id, engine, name, status, progress, download_speed, upload_speed,
+               save_path, created_at, updated_at
+             ) VALUES (
+               'download-empty-release-id', '   ', 'embedded', '空标识任务', 'paused', 0, 0, 0,
+               'C:/video', '2026-07-26T00:00:00.000Z', '2026-07-26T00:00:00.000Z'
+             );
+             INSERT INTO release_search_cache (cache_key, result_json, expires_at, updated_at)
+             VALUES (
+               'legacy-cache', '[]', '2026-07-27T00:00:00.000Z', '2026-07-26T00:00:00.000Z'
+             );",
+        )
+        .expect("insert invalid release references and cache");
+    drop(legacy);
+
+    let storage = Storage::open(options).expect("oversized release ids must migrate");
+    let migrated_task_id = storage
+        .connection
+        .query_row(
+            "SELECT release_id FROM download_task WHERE id = 'download-release-id'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("read migrated task release id");
+    let migrated_preference_id = storage
+        .connection
+        .query_row(
+            "SELECT release_id FROM episode_preference WHERE id = 'preference-release-id'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .expect("read migrated preference release id");
+
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "23");
+    assert_eq!(migrated_task_id, migrated_preference_id);
+    assert!(migrated_task_id.starts_with("release:"));
+    assert!(migrated_task_id.len() <= 200);
+    assert_eq!(
+        storage
+            .connection
+            .query_row(
+                "SELECT release_id FROM download_task WHERE id = 'download-empty-release-id'",
+                [],
+                |row| row.get::<_, Option<String>>(0),
+            )
+            .expect("read cleared empty release id"),
+        None
+    );
+    assert_eq!(
+        storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM release WHERE id = ?1",
+                [&migrated_task_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count migrated release"),
+        1
+    );
+    assert_eq!(
+        storage
+            .connection
+            .query_row("SELECT COUNT(*) FROM release_search_cache", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count cleared release cache"),
+        0
+    );
+
+    let migrated_task = DownloadRepository::list_downloads(&storage.repository())
+        .expect("list migrated downloads")
+        .into_iter()
+        .find(|task| task.id == "download-release-id")
+        .expect("migrated download task");
+    DownloadRepository::upsert_download_task(&storage.repository(), &migrated_task)
+        .expect("migrated task must pass write validation");
 }
 
 /// 验证 Tauri 首启只复制 Electron 数据库，不修改或删除源文件。

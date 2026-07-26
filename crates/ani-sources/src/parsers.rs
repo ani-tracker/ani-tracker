@@ -120,12 +120,11 @@ pub fn parse_torznab_releases(
                 .or_else(|| torznab_attr_number(&attrs, "size"));
             enrich_release_from_title(
                 Release {
-                    id: format!(
-                        "{}:{}",
-                        config.id,
+                    id: stable_release_id(
+                        &config.id,
                         item.child_text("guid")
                             .or(link.as_deref())
-                            .unwrap_or(&title)
+                            .unwrap_or(&title),
                     ),
                     title,
                     magnet_url: link
@@ -213,13 +212,12 @@ pub fn parse_anibt_rss(
             let subtitle = normalize_anibt_subtitle(item.child_text("language"));
             enrich_release_from_title(
                 Release {
-                    id: format!(
-                        "{}:{}",
-                        config.id,
+                    id: stable_release_id(
+                        &config.id,
                         release_id
                             .or(info_hash.as_deref())
                             .or(torrent_url.as_deref())
-                            .unwrap_or(&title)
+                            .unwrap_or(&title),
                     ),
                     title,
                     fansub_name: item.child_text("groupName").map(str::to_owned),
@@ -523,7 +521,7 @@ fn map_rss_item(
     }
 }
 
-/// 保留合法短标识，并为超长 RSS 标识生成跨同步稳定的固定长度哈希。
+/// 保留合法短标识，并为超长来源标识生成跨同步稳定的固定长度哈希。
 fn stable_release_id(source_id: &str, identity: &str) -> String {
     let candidate = format!("{source_id}:{identity}");
     if !identity.trim().is_empty() && candidate.len() <= MAX_RELEASE_ID_BYTES {
@@ -588,10 +586,9 @@ fn map_dmhy_row(row: ElementRef<'_>, config: &ReleaseSourceConfig) -> Option<Rel
         .and_then(|value| value.split(['/', '?', '#']).next());
     let text = element_text(row);
     Some(Release {
-        id: format!(
-            "{}:{}",
-            config.id,
-            info_hash.as_deref().or(topic_id).unwrap_or("unknown")
+        id: stable_release_id(
+            &config.id,
+            info_hash.as_deref().or(topic_id).unwrap_or("unknown"),
         ),
         title,
         source_id: config.id.clone(),
@@ -627,14 +624,13 @@ fn map_mikan_row(row: ElementRef<'_>, config: &ReleaseSourceConfig) -> Option<Re
     let info_hash = extract_info_hash(magnet_url.as_deref());
     let text = element_text(row);
     Some(Release {
-        id: format!(
-            "{}:{}",
-            config.id,
+        id: stable_release_id(
+            &config.id,
             episode
                 .as_ref()
                 .map(|(id, _)| id.as_str())
                 .or(info_hash.as_deref())
-                .unwrap_or("unknown")
+                .unwrap_or("unknown"),
         ),
         title,
         source_id: config.id.clone(),
@@ -651,7 +647,7 @@ fn map_mikan_row(row: ElementRef<'_>, config: &ReleaseSourceConfig) -> Option<Re
 fn map_mikan_anchor(anchor: ElementRef<'_>, config: &ReleaseSourceConfig) -> Option<Release> {
     let (id, title) = mikan_episode(anchor)?;
     Some(Release {
-        id: format!("{}:{id}", config.id),
+        id: stable_release_id(&config.id, &id),
         title,
         source_id: config.id.clone(),
         source_name: config.name.clone(),
@@ -789,14 +785,13 @@ fn map_acgnx_record(
         &["id", "torrentId", "torrent_id", "resourceId", "resource_id"],
     );
     Some(Release {
-        id: format!(
-            "{}:{}",
-            config.id,
+        id: stable_release_id(
+            &config.id,
             id.as_deref()
                 .or(info_hash.as_deref())
                 .or(magnet_url.as_deref())
                 .or(torrent_url.as_deref())
-                .unwrap_or(if index == 0 { "0" } else { "item" })
+                .unwrap_or(if index == 0 { "0" } else { "item" }),
         ),
         title,
         source_id: config.id.clone(),
@@ -858,13 +853,12 @@ fn map_acgnx_html_row(row: ElementRef<'_>, config: &ReleaseSourceConfig) -> Opti
     });
     let text = element_text(row);
     Some(Release {
-        id: format!(
-            "{}:{}",
-            config.id,
+        id: stable_release_id(
+            &config.id,
             info_hash
                 .as_deref()
                 .or(torrent_url.as_deref())
-                .unwrap_or("unknown")
+                .unwrap_or("unknown"),
         ),
         title,
         source_id: config.id.clone(),
@@ -1268,6 +1262,23 @@ mod tests {
             .expect("parse oversized RSS");
         let second = parse_rss_releases(&xml, &rss, Some("https://mikanani.me/RSS/Bangumi"))
             .expect("parse oversized RSS again");
+
+        assert_eq!(first[0].id, second[0].id);
+        assert!(first[0].id.starts_with("release:"));
+        assert!(first[0].id.len() <= 200);
+    }
+
+    /// 验证 AniBT 的超长 releaseId 同样生成稳定且可持久化的资源标识。
+    #[test]
+    fn hashes_oversized_anibt_release_identifiers() {
+        let anibt = source("anibt", "AniBT", "https://anibt.net/");
+        let release_id = "oversized-release-id-".repeat(16);
+        let xml = format!(
+            "<rss xmlns:anibt=\"x\"><channel><item><anibt:releaseId>{release_id}</anibt:releaseId><anibt:releaseTitle>[组] 测试番 - 01 [1080p]</anibt:releaseTitle></item></channel></rss>"
+        );
+
+        let first = parse_anibt_rss(&xml, &anibt).expect("parse oversized AniBT release");
+        let second = parse_anibt_rss(&xml, &anibt).expect("parse oversized AniBT release again");
 
         assert_eq!(first[0].id, second[0].id);
         assert!(first[0].id.starts_with("release:"));
