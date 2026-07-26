@@ -1,7 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { cpSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import electronPath from "electron";
 
 const outputDir = "out/test-node";
 rmSync(outputDir, { force: true, recursive: true });
@@ -21,15 +20,12 @@ mkdirSync(sharedModuleTarget, { recursive: true });
 cpSync(join(outputDir, "shared"), sharedModuleTarget, { recursive: true });
 
 const testFiles = [
-  ...collectTestFiles(join(outputDir, "main", "core")),
   ...collectTestFiles(join(outputDir, "shared", "__tests__"))
 ];
 const result = spawnSync(
-  electronPath,
+  process.execPath,
   ["--test", ...testFiles],
   {
-    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-    shell: process.platform === "win32",
     stdio: "inherit"
   }
 );

@@ -2,44 +2,37 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { getPlatformCapabilities, resolveAppRuntime } from "../platform-runtime";
 
-test("Electron bridge 优先识别为桌面运行时", () => {
+test("非 Tauri WebView 不会被识别为本地移动运行时", () => {
   assert.equal(
-    resolveAppRuntime({ hasElectronBridge: true, hasTauriBridge: true, nativePlatform: "android" }),
-    "desktop"
-  );
-});
-
-test("Capacitor Android 不会回退到远程运行时", () => {
-  assert.equal(
-    resolveAppRuntime({ hasElectronBridge: false, hasTauriBridge: false, nativePlatform: "android" }),
-    "android"
+    resolveAppRuntime({ hasTauriBridge: false, nativePlatform: "android" }),
+    "remote"
   );
 });
 
 test("Tauri Android 优先识别为移动运行时", () => {
   assert.equal(
-    resolveAppRuntime({ hasElectronBridge: false, hasTauriBridge: true, nativePlatform: "android" }),
+    resolveAppRuntime({ hasTauriBridge: true, nativePlatform: "android" }),
     "android"
   );
 });
 
 test("Tauri iOS 优先识别为移动运行时", () => {
   assert.equal(
-    resolveAppRuntime({ hasElectronBridge: false, hasTauriBridge: true, nativePlatform: "ios" }),
+    resolveAppRuntime({ hasTauriBridge: true, nativePlatform: "ios" }),
     "ios"
   );
 });
 
 test("Tauri 桌面不会回退到远程运行时", () => {
   assert.equal(
-    resolveAppRuntime({ hasElectronBridge: false, hasTauriBridge: true, nativePlatform: "windows" }),
+    resolveAppRuntime({ hasTauriBridge: true, nativePlatform: "windows" }),
     "desktop"
   );
 });
 
 test("普通浏览器识别为远程运行时", () => {
   assert.equal(
-    resolveAppRuntime({ hasElectronBridge: false, hasTauriBridge: false, nativePlatform: "web" }),
+    resolveAppRuntime({ hasTauriBridge: false, nativePlatform: "web" }),
     "remote"
   );
 });

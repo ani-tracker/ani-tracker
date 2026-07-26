@@ -20,7 +20,6 @@ export interface PlatformCapabilities {
 
 /** 运行时探测所需的最小环境信息，避免共享层直接访问 window。 */
 export interface AppRuntimeProbe {
-  hasElectronBridge: boolean;
   hasTauriBridge: boolean;
   nativePlatform?: string;
 }
@@ -90,9 +89,7 @@ const PLATFORM_CAPABILITIES: Record<AppRuntimeKind, PlatformCapabilities> = {
 
 /** 按明确优先级识别桌面、Android、iOS 或远程运行时。 */
 export function resolveAppRuntime(probe: AppRuntimeProbe): AppRuntimeKind {
-  if (probe.hasElectronBridge) {
-    return "desktop";
-  }
+  if (!probe.hasTauriBridge) return "remote";
   const nativePlatform = probe.nativePlatform?.toLowerCase();
   if (nativePlatform === "android") {
     return "android";
@@ -100,10 +97,7 @@ export function resolveAppRuntime(probe: AppRuntimeProbe): AppRuntimeKind {
   if (nativePlatform === "ios") {
     return "ios";
   }
-  if (probe.hasTauriBridge) {
-    return "desktop";
-  }
-  return "remote";
+  return "desktop";
 }
 
 /** 返回只读的平台能力副本，防止调用方污染全局定义。 */

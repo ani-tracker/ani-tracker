@@ -46,9 +46,6 @@ android {
     }
 
     sourceSets {
-        getByName("main").java.srcDir(
-            file("../../../android/app/src/main/java/dev/ani/tracker/android/player")
-        )
         getByName("main").assets.srcDir(generatedLicenseAssets)
     }
 }

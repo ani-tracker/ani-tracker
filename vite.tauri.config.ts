@@ -4,7 +4,7 @@ import { defineConfig } from "vite";
 
 const tauriDevHost = process.env.TAURI_DEV_HOST;
 
-/** 构建供 Tauri WebView 使用的 Renderer，并与 Electron 产物隔离。 */
+/** 构建供 Tauri WebView 使用的主 Renderer。 */
 export default defineConfig({
   root: resolve("src/renderer"),
   publicDir: resolve("src/renderer/public"),

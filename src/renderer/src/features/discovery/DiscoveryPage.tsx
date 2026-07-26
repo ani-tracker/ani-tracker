@@ -250,7 +250,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     }
   }
 
-  /** Opens an external metadata page through the Electron bridge. */
+  /** 通过本地宿主打开外部元数据页面。 */
   async function openExternalId(externalId: ExternalIdBadge) {
     if (!externalId.url) {
       return;

@@ -14,7 +14,7 @@ import {
   PageHeader,
   PageHeading
 } from "@/components/page-layout";
-import { appApi, isElectronClient } from "@/lib/api";
+import { appApi, isLocalClient } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import type { NotificationRecord } from "@shared/domain";
 
@@ -58,7 +58,7 @@ export function NotificationsPage() {
   const [message, setMessage] = useState<string | null>(null);
   const [clearDialogOpen, setClearDialogOpen] = useState(false);
   const [filter, setFilter] = useState<NotificationFilter>("all");
-  const electronClient = isElectronClient();
+  const localClient = isLocalClient();
 
   const unreadCount = useMemo(() => items.filter((item) => !item.readAt).length, [items]);
   const successCount = useMemo(() => items.filter((item) => item.severity === "success").length, [items]);
@@ -165,7 +165,7 @@ export function NotificationsPage() {
             <CheckCheck data-icon="inline-start" />
             全部已读
           </Button>
-          {electronClient && (
+          {localClient && (
             <Button
               className="px-2 text-xs md:min-h-8"
               variant="outline"

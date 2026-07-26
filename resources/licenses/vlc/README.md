@@ -1,6 +1,6 @@
 # VLC / libVLC notices
 
-Ani Tracker uses libVLC as the built-in player on Electron, Android, and iOS.
+Ani Tracker uses libVLC as the built-in player on Tauri desktop, Android, and iOS.
 The remote web player remains ArtPlayer-based and does not load libVLC.
 
 The desktop package dynamically loads the shared libraries from

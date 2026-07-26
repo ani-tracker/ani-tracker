@@ -6,13 +6,10 @@ import {
   type PlatformCapabilities
 } from "@shared/platform-runtime";
 
-/** 读取 Tauri 或 Capacitor 注入的平台名称。 */
+/** 读取 Tauri 构建时注入的平台名称。 */
 function getNativePlatform(): string | undefined {
   try {
-    if (isTauri()) {
-      return import.meta.env.TAURI_ENV_PLATFORM;
-    }
-    return window.Capacitor?.getPlatform?.();
+    return isTauri() ? import.meta.env.TAURI_ENV_PLATFORM : undefined;
   } catch (error) {
     console.warn("[runtime] 本地平台读取失败", error);
     return undefined;
@@ -22,7 +19,6 @@ function getNativePlatform(): string | undefined {
 /** 识别当前 Renderer 运行时。 */
 export function getAppRuntime(): AppRuntimeKind {
   return resolveAppRuntime({
-    hasElectronBridge: Boolean(window.aniBridge),
     hasTauriBridge: isTauri(),
     nativePlatform: getNativePlatform()
   });

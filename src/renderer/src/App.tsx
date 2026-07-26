@@ -35,7 +35,6 @@ import { SourcesPage } from "@/features/sources/SourcesPage";
 import {
   appApi,
   getRemotePairingState,
-  isElectronClient,
   isTauriClient,
   REMOTE_AUTH_CHANGED_EVENT
 } from "@/lib/api";
@@ -205,7 +204,7 @@ export function App() {
   if (playerPreview) {
     return <PlayerDesignPreview mode={playerPreview} />;
   }
-  const desktopPlayerTarget = isElectronClient()
+  const desktopPlayerTarget = getAppRuntime() === "desktop"
     ? resolveDesktopPlayerWindowInput(window.location.search)
     : null;
   if (desktopPlayerTarget) {
@@ -252,10 +251,9 @@ function MainApplication() {
   const capabilities = getAppCapabilities();
   const desktopClient = runtime === "desktop";
   const localClient = capabilities.localData;
-  const desktopPlatform = window.aniBridge?.platform;
   const framelessWindow = capabilities.windowControls
     && desktopClient
-    && (isTauriClient() || desktopPlatform === "win32" || desktopPlatform === "darwin");
+    && isTauriClient();
   const remotePlayerTaskId = runtime === "remote"
     ? resolveRemotePlayerTaskId(window.location.pathname)
     : undefined;
@@ -370,10 +368,6 @@ function MainApplication() {
   /** 按默认播放器配置打开独立内置窗口或调用外部播放器。 */
   async function playMedia(target: MediaPlaybackTarget): Promise<void> {
     if (runtime === "android" || runtime === "ios") {
-      if (!isTauriClient()) {
-        await appApi.playMedia(target.filePath);
-        return;
-      }
       if (!target.taskId) {
         throw new Error("当前媒体缺少下载任务关联，无法使用移动内置播放器");
       }

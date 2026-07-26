@@ -4,8 +4,6 @@ import type {
   RemotePlaybackSession
 } from "@shared/contracts";
 import type { AppClient } from "@shared/app-client";
-import { createAndroidClient } from "@/lib/clients/android-client";
-import { createElectronClient } from "@/lib/clients/electron-client";
 import { createRemoteClient } from "@/lib/clients/remote-client";
 import { createTauriClient } from "@/lib/clients/tauri-client";
 import { getAppRuntime, isLocalAppRuntime, isTauriAppRuntime } from "@/lib/runtime";
@@ -25,9 +23,9 @@ export interface RemotePairingState {
   remoteUrl?: string;
 }
 
-/** 判断当前渲染进程是否运行在 Electron 桌面端。 */
-export function isElectronClient(): boolean {
-  return Boolean(window.aniBridge);
+/** 判断当前渲染进程是否运行在 Tauri 本地应用。 */
+export function isLocalClient(): boolean {
+  return isLocalAppRuntime();
 }
 
 /** 判断当前渲染进程是否运行在 Tauri 本地应用。 */
@@ -224,7 +222,7 @@ async function invokeRemote(baseUrl: string, method: string, args: unknown[]): P
   return payload.result;
 }
 
-/** 根据运行环境选择 Electron、Tauri、Android 或远程客户端。 */
+/** 根据运行环境选择 Tauri 本地客户端或桌面网关远程客户端。 */
 function createAppClient(): AppClient {
   const runtime = getAppRuntime();
   if (isTauriClient()) {
@@ -232,15 +230,6 @@ function createAppClient(): AppClient {
     console.info("[renderer] 使用 Tauri invoke 客户端", { platform });
     return createTauriClient(platform);
   }
-  if (runtime === "desktop") {
-    console.info("[renderer] 使用 Electron IPC 客户端");
-    return createElectronClient(window.aniBridge);
-  }
-  if (runtime === "android") {
-    console.info("[renderer] 使用 Android 原生客户端");
-    return createAndroidClient(window.aniAndroidBridge);
-  }
-
   const remoteUrl = getRemoteBaseUrl();
   if (remoteUrl) {
     console.info("[renderer] 使用远程 HTTP 客户端", { remoteUrl });

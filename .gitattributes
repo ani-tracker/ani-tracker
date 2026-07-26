@@ -1,4 +1,4 @@
-scripts/clean-rebuild.sh text eol=lf
-scripts/incremental-rebuild.sh text eol=lf
-scripts/rebuild-common.sh text eol=lf
+archive/legacy-hosts/electron/scripts/clean-rebuild.sh text eol=lf
+archive/legacy-hosts/electron/scripts/incremental-rebuild.sh text eol=lf
+archive/legacy-hosts/electron/scripts/rebuild-common.sh text eol=lf
 scripts/setup-desktop-build-tools.sh text eol=lf

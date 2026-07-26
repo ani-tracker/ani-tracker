@@ -15,7 +15,7 @@ export function WindowControls() {
     void appApi.getWindowState().then((state) => {
       if (active) setMaximized(state.maximized);
     });
-    const unsubscribe = window.aniBridge?.onWindowStateChanged((state) => setMaximized(state.maximized));
+    const unsubscribe = appApi.onWindowStateChanged((state) => setMaximized(state.maximized));
     return () => {
       active = false;
       unsubscribe?.();

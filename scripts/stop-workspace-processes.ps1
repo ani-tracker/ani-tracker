@@ -12,7 +12,7 @@ $rootPrefix = $resolvedRoot + [IO.Path]::DirectorySeparatorChar
 Write-Host "Scanning workspace processes under $resolvedRoot"
 
 # 仅终止可执行文件位于当前工作区内的桌面进程与原生 sidecar。
-Get-Process -Name "electron", "qbittorrent-nox", "torrent-core" -ErrorAction SilentlyContinue |
+Get-Process -Name "ani-tracker-tauri", "qbittorrent-nox", "torrent-core" -ErrorAction SilentlyContinue |
   Where-Object {
     $_.Path -and $_.Path.StartsWith($rootPrefix, [StringComparison]::OrdinalIgnoreCase)
   } |

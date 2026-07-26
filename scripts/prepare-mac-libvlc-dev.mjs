@@ -30,12 +30,7 @@ await downloadArchive(asset, archivePath, options.offline);
 await downloadSourceArchive(sourceArchivePath, options.offline);
 await stageRuntime(asset, archivePath, sourceArchivePath, options.targetRoot);
 verifyRuntime(options.targetRoot, options.arch);
-if (options.runtimeOnly) {
-  smokeTestTauriRuntime();
-} else {
-  rebuildNativeModules();
-  smokeTestElectronRuntime(targetDirectory);
-}
+smokeTestTauriRuntime();
 
 console.log(`[libvlc] macOS development runtime ready: ${targetDirectory}`);
 
@@ -124,11 +119,6 @@ async function extractSourceLicenses(sourceArchive, temporaryRoot) {
   return licenseRoot;
 }
 
-/** 使用当前 Electron ABI 和进程架构重编译桌面原生模块。 */
-function rebuildNativeModules() {
-  runCommand("pnpm", ["run", "rebuild:desktop-native"]);
-}
-
 /** 复用正式打包校验，确认整理后的运行时结构完整。 */
 function verifyRuntime(targetRoot, arch) {
   runCommand(process.execPath, [
@@ -139,20 +129,6 @@ function verifyRuntime(targetRoot, arch) {
     "--required",
     "--verify-only"
   ]);
-}
-
-/** 通过 Electron 实际加载原生模块和 libVLC，拦截 ABI 或动态库错误。 */
-function smokeTestElectronRuntime(runtimeDirectory) {
-  runCommand("pnpm", [
-    "exec",
-    "electron",
-    resolve("scripts/smoke-libvlc-runtime.cjs"),
-    runtimeDirectory
-  ], {
-    ...process.env,
-    ELECTRON_RUN_AS_NODE: "1",
-    ANI_LIBVLC_DIR: runtimeDirectory
-  });
 }
 
 /** 通过 Rust 动态 FFI 创建并释放 libVLC 实例和媒体播放器。 */
@@ -210,18 +186,13 @@ function parseArgs(args) {
     arch: process.arch,
     cacheRoot: resolve(".cache", "libvlc"),
     targetRoot: resolve("out", "libvlc"),
-    offline: false,
-    runtimeOnly: false
+    offline: false
   };
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index];
     if (arg === "--") continue;
     if (arg === "--offline") {
       parsed.offline = true;
-      continue;
-    }
-    if (arg === "--runtime-only") {
-      parsed.runtimeOnly = true;
       continue;
     }
     if (["--arch", "--cache", "--target"].includes(arg)) {

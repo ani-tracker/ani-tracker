@@ -5,3 +5,5 @@
 /app/src/main/assets/capacitor.plugins.json
 /app/src/main/assets/public/
 /app/src/main/res/xml/config.xml
+/.gradle/
+/**/build/
