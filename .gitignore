@@ -52,6 +52,7 @@ bin-release/
 docs/img_*.png
 other.md
 /.tmp-stitch/
+/.local-signing/
 /docs/ui-reference/
 #/docs/assets/
 /commonPrompt/
