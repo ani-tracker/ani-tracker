@@ -342,10 +342,14 @@ final class AniPlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
         let kind = (command["aspectRatio"] as? String) ?? "default"
         let value = command["value"] as? String
         switch kind == "custom" ? value : kind {
-        case "default", "fit": .automatic
-        case "16:9": .widescreen
-        case "4:3": .standard
-        default: nil
+        case "default", "fit":
+            return .automatic
+        case "16:9":
+            return .widescreen
+        case "4:3":
+            return .standard
+        default:
+            return nil
         }
     }
 
