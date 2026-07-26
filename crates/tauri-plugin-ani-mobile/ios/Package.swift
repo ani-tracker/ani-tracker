@@ -24,6 +24,11 @@ let package = Package(
                 .byName(name: "Tauri")
             ],
             path: "Sources"
+        ),
+        .testTarget(
+            name: "tauri-plugin-ani-mobile-tests",
+            dependencies: ["tauri-plugin-ani-mobile"],
+            path: "Tests"
         )
     ]
 )

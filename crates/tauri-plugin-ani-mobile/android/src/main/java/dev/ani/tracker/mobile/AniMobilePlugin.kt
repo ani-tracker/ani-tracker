@@ -21,10 +21,12 @@ import app.tauri.annotation.TauriPlugin
 import app.tauri.plugin.Invoke
 import app.tauri.plugin.JSObject
 import app.tauri.plugin.Plugin
-import java.nio.charset.StandardCharsets
 import java.io.File
 import java.io.FileOutputStream
+import java.net.URI
+import java.nio.charset.StandardCharsets
 import java.security.KeyStore
+import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
 import javax.crypto.Cipher
@@ -53,6 +55,28 @@ class ImportDocumentArgs {
 class ExportDocumentArgs {
     lateinit var uri: String
     lateinit var sourcePath: String
+}
+
+@InvokeArg
+class ExternalUrlArgs {
+    lateinit var url: String
+}
+
+/** 规范移动系统可打开的外链，拒绝任意协议、无主机地址和内嵌凭据。 */
+internal object ExternalUrlPolicy {
+    /** 返回可交给 Android Intent 的 ASCII URL，输入不安全时返回 null。 */
+    fun normalize(value: String): String? {
+        val uri = try {
+            URI(value)
+        } catch (_: Exception) {
+            return null
+        }
+        val scheme = uri.scheme?.lowercase(Locale.ROOT)
+        if (scheme !in ALLOWED_SCHEMES || uri.host.isNullOrBlank() || uri.userInfo != null) return null
+        return uri.normalize().toASCIIString()
+    }
+
+    private val ALLOWED_SCHEMES = setOf("http", "https")
 }
 
 /** 提供 Android 生命周期、运行约束和 Keystore 安全存储。 */
@@ -119,6 +143,35 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun consumeBackgroundRefresh(invoke: Invoke) {
         invoke.resolve(JSObject().put("due", false))
+    }
+
+    /** 使用系统浏览器打开经过双重白名单校验的 HTTP/HTTPS 外链。 */
+    @Command
+    fun openExternal(invoke: Invoke) {
+        val args = try {
+            invoke.parseArgs(ExternalUrlArgs::class.java)
+        } catch (error: Exception) {
+            invoke.reject("外链参数无效", "invalid_external_url", error)
+            return
+        }
+        val normalized = ExternalUrlPolicy.normalize(args.url)
+        if (normalized == null) {
+            invoke.reject("仅允许打开不含凭据的 HTTP 或 HTTPS 外链", "invalid_external_url")
+            return
+        }
+        activity.runOnUiThread {
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, android.net.Uri.parse(normalized)).apply {
+                    addCategory(Intent.CATEGORY_BROWSABLE)
+                }
+                activity.startActivity(intent)
+                Log.i(LOG_TAG, "external URL opened host=${URI(normalized).host}")
+                invoke.resolve()
+            } catch (error: Exception) {
+                Log.e(LOG_TAG, "failed to open external URL", error)
+                invoke.reject("Android 系统无法打开外链", "open_external_failed", error)
+            }
+        }
     }
 
     /** 使用 Android Keystore 加密并保存一个敏感值。 */

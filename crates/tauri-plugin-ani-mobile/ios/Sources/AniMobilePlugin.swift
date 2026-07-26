@@ -44,6 +44,26 @@ private struct ExportDocumentArgs: Decodable {
     let sourcePath: String
 }
 
+private struct ExternalUrlArgs: Decodable {
+    let url: String
+}
+
+/** 规范移动系统可打开的外链，拒绝任意协议、无主机地址和内嵌凭据。 */
+enum ExternalUrlPolicy {
+    /** 返回可交给 UIApplication 的 URL，输入不安全时返回 nil。 */
+    static func normalize(_ value: String) -> URL? {
+        guard let components = URLComponents(string: value),
+              let scheme = components.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              components.host?.isEmpty == false,
+              components.user == nil,
+              components.password == nil else {
+            return nil
+        }
+        return components.url
+    }
+}
+
 /** 幂等完成 iOS BGTask，避免正常完成和超时回调重复提交。 */
 private final class BackgroundTaskCompletion: @unchecked Sendable {
     private let lock = NSLock()
@@ -126,6 +146,25 @@ final class AniMobilePlugin: Plugin {
         let due = defaults.object(forKey: backgroundRefreshDueKey) != nil
         if due { defaults.removeObject(forKey: backgroundRefreshDueKey) }
         invoke.resolve(["due": due])
+    }
+
+    /** 使用系统浏览器打开经过双重白名单校验的 HTTP/HTTPS 外链。 */
+    @objc public func openExternal(_ invoke: Invoke) throws {
+        let args = try invoke.parseArgs(ExternalUrlArgs.self)
+        guard let url = ExternalUrlPolicy.normalize(args.url) else {
+            invoke.reject("仅允许打开不含凭据的 HTTP 或 HTTPS 外链", code: "invalid_external_url")
+            return
+        }
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url, options: [:]) { opened in
+                if opened {
+                    NSLog("AniMobilePlugin external URL opened host=%@", url.host ?? "unknown")
+                    invoke.resolve()
+                } else {
+                    invoke.reject("iOS 系统无法打开外链", code: "open_external_failed")
+                }
+            }
+        }
     }
 
     /** 将 UTF-8 敏感值写入仅本设备可用的 Keychain。 */

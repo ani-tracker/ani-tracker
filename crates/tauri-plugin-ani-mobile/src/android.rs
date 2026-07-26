@@ -65,6 +65,12 @@ struct BackgroundRefreshResponse {
     due: bool,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExternalUrlRequest<'a> {
+    url: &'a str,
+}
+
 impl<R: Runtime> AniMobile<R> {
     /// 读取网络、存储、方向、通知权限和生命周期状态。
     pub fn status(&self) -> crate::Result<MobilePlatformStatus> {
@@ -83,6 +89,13 @@ impl<R: Runtime> AniMobile<R> {
         self.0
             .run_mobile_plugin::<BackgroundRefreshResponse>("consumeBackgroundRefresh", ())
             .map(|response| response.due)
+            .map_err(Into::into)
+    }
+
+    /// 使用 Android 系统浏览器打开经过 Rust 白名单校验的外链。
+    pub fn open_external(&self, url: &str) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin::<()>("openExternal", ExternalUrlRequest { url })
             .map_err(Into::into)
     }
 

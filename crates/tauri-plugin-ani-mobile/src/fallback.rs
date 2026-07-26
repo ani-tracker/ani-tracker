@@ -13,7 +13,7 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
     Ok(AniMobile(app.clone()))
 }
 
-/// 非 Android 平台的兼容句柄；iOS 原生实现将在对应阶段替换。
+/// 桌面平台的兼容句柄；移动原生能力在对应平台模块实现。
 pub struct AniMobile<R: Runtime>(AppHandle<R>);
 
 impl<R: Runtime> AniMobile<R> {
@@ -38,6 +38,11 @@ impl<R: Runtime> AniMobile<R> {
     /// 非移动平台没有原生后台补跑标记。
     pub fn consume_background_refresh(&self) -> crate::Result<bool> {
         Ok(false)
+    }
+
+    /// 桌面外链由宿主系统集成处理，不经过移动插件。
+    pub fn open_external(&self, _url: &str) -> crate::Result<()> {
+        Err(crate::Error::UnsupportedPlatform)
     }
 
     /// 拒绝在尚未实现的平台写入移动安全存储。

@@ -5,6 +5,8 @@ use ani_domain::AppSettings;
 use ani_repository::SettingsRepository;
 use serde_json::Value;
 use tauri::{AppHandle, State};
+#[cfg(mobile)]
+use tauri_plugin_ani_mobile::AniMobileExt;
 use url::Url;
 
 use crate::media::AppMediaState;
@@ -42,10 +44,16 @@ fn validate_external_url(url: &str) -> Result<Url, AppCommandError> {
         code: "invalid_external_url".to_string(),
         message: format!("外部链接格式无效: {error}"),
     })?;
-    if !matches!(parsed.scheme(), "http" | "https") {
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
         return Err(AppCommandError {
             code: "unsupported_external_url_scheme".to_string(),
-            message: "仅允许打开 HTTP 或 HTTPS 外部链接".to_string(),
+            message: "仅允许打开包含有效主机的 HTTP 或 HTTPS 外部链接".to_string(),
+        });
+    }
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(AppCommandError {
+            code: "external_url_credentials_forbidden".to_string(),
+            message: "外部链接不能包含用户名或密码".to_string(),
         });
     }
     Ok(parsed)
@@ -53,7 +61,7 @@ fn validate_external_url(url: &str) -> Result<Url, AppCommandError> {
 
 /// 使用系统默认程序打开经过协议白名单校验的外部链接。
 #[tauri::command]
-pub(crate) fn open_external(url: String) -> Result<(), AppCommandError> {
+pub(crate) fn open_external(url: String, app: AppHandle) -> Result<(), AppCommandError> {
     let parsed = validate_external_url(&url)?;
 
     log::info!(
@@ -64,6 +72,7 @@ pub(crate) fn open_external(url: String) -> Result<(), AppCommandError> {
 
     #[cfg(desktop)]
     {
+        let _ = app;
         open::that_detached(parsed.as_str()).map_err(|error| AppCommandError {
             code: "open_external_failed".to_string(),
             message: format!("系统无法打开外部链接: {error}"),
@@ -71,12 +80,14 @@ pub(crate) fn open_external(url: String) -> Result<(), AppCommandError> {
         Ok(())
     }
 
-    #[cfg(not(desktop))]
+    #[cfg(mobile)]
     {
-        Err(AppCommandError {
-            code: "open_external_unavailable".to_string(),
-            message: "当前移动宿主尚未接入系统外链能力".to_string(),
-        })
+        app.ani_mobile()
+            .open_external(parsed.as_str())
+            .map_err(|error| AppCommandError {
+                code: "open_external_failed".to_string(),
+                message: format!("系统无法打开外部链接: {error}"),
+            })
     }
 }
 
@@ -179,6 +190,8 @@ mod tests {
     #[test]
     fn validates_external_url_scheme() {
         assert!(validate_external_url("https://example.com/anime/1").is_ok());
+        assert!(validate_external_url("https://用户:密码@example.com/anime/1").is_err());
+        assert!(validate_external_url("https://").is_err());
         assert!(validate_external_url("file:///C:/sensitive.txt").is_err());
         assert!(validate_external_url("javascript:alert(1)").is_err());
     }
