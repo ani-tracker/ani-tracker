@@ -85,7 +85,9 @@ if(ANI_BUILD_APPLE_FRAMEWORK)
   if(NOT APPLE OR NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
     message(FATAL_ERROR "ANI_BUILD_APPLE_FRAMEWORK requires an iOS CMake toolchain")
   endif()
-  add_library(AniTorrentCore SHARED src/apple_c_api.cpp)
+  set(ANI_TORRENT_CORE_MODULE_MAP "${CMAKE_CURRENT_SOURCE_DIR}/apple/AniTorrentCore.modulemap")
+  set_source_files_properties("${ANI_TORRENT_CORE_MODULE_MAP}" PROPERTIES HEADER_FILE_ONLY TRUE)
+  add_library(AniTorrentCore SHARED src/apple_c_api.cpp "${ANI_TORRENT_CORE_MODULE_MAP}")
   target_link_libraries(AniTorrentCore PRIVATE ani-torrent-core-runtime)
   target_include_directories(AniTorrentCore PUBLIC include)
   target_compile_options(AniTorrentCore PRIVATE -Wall -Wextra -Wpedantic -fvisibility=hidden)
@@ -95,8 +97,11 @@ if(ANI_BUILD_APPLE_FRAMEWORK)
       FRAMEWORK TRUE
       MACOSX_FRAMEWORK_IDENTIFIER "com.ani.tracker.torrent.core"
       PUBLIC_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/include/AniTorrentCore.h;${CMAKE_CURRENT_SOURCE_DIR}/include/ani/torrent_core_c.h"
+      XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES "YES"
       XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
       XCODE_ATTRIBUTE_DEFINES_MODULE "YES"
+      XCODE_ATTRIBUTE_MODULEMAP_FILE "${ANI_TORRENT_CORE_MODULE_MAP}"
+      XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.ani.tracker.torrent.core"
       OUTPUT_NAME "AniTorrentCore"
   )
 endif()

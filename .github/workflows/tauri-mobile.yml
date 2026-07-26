@@ -130,11 +130,38 @@ jobs:
         run: bash scripts/prepare-android-torrent-dependencies.sh
 
       - name: Build Tauri Android debug APK
+        id: android_build
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
           ANI_ANDROID_NATIVE_PREFIX: ${{ github.workspace }}/.cache/android-torrent/vcpkg_installed/arm64-android
           RUST_BACKTRACE: "1"
         run: pnpm exec tauri android build --target aarch64 --debug --apk --ci --verbose
+
+      - name: Diagnose Android Kotlin compiler failure
+        if: ${{ failure() && steps.android_build.outcome == 'failure' }}
+        working-directory: src-tauri/gen/android
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          ANI_ANDROID_NATIVE_PREFIX: ${{ github.workspace }}/.cache/android-torrent/vcpkg_installed/arm64-android
+        run: |
+          set +e
+          ./gradlew :tauri-plugin-ani-player:compileDebugKotlin \
+            --stacktrace \
+            --info \
+            --no-daemon \
+            --max-workers=1 \
+            --console=plain \
+            -Pkotlin.compiler.execution.strategy=in-process
+          compile_status=$?
+          set -e
+          for directory in .gradle/kotlin "${HOME}/.gradle/kotlin"; do
+            if [[ -d "${directory}" ]]; then
+              find "${directory}" -type f \
+                \( -path '*/errors/*' -o -name 'kotlin-daemon*.log' \) \
+                -print -exec tail -n 400 {} \;
+            fi
+          done
+          exit "${compile_status}"
 
       - name: Run Android native policy tests
         working-directory: src-tauri/gen/android

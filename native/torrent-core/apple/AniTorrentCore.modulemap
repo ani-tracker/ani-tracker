@@ -1,0 +1,6 @@
+framework module AniTorrentCore {
+  umbrella header "AniTorrentCore.h"
+
+  export *
+  module * { export * }
+}
