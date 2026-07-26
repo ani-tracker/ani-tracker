@@ -47,6 +47,12 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 - Windows/Android 自签、macOS 临时签名、iOS 未签名可重签包的发布工作流，以及 SHA-256、JSON 产物清单和独立 actionlint 门禁。
 - 本地主 Renderer 与远程 PWA 已拆分入口和 API Adapter；移动构建的模块图会拒绝远程页面、ArtPlayer、HLS.js 与远程转码客户端。
 - 全平台 Logo 已替换，Tauri 与生成的 Android/iOS 工程使用统一品牌资源。
+- 已增加旧宿主防回流门禁，持续拒绝 Electron/Capacitor 依赖、脚本、活跃路径和 Renderer bridge 重新进入正式构建链。
+
+### 历史数据兼容
+
+- 数据版本 23 会把历史空值或超过 200 字符的资源标识迁移为稳定短标识，并同步修复下载任务、单集偏好和资源记录关联。
+- Bug 清单第 13–15 项均由历史 `downloadTask.releaseId` 超限触发，已归并到同一迁移回归；第 12 项与既有播放器路径、虚拟列表回顶修复重复，不新增重复实现。
 
 ## 验证结果
 
@@ -58,6 +64,8 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 | `pnpm.cmd run test:parsers` | 40/40 通过；退役 Node 主进程测试不再进入活跃入口 |
 | `pnpm.cmd run test:theme` | 浅色/深色各 38 个令牌通过 |
 | `pnpm.cmd run test:mobile-package` | 移动原生能力、许可证与 iOS 未签名策略 11/11 通过 |
+| `pnpm.cmd run test:retired-hosts` | 旧宿主门禁单元测试 5/5 通过 |
+| `pnpm.cmd run verify:tauri:retired-hosts` | Electron/Capacitor 依赖、脚本、路径与活跃源码边界通过 |
 | Tauri 主 Renderer | 生产构建通过 |
 | 桌面远程 Renderer | 生产构建通过 |
 | Renderer 模块边界 | 本地 313 个模块、远程 245 个模块通过 |
@@ -81,6 +89,8 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 pnpm.cmd run typecheck
 pnpm.cmd run test:parsers
 pnpm.cmd run test:theme
+pnpm.cmd run test:retired-hosts
+pnpm.cmd run verify:tauri:retired-hosts
 pnpm.cmd run build:tauri:desktop-renderers
 pnpm.cmd run test:rust
 pnpm.cmd run lint:rust
