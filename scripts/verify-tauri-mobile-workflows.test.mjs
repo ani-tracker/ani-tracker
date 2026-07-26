@@ -17,6 +17,7 @@ const [
   playerPackage,
   torrentPackage,
   playerError,
+  playerController,
   windowCommands
 ] = await Promise.all([
   readFile(".github/workflows/tauri-mobile.yml", "utf8"),
@@ -33,6 +34,7 @@ const [
   readFile("crates/tauri-plugin-ani-player/ios/Package.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-torrent/ios/Package.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-player/src/error.rs", "utf8"),
+  readFile("crates/tauri-plugin-ani-player/ios/Sources/MobileVLCPlayerController.swift", "utf8"),
   readFile("src-tauri/src/commands/window.rs", "utf8")
 ]);
 
@@ -109,4 +111,10 @@ test("移动窗口命令不会编译桌面最小化与最大化 API", () => {
 
 test("移动播放器注册错误支持 Tauri PluginInvokeError", () => {
   assert.match(playerError, /PluginInvoke\(#\[from\] tauri::plugin::mobile::PluginInvokeError\)/);
+});
+
+test("iOS 播放器安全处理 MobileVLCKit 可选音频对象", () => {
+  assert.match(playerController, /guard let audio = mediaPlayer\.audio else/);
+  assert.match(playerController, /applyAudioSnapshot\(reason: "playing"\)/);
+  assert.doesNotMatch(playerController, /mediaPlayer\.audio\.(?:volume|isMuted)/);
 });

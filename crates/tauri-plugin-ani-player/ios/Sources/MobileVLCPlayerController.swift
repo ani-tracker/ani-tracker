@@ -35,7 +35,7 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
         ])
         super.init()
         mediaPlayer.delegate = self
-        mediaPlayer.audio.volume = snapshot.volume
+        applyAudioSnapshot(reason: "initialize")
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(handleAudioInterruption(_:)),
@@ -146,10 +146,9 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
     /** 设置 0 到 100 的音量，并在调节时取消静音。 */
     func setVolume(_ volume: Int32) {
         let normalized = min(max(volume, 0), 100)
-        mediaPlayer.audio.volume = normalized
-        mediaPlayer.audio.isMuted = false
         snapshot.volume = normalized
         snapshot.muted = false
+        applyAudioSnapshot(reason: "volume")
     }
 
     /** 切换 MobileVLCKit 音频静音状态。 */
@@ -159,8 +158,8 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
 
     /** 显式设置静音状态，供 Tauri 统一命令调用。 */
     func setMuted(_ muted: Bool) {
-        mediaPlayer.audio.isMuted = muted
         snapshot.muted = muted
+        applyAudioSnapshot(reason: "muted")
     }
 
     /** 设置最接近的受支持播放倍速。 */
@@ -353,6 +352,7 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
             snapshot.status = .playing
             snapshot.errorMessage = nil
             applyPendingPlaybackValues()
+            applyAudioSnapshot(reason: "playing")
             refreshTracks()
         case 6:
             snapshot.status = .paused
@@ -474,6 +474,16 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
                 selected: trackID == mediaPlayer.currentVideoSubTitleIndex
             )
         }
+    }
+
+    /** 在 MobileVLCKit 音频对象就绪后应用快照中的音量与静音状态。 */
+    private func applyAudioSnapshot(reason: String) {
+        guard let audio = mediaPlayer.audio else {
+            logger.debug("iOS MobileVLCKit 音频对象尚未就绪: reason=\(reason, privacy: .public)")
+            return
+        }
+        audio.volume = snapshot.volume
+        audio.isMuted = snapshot.muted
     }
 
     /** 配置适合视频播放的系统音频会话。 */
