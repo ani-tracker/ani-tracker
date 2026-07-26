@@ -540,8 +540,10 @@ impl TauriRemoteMediaRepository {
     }
 }
 
-async fn load_or_create_master_key(directory: &Path) -> Result<[u8; 32], String> {
-    let directory = directory.to_owned();
+/// 从平台安全存储读取或创建远程访问主密钥。
+async fn load_or_create_master_key(_directory: &Path) -> Result<[u8; 32], String> {
+    #[cfg(target_os = "linux")]
+    let directory = _directory.to_owned();
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(target_os = "linux")]
         if is_windows_subsystem_for_linux() {
