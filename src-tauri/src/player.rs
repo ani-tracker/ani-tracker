@@ -165,7 +165,7 @@ impl AppPlayerState {
             .map_err(|error| format!("定位 libVLC 视频窗口失败：{error}"))?;
 
         let route = player_route(&input);
-        let controls = match WebviewWindowBuilder::new(
+        let controls_builder = WebviewWindowBuilder::new(
             &self.app,
             PLAYER_CONTROL_WINDOW_LABEL,
             WebviewUrl::App(route.into()),
@@ -176,10 +176,14 @@ impl AppPlayerState {
         .decorations(false)
         .transparent(true)
         .shadow(false)
-        .always_on_top(true)
-        .visible(false)
-        .build()
-        {
+        .visible(false);
+        #[cfg(target_os = "windows")]
+        let controls_builder = controls_builder.owner_raw(
+            video
+                .hwnd()
+                .map_err(|error| format!("读取播放器所有者 HWND 失败：{error}"))?,
+        );
+        let controls = match controls_builder.build() {
             Ok(window) => window,
             Err(error) => {
                 let _ = video.close();
