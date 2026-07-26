@@ -34,7 +34,10 @@ struct ExternalPlayerProfile {
 
 #[derive(Debug)]
 enum PlaybackMonitorKind {
-    Mpv { endpoint: String },
+    Mpv {
+        endpoint: String,
+    },
+    #[cfg(target_os = "windows")]
     PotPlayer,
 }
 
@@ -279,11 +282,14 @@ fn executable_candidates(configured: &str) -> Vec<PathBuf> {
     if configured_path.is_absolute() {
         return vec![configured_path];
     }
-    let mut names = vec![configured_path.clone()];
     #[cfg(target_os = "windows")]
-    if configured_path.extension().is_none() {
-        names.push(PathBuf::from(format!("{configured}.exe")));
-    }
+    let names = if configured_path.extension().is_none() {
+        vec![configured_path, PathBuf::from(format!("{configured}.exe"))]
+    } else {
+        vec![configured_path]
+    };
+    #[cfg(not(target_os = "windows"))]
+    let names = [configured_path];
     std::env::var_os("PATH")
         .into_iter()
         .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
@@ -412,6 +418,7 @@ async fn monitor_playback(
         PlaybackMonitorKind::Mpv { endpoint } => {
             monitor_mpv(endpoint, media_state, file_path).await
         }
+        #[cfg(target_os = "windows")]
         PlaybackMonitorKind::PotPlayer => monitor_potplayer(media_state, file_path).await,
     }
 }
@@ -449,58 +456,51 @@ async fn monitor_mpv(
 }
 
 /// 在 Windows 上通过 GSMTC 轮询 PotPlayer 播放百分比。
+#[cfg(target_os = "windows")]
 async fn monitor_potplayer(media_state: AppMediaState, file_path: PathBuf) -> Result<(), String> {
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (media_state, file_path);
-        return Err("PotPlayer GSMTC 监控仅支持 Windows".to_owned());
-    }
-    #[cfg(target_os = "windows")]
-    {
-        use std::os::windows::process::CommandExt;
-        use tokio::process::Command;
+    use std::os::windows::process::CommandExt;
+    use tokio::process::Command;
 
-        let mut command = Command::new("powershell.exe");
-        command
-            .args([
-                "-NoLogo",
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                GSMTC_MONITOR_SCRIPT,
-            ])
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::null())
-            .kill_on_drop(true);
-        command.as_std_mut().creation_flags(0x0800_0000);
-        let mut child = command
-            .spawn()
-            .map_err(|error| format!("启动 PotPlayer GSMTC 监控失败：{error}"))?;
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| "PotPlayer GSMTC 监控没有标准输出".to_owned())?;
-        let mut lines = BufReader::new(stdout).lines();
-        while let Some(line) = lines
-            .next_line()
-            .await
-            .map_err(|error| format!("读取 PotPlayer GSMTC 进度失败：{error}"))?
-        {
-            let Some(percent) = parse_progress_line(&line, false) else {
-                continue;
-            };
-            match media_state.report_external_playback_progress(&file_path, percent) {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(error) => log::warn!("Tauri PotPlayer 进度回写失败 error={error}"),
-            }
+    let mut command = Command::new("powershell.exe");
+    command
+        .args([
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            GSMTC_MONITOR_SCRIPT,
+        ])
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    command.as_std_mut().creation_flags(0x0800_0000);
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("启动 PotPlayer GSMTC 监控失败：{error}"))?;
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "PotPlayer GSMTC 监控没有标准输出".to_owned())?;
+    let mut lines = BufReader::new(stdout).lines();
+    while let Some(line) = lines
+        .next_line()
+        .await
+        .map_err(|error| format!("读取 PotPlayer GSMTC 进度失败：{error}"))?
+    {
+        let Some(percent) = parse_progress_line(&line, false) else {
+            continue;
+        };
+        match media_state.report_external_playback_progress(&file_path, percent) {
+            Ok(true) => break,
+            Ok(false) => {}
+            Err(error) => log::warn!("Tauri PotPlayer 进度回写失败 error={error}"),
         }
-        let _ = child.kill().await;
-        Ok(())
     }
+    let _ = child.kill().await;
+    Ok(())
 }
 
 /// 有限重试连接播放器创建的 Unix Socket 或 Windows Named Pipe。

@@ -11,11 +11,10 @@ pub(crate) fn simplify(path: impl AsRef<Path>) -> PathBuf {
     dunce::simplified(path.as_ref()).to_path_buf()
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "windows"))]
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn removes_windows_verbatim_prefix_for_external_consumers() {
         assert_eq!(

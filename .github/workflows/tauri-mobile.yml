@@ -131,7 +131,8 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
           ANI_ANDROID_NATIVE_PREFIX: ${{ github.workspace }}/.cache/android-torrent/vcpkg_installed/arm64-android
-        run: pnpm exec tauri android build --target aarch64 --debug --apk --ci
+          RUST_BACKTRACE: "1"
+        run: pnpm exec tauri android build --target aarch64 --debug --apk --ci --verbose
 
       - name: Run Android native policy tests
         working-directory: src-tauri/gen/android
@@ -194,12 +195,13 @@ jobs:
           pnpm run test:mobile-package
           cargo fmt --all -- --check
 
-      - name: Prepare iOS torrent-core and MobileVLCKit
+      - name: Prepare iOS torrent-core
         env:
           VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
-        run: |
-          pnpm run prepare:torrent-core:ios
-          pnpm run prepare:tauri:ios-libvlc
+        run: pnpm run prepare:torrent-core:ios
+
+      - name: Prepare iOS MobileVLCKit
+        run: pnpm run prepare:tauri:ios-libvlc
 
       - name: Generate Tauri iOS project
         run: pnpm run init:tauri:ios
