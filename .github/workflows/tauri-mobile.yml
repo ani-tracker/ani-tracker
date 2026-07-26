@@ -1,0 +1,222 @@
+name: Tauri 2 Mobile Gate
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - master
+      - master_android
+      - Tauri_迁移
+    paths:
+      - ".github/workflows/tauri-mobile.yml"
+      - ".cargo/**"
+      - "crates/**"
+      - "native/torrent-core/**"
+      - "native/torrent-dependencies/**"
+      - "src-tauri/**"
+      - "src/renderer/**"
+      - "src/shared/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "rust-toolchain.toml"
+      - "scripts/package-unsigned-ios-ipa.sh"
+      - "scripts/prepare-android-torrent-dependencies.sh"
+      - "scripts/prepare-ios-libvlc.sh"
+      - "scripts/prepare-ios-torrent-core.sh"
+      - "scripts/verify-renderer-boundaries.mjs"
+      - "scripts/verify-tauri-mobile-package.mjs"
+      - "vite.renderer-boundaries.ts"
+      - "vite.tauri.config.ts"
+  pull_request:
+    paths:
+      - ".github/workflows/tauri-mobile.yml"
+      - ".cargo/**"
+      - "crates/**"
+      - "native/torrent-core/**"
+      - "native/torrent-dependencies/**"
+      - "src-tauri/**"
+      - "src/renderer/**"
+      - "src/shared/**"
+      - "Cargo.lock"
+      - "Cargo.toml"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "rust-toolchain.toml"
+      - "scripts/package-unsigned-ios-ipa.sh"
+      - "scripts/prepare-android-torrent-dependencies.sh"
+      - "scripts/prepare-ios-libvlc.sh"
+      - "scripts/prepare-ios-torrent-core.sh"
+      - "scripts/verify-renderer-boundaries.mjs"
+      - "scripts/verify-tauri-mobile-package.mjs"
+      - "vite.renderer-boundaries.ts"
+      - "vite.tauri.config.ts"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tauri-mobile-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  android:
+    name: android-arm64-debug
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> out/cargo-target
+          key: mobile-android-arm64
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and NDK
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.31.1"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: "2025.06.13"
+          path: .vcpkg
+
+      - name: Bootstrap vcpkg
+        run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - uses: actions/cache@v4
+        with:
+          path: .cache/android-torrent
+          key: android-torrent-${{ runner.os }}-${{ hashFiles('native/torrent-core/**', 'native/torrent-dependencies/**', 'scripts/prepare-android-torrent-dependencies.sh') }}
+          restore-keys: |
+            android-torrent-${{ runner.os }}-
+
+      - name: Validate shared mobile contracts
+        run: |
+          pnpm run typecheck
+          pnpm run test:mobile-package
+          cargo fmt --all -- --check
+
+      - name: Prepare Android torrent-core dependencies
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: bash scripts/prepare-android-torrent-dependencies.sh
+
+      - name: Build Tauri Android debug APK
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          ANI_ANDROID_NATIVE_PREFIX: ${{ github.workspace }}/.cache/android-torrent/vcpkg_installed/arm64-android
+        run: pnpm exec tauri android build --target aarch64 --debug --apk --ci
+
+      - name: Run Android native policy tests
+        working-directory: src-tauri/gen/android
+        run: ./gradlew :tauri-plugin-ani-mobile:testDebugUnitTest --no-daemon
+
+      - name: Verify Android package boundaries
+        run: |
+          pnpm run verify:tauri:renderer-boundaries -- --renderer local
+          pnpm run verify:tauri:android-package
+
+  ios:
+    name: ios-arm64-unsigned
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-apple-ios
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> out/cargo-target
+          key: mobile-ios-arm64
+
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: "2025.06.13"
+          path: .vcpkg
+
+      - name: Bootstrap vcpkg
+        run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .cache/ios-torrent
+            .cache/ios-libvlc
+          key: ios-native-${{ runner.os }}-${{ hashFiles('native/torrent-core/**', 'native/torrent-dependencies/**', 'scripts/prepare-ios-torrent-core.sh', 'scripts/prepare-ios-libvlc.sh') }}
+          restore-keys: |
+            ios-native-${{ runner.os }}-
+
+      - name: Validate shared mobile contracts
+        run: |
+          pnpm run typecheck
+          pnpm run test:mobile-package
+          cargo fmt --all -- --check
+
+      - name: Prepare iOS torrent-core and MobileVLCKit
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: |
+          pnpm run prepare:torrent-core:ios
+          pnpm run prepare:tauri:ios-libvlc
+
+      - name: Generate Tauri iOS project
+        run: pnpm run init:tauri:ios
+
+      - name: Build unsigned Tauri iOS package
+        run: |
+          pnpm exec tauri ios build --target aarch64 --ci --no-sign
+          bash scripts/package-unsigned-ios-ipa.sh
+
+      - name: Compile iOS native policy tests
+        working-directory: crates/tauri-plugin-ani-mobile/ios
+        run: >-
+          xcodebuild -scheme tauri-plugin-ani-mobile
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO build-for-testing
+
+      - name: Verify iOS package boundaries
+        run: |
+          pnpm run verify:tauri:renderer-boundaries -- --renderer local
+          pnpm run verify:tauri:ios-package -- --require-unsigned

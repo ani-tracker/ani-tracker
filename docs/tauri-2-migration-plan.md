@@ -444,6 +444,7 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - 根依赖与锁文件已移除 Electron、Capacitor、better-sqlite3、electron-vlc-player、node-forge 和旧 XML 解析依赖；共享契约测试改由 Node 直接执行。
 - README、架构、启动、发布、进度、脚本和归档清单已按 Tauri 正式架构更新。
 - 已新增独立 actionlint 门禁；Windows 之外的桌面平台和 Android/iOS 原生功能由项目负责人依据 CI 产物手动验收。
+- 已新增 Android/iOS 持续构建门禁；相关推送和 Pull Request 会真实编译 ARM64 移动产物、原生策略测试目标并检查 Renderer 与包内容边界，正式签名和真机矩阵仍由项目负责人验收。
 - 已新增旧宿主防回流门禁并接入 Renderer 边界验证，持续拒绝 Electron/Capacitor 依赖、脚本、活跃路径和 bridge 调用重新进入正式构建链。
 - 数据版本 23 已迁移历史空值和超长资源标识，并同步保持下载任务、单集偏好与资源记录关联；Bug 清单第 13–15 项归并为同一回归项，第 12 项与既有修复重复。
 

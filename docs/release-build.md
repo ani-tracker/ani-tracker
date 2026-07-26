@@ -7,13 +7,14 @@
 | 工作流 | 目标 | 正式产物 |
 | --- | --- | --- |
 | `actions-lint.yml` | 全部 GitHub Actions 配置 | actionlint 静态门禁 |
+| `tauri-mobile.yml` | Android/iOS 持续集成 | ARM64 Debug APK、未签名 IPA 与原生策略测试，不发布 |
 | `tauri-release-desktop.yml` | Windows x64 | 自签 NSIS `.exe`、MSI `.msi` |
 | `tauri-release-desktop.yml` | macOS x64/arm64 | 临时签名 `.dmg` |
 | `tauri-release-desktop.yml` | Linux x64 | `.deb`、`.AppImage` |
 | `tauri-release-android.yml` | Android arm64 | 自签 `.apk` |
 | `tauri-release-ios.yml` | iOS arm64 | 未签名 `.ipa`，由用户重签 |
 
-发布工作流支持 `workflow_dispatch` 和 `v*` 标签。版本必须符合语义版本，发布脚本会同步 `package.json`、Tauri 配置与 Cargo 包版本，并为每组产物生成 SHA-256 和版本化 `manifest.json`。任何 `.github/workflows` 修改都会触发固定版本及摘要的 actionlint 门禁。macOS 同时产出 Intel/Apple Silicon 的临时签名 DMG，iOS 则固定产出供用户自行重签的 ARM64 IPA。
+移动持续门禁在相关源码的分支推送和 Pull Request 上真实编译 Android ARM64 Debug APK 与 iOS ARM64 未签名 IPA，执行 Kotlin/Swift 策略测试编译、Renderer 隔离和包内容检查，但不发布产物。发布工作流支持 `workflow_dispatch` 和 `v*` 标签。版本必须符合语义版本，发布脚本会同步 `package.json`、Tauri 配置与 Cargo 包版本，并为每组产物生成 SHA-256 和版本化 `manifest.json`。任何 `.github/workflows` 修改都会触发固定版本及摘要的 actionlint 门禁。macOS 同时产出 Intel/Apple Silicon 的临时签名 DMG，iOS 则固定产出供用户自行重签的 ARM64 IPA。
 
 ## 签名凭据
 
