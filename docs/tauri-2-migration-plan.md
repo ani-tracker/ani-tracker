@@ -2,7 +2,7 @@
 
 最近更新：2026-07-26
 
-状态：P0-P8 代码实施已完成；跨平台签名安装包和真机门禁按计划后续统一验证
+状态：P0-P8 代码实施已完成；Windows 之外的桌面平台与移动端由项目负责人手动验收
 
 ## 1. 迁移目标
 
@@ -442,6 +442,7 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - 活跃 Renderer 已移除 Electron/Capacitor 探测与回退；本地能力只接受 Tauri bridge，移动端追番操作、自动扫描、播放和主题不再被旧 Electron 判断错误隐藏。
 - 根依赖与锁文件已移除 Electron、Capacitor、better-sqlite3、electron-vlc-player、node-forge 和旧 XML 解析依赖；共享契约测试改由 Node 直接执行。
 - README、架构、启动、发布、进度、脚本和归档清单已按 Tauri 正式架构更新。
+- 已新增独立 actionlint 门禁；Windows 之外的桌面平台和 Android/iOS 原生功能由项目负责人依据 CI 产物手动验收。
 
 ## 5. 每阶段统一验证
 
@@ -535,4 +536,4 @@ P0 执行记录：
 6. 同意 P0 安装 Rust 工具链并增加 Tauri/Cargo 依赖。
 7. 同意业务存储依赖公共 Repository Ports 与 UnitOfWork，SQLite 为默认本地 Adapter，并为未来 MySQL Adapter 保持可替换边界。
 
-P0-P8 已按上述决策执行并分阶段提交；剩余工作是对应平台的签名安装包和真机发布验收。
+P0-P8 已按上述决策执行并分阶段提交；剩余工作仅为项目负责人执行对应平台的签名安装包和真机发布验收。

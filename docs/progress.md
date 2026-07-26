@@ -44,7 +44,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 - Android 生命周期、前台下载服务、WorkManager、Keystore、通知导航、文件导入导出和低存储保护。
 - iOS 生命周期、BGTask 补跑、Keychain、安全作用域文件、通知导航和备份恢复。
 - 移动设置保留完整业务与主题；隐藏并强制关闭 FFmpeg/FFprobe、转码、远程网关和桌面进程能力。
-- Windows、macOS、Linux、Android、iOS 发布工作流，签名凭据门禁、SHA-256 和 JSON 产物清单。
+- Windows、macOS、Linux、Android、iOS 发布工作流，签名凭据门禁、SHA-256、JSON 产物清单及独立 actionlint 门禁。
 - 全平台 Logo 已替换，Tauri 与生成的 Android/iOS 工程使用统一品牌资源。
 
 ## 验证结果
@@ -70,7 +70,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 - 公网 BT、网络切换、磁盘满、损坏恢复数据和移动后台限制。
 - Linux 原生 Wayland 嵌入；首期正式范围为 X11/XWayland。
 
-上述项目是平台发布验收，不再阻塞宿主迁移代码收口。原生结果必须由对应平台或 CI 产物确认。
+上述项目是平台发布验收，不再阻塞宿主迁移代码收口。Windows 之外的桌面平台与 Android/iOS 原生功能由项目负责人手动验收，CI 产物作为验收输入。
 
 ## 验证入口
 

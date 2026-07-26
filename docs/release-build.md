@@ -6,13 +6,14 @@
 
 | 工作流 | 目标 | 正式产物 |
 | --- | --- | --- |
+| `actions-lint.yml` | 全部 GitHub Actions 配置 | actionlint 静态门禁 |
 | `tauri-release-desktop.yml` | Windows x64 | 签名 NSIS `.exe`、MSI `.msi` |
 | `tauri-release-desktop.yml` | macOS x64/arm64 | 签名、公证 `.dmg` |
 | `tauri-release-desktop.yml` | Linux x64 | `.deb`、`.AppImage` |
 | `tauri-release-android.yml` | Android arm64 | 签名 `.apk`、`.aab` |
 | `tauri-release-ios.yml` | iOS arm64 | 签名归档/IPA 产物 |
 
-工作流支持 `workflow_dispatch` 和 `v*` 标签。版本必须符合语义版本，发布脚本会同步 `package.json`、Tauri 配置与 Cargo 包版本，并为每组产物生成 SHA-256 和版本化 `manifest.json`。
+发布工作流支持 `workflow_dispatch` 和 `v*` 标签。版本必须符合语义版本，发布脚本会同步 `package.json`、Tauri 配置与 Cargo 包版本，并为每组产物生成 SHA-256 和版本化 `manifest.json`。任何 `.github/workflows` 修改都会触发固定版本及摘要的 actionlint 门禁。
 
 ## 签名凭据
 
@@ -91,6 +92,8 @@ pnpm.cmd run package:tauri:ios
 7. 运行 H.264、HEVC 10bit、HDR、ASS、字幕、音轨、倍速、横竖屏、续播和自动下一集矩阵。
 8. 完成低存储、权限拒绝、网络切换、后台恢复和退出资源回收验证。
 9. 复核第三方许可证、源码获取说明、病毒扫描和 Release 文件列表后再公开版本。
+
+Windows 之外的桌面平台以及 Android/iOS 原生功能由项目负责人手动验收；CI 构建和产物校验只提供验收输入，不替代签名安装、真机生命周期与媒体矩阵签收。
 
 ## 回退
 
