@@ -874,13 +874,18 @@ async fn run_command(
 }
 
 fn hidden_command(path: &Path) -> Command {
-    let mut command = Command::new(path);
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
+
+        let mut command = Command::new(path);
         command.as_std_mut().creation_flags(0x0800_0000);
+        command
     }
-    command
+    #[cfg(not(target_os = "windows"))]
+    {
+        Command::new(path)
+    }
 }
 
 async fn validate_media_path(root: &Path, candidate: &Path) -> Option<PathBuf> {
