@@ -27,6 +27,7 @@ on:
       - "scripts/prepare-linux-libvlc-dev.mjs"
       - "scripts/prepare-mac-libvlc-dev.mjs"
       - "scripts/prepare-tauri-gate-resources.mjs"
+      - "scripts/prepare-tauri-gate-resources.test.mjs"
       - "scripts/prepare-windows-libvlc-dev.mjs"
       - "scripts/verify-tauri-mobile-package.mjs"
       - "scripts/verify-tauri-mobile-package.test.mjs"
@@ -53,6 +54,7 @@ on:
       - "scripts/prepare-linux-libvlc-dev.mjs"
       - "scripts/prepare-mac-libvlc-dev.mjs"
       - "scripts/prepare-tauri-gate-resources.mjs"
+      - "scripts/prepare-tauri-gate-resources.test.mjs"
       - "scripts/prepare-windows-libvlc-dev.mjs"
       - "scripts/verify-tauri-mobile-package.mjs"
       - "scripts/verify-tauri-mobile-package.test.mjs"
@@ -153,7 +155,9 @@ jobs:
         run: |
           pnpm run typecheck
           pnpm run test:mobile-package
-          node --test scripts/libvlc-macos-relocation.test.mjs
+          node --test \
+            scripts/libvlc-macos-relocation.test.mjs \
+            scripts/prepare-tauri-gate-resources.test.mjs
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check

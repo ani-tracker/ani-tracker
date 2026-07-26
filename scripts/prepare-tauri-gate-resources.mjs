@@ -2,13 +2,21 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
-const options = parseArgs(process.argv.slice(2));
-const directories = compileOnlyResourceDirectories(options.platform, options.arch);
-for (const relativePath of directories) {
-  const directory = resolve(relativePath);
-  await mkdir(directory, { recursive: true });
-  console.log(`[tauri-gate] 编译期资源目录已准备：${directory}`);
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  await main(process.argv.slice(2));
+}
+
+/** 创建无 bundle 编译门禁需要的平台资源目录。 */
+async function main(args) {
+  const options = parseArgs(args);
+  const directories = compileOnlyResourceDirectories(options.platform, options.arch);
+  for (const relativePath of directories) {
+    const directory = resolve(relativePath);
+    await mkdir(directory, { recursive: true });
+    console.log(`[tauri-gate] 编译期资源目录已准备：${directory}`);
+  }
 }
 
 /** 返回无 bundle Gate 编译仍需存在的平台资源目录。 */
