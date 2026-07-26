@@ -36,6 +36,9 @@ use crate::sources::native_http_config;
 
 static TORRENT_IMPORT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 const MAX_TORRENT_FILE_BYTES: u64 = 32 * 1024 * 1024;
+const MAGNET_PARAMETER_PREFIXES: [&str; 9] = [
+    "dn=", "xl=", "tr=", "ws=", "as=", "xs=", "kt=", "so=", "x.pe=",
+];
 
 #[derive(Default)]
 struct EmbeddedLifecycle {
@@ -1119,6 +1122,117 @@ fn resolve_torrent_core_binary(app: &AppHandle) -> PathBuf {
         .join(binary_name)
 }
 
+/// 返回可下载的资源地址，并兼容实体分隔符曾被吞掉的历史磁链。
+pub(crate) fn release_download_source_url(release: &Release) -> Result<String, String> {
+    if let Some(magnet) = release
+        .magnet_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        if has_valid_magnet_info_hash(magnet) {
+            return Ok(magnet.to_owned());
+        }
+        let info_hash = release
+            .info_hash
+            .as_deref()
+            .and_then(normalize_info_hash)
+            .or_else(|| embedded_magnet_info_hash(magnet))
+            .ok_or_else(|| "添加资源下载失败：磁链中的 info-hash 无效".to_owned())?;
+        let repaired = restore_magnet_parameter_separators(magnet, &info_hash)
+            .filter(|value| has_valid_magnet_info_hash(value))
+            .unwrap_or_else(|| format!("magnet:?xt=urn:btih:{info_hash}"));
+        log::warn!(
+            "Tauri 历史磁链已在下载边界修复 release_id={} info_hash={}",
+            release.id,
+            info_hash
+        );
+        return Ok(repaired);
+    }
+    release
+        .torrent_url
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
+        .ok_or_else(|| "添加资源下载失败：资源没有磁链或 torrent 地址".to_owned())
+}
+
+/// 判断磁链是否包含独立且格式正确的 BT info-hash 参数。
+fn has_valid_magnet_info_hash(value: &str) -> bool {
+    url::Url::parse(value).is_ok_and(|url| {
+        url.scheme().eq_ignore_ascii_case("magnet")
+            && url.query_pairs().any(|(key, value)| {
+                key.eq_ignore_ascii_case("xt")
+                    && value
+                        .to_ascii_lowercase()
+                        .strip_prefix("urn:btih:")
+                        .and_then(normalize_info_hash)
+                        .is_some()
+            })
+    })
+}
+
+/// 规范十六进制或 Base32 BT info-hash。
+fn normalize_info_hash(value: &str) -> Option<String> {
+    let value = value.trim();
+    let valid_hex = value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit());
+    let valid_base32 = value.len() == 32
+        && value.bytes().all(|byte| {
+            byte.to_ascii_uppercase().is_ascii_uppercase() || (b'2'..=b'7').contains(&byte)
+        });
+    (valid_hex || valid_base32).then(|| value.to_ascii_lowercase())
+}
+
+/// 从即使参数已粘连的 magnet xt 中提取十六进制或 Base32 hash。
+fn embedded_magnet_info_hash(value: &str) -> Option<String> {
+    let lowercase = value.to_ascii_lowercase();
+    let marker = "xt=urn:btih:";
+    let start = lowercase.find(marker)? + marker.len();
+    [40, 32].into_iter().find_map(|length| {
+        value
+            .get(start..start + length)
+            .and_then(normalize_info_hash)
+    })
+}
+
+/// 为旧版 XML 解析器吞掉的 magnet 查询参数恢复 `&` 分隔符。
+fn restore_magnet_parameter_separators(value: &str, info_hash: &str) -> Option<String> {
+    let lowercase = value.to_ascii_lowercase();
+    let marker = "xt=urn:btih:";
+    let hash_start = lowercase.find(marker)? + marker.len();
+    let hash_end = hash_start + info_hash.len();
+    let embedded_hash = normalize_info_hash(value.get(hash_start..hash_end)?)?;
+    if embedded_hash != info_hash {
+        return None;
+    }
+    let mut suffix = value.get(hash_end..)?;
+    let mut repaired = value.get(..hash_end)?.to_owned();
+    if suffix.is_empty() {
+        return Some(repaired);
+    }
+
+    while !suffix.is_empty() {
+        let prefix = MAGNET_PARAMETER_PREFIXES
+            .iter()
+            .find(|prefix| suffix.starts_with(**prefix))?;
+        let value_start = prefix.len();
+        let next = MAGNET_PARAMETER_PREFIXES
+            .iter()
+            .filter_map(|candidate| {
+                suffix[value_start..]
+                    .find(candidate)
+                    .map(|offset| value_start + offset)
+            })
+            .min()
+            .unwrap_or(suffix.len());
+        repaired.push('&');
+        repaired.push_str(&suffix[..next]);
+        suffix = &suffix[next..];
+    }
+    Some(repaired)
+}
+
 #[cfg(test)]
 mod tests {
     use ani_domain::EpisodeStatus;
@@ -1175,6 +1289,45 @@ mod tests {
         assert_eq!(config.seeding_limits.time_limit_minutes, 90);
     }
 
+    /// 验证历史 AniBT 磁链恢复 dn、xl 和 tracker 参数分隔符。
+    #[test]
+    fn repairs_legacy_anibt_magnet_before_download() {
+        let release = test_release(
+            "magnet:?xt=urn:btih:5448ae0ed36912eb0dfba53c3e495b9988841e68dn=%5BNix-Raws%5D%20Episode%2001xl=1479404657tr=https%3A%2F%2Ftracker.anibt.net%2Fannounce",
+            Some("5448ae0ed36912eb0dfba53c3e495b9988841e68"),
+        );
+
+        assert_eq!(
+            release_download_source_url(&release).expect("repair historical magnet"),
+            "magnet:?xt=urn:btih:5448ae0ed36912eb0dfba53c3e495b9988841e68&dn=%5BNix-Raws%5D%20Episode%2001&xl=1479404657&tr=https%3A%2F%2Ftracker.anibt.net%2Fannounce"
+        );
+    }
+
+    /// 验证格式正确的磁链不会在下载边界被重新编码。
+    #[test]
+    fn preserves_valid_release_magnet() {
+        let magnet = "magnet:?xt=urn:btih:5448ae0ed36912eb0dfba53c3e495b9988841e68&dn=Episode";
+        let release = test_release(magnet, None);
+        assert_eq!(
+            release_download_source_url(&release).expect("preserve valid magnet"),
+            magnet
+        );
+    }
+
+    /// 验证旧缓存中的 Base32 磁链也能从 xt 参数恢复。
+    #[test]
+    fn repairs_legacy_base32_magnet_without_cached_hash() {
+        let release = test_release(
+            "magnet:?xt=urn:btih:AERUKZ4JVPG66AJDIVTYTK6LWO5FADP5dn=Episode",
+            None,
+        );
+
+        assert_eq!(
+            release_download_source_url(&release).expect("repair Base32 magnet"),
+            "magnet:?xt=urn:btih:AERUKZ4JVPG66AJDIVTYTK6LWO5FADP5&dn=Episode"
+        );
+    }
+
     /// 验证合集视频文件按文件名关联单集，非视频文件不会污染下载状态。
     #[test]
     fn associates_collection_video_files_with_episodes() {
@@ -1225,5 +1378,19 @@ mod tests {
             priority: 1,
             selected: true,
         }
+    }
+
+    fn test_release(magnet_url: &str, info_hash: Option<&str>) -> Release {
+        serde_json::from_value(json!({
+            "id": "anibt:release-1",
+            "title": "[Nix-Raws] Episode 01",
+            "sourceId": "anibt",
+            "sourceName": "AniBT",
+            "magnetUrl": magnet_url,
+            "infoHash": info_hash,
+            "size": 1479404657,
+            "publishedAt": "2026-07-26T00:00:00.000Z"
+        }))
+        .expect("build test release")
     }
 }

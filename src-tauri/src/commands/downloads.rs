@@ -15,7 +15,7 @@ use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_ani_mobile::AniMobileExt;
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
-use crate::downloads::{release_download_context, AppDownloadState};
+use crate::downloads::{release_download_context, release_download_source_url, AppDownloadState};
 use crate::media::AppMediaState;
 
 const DOWNLOAD_SERVICE_STATUS_CHANGED_EVENT: &str = "download-service-status-changed";
@@ -414,17 +414,13 @@ pub(crate) async fn add_release_download(
     let engine = state
         .default_engine(&settings)
         .map_err(|error| map_download_error("添加资源下载", error))?;
-    let source_url = input
-        .release
-        .magnet_url
-        .as_deref()
-        .or(input.release.torrent_url.as_deref())
-        .ok_or_else(|| AppCommandError {
+    let source_url =
+        release_download_source_url(&input.release).map_err(|message| AppCommandError {
             code: "invalid_input".to_owned(),
-            message: "添加资源下载失败：资源没有磁链或 torrent 地址".to_owned(),
+            message,
         })?;
     let prepared = state
-        .prepare_source(source_url, &settings)
+        .prepare_source(&source_url, &settings)
         .await
         .map_err(|error| runtime_error("准备资源下载", error))?;
     let anime_id = input.anime_id.or_else(|| input.release.anime_id.clone());

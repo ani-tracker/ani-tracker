@@ -18,7 +18,7 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use tauri::AppHandle;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
-use crate::downloads::{release_download_context, AppDownloadState};
+use crate::downloads::{release_download_context, release_download_source_url, AppDownloadState};
 use crate::sources::{AppSourceState, SharedReleaseSearchStore};
 
 const MIN_INTERVAL_MINUTES: i64 = 5;
@@ -364,13 +364,11 @@ impl AutomaticDownloadExecutor for TauriAutomaticDownloadExecutor {
             .downloads
             .default_engine(&settings)
             .map_err(|error| error.to_string())?;
-        let source_url = request
-            .release
-            .magnet_url
-            .as_deref()
-            .or(request.release.torrent_url.as_deref())
-            .ok_or_else(|| "自动下载资源没有磁链或 torrent 地址".to_owned())?;
-        let prepared = self.downloads.prepare_source(source_url, &settings).await?;
+        let source_url = release_download_source_url(&request.release)?;
+        let prepared = self
+            .downloads
+            .prepare_source(&source_url, &settings)
+            .await?;
         let correlation_tag = format!(
             "ani:{}:{}:{}",
             request.anime.anime.id, request.episode.id, request.release.id

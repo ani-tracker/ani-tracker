@@ -380,6 +380,17 @@ fn parse_xml(xml: &str) -> Result<XmlNode, SourceError> {
                     node.text.push_str(&text);
                 }
             }
+            Ok(Event::GeneralRef(event)) => {
+                let reference = event
+                    .xml10_content()
+                    .map_err(|error| SourceError::Parse(error.to_string()))?;
+                let escaped = format!("&{reference};");
+                let text = quick_xml::escape::unescape(&escaped)
+                    .map_err(|error| SourceError::Parse(error.to_string()))?;
+                if let Some(node) = stack.last_mut() {
+                    node.text.push_str(&text);
+                }
+            }
             Ok(Event::End(_)) => {
                 let node = stack
                     .pop()
@@ -1232,13 +1243,19 @@ mod tests {
 
         let anibt = source("anibt", "AniBT", "https://anibt.net/");
         let releases = parse_anibt_rss(
-            r#"<rss xmlns:anibt="x"><channel><item><anibt:releaseId>rel-1</anibt:releaseId><anibt:releaseTitle>[Nix-Raws] 测试番 S02E02 [1080p AVC][简繁]</anibt:releaseTitle><anibt:groupName>Nix-Raws</anibt:groupName><anibt:episode>2</anibt:episode><anibt:language>CHS/CHT</anibt:language><torrent><infohash>A307AE8DBE4B93226197A7D560651457AC9A28D4</infohash><magneturi>magnet:?xt=urn:btih:a307ae8dbe4b93226197a7d560651457ac9a28d4&amp;dn=test</magneturi></torrent></item></channel></rss>"#,
+            r#"<rss xmlns:anibt="x"><channel><item><anibt:releaseId>rel-1</anibt:releaseId><anibt:releaseTitle>[Nix-Raws] 测试番 S02E02 [1080p AVC][简繁]</anibt:releaseTitle><anibt:groupName>Nix-Raws</anibt:groupName><anibt:episode>2</anibt:episode><anibt:language>CHS/CHT</anibt:language><torrent><infohash>A307AE8DBE4B93226197A7D560651457AC9A28D4</infohash><magneturi>magnet:?xt=urn:btih:a307ae8dbe4b93226197a7d560651457ac9a28d4&amp;dn=test&amp;xl=1479404657&amp;tr=https%3A%2F%2Ftracker.anibt.net%2Fannounce</magneturi></torrent></item></channel></rss>"#,
             &anibt,
         )
         .expect("parse AniBT");
         assert_eq!(releases[0].id, "anibt:rel-1");
         assert_eq!(releases[0].fansub_name.as_deref(), Some("Nix-Raws"));
         assert_eq!(releases[0].episode_no, Some(2.0));
+        assert_eq!(
+            releases[0].magnet_url.as_deref(),
+            Some(
+                "magnet:?xt=urn:btih:a307ae8dbe4b93226197a7d560651457ac9a28d4&dn=test&xl=1479404657&tr=https%3A%2F%2Ftracker.anibt.net%2Fannounce"
+            )
+        );
     }
 
     /// 验证超长 RSS GUID 会生成稳定且可持久化的资源标识。

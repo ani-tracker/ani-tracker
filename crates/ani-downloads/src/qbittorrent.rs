@@ -924,6 +924,9 @@ mod tests {
                         .to_ascii_lowercase()
                         .contains("cookie: sid=test-session"));
                     assert!(request.contains("tags=ani%3Atest"));
+                    assert!(request.contains(
+                        "urls=magnet%3A%3Fxt%3Durn%3Abtih%3A5448ae0ed36912eb0dfba53c3e495b9988841e68%26dn%3DEpisode"
+                    ));
                     ("Ok.".to_owned(), "")
                 } else if first_line.contains("/api/v2/torrents/info") {
                     assert!(request
@@ -963,7 +966,7 @@ mod tests {
 
         let task = engine
             .add_magnet(
-                "magnet:?xt=urn:btih:abc",
+                "magnet:?xt=urn:btih:5448ae0ed36912eb0dfba53c3e495b9988841e68&dn=Episode",
                 &AddTorrentOptions {
                     save_path: "C:/Downloads".to_owned(),
                     correlation_tag: Some("ani:test".to_owned()),
