@@ -8,18 +8,11 @@
       "../.tauri-remote-pwa/": "remote-pwa/",
       "../LICENSE": "licenses/ani-tracker-LICENSE.txt",
       "../NOTICE": "licenses/ani-tracker-NOTICE.txt",
-      "../out/libvlc/linux-x64/": "libvlc/linux-x64/",
-      "../out/qbittorrent/linux-x64/": "qbittorrent/linux-x64/",
-      "../out/torrent-core/linux-x64/": "torrent-core/linux-x64/",
+      "../out/ffmpeg/": "ffmpeg/",
+      "../out/libvlc/": "libvlc/",
+      "../out/qbittorrent/": "qbittorrent/",
+      "../out/torrent-core/": "torrent-core/",
       "../resources/licenses/vlc/": "licenses/vlc/"
-    },
-    "linux": {
-      "deb": {
-        "depends": ["ffmpeg", "vlc (>= 3.0.0)"]
-      },
-      "rpm": {
-        "depends": ["ffmpeg", "vlc >= 3.0.0"]
-      }
     }
   }
 }

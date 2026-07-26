@@ -4,7 +4,9 @@ on:
   workflow_dispatch:
   push:
     branches:
+      - master
       - master_android
+      - Tauri_迁移
     paths:
       - ".github/workflows/tauri-desktop.yml"
       - ".cargo/**"
@@ -119,7 +121,7 @@ jobs:
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Build Tauri desktop host
-        run: pnpm run build:tauri
+        run: pnpm exec tauri build --no-bundle --ci --config src-tauri/tauri.remote.conf.json
 
       - name: Verify staged libVLC runtime
         run: pnpm run verify:libvlc

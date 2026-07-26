@@ -5,7 +5,14 @@
   },
   "bundle": {
     "resources": {
-      "../out/libvlc/win32-x64/": "libvlc/win32-x64/"
+      "../.tauri-remote-pwa/": "remote-pwa/",
+      "../LICENSE": "licenses/ani-tracker-LICENSE.txt",
+      "../NOTICE": "licenses/ani-tracker-NOTICE.txt",
+      "../out/ffmpeg/win32-x64/": "ffmpeg/win32-x64/",
+      "../out/libvlc/win32-x64/": "libvlc/win32-x64/",
+      "../out/qbittorrent/win32-x64/": "qbittorrent/win32-x64/",
+      "../out/torrent-core/win32-x64/": "torrent-core/win32-x64/",
+      "../resources/licenses/vlc/": "licenses/vlc/"
     }
   }
 }

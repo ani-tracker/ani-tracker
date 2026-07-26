@@ -30,6 +30,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "copyright": "Copyright (c) 2026 Ani Tracker contributors",
+    "licenseFile": "../LICENSE",
     "android": {
       "minSdkVersion": 26
     },

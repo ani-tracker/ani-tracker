@@ -1,0 +1,279 @@
+name: Tauri Desktop Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Release version (for example v0.1.0)
+        required: true
+        default: "v0.1.0"
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Validate semantic version
+        shell: bash
+        run: |
+          if [[ ! "${RELEASE_VERSION}" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: ${RELEASE_VERSION}" >&2
+            exit 1
+          fi
+
+  desktop:
+    needs: validate
+    name: ${{ matrix.target }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            runner: windows-2022
+            platform: win32
+            arch: x64
+            bundles: nsis,msi
+          - target: macos-arm64
+            runner: macos-15
+            platform: darwin
+            arch: arm64
+            bundles: app,dmg
+          - target: macos-x64
+            runner: macos-15-intel
+            platform: darwin
+            arch: x64
+            bundles: app,dmg
+          - target: linux-x64
+            runner: ubuntu-22.04
+            platform: linux
+            arch: x64
+            bundles: deb,appimage
+    env:
+      MACOS_CERTIFICATE_BASE64: ${{ secrets.MACOS_CERTIFICATE_BASE64 }}
+      MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+      WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          components: clippy,rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: . -> out/cargo-target
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: matrix.platform == 'win32'
+
+      - name: Install Linux desktop dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ffmpeg libayatana-appindicator3-dev \
+            libboost-system-dev librsvg2-dev libssl-dev libwebkit2gtk-4.1-dev \
+            libx11-dev libxdo-dev ninja-build patchelf pax-utils vlc wget
+
+      - name: Install macOS native dependencies
+        if: matrix.platform == 'darwin'
+        run: brew install boost cmake ninja openssl@3
+
+      - uses: jurplel/install-qt-action@v4
+        with:
+          version: "6.8.3"
+          host: ${{ matrix.platform == 'linux' && 'linux' || matrix.platform == 'darwin' && 'mac' || 'windows' }}
+          target: desktop
+          arch: ${{ matrix.platform == 'linux' && 'linux_gcc_64' || matrix.platform == 'darwin' && 'clang_64' || 'win64_msvc2022_64' }}
+          cache: true
+
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: "2025.06.13"
+          path: .vcpkg
+
+      - name: Bootstrap Unix vcpkg
+        if: matrix.platform != 'win32'
+        run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Bootstrap Windows vcpkg
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: ./.vcpkg/bootstrap-vcpkg.bat -disableMetrics
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Set release version
+        run: pnpm run release:set-version -- "${{ env.RELEASE_VERSION }}"
+
+      - name: Require desktop signing secrets
+        if: matrix.platform != 'linux'
+        shell: bash
+        run: |
+          if [[ "${{ matrix.platform }}" == "win32" ]]; then
+            required=(WINDOWS_CERTIFICATE_BASE64 WINDOWS_CERTIFICATE_PASSWORD)
+          else
+            required=(MACOS_CERTIFICATE_BASE64 MACOS_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID)
+          fi
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required desktop signing secret: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Validate shared code
+        if: matrix.target == 'windows-x64'
+        run: |
+          pnpm run typecheck
+          pnpm run test:theme
+          cargo fmt --all -- --check
+          cargo test --workspace
+          cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Prepare desktop libVLC
+        shell: bash
+        run: pnpm run prepare:tauri:${{ matrix.platform == 'win32' && 'win' || matrix.platform == 'darwin' && 'mac' || 'linux' }}-libvlc
+
+      - name: Build and stage torrent-core
+        shell: bash
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: |
+          if [[ "${{ matrix.platform }}" == "linux" ]]; then
+            cmake --preset portable-release -S native/torrent-core
+            cmake --build native/torrent-core/build/portable-release --config Release
+            node scripts/package-torrent-core-bundle.mjs \
+              --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}"
+          else
+            node scripts/prepare-desktop-torrent-core-dev.mjs --arch "${{ matrix.arch }}"
+          fi
+          node scripts/prepare-torrent-core-resources.mjs \
+            --source artifacts/torrent-core --target out/torrent-core \
+            --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --required
+
+      - name: Build and stage managed qBittorrent
+        shell: bash
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: |
+          if [[ "${{ matrix.platform }}" == "win32" ]]; then
+            pwsh -NoProfile -File scripts/build-qbittorrent-nox-windows.ps1 -Arch "${{ matrix.arch }}"
+          else
+            bash scripts/build-qbittorrent-nox-unix.sh \
+              --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}"
+          fi
+          node scripts/prepare-qbittorrent-resources.mjs \
+            --source artifacts/qbittorrent --target out/qbittorrent \
+            --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --required
+
+      - name: Stage FFmpeg and FFprobe
+        if: matrix.platform != 'linux'
+        run: pnpm run prepare:ffmpeg -- --platform ${{ matrix.platform }} --arch ${{ matrix.arch }}
+
+      - uses: apple-actions/import-codesign-certs@v3
+        if: matrix.platform == 'darwin' && env.MACOS_CERTIFICATE_BASE64 != ''
+        with:
+          p12-file-base64: ${{ env.MACOS_CERTIFICATE_BASE64 }}
+          p12-password: ${{ env.MACOS_CERTIFICATE_PASSWORD }}
+
+      - name: Import Windows signing certificate
+        if: matrix.platform == 'win32' && env.WINDOWS_CERTIFICATE_BASE64 != ''
+        id: windows-signing
+        shell: pwsh
+        run: |
+          $certificatePath = Join-Path $env:RUNNER_TEMP "ani-tracker-release.pfx"
+          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
+
+      - name: Build signed Windows installers
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $thumbprint = "${{ steps.windows-signing.outputs.thumbprint }}"
+          if (-not $thumbprint) { throw "Windows signing certificate was not imported" }
+          $config = '{"bundle":{"windows":{"certificateThumbprint":"' + $thumbprint + '","digestAlgorithm":"sha256","timestampUrl":"http://timestamp.digicert.com"}}}'
+          pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}" --config $config
+
+      - name: Build macOS and Linux bundles
+        if: matrix.platform != 'win32'
+        shell: bash
+        run: |
+          pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}"
+
+      - name: Collect Unix release assets
+        if: matrix.platform != 'win32'
+        shell: bash
+        run: |
+          mkdir -p "release-assets/${{ matrix.target }}"
+          find out/cargo-target/release/bundle -type f \
+            \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) \
+            -exec cp {} "release-assets/${{ matrix.target }}/" \;
+          pnpm run release:manifest -- \
+            --root "release-assets/${{ matrix.target }}" \
+            --target "${{ matrix.target }}" \
+            --output "release-assets/${{ matrix.target }}/manifest.json"
+
+      - name: Collect Windows release assets
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $destination = "release-assets/${{ matrix.target }}"
+          New-Item -ItemType Directory -Path $destination -Force | Out-Null
+          Get-ChildItem out/cargo-target/release/bundle -Recurse -File |
+            Where-Object { $_.Extension -in @('.exe', '.msi') } |
+            Copy-Item -Destination $destination
+          pnpm run release:manifest -- --root $destination --target "${{ matrix.target }}" --output "$destination/manifest.json"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ani-tracker-${{ matrix.target }}
+          path: release-assets/${{ matrix.target }}
+          if-no-files-found: error
+
+  publish:
+    needs: desktop
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: ani-tracker-*
+          path: release-assets
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: release-assets/**/*

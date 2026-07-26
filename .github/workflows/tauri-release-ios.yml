@@ -1,0 +1,137 @@
+name: Tauri iOS Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Release version (for example v0.1.0)
+        required: true
+        default: "v0.1.0"
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
+
+jobs:
+  ios:
+    runs-on: macos-15
+    env:
+      IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+      IOS_CERTIFICATE_PASSWORD: ${{ secrets.IOS_CERTIFICATE_PASSWORD }}
+      IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+      IOS_KEYCHAIN_PASSWORD: ${{ secrets.IOS_KEYCHAIN_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-apple-ios,aarch64-apple-ios-sim
+
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: "2025.06.13"
+          path: .vcpkg
+
+      - name: Bootstrap vcpkg
+        run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Validate version and shared code
+        run: |
+          pnpm run release:set-version -- "${RELEASE_VERSION}"
+          pnpm run typecheck
+          cargo fmt --all -- --check
+
+      - name: Prepare iOS torrent-core and MobileVLCKit
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: |
+          pnpm run prepare:torrent-core:ios
+          pnpm run prepare:tauri:ios-libvlc
+
+      - name: Generate Tauri iOS project
+        run: pnpm run init:tauri:ios
+
+      - name: Require release signing secrets
+        shell: bash
+        run: |
+          for name in IOS_CERTIFICATE_BASE64 IOS_CERTIFICATE_PASSWORD IOS_PROVISIONING_PROFILE_BASE64 IOS_KEYCHAIN_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required iOS signing secret: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Install signing certificate and provisioning profile
+        shell: bash
+        run: |
+          certificate_path="${RUNNER_TEMP}/ani-tracker-ios.p12"
+          profile_path="${RUNNER_TEMP}/ani-tracker.mobileprovision"
+          keychain_path="${RUNNER_TEMP}/ani-tracker-signing.keychain-db"
+          echo "${IOS_CERTIFICATE_BASE64}" | base64 --decode > "${certificate_path}"
+          echo "${IOS_PROVISIONING_PROFILE_BASE64}" | base64 --decode > "${profile_path}"
+          security create-keychain -p "${IOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${IOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
+          security import "${certificate_path}" -P "${IOS_CERTIFICATE_PASSWORD}" -A -t cert -f pkcs12 -k "${keychain_path}"
+          security list-keychain -d user -s "${keychain_path}" login.keychain-db
+          security set-key-partition-list -S apple-tool:,apple: -k "${IOS_KEYCHAIN_PASSWORD}" "${keychain_path}"
+          mkdir -p "${HOME}/Library/MobileDevice/Provisioning Profiles"
+          cp "${profile_path}" "${HOME}/Library/MobileDevice/Provisioning Profiles/"
+
+      - name: Build signed Tauri IPA
+        run: pnpm exec tauri ios build --ci --export-method app-store-connect
+
+      - name: Verify mobile package boundaries
+        run: pnpm run verify:tauri:ios-package
+
+      - name: Collect iOS assets and checksums
+        shell: bash
+        run: |
+          mkdir -p release-assets/ios-arm64
+          find src-tauri/gen/apple -type f -name '*.ipa' -exec cp {} release-assets/ios-arm64/ \;
+          pnpm run release:manifest -- \
+            --root release-assets/ios-arm64 \
+            --target ios-arm64 \
+            --output release-assets/ios-arm64/manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ani-tracker-ios-arm64
+          path: release-assets/ios-arm64
+          if-no-files-found: error
+
+  publish:
+    needs: ios
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ani-tracker-ios-arm64
+          path: release-assets
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: release-assets/*

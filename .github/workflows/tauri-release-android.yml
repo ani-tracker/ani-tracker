@@ -1,0 +1,138 @@
+name: Tauri Android Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: Release version (for example v0.1.0)
+        required: true
+        default: "v0.1.0"
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || github.ref_name }}
+
+jobs:
+  android:
+    runs-on: ubuntu-22.04
+    outputs:
+      signed: ${{ steps.signing.outputs.enabled }}
+    env:
+      ANI_ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANI_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANI_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANI_ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.1
+          targets: aarch64-linux-android,x86_64-linux-android
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install Android SDK and NDK
+        run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;27.2.12479018" "cmake;3.31.1"
+
+      - uses: actions/checkout@v4
+        with:
+          repository: microsoft/vcpkg
+          ref: "2025.06.13"
+          path: .vcpkg
+
+      - name: Bootstrap vcpkg
+        run: ./.vcpkg/bootstrap-vcpkg.sh -disableMetrics
+
+      - name: Install JavaScript dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Validate version and shared code
+        run: |
+          pnpm run release:set-version -- "${RELEASE_VERSION}"
+          pnpm run typecheck
+          cargo fmt --all -- --check
+
+      - name: Prepare Android torrent-core dependencies
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: bash scripts/prepare-android-torrent-dependencies.sh
+
+      - name: Configure optional release signing
+        id: signing
+        shell: bash
+        run: |
+          for name in ANI_ANDROID_KEYSTORE_BASE64 ANI_ANDROID_KEYSTORE_PASSWORD ANI_ANDROID_KEY_ALIAS ANI_ANDROID_KEY_PASSWORD; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required Android signing secret: ${name}" >&2
+              exit 1
+            fi
+          done
+          echo "${ANI_ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${RUNNER_TEMP}/ani-tracker-release.jks"
+          echo "ANI_ANDROID_KEYSTORE_PATH=${RUNNER_TEMP}/ani-tracker-release.jks" >> "${GITHUB_ENV}"
+          echo "enabled=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Build Tauri APK and AAB
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
+          ANI_ANDROID_NATIVE_PREFIX: ${{ github.workspace }}/.cache/android-torrent/vcpkg_installed/arm64-android
+        run: pnpm exec tauri android build --apk --aab --ci
+
+      - name: Verify mobile package boundaries
+        run: pnpm run verify:tauri:android-package
+
+      - name: Collect Android assets and checksums
+        shell: bash
+        run: |
+          mkdir -p release-assets/android-arm64
+          find src-tauri/gen/android/app/build/outputs -type f \
+            \( -name '*.apk' -o -name '*.aab' \) \
+            -exec cp {} release-assets/android-arm64/ \;
+          pnpm run release:manifest -- \
+            --root release-assets/android-arm64 \
+            --target android-arm64 \
+            --output release-assets/android-arm64/manifest.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ani-tracker-android-arm64
+          path: release-assets/android-arm64
+          if-no-files-found: error
+
+  publish:
+    if: needs.android.outputs.signed == 'true'
+    needs: android
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ani-tracker-android-arm64
+          path: release-assets
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_VERSION }}
+          target_commitish: ${{ github.sha }}
+          generate_release_notes: true
+          files: release-assets/*

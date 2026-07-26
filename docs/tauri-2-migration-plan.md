@@ -430,6 +430,14 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 
 门禁：五个平台生成可安装产物；升级不丢数据；桌面与移动功能矩阵签收；旧宿主移除前保留最后一个可回退标签和 Electron 内核归档清单。
 
+执行记录：
+
+- `dev`、`build` 和 `package:desktop` 已切换为 Tauri 默认入口，旧 Electron/Capacitor 命令仅保留为待归档的 `legacy:*` 入口。
+- 已建立 Windows、macOS x64/arm64、Linux、Android 和 iOS Tauri 发布工作流；发布版本由标签注入，安装包同时生成 SHA-256 与版本化 JSON 产物清单。
+- Windows、macOS、Android 和 iOS 发布任务要求 CI 签名凭据；缺失时拒绝发布，避免将未签名安装包写入正式 Release。
+- 桌面资源按平台配置打包 torrent-core、libVLC、托管 qBittorrent、FFmpeg/FFprobe、远程 Renderer 和许可证；移动配置仅保留本地核心、原生播放器和许可证边界。
+- 已由新版 Ani Tracker 标识重新生成 Tauri Windows/macOS/Linux/Android/iOS 图标，并替换 Android Tauri 工程残留的旧启动图标。
+
 ## 5. 每阶段统一验证
 
 每个阶段至少执行：

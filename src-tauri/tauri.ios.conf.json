@@ -2,6 +2,12 @@
   "$schema": "https://schema.tauri.app/config/2",
   "bundle": {
     "active": true,
+    "resources": {
+      "../LICENSE": "licenses/ani-tracker-LICENSE.txt",
+      "../NOTICE": "licenses/ani-tracker-NOTICE.txt",
+      "../resources/licenses/vlc/": "licenses/vlc/",
+      "../resources/torrent-core/licenses/": "licenses/torrent-core/"
+    },
     "iOS": {
       "minimumSystemVersion": "16.0"
     }
