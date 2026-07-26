@@ -77,18 +77,36 @@ fn desktop_runtime_roots<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
     roots
 }
 
-fn platform_directory() -> String {
-    let platform = if cfg!(target_os = "windows") {
-        "win32"
-    } else if cfg!(target_os = "macos") {
-        "darwin"
-    } else {
-        "linux"
+/// 返回当前桌面目标对应的资源目录名。
+pub(crate) fn platform_directory() -> String {
+    platform_directory_for(std::env::consts::OS, std::env::consts::ARCH)
+}
+
+/// 将 Rust 平台和架构名称转换为桌面资源目录名。
+fn platform_directory_for(os: &str, arch: &str) -> String {
+    let platform = match os {
+        "windows" => "win32",
+        "macos" => "darwin",
+        "linux" => "linux",
+        value => value,
     };
-    let arch = match std::env::consts::ARCH {
+    let arch = match arch {
         "x86_64" => "x64",
         "aarch64" => "arm64",
         value => value,
     };
     format!("{platform}-{arch}")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::platform_directory_for;
+
+    #[test]
+    fn maps_supported_desktop_resource_directories() {
+        assert_eq!(platform_directory_for("windows", "x86_64"), "win32-x64");
+        assert_eq!(platform_directory_for("macos", "x86_64"), "darwin-x64");
+        assert_eq!(platform_directory_for("macos", "aarch64"), "darwin-arm64");
+        assert_eq!(platform_directory_for("linux", "x86_64"), "linux-x64");
+    }
 }

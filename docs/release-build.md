@@ -50,7 +50,7 @@ Android 使用 JDK `keytool` 生成长期发布密钥：
 keytool -genkeypair -v -keystore ani-tracker-android.jks -alias ani-tracker -keyalg RSA -keysize 4096 -validity 10000
 ```
 
-将 `.pfx` 与 `.jks` 的原始文件内容编码为 Base64 后分别写入 `WINDOWS_CERTIFICATE_BASE64` 和 `ANDROID_KEYSTORE_BASE64`；密码和 Android alias 写入同组 Secrets。私钥文件必须离线备份，不能提交到仓库。Windows 发布产物会自动附带不含私钥的 `.cer`，供目标机器建立信任。
+将 `.pfx` 与 `.jks` 的原始文件内容编码为 Base64 后分别写入 `WINDOWS_CERTIFICATE_BASE64` 和 `ANDROID_KEYSTORE_BASE64`；密码和 Android alias 写入同组 Secrets。私钥文件必须离线备份，不能提交到仓库。Windows 工作流会自动导入自签 PFX、调用 Tauri 签署 MSI/NSIS、逐个核验证书指纹，并在产物中附带不含私钥的 `.cer` 供目标机器建立信任；密钥缺失、证书过期、不是自签证书、不含 Code Signing 用途或签名校验失败都会终止发布。
 
 ## 资源边界
 
@@ -91,7 +91,7 @@ Android 正式命令只生成 ARM64 自签 APK，不再生成应用市场使用�
 ## 发布验收
 
 1. 校验 `manifest.json` 中版本、目标、文件大小和 SHA-256。
-2. 验证 Windows 自签证书、macOS 临时签名、Android 自签证书，以及 iOS IPA 保持未签名且可由用户重签。
+2. 验证 Windows 自签证书指纹、macOS ad-hoc 临时签名、Android APK 自签证书，以及 iOS IPA 保持未签名且可由用户重签。
 3. 从上一公开版本升级，确认旧 SQLite 只复制迁移、备份存在且追番/下载/播放进度不丢失。
 4. 桌面包确认 torrent-core、qBittorrent-nox、libVLC、FFmpeg/FFprobe、远程 PWA 和许可证完整。
 5. 移动包确认 torrent-core、libVLC、主题与本地通知完整，并通过禁止内容检查。

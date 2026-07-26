@@ -23,7 +23,7 @@ const targetDirectory = resolve(options.targetRoot, asset.targetKey);
 await downloadArchive(asset, archivePath, options.offline);
 await stageRuntime(asset, archivePath, options.targetRoot);
 verifyRuntime(options.targetRoot, options.arch);
-smokeTestTauriRuntime();
+smokeTestTauriRuntime(asset.targetKey);
 
 console.log(`[libvlc] Windows development runtime ready: ${targetDirectory}`);
 
@@ -90,13 +90,17 @@ function verifyRuntime(targetRoot, arch) {
 }
 
 /** 通过 Rust 动态 FFI 创建并释放 libVLC 实例和媒体播放器。 */
-function smokeTestTauriRuntime() {
+function smokeTestTauriRuntime(targetKey) {
   runCommand("cargo.exe", [
     "test",
     "-p", "tauri-plugin-ani-player",
     "loads_prepared_libvlc_runtime_when_available",
     "--", "--nocapture"
-  ]);
+  ], {
+    ...process.env,
+    ANI_LIBVLC_TARGET: targetKey,
+    ANI_REQUIRE_PREPARED_LIBVLC: "1"
+  });
 }
 
 /** 执行子命令并保留原始日志，任何非零退出码都会终止准备流程。 */

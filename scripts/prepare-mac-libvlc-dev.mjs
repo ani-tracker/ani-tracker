@@ -30,7 +30,8 @@ await downloadArchive(asset, archivePath, options.offline);
 await downloadSourceArchive(sourceArchivePath, options.offline);
 await stageRuntime(asset, archivePath, sourceArchivePath, options.targetRoot);
 verifyRuntime(options.targetRoot, options.arch);
-smokeTestTauriRuntime();
+diagnoseRuntime(targetDirectory);
+smokeTestTauriRuntime(asset.targetKey);
 
 console.log(`[libvlc] macOS development runtime ready: ${targetDirectory}`);
 
@@ -132,13 +133,24 @@ function verifyRuntime(targetRoot, arch) {
 }
 
 /** 通过 Rust 动态 FFI 创建并释放 libVLC 实例和媒体播放器。 */
-function smokeTestTauriRuntime() {
+function smokeTestTauriRuntime(targetKey) {
   runCommand("cargo", [
     "test",
     "-p", "tauri-plugin-ani-player",
     "loads_prepared_libvlc_runtime_when_available",
     "--", "--nocapture"
-  ]);
+  ], {
+    ...process.env,
+    ANI_LIBVLC_TARGET: targetKey,
+    ANI_REQUIRE_PREPARED_LIBVLC: "1"
+  });
+}
+
+/** 输出 macOS 核心 dylib 的架构和依赖，便于定位 CI 动态加载失败。 */
+function diagnoseRuntime(targetDirectory) {
+  const library = join(targetDirectory, "lib", "libvlc.dylib");
+  runCommand("file", [library]);
+  runCommand("otool", ["-L", library]);
 }
 
 /** 卸载本次创建的临时 DMG 挂载点，普通卸载失败时执行强制卸载。 */

@@ -141,18 +141,9 @@ jobs:
             fi
           done
 
-      - name: Validate shared code
-        if: matrix.target == 'windows-x64'
-        run: |
-          pnpm run typecheck
-          pnpm run test:theme
-          cargo fmt --all -- --check
-          cargo test --workspace
-          cargo clippy --workspace --all-targets -- -D warnings
-
       - name: Prepare desktop libVLC
         shell: bash
-        run: pnpm run prepare:tauri:${{ matrix.platform == 'win32' && 'win' || matrix.platform == 'darwin' && 'mac' || 'linux' }}-libvlc
+        run: pnpm run prepare:tauri:${{ matrix.platform == 'win32' && 'win' || matrix.platform == 'darwin' && 'mac' || 'linux' }}-libvlc -- --arch "${{ matrix.arch }}"
 
       - name: Build and stage torrent-core
         shell: bash
@@ -198,8 +189,41 @@ jobs:
           $certificatePath = Join-Path $env:RUNNER_TEMP "ani-tracker-release.pfx"
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
           $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-          $certificate = Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password
+          $importedCertificates = @(Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password)
+          $certificate = $importedCertificates | Where-Object HasPrivateKey | Select-Object -First 1
+          if (-not $certificate) {
+            throw "Windows self-signing certificate does not contain a private key"
+          }
+          if ($certificate.Subject -ne $certificate.Issuer) {
+            throw "Windows signing certificate must be self-signed"
+          }
+          if ($certificate.NotAfter -le (Get-Date)) {
+            throw "Windows self-signing certificate has expired"
+          }
+          $codeSigningEku = $certificate.Extensions |
+            Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } |
+            ForEach-Object { $_.EnhancedKeyUsages } |
+            Where-Object { $_.Value -eq '1.3.6.1.5.5.7.3.3' }
+          if (-not $codeSigningEku) {
+            throw "Windows self-signing certificate is missing the Code Signing EKU"
+          }
+          $publicCertificatePath = Join-Path $env:RUNNER_TEMP "ani-tracker-release.cer"
+          Export-Certificate -Cert $certificate -FilePath $publicCertificatePath | Out-Null
+          Import-Certificate -FilePath $publicCertificatePath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
+          Import-Certificate -FilePath $publicCertificatePath -CertStoreLocation Cert:\CurrentUser\TrustedPublisher | Out-Null
           "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
+
+      - name: Build remote PWA for desktop bundle
+        run: pnpm run build:tauri:remote-renderer
+
+      - name: Validate shared code
+        if: matrix.target == 'windows-x64'
+        run: |
+          pnpm run typecheck
+          pnpm run test:theme
+          cargo fmt --all -- --check
+          cargo test --workspace
+          cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Build signed Windows installers
         if: matrix.platform == 'win32'
@@ -215,6 +239,22 @@ jobs:
         shell: bash
         run: |
           pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}"
+
+
+      - name: Verify macOS ad-hoc signature
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          verified=0
+          while IFS= read -r -d '' app; do
+            codesign --verify --deep --strict "$app"
+            codesign -dv --verbose=2 "$app" 2>&1 | grep -q 'Signature=adhoc'
+            verified=$((verified + 1))
+          done < <(find out/cargo-target/release/bundle -type d -name '*.app' -print0)
+          if [[ "$verified" -eq 0 ]]; then
+            echo "No macOS app bundle found for ad-hoc signature verification" >&2
+            exit 1
+          fi
 
       - name: Collect Unix release assets
         if: matrix.platform != 'win32'
@@ -238,6 +278,14 @@ jobs:
           Get-ChildItem out/cargo-target/release/bundle -Recurse -File |
             Where-Object { $_.Extension -in @('.exe', '.msi') } |
             Copy-Item -Destination $destination
+          Get-ChildItem $destination -File |
+            Where-Object { $_.Extension -in @('.exe', '.msi') } |
+            ForEach-Object {
+              $signature = Get-AuthenticodeSignature $_.FullName
+              if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne '${{ steps.windows-signing.outputs.thumbprint }}') {
+                throw "Invalid Windows self-signature: $($_.FullName) [$($signature.Status)]"
+              }
+            }
           $certificate = Get-Item "Cert:\CurrentUser\My\${{ steps.windows-signing.outputs.thumbprint }}"
           Export-Certificate -Cert $certificate -FilePath "$destination/ani-tracker-windows-self-signed.cer" | Out-Null
           pnpm run release:manifest -- --root $destination --target "${{ matrix.target }}" --output "$destination/manifest.json"
