@@ -19,15 +19,17 @@ Ani Tracker 是一个本地桌面追番工具，目标功能包括新番发现�
 
 当前技术栈：
 
-- Electron
-- React
-- TypeScript
-- Vite / electron-vite
+- Tauri 2
+- Rust workspace
+- React / TypeScript / Vite
 - Tailwind CSS
 - shadcn/ui 风格自定义基础组件
-- pnpm
+- SQLite / Repository Ports / UnitOfWork
+- libtorrent-rasterbar / libVLC
+- pnpm / Cargo
 
-当前持久化方案是 JSON 文件，SQLite schema 已预留，后续再切换。
+当前正式宿主、默认开发链和发布链均为 Tauri。Electron / Capacitor 已移入
+`archive/legacy-hosts`，只用于历史审计和行为对照，不参与安装、类型检查、测试、构建或发布。
 
 ## 常用命令
 
@@ -36,6 +38,8 @@ pnpm.cmd install
 pnpm.cmd dev
 pnpm.cmd run typecheck
 pnpm.cmd build
+pnpm.cmd run test:parsers
+cargo test --workspace
 ```
 
 说明：
@@ -45,15 +49,13 @@ pnpm.cmd build
 
 ## 关键目录
 
-- `src/main`：Electron 主进程、IPC、平台能力、下载引擎、自动化服务。
-- `src/preload`：Electron preload bridge。
-- `src/renderer/src`：React UI。
-- `src/shared`：主进程和渲染进程共享的 domain/types/contracts。
-- `src/main/core/storage`：JSON 持久化、seed data、未来 SQLite schema。
-- `src/main/core/sources`：RSS / Torznab / 后续站点源适配。
-- `src/main/core/downloads`：qBittorrent 兼容引擎和内置引擎占位。
-- `src/main/core/media`：媒体文件扫描、ffprobe 探测。
-- `src/main/core/automation`：自动扫描、自动下载、候选资源匹配。
+- `src-tauri`：Tauri 宿主、commands、生命周期、平台装配和桌面能力。
+- `crates/ani-*`：Rust 契约、领域、Repository、SQLite、来源、下载、媒体和自动化核心。
+- `crates/tauri-plugin-ani-*`：Android / iOS torrent、libVLC 和移动平台插件。
+- `src/renderer/src`：桌面与移动 React UI，以及独立的桌面远程 PWA 页面。
+- `src/shared`：TypeScript domain/types/contracts 与 `AppClient` 契约。
+- `native/torrent-core`：桌面 sidecar 与移动原生核心共用的 C++ 运行时。
+- `archive/legacy-hosts`：已退役 Electron / Capacitor 宿主，只读归档。
 - `docs`：设计文档和进度文档。
 
 ## 当前已实现
@@ -65,32 +67,27 @@ pnpm.cmd build
 
 重点能力：
 
-- 我的追番 CRUD。
-- 单集规则和字幕组覆盖。
-- 资源搜索，支持番剧标题、原名、别名。
-- RSS / Torznab 下载源。
-- qBittorrent Web API 兼容模式。
-- 下载队列、速度、进度、文件选择。
-- ffprobe 媒体扫描。
-- 手动/定时自动扫描。
-- 自动扫描结果通知。
-- 播放器调用和定位文件。
+- Windows、macOS、Linux、Android 和 iOS/iPadOS 的 Tauri 正式宿主与发布工作流。
+- SQLite 默认 Adapter、版本化迁移、备份恢复、安全存储和数据库无关 Repository Ports。
+- 新番发现、追番 CRUD、单集规则、来源、资源搜索、自动扫描和提醒。
+- 内置 torrent-core、外部 qBittorrent；桌面额外支持托管 qBittorrent-nox。
+- 桌面 libVLC、Android LibVLC、iOS MobileVLCKit，以及续播、已看和自动下一集。
+- 桌面 FFmpeg/FFprobe、媒体扫描、远程 HTTPS 网关、托盘与外部播放器。
+- 移动完整主题、本地通知、文件导入导出和生命周期恢复。
 
 ## 当前未完成
 
-- 真正的内置 BT 核心。
-- qBittorrent 随应用托管启动。
-- SQLite 仓库替换 JSON 仓库。
-- 更完整的新番元数据源。
-- 动漫花园等站点专用适配器。
-- madVR 相关播放链路。
-- 托盘、开机启动、后台运行策略。
+- Windows 之外桌面平台和 Android / iOS 的签名安装包、真机下载与媒体矩阵验收。
+- Linux 原生 Wayland libVLC 嵌入；首期正式支持 X11 / XWayland。
+- 未来 MySQL Adapter；当前默认存储保持 SQLite。
 
 ## 开发约束
 
 - 不要把生成产物提交到源码区，例如 `out/`、`*.tsbuildinfo`、临时 `.js/.d.ts`。
-- 新增主进程能力时优先通过 `src/shared/contracts.ts` 定义契约，再接 IPC/preload/renderer API。
+- 新增宿主能力时优先定义共享契约，再接 Rust service、Tauri command/event 和 `AppClient`。
 - 新增可替换能力时优先抽接口或独立 service，不要直接把业务逻辑堆在页面组件里。
+- 页面不得直接调用 Tauri、SQL、文件、shell 或平台插件，应通过 `AppClient` 和窄业务命令访问。
+- 移动端必须保留主题、内置 torrent-core 和平台 libVLC，并持续排除远程 Web/网关、FFmpeg/FFprobe 与转码资源。
 - UI 应保持工具型、信息密度适中，不做营销页。
 - 运行时错误不能导致纯白屏；应通过错误边界或页面错误状态展示问题。
 - 熟练使用26种设计模式，但不要过度设置，一些可扩展点可抽象使用。
@@ -100,15 +97,10 @@ pnpm.cmd build
 - 重要决策由用户审核
 ## 已知注意事项
 
-- Electron/Vite 构建时仍会输出一个 ESM warning，目前不影响产物。
-- `EmbeddedTorrentEngine` 仍是占位实现，不是真实 BT 下载。
-- 当前 JSON 数据文件在 Electron `userData` 目录下，数据结构升级依赖 `APP_DATA_VERSION` 和迁移逻辑。
-- 开发模式空白页优先检查：
-  - preload 是否指向 `out/preload/index.mjs`
-  - `window.aniBridge` 是否存在
-  - lucide-react 图标是否真实导出
-  - renderer console 是否有运行时错误
-  - 
+- SQLite 数据结构升级依赖 `SQLITE_SCHEMA_VERSION`、`APP_DATA_VERSION` 和迁移回滚测试。
+- 开发模式空白页优先检查 Tauri bridge、`out/tauri` Renderer、lucide-react 导出和 WebView console。
+- 本地主 Renderer 与远程 PWA 使用独立入口；移动构建不得引入远程页面、ArtPlayer 或 HLS.js。
+- Android / iOS 原生构建和真机能力必须在对应平台验收，不能用 Windows 结果代替。
 ## 代码提交约束
 - 提交说明添加了什么功能
 - 修改bug，则fix开头

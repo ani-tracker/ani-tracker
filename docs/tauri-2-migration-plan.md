@@ -227,7 +227,7 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 
 执行记录：
 
-- 已建立 Rust SQLite 单写者、schema 18 / 数据版本 22 兼容迁移、迁移前备份、完整性检查和失败恢复。
+- 已建立 Rust SQLite 单写者、schema 18 / 数据版本 23 兼容迁移、迁移前备份、完整性检查和失败恢复。
 - Tauri 首启会发现并只复制旧 Electron 数据库，原库不删除；宿主路径由 Tauri 重新注入设置。
 - 已迁移设置、通知、追番只读和首页聚合 commands，Renderer 首屏通过 `TauriClient` 读取 Rust Repository。
 - 已建立安全存储端口与 TypeScript/Rust 共用 P2 金样；Rust、类型检查及 351 项 Node 测试通过，平台构建按当前安排后续统一验证。
@@ -476,7 +476,7 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 
 ## 7. 当前基线与前置条件
 
-当前分支：`Tauri_迁移`
+当前正式分支：`master`
 
 当前已确认基础：
 
