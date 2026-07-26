@@ -2,7 +2,7 @@
 export type PlayerBackend = "artplayer" | "libvlc";
 
 /** 播放器宿主平台。 */
-export type PlayerHostPlatform = "remote-web" | "electron" | "android" | "ios";
+export type PlayerHostPlatform = "remote-web" | "tauri-desktop" | "android" | "ios";
 
 /** 播放器运行时可用状态。 */
 export type PlayerAvailability = "unknown" | "available" | "unavailable";

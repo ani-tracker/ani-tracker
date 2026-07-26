@@ -9,8 +9,8 @@
 - Upstream repository: https://code.videolan.org/videolan/vlc
 - Ani Tracker does not modify VLC source code. Linux packaging only adjusts
   copied ELF RPATH values so the shared libraries remain relocatable.
-- `electron-vlc-player` 1.0.2 is dynamically bound through N-API. Its source is
-  available at https://github.com/ssnangua/electron-vlc-player .
+- Tauri desktop dynamically loads the libVLC C API through the Rust player
+  adapter; Ani Tracker does not statically link VLC.
 
 To use a modified library, close Ani Tracker and replace the complete
 `resources/libvlc/<platform-arch>` directory with a compatible VLC 3.0.x

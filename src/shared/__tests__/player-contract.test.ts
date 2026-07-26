@@ -10,7 +10,7 @@ import {
 
 const capabilities: PlayerCapabilities = {
   backend: "libvlc",
-  platform: "electron",
+  platform: "tauri-desktop",
   availability: "available",
   canSeek: true,
   canSetVolume: true,
@@ -38,7 +38,7 @@ test("createInitialPlayerSnapshot 创建稳定的空闲状态", () => {
 });
 
 test("createUnavailablePlayerCapabilities 默认关闭所有原生能力", () => {
-  const unavailable = createUnavailablePlayerCapabilities("libvlc", "electron", "运行时缺失");
+  const unavailable = createUnavailablePlayerCapabilities("libvlc", "tauri-desktop", "运行时缺失");
 
   assert.equal(unavailable.availability, "unavailable");
   assert.equal(unavailable.canSeek, false);

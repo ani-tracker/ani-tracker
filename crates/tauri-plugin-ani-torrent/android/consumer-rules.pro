@@ -1,0 +1,2 @@
+-keep class dev.ani.tracker.torrent.AniTorrentPlugin { *; }
+-keep class dev.ani.tracker.torrent.NativeTorrentCore { *; }

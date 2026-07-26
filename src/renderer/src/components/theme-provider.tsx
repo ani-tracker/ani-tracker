@@ -8,7 +8,6 @@ import {
   type ReactNode
 } from "react";
 import { Toaster } from "@/components/ui/sonner";
-import { appApi, isElectronClient } from "@/lib/api";
 import {
   THEME_TOKEN_NAMES,
   createDefaultAppearanceSettings,
@@ -42,8 +41,13 @@ interface ThemeContextValue {
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
-/** 管理桌面与 Web 的主题解析、预览、缓存和系统外观监听。 */
-export function ThemeProvider({ children }: { children: ReactNode }) {
+interface ThemeProviderProps {
+  children: ReactNode;
+  loadAppearance?: () => Promise<AppearanceSettings | undefined>;
+}
+
+/** 管理跨端主题解析、预览、缓存和可选的平台设置加载。 */
+export function ThemeProvider({ children, loadAppearance }: ThemeProviderProps) {
   const [persistedAppearance, setPersistedAppearance] = useState(readCachedAppearance);
   const [preview, setPreview] = useState<AppearanceSettings | null>(null);
   const [systemDark, setSystemDark] = useState(readSystemDark);
@@ -68,21 +72,22 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   }, [persistedAppearance, systemDark]);
 
   useEffect(() => {
-    if (!isElectronClient()) {
+    if (!loadAppearance) {
       return;
     }
-    void appApi.getSettings()
-      .then((settings) => {
-        setPersistedAppearance(normalizeAppearanceSettings(settings.appearance));
+    void loadAppearance()
+      .then((appearance) => {
+        if (!appearance) return;
+        setPersistedAppearance(normalizeAppearanceSettings(appearance));
         console.info("[renderer] 外观设置加载完成", {
-          themeMode: settings.appearance.themeMode,
-          themePackId: settings.appearance.themePackId
+          themeMode: appearance.themeMode,
+          themePackId: appearance.themePackId
         });
       })
       .catch((error: unknown) => {
         console.error("[renderer] 外观设置加载失败，继续使用缓存主题", error);
       });
-  }, []);
+  }, [loadAppearance]);
 
   const previewAppearance = useCallback((next: AppearanceSettings) => {
     setPreview(normalizeAppearanceSettings(next));

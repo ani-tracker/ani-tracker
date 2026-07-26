@@ -1,0 +1,62 @@
+name: AniTracker
+
+options:
+  bundleIdPrefix: dev.ani.tracker
+  deploymentTarget:
+    iOS: "16.0"
+  groupSortPosition: top
+
+settings:
+  base:
+    CURRENT_PROJECT_VERSION: 1
+    MARKETING_VERSION: 0.1.0
+    SWIFT_VERSION: 5.9
+
+targets:
+  AniTracker:
+    type: application
+    platform: iOS
+    sources:
+      - path: AniTracker
+        excludes:
+          - Info.plist
+      - path: ../crates/tauri-plugin-ani-player/ios/Sources
+        group: Player
+        excludes:
+          - AniPlayerPlugin.swift
+      - path: ../resources/licenses/vlc
+        group: Resources/ThirdPartyLicenses
+        type: folder
+        buildPhase: resources
+      - path: ../resources/ffmpeg/licenses/LGPL-2.1-only.json
+        group: Resources/ThirdPartyLicenses/VLC
+        buildPhase: resources
+    info:
+      path: AniTracker/Info.plist
+    settings:
+      base:
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_ASSET_PATHS: ""
+        ENABLE_USER_SCRIPT_SANDBOXING: true
+        PRODUCT_BUNDLE_IDENTIFIER: dev.ani.tracker
+        PRODUCT_MODULE_NAME: AniTracker
+        PRODUCT_NAME: Ani Tracker
+        SUPPORTS_MACCATALYST: false
+        TARGETED_DEVICE_FAMILY: "1,2"
+    scheme:
+      gatherCoverageData: false
+      testTargets:
+        - AniTrackerTests
+
+  AniTrackerTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: ../crates/tauri-plugin-ani-player/ios/Tests
+        group: PlayerTests
+    dependencies:
+      - target: AniTracker
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: true

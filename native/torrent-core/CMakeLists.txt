@@ -13,6 +13,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(ANI_FETCH_LIBTORRENT "Build the pinned libtorrent source instead of using a system package" OFF)
 option(ANI_BUILD_SIDECAR "Build the desktop torrent-core executable" ON)
 option(ANI_BUILD_ANDROID_JNI "Build the Android JNI bridge" OFF)
+option(ANI_BUILD_APPLE_FRAMEWORK "Build the iOS AniTorrentCore framework" OFF)
 
 if(ANI_FETCH_LIBTORRENT)
   include(FetchContent)
@@ -55,7 +56,7 @@ target_link_libraries(ani-torrent-core-runtime PUBLIC LibtorrentRasterbar::torre
 target_compile_definitions(ani-torrent-core-runtime PRIVATE ANI_TORRENT_CORE_VERSION="${PROJECT_VERSION}")
 
 if(MSVC)
-  target_compile_options(ani-torrent-core-runtime PRIVATE /W4 /permissive-)
+  target_compile_options(ani-torrent-core-runtime PRIVATE /W4 /permissive- /utf-8)
 else()
   target_compile_options(ani-torrent-core-runtime PRIVATE -Wall -Wextra -Wpedantic)
 endif()
@@ -64,7 +65,7 @@ if(ANI_BUILD_SIDECAR)
   add_executable(torrent-core src/sidecar_main.cpp)
   target_link_libraries(torrent-core PRIVATE ani-torrent-core-runtime)
   if(MSVC)
-    target_compile_options(torrent-core PRIVATE /W4 /permissive-)
+    target_compile_options(torrent-core PRIVATE /W4 /permissive- /utf-8)
   else()
     target_compile_options(torrent-core PRIVATE -Wall -Wextra -Wpedantic)
   endif()
@@ -78,4 +79,24 @@ if(ANI_BUILD_ANDROID_JNI)
   add_library(ani_torrent_core SHARED src/android_jni.cpp)
   target_link_libraries(ani_torrent_core PRIVATE ani-torrent-core-runtime log android)
   target_compile_options(ani_torrent_core PRIVATE -Wall -Wextra -Wpedantic)
+endif()
+
+if(ANI_BUILD_APPLE_FRAMEWORK)
+  if(NOT APPLE OR NOT CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    message(FATAL_ERROR "ANI_BUILD_APPLE_FRAMEWORK requires an iOS CMake toolchain")
+  endif()
+  add_library(AniTorrentCore SHARED src/apple_c_api.cpp)
+  target_link_libraries(AniTorrentCore PRIVATE ani-torrent-core-runtime)
+  target_include_directories(AniTorrentCore PUBLIC include)
+  target_compile_options(AniTorrentCore PRIVATE -Wall -Wextra -Wpedantic -fvisibility=hidden)
+  set_target_properties(
+    AniTorrentCore
+    PROPERTIES
+      FRAMEWORK TRUE
+      MACOSX_FRAMEWORK_IDENTIFIER "com.ani.tracker.torrent.core"
+      PUBLIC_HEADER "${CMAKE_CURRENT_SOURCE_DIR}/include/AniTorrentCore.h;${CMAKE_CURRENT_SOURCE_DIR}/include/ani/torrent_core_c.h"
+      XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED "NO"
+      XCODE_ATTRIBUTE_DEFINES_MODULE "YES"
+      OUTPUT_NAME "AniTorrentCore"
+  )
 endif()

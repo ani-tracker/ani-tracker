@@ -1,6 +1,6 @@
 # Ani Tracker torrent-core
 
-`torrent-core` 是 Electron 主进程托管的 libtorrent-rasterbar 2.1 sidecar。它只通过 stdin/stdout 的 NDJSON 协议通信，不开放 WebUI 或局域网端口。
+`torrent-core` 是 Tauri Rust 后台托管的 libtorrent-rasterbar 2.1 sidecar。它只通过 stdin/stdout 的 NDJSON 协议通信，不开放 WebUI 或局域网端口。
 
 ## 本机构建
 
@@ -10,7 +10,7 @@
 pnpm run build:torrent-core
 ```
 
-输出位于 `native/torrent-core/build/release/`。Electron 开发模式会从该目录查找当前平台核心，也可用 `ANI_TORRENT_CORE_PATH` 指定绝对路径。
+输出位于 `native/torrent-core/build/release/`。Tauri 开发模式会从该目录或已整理资源查找当前平台核心，也可用 `ANI_TORRENT_CORE_PATH` 指定绝对路径。
 
 ## 便携构建
 

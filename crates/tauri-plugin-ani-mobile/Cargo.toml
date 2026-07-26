@@ -1,0 +1,18 @@
+[package]
+name = "tauri-plugin-ani-mobile"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors = ["Ani Tracker contributors"]
+description = "Ani Tracker Tauri mobile lifecycle and secure platform transport"
+exclude = ["/android/.gradle", "/android/build"]
+links = "tauri-plugin-ani-mobile"
+
+[dependencies]
+serde.workspace = true
+tauri = { version = "2", default-features = false }
+thiserror.workspace = true
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }

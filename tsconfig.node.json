@@ -15,9 +15,8 @@
     }
   },
   "include": [
-    "electron.vite.config.ts",
-    "src/main/**/*.ts",
-    "src/preload/**/*.ts",
+    "vite.tauri.config.ts",
+    "vite.remote.config.ts",
     "src/shared/**/*.ts"
   ]
 }

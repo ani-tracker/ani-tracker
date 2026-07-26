@@ -220,8 +220,7 @@ async function verifyNormalizedRuntime(directory, asset, requireUpstreamLicenses
   const licenses = [
     join(directory, "LICENSES", "README.md"),
     join(directory, "LICENSES", "SOURCE.md"),
-    join(directory, "LICENSES", "LGPL-2.1-only.json"),
-    join(directory, "LICENSES", "electron-vlc-player-MIT.txt")
+    join(directory, "LICENSES", "LGPL-2.1-only.json")
   ];
   if (requireUpstreamLicenses) {
     licenses.push(

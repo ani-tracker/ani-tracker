@@ -1,0 +1,539 @@
+# Ani Tracker Tauri 2 全平台迁移计划
+
+最近更新：2026-07-26
+
+状态：P0-P8 代码实施已完成；Windows 之外的桌面平台与移动端由项目负责人手动验收
+
+## 1. 迁移目标
+
+在当前 `master_android` 分支和现有代码基础上，将应用宿主从 Electron / Capacitor 逐步迁移到 Tauri 2，同时保留迁移期间可工作的旧入口，直到新入口通过完整功能验收。
+
+目标平台：
+
+| 平台 | 目标形态 | 功能边界 |
+| --- | --- | --- |
+| Windows | Tauri 2 桌面应用 | 保留全部桌面功能 |
+| macOS | Tauri 2 桌面应用 | 保留全部桌面功能 |
+| Linux | Tauri 2 桌面应用 | 保留全部桌面功能；播放器首期支持 X11/XWayland |
+| Android | Tauri 2 移动应用 | 保留全部具有移动语义的业务与主题功能；不包含远程 Web/网关、转码和 FFprobe |
+| iOS / iPadOS | Tauri 2 移动应用 | 保留全部具有移动语义的业务与主题功能；不包含远程 Web/网关、转码和 FFprobe |
+
+完整业务闭环包括：新番发现、追番管理、来源配置、资源搜索、内置下载、文件选择、媒体关联、原生 VLC 播放、续播、已看状态、自动检查、通知和设置。
+
+移动端必须具备以下本地原生能力，不允许降级为依赖桌面端或远程网页：
+
+- Android 和 iOS 均随应用提供内置 `torrent-core`，支持添加磁链 / torrent、任务控制、文件优先级、状态恢复和下载完成关联。
+- Android 使用 LibVLC for Android，iOS 使用 MobileVLCKit；两端播放器必须支持本地下载文件、直接网络媒体、外挂字幕、音轨、倍速、比例、续播和自动下一集。
+- 移动应用离线于桌面端时仍可独立完成“发现、追番、搜索、下载、播放、进度回写”闭环。
+- 移动端保留当前主题系统，包括浅色、深色、跟随系统、主题变量、用户主题选择和持久化；所有移动页面必须使用同一语义主题契约。
+
+桌面端额外保留：
+
+- 托管 qBittorrent、外部 qBittorrent 和内置 torrent-core。
+- FFmpeg / FFprobe、媒体扫描、实时转码和桌面播放器选择。
+- 托盘、窗口、主题、外部播放器、文件管理器和系统集成。
+- 远程 HTTPS 网关、设备配对、远程 Renderer、远程播放和媒体代理。
+
+移动端默认保留全部具有移动语义的业务能力，仅明确排除：
+
+- `.remote-pwa`、远程 Renderer、局域网配对和远程播放器页面。
+- 远程 HTTPS 网关、本地 CA、远程设备令牌和媒体代理服务。
+- qBittorrent-nox 托管进程、托盘、开机启动和桌面窗口能力。
+- FFmpeg / FFprobe、HLS 生成和实时转码；移动端使用 libVLC 完成媒体解析与直接播放。
+- 任意桌面可执行文件路径。外部播放使用 Android Intent 或 iOS 系统能力。
+
+上述裁剪不包含内置下载引擎和 libVLC 播放器；二者是移动端发布必需能力。
+
+移动端功能矩阵：
+
+| 能力 | Android / iOS |
+| --- | --- |
+| 首页、发现、追番、详情、单集和提醒 | 保留 |
+| 来源管理、RSS、Torznab、站点搜索和匹配 | 保留 |
+| 内置 torrent-core、任务控制和文件优先级 | 保留，发布必需 |
+| 外部 qBittorrent Web API | 保留 |
+| libVLC 本地/网络播放、字幕、音轨和续播 | 保留，发布必需 |
+| 自动扫描、系统允许的后台调度和本地通知 | 保留 |
+| 设置、主题、安全存储、备份、恢复和日志 | 保留 |
+| 远程 Web 页面、配对、远程 HTTPS 网关和媒体代理 | 排除 |
+| FFmpeg、FFprobe、HLS/实时转码 | 排除 |
+| 托盘、桌面窗口控制、开机启动、可执行文件路径 | 平台不适用 |
+| 托管 qBittorrent-nox 进程 | 平台不适用；保留外部 Web API 模式 |
+
+## 2. 迁移原则
+
+1. **并行迁移**：Tauri、Electron 和现有移动宿主在迁移期共存，禁止先删除旧入口再补功能。
+2. **垂直闭环**：按可运行的业务链路迁移，不按目录一次性翻译 2.6 万行主进程代码。
+3. **Rust 持有后台状态**：Repository、网络、下载编排、自动化和远程网关不能依赖 WebView 存活。
+4. **React 只依赖 `AppClient`**：页面不直接调用 Tauri、Electron、Capacitor、SQL、文件或 shell API。
+5. **窄命令面**：Tauri command 和移动插件只暴露业务命令，不向 Renderer 开放任意 SQL、任意路径或任意进程启动。
+6. **契约先行**：TypeScript / Rust / Kotlin / Swift 使用版本化 JSON fixture 验证字段、默认值、错误码和状态机一致。
+7. **保持数据兼容**：桌面端读取现有 SQLite 数据；路径迁移必须先备份、校验版本并支持失败回滚。
+8. **阶段可回退**：每阶段单独提交、单独验收；未通过门禁时旧入口仍可运行。
+9. **平台能力显式化**：桌面、Android、iOS 和远程客户端通过 `PlatformCapabilities` 控制功能，不散布临时平台判断。
+10. **不混入用户改动**：每次提交只暂存本阶段文件，提交前检查 `git diff --cached`。
+
+## 3. 目标架构
+
+```text
+React / Tailwind / shadcn UI
+              |
+           AppClient
+              |
+    Tauri invoke / event bridge
+              |
++------------------- Rust workspace --------------------+
+| ani-contracts | ani-domain | ani-repository             |
+| ani-storage   | ani-sources                              |
+| ani-downloads | ani-media  | ani-automation            |
++-------------------------------------------------------+
+              |
++-------------------- Platform adapters ----------------+
+| Desktop: process / tray / remote gateway / libVLC      |
+| Android: Kotlin plugin / Service / PlayerActivity      |
+| iOS: Swift plugin / BGTask / MobileVLCKit              |
++-------------------------------------------------------+
+              |
+ SQLite / future MySQL adapter | torrent-core | libVLC | OS APIs
+```
+
+### 3.1 Rust 模块边界
+
+| 模块 | 职责 |
+| --- | --- |
+| `ani-contracts` | 与 `src/shared` 对齐的序列化 DTO、版本和错误模型 |
+| `ani-domain` | 追番、来源、匹配、播放进度、下载状态和自动化规则 |
+| `ani-repository` | 与数据库驱动无关的分域 Repository Ports、稳定错误和 UnitOfWork |
+| `ani-storage` | SQLite Adapter、迁移、事务、备份、路径迁移和安全字段引用 |
+| `ani-sources` | Metadata、RSS、Torznab、站点适配、限流、缓存和熔断 |
+| `ani-downloads` | 下载引擎接口、任务编排、恢复、文件优先级和状态归一化 |
+| `ani-media` | 文件关联、桌面探测、播放会话和平台播放器接口 |
+| `ani-automation` | 来源同步、自动扫描、提醒和平台调度入口 |
+| `src-tauri` | Tauri 状态装配、commands、events、capabilities 和生命周期 |
+
+Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri 类型，便于单元测试和移动复用。
+
+### 3.2 Renderer 边界
+
+- 保留 `src/renderer/src`、设计系统、页面和响应式布局。
+- 保留 `src/shared/app-client.ts` 作为页面唯一业务入口。
+- 新增 `TauriClient`，将方法映射到类型化 commands 和 events。
+- `AppRuntimeKind` 扩展为桌面、Android、iOS 和远程，运行时探测不再把未知 WebView 当作远程页面。
+- 移动构建通过独立入口和 feature manifest 排除远程页面、远程客户端和桌面设置分组。
+- Electron Client 在迁移期保留，用于回归和功能对照。
+
+### 3.3 数据与安全
+
+- Rust Repository 使用 SQLite 单写者模型，启用 WAL、外键、busy timeout 和事务。
+- 业务服务仅依赖 `ani-repository` 公共端口；SQL 方言、连接、迁移和备份归具体适配器所有。
+- SQLite 保持桌面和移动默认本地存储；未来 MySQL 通过独立 Adapter 接入，不改变 Tauri commands、`AppClient` 或页面。
+- 面向公网部署时客户端不直连 MySQL，使用服务端 API 保存凭据并实施认证；直连 Adapter 只用于受控服务进程。
+- 复用当前 schema 语义与版本，不允许 Tauri 首启创建不兼容的第二套桌面数据。
+- 桌面首次启动检测 Electron `userData` 数据库，执行只复制不删除的版本化迁移。
+- Android / iOS 使用各自应用数据目录，保持设备本地数据库，不依赖桌面在线。
+- 敏感凭据通过 `SecureStore` 端口访问 DPAPI / Keychain / Android Keystore；SQLite 只保存引用或非敏感设置。
+- Tauri capabilities 按窗口和平台配置最小权限，不为 Renderer 开放通配 shell、fs、http 或 SQL 权限。
+
+### 3.4 torrent-core 与下载
+
+- 保留当前 C++ `native/torrent-core` 和版本化 JSON 命令协议。
+- 桌面迁移初期继续以受管 sidecar 运行，Rust 负责启动、握手、重启、日志和退出。
+- Android 首期复用现有 JNI、`TorrentDownloadService` 和 resume 目录，通过 Tauri Kotlin 插件连接。
+- iOS 使用稳定 C ABI 和 XCFramework，由 Swift 插件管理前台生命周期与有限后台刷盘。
+- 三个平台共享下载 DTO、错误码、状态合并和 fixture；桥接方式允许不同。
+- 托管 qBittorrent 和 FFmpeg 仅编入桌面 feature，移动产物执行负向文件检查。
+
+### 3.5 libVLC
+
+桌面不能复用 `electron-vlc-player` 的 N-API 绑定，但可以复用当前播放器契约、React 控制层、受控资源会话和双窗口交互模型。
+
+| 平台 | 实现 |
+| --- | --- |
+| Windows | Rust libVLC 3 C API 动态加载；原生 HWND 视频宿主；透明 Tauri 控制窗口 |
+| macOS | Rust libVLC 3 C API；NSView 视频宿主；透明 WKWebView 控制窗口 |
+| Linux | Rust libVLC 3 C API；X11/XWayland 视频宿主；原生 Wayland 另设门禁 |
+| Android | 复用 `AndroidVlcPlayerViewModel`、`PlayerActivity` 和 `libvlc-all:3.6.2`，包装为 Tauri Kotlin 插件 |
+| iOS | 复用 SwiftUI 播放器和 MobileVLCKit，包装为 Tauri Swift 插件 |
+
+桌面播放器协调器必须同步视频窗与控制窗的移动、缩放、DPI、最大化、全屏、焦点、最小化和关闭。libVLC 回调进入线程安全事件队列，再发布带会话 ID 和递增序号的完整快照。
+
+### 3.6 远程访问
+
+- 远程 Renderer 和现有 HTTP/RPC 契约仅保留在桌面 feature。
+- Rust 远程网关替代 Node HTTP/TLS 服务，负责认证、限流、媒体会话和受控资源访问。
+- 远程网页仍使用 ArtPlayer，不改为 libVLC。
+- Android / iOS 构建不编译远程网关模块，不复制 `.remote-pwa`，不显示远程设置入口。
+
+## 4. 分阶段实施与提交边界
+
+### P0：基线、工具链与契约门禁
+
+交付内容：
+
+- 提交当前 Windows torrent-core UTF-8 与优先级告警修复，和迁移代码隔离。
+- 安装并验证 Rust stable、Cargo、Windows MSVC target；记录 macOS、Linux、Android 和 iOS CI 前置条件。
+- 固定 Tauri CLI/API、Rust edition、最低系统版本和依赖锁文件。
+- 增加跨语言 contract fixture 目录与最小解码测试。
+- 记录现有 Electron、Android、iOS、播放器、torrent-core 和数据库基线测试结果。
+
+提交建议：
+
+1. `fix: 修复 Windows torrent-core MSVC 编译`
+2. `feat: 建立 Tauri 迁移契约与工具链基线`
+
+门禁：旧桌面与现有 Android 构建不回归；fixture 测试通过；Rust/Cargo 可在本机和 CI 使用。
+
+### P1：Tauri 2 共存宿主
+
+交付内容：
+
+- 新增 Rust workspace、`src-tauri`、Tauri 配置、图标、日志和启动错误页。
+- 新增 `TauriClient`、invoke 封装、event 订阅和平台能力探测。
+- 先实现窗口状态、最小化、最大化、关闭、打开外链和选择路径等最小平台命令。
+- 保留 Electron、Capacitor 和 Tauri 三套脚本，默认入口暂不切换。
+- 建立 Windows Tauri dev/build 冒烟；增加 macOS/Linux CI 骨架。
+
+提交建议：
+
+1. `feat: 建立 Tauri 2 共存宿主`
+2. `feat: 接入 Tauri AppClient 与平台能力`
+3. `feat: 添加 Tauri 桌面构建门禁`
+
+门禁：Tauri 首屏可用且无白屏；React 主壳、主题和窗口控制工作；Electron 回归通过。
+
+执行记录：
+
+- 已建立 `src-tauri` 共存宿主、独立 Renderer 构建、日志、跨平台图标及受限命令入口，Electron 仍为默认入口。
+- 已接入 TauriClient、窗口状态事件、无边框窗口控制、HTTP/HTTPS 外链白名单及 Android/iOS 运行时能力矩阵。
+- Windows 已通过 Rust 测试、Clippy、TypeScript 类型检查、Renderer/Android Web 构建、Tauri release 构建和进程启动退出冒烟。
+- 已新增 Windows、macOS、Linux 三平台 GitHub Actions 门禁；macOS/Linux 结果必须以远端首次运行结果为准，当前不标记为已通过。
+
+### P2：Rust 数据层与首页闭环
+
+交付内容：
+
+- 实现 Rust DTO、SQLite Repository、迁移、seed、备份和安全存储端口。
+- 完成现有桌面数据库路径发现、备份、兼容迁移和失败回滚。
+- 首批迁移设置、通知、首页聚合和追番只读接口。
+- 建立 TypeScript/Node 与 Rust 对同一 fixture 和数据库样本的契约测试。
+
+提交建议：
+
+1. `feat: 建立 Rust SQLite 仓库与数据迁移`
+2. `feat: 迁移设置通知与首页查询`
+3. `feat: 接通 Tauri 首页业务闭环`
+
+门禁：旧数据无损读取；首次启动、升级、损坏库和回滚测试通过；Tauri 首页与 Electron 数据一致。
+
+执行记录：
+
+- 已建立 Rust SQLite 单写者、schema 18 / 数据版本 22 兼容迁移、迁移前备份、完整性检查和失败恢复。
+- Tauri 首启会发现并只复制旧 Electron 数据库，原库不删除；宿主路径由 Tauri 重新注入设置。
+- 已迁移设置、通知、追番只读和首页聚合 commands，Renderer 首屏通过 `TauriClient` 读取 Rust Repository。
+- 已建立安全存储端口与 TypeScript/Rust 共用 P2 金样；Rust、类型检查及 351 项 Node 测试通过，平台构建按当前安排后续统一验证。
+
+### P3：核心业务与来源迁移
+
+按以下垂直切片逐个迁移，每个切片独立提交：
+
+1. 追番 CRUD、单集、偏好和观看进度。
+2. 番剧目录、月份/季度发现、搜索和详情。
+3. 来源配置、Native HTTP、缓存、限流、熔断和代理。
+4. RSS、Torznab、站点来源、标题解析和资源匹配。
+5. 来源同步、自动扫描和提醒。
+
+提交命名示例：
+
+- `feat: 迁移追番与单集业务到 Rust 核心`
+- `feat: 迁移番剧发现与详情服务`
+- `feat: 迁移来源网络与资源搜索`
+- `feat: 迁移自动扫描与提醒服务`
+
+门禁：每个切片的页面在 Tauri 可独立完成；固定 fixture 与 Electron 结果一致；部分来源失败不清空成功结果。
+
+执行记录：
+
+- 已迁移追番 CRUD、单集、单集偏好、连续观看进度、播放进度回写和续播检查点，复合写入使用 SQLite 事务。
+- 已迁移番剧目录合并、年月查询、本地搜索、月份原子替换和详情聚合，并保护追番、单集、下载和媒体引用。
+- 已接通对应 Tauri commands 与 `TauriClient`，新增 TypeScript/Rust 共用 P3 写入、目录金样及事务回滚测试。
+- Rust 测试、Clippy、Tauri Rust check、TypeScript 类型检查及 353 项 Node 测试通过；平台构建按当前安排后续统一验证。
+- 已新增数据库无关的分域 Repository Ports、稳定错误模型和 UnitOfWork；SQLite Adapter 已通过显式提交/回滚测试，并为未来 MySQL Adapter 保留实现边界。
+- 已迁移来源配置与设置写入 commands，建立 Rust Native HTTP、HTTP/HTTPS 白名单、系统/手动/关闭代理、AniBT 强制直连、主机限流、响应大小限制、跨重启熔断及搜索缓存。
+- 已接通 `TauriClient` 的来源配置、代理设置和字幕组读取，新增来源网络跨语言金样；Rust、Clippy、TypeScript 与 354 项 Node 回归通过，其中 353 项通过、1 项跳过。
+- 已迁移 RSS、Torznab、Mikan、AniBT、DMHY、ACGNX、Nyaa 和 ACG.RIP 解析，完成标题归一化、季度与集数过滤、字幕组识别、资源评分、聚合去重及单源失败隔离。
+- 已接通关键词、番剧上下文和单番 RSS 三组 Tauri 搜索命令与 `TauriClient`，搜索缓存通过服务重建复用测试；Rust 全工作区测试、Clippy、TypeScript 与 355 项 Node 回归通过，其中 354 项通过、1 项跳过。
+- 已迁移 AniBT/Mikan 番剧来源绑定、外部 ID 自动绑定、候选发现与评分、人工确认和排除；已确认绑定用于精确 RSS，绑定签名纳入搜索缓存作用域。
+- 已接通六组来源绑定 Tauri commands 与 `TauriClient`，新增跨语言金样、SQLite 正反向测试、单来源失败隔离和绑定缓存回归；Rust 测试、Clippy、TypeScript 与 356 项 Node 回归通过，其中 355 项通过、1 项跳过。
+- 已迁移原始资源缓存与动态字幕组观察 Repository 端口；Tauri 搜索会增量写入 `release` 表、合并跨重启缓存并维护 `anime_fansub_group`，实时来源失败时仍可返回历史资源。
+- 已建立 `ani-automation` Rust 核心并迁移每日来源增量同步；支持 ETag/Last-Modified 条件请求、90 天缓存清理、单来源失败隔离、熔断详情提醒、启动补跑和每日调度。
+- 已接通来源同步状态与立即同步 Tauri commands，设置保存会实时重排调度；新增跨语言金样、304 游标复用、失败提醒和 SQLite 通知写入测试。
+- 已迁移单集元数据/资源缓存补齐、周播时间与时区推导、已播状态推进、每日追番提醒和幂等通知写入。
+- 已迁移 Rust 自动扫描核心，支持 RSS 优先、来源回退、单集字幕组覆盖、候补字幕组策略、重复任务判定、资源可信度门禁和单集失败隔离；下载动作通过 `AutomaticDownloadExecutor` 端口交由 P4 平台引擎实现。
+- 已接通自动扫描状态、手动执行、设置重排、最小间隔、并发保护、人工冷却及结果通知 Tauri commands 与 `TauriClient`；新增 TypeScript/Rust 自动扫描跨语言金样。
+
+### P4：下载、torrent-core 与媒体闭环
+
+交付内容：
+
+- 建立 Rust 下载引擎接口和统一状态服务。
+- 接入桌面 torrent-core sidecar、外部 qBittorrent 和托管 qBittorrent。
+- 迁移添加、暂停、恢复、删除、文件优先级、恢复和下载完成关联。
+- 桌面接入 FFprobe/FFmpeg；移动接入 libVLC 媒体解析。
+- Android 复用前台下载服务；iOS 实现前台下载与有限后台刷盘语义。
+
+提交建议：
+
+1. `feat: 建立 Rust 下载引擎与任务状态服务`
+2. `feat: 接入 Tauri 桌面 torrent-core 与 qBittorrent`
+3. `feat: 接通下载媒体关联与扫描`
+4. `feat: 接入 Tauri 移动 torrent-core 生命周期`
+
+门禁：本地确定性种子完成添加、下载、文件选择、暂停、恢复、删除和重启恢复；关闭后无残留进程或损坏 resume data。
+
+执行记录：
+
+- 已建立桌面 `torrent-core` NDJSON transport，支持按需启动、握手、请求超时、异常退出恢复、动态库路径注入和退出前恢复数据落盘。
+- 已装配 Tauri 下载状态与命令，接通添加、刷新、暂停、恢复、删除、文件优先级、远程 torrent 安全导入及 `TauriClient`。
+- Rust 自动扫描已使用统一下载服务执行真实任务，设置保存会刷新引擎配置，历史任务继续按原属引擎路由并隔离不可用旧引擎。
+- 已接入外部 qBittorrent Web API，支持登录会话、经典版与 Enhanced 版添加回执、关联标签确认、任务和文件映射、qBittorrent 4/5 控制端点、连接动态重配、限速及做种目标。
+- Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查及 358 项 Node 回归通过，其中 357 项通过、1 项跳过；Windows `torrent-core` 状态、配置、空任务列表和优雅关闭协议冒烟通过，平台完整构建按当前安排后续统一验证。
+- 已接入托管 qBittorrent-nox 的跨平台二进制解析、随机端口回退、启动输出脱敏、临时凭据同步、回环 WebUI 约束、优雅关闭和超时回收；统一下载服务、托管进程与内置核心状态可通过 Tauri commands/events 查询和控制。
+- 新增 P4 下载服务跨语言金样与真实 Windows 托管 qBittorrent 冒烟，验证临时登录、固定凭据更新、任务读取和 API 优雅退出；Rust、Clippy、TypeScript 与 359 项 Node 回归通过，其中 358 项通过、1 项跳过。
+- 已建立数据库无关的 `MediaRepository` 与 `ani-media` 核心，接通媒体列表、手动扫描、下载完成自动关联、路径逃逸防护、SQLite 路径去重写入及桌面 FFprobe/FFmpeg 状态；移动端探测入口保留给 P5 libVLC 插件。
+- 新增 P4 媒体跨语言金样，Rust 工作区测试、Clippy、格式检查、TypeScript 与 360 项 Node 回归通过，其中 359 项通过、1 项跳过；Windows 真实 FFprobe 媒体流探测通过，平台完整构建按当前安排后续统一验证。
+- 已建立不向 Renderer 暴露原生命令的 `tauri-plugin-ani-torrent`；Rust 统一 transport 已接入 `AppDownloadState`，Android/iOS 与桌面复用添加、控制、文件优先级、任务恢复和状态映射。
+- Android 已复用 JNI libtorrent 并迁入 Tauri 前台 `dataSync` Service，使用应用内 Binder 串行调用、私有 no-backup 恢复目录和配置重放；Activity 重建不终止下载，显式退出会同步刷盘。
+- iOS 已新增稳定 C ABI、Swift 串行 Session、配置重放、前后台恢复与有限后台刷盘语义，并提供设备/模拟器 `AniTorrentCore.xcframework` 构建脚本；不承诺系统挂起后的持续下载。
+- 新增 P4 移动生命周期跨语言金样；Rust 工作区测试、Clippy、格式检查、TypeScript、Shell 语法与 361 项 Node 回归通过，其中 360 项通过、1 项跳过。Kotlin、Swift、XCFramework 和真机门禁按当前安排后续统一验证。
+
+### P5：全平台 libVLC
+
+按平台独立提交，任何平台失败不阻断其他平台回退到旧入口：
+
+1. Windows Rust FFI、双窗口、D3D11VA、字幕/音轨和资源打包。
+2. macOS NSView、VideoToolbox、窗口同步、签名和运行库布局。
+3. Linux X11/XWayland、运行库探测和包依赖。
+4. Android Tauri Kotlin 插件复用现有 PlayerActivity。
+5. iOS Tauri Swift 插件复用 MobileVLCKit 播放器。
+
+提交命名示例：
+
+- `feat: 接入 Tauri Windows libVLC 播放器`
+- `feat: 接入 Tauri macOS libVLC 播放器`
+- `feat: 接入 Tauri Linux libVLC 播放器`
+- `feat: 接入 Tauri Android 原生播放器`
+- `feat: 接入 Tauri iOS 原生播放器`
+
+门禁：播放、暂停、跳转、音量、静音、倍速、字幕、音轨、比例、全屏、续播、90% 已看、自动下一集、错误恢复和幂等释放通过。真机覆盖 H.264、HEVC 10bit、HDR、ASS 字幕和多音轨。
+
+执行记录：
+
+- 已建立版本化播放器命令、能力、结构化错误、递增快照和受控本地播放会话契约，Renderer 不接触真实媒体与字幕路径。
+- 已新增 `tauri-plugin-ani-player` 与平台无关 `PlayerTransport`/`PlayerService`，统一校验命令范围、活动会话和乱序快照，并保证幂等释放。
+- Windows 已通过 Rust 动态 FFI 加载 libVLC 3.0.x，绑定原生 HWND，启用 D3D11VA，接通播放、暂停、跳转、音量、静音、倍速、字幕、音轨、比例、全屏、错误快照和状态轮询。
+- 已接通 Tauri 原生视频窗口与透明 React 控制层的位置、尺寸、全屏和关闭协作；Windows 运行库通过平台资源映射随安装包布局，并新增无需 Electron Node 绑定的准备与冒烟入口。
+- Rust 全工作区测试、Clippy、格式检查、TypeScript、361 项 Node 通过项及本机 libVLC 实例创建/释放冒烟通过；Windows 完整打包、实际媒体播放和跨平台门禁按当前安排后续统一验证。
+- macOS 已接通 NSView 视频目标与 VideoToolbox，使用逻辑坐标同步透明控制层和视频窗口，避免 Retina 缩放重复放大拖动位移；Apple Silicon/Intel 运行库分别使用独立资源布局。
+- macOS 运行库准备入口已移除 Electron 原生模块依赖，并复用 Rust FFI 冒烟；Windows 上的共享 Rust、Clippy、TypeScript 和坐标测试通过，macOS 实际编译、签名、运行库装包与播放按当前安排后续统一验证。
+- Linux 已接通 Xlib/XCB 视频目标和 X11/XWayland 窗口，原生 Wayland 返回明确的平台不支持错误；运行库按系统 VLC 3.0.x 实际版本整理并设置相对 RPATH。
+- Deb/RPM 已声明 VLC 运行依赖，桌面 CI 会在 Windows、macOS、Linux 分别准备并真实加载本平台运行库；Windows 共享门禁通过，Linux 实际编译、装包和播放按当前安排后续统一验证。
+- Android 已将 `libvlc-all:3.6.2`、Compose 播放页和 `PlayerActivity` 接入 Tauri Kotlin 插件，Rust `PlayerTransport` 统一转发能力、命令、快照和幂等关闭；移动 Renderer 只提交任务与文件索引，真实媒体和字幕路径由 Rust 受控会话解析后直接交给原生插件。
+- Android 原生页已接通播放、暂停、跳转、音量、静音、倍速、音轨、字幕、比例、横屏全屏、续播、90% 已看和自动下一集原有能力；旧 Capacitor 启动链保持可用，Kotlin/Tauri Android 实编译、APK 内容和真机媒体矩阵按当前安排后续统一验证。
+- iOS 已将 SwiftUI 播放页与 `MobileVLCKit 3.7.3` 迁入 Tauri Swift Package，通过全屏 `UIHostingController` 接通能力、命令、快照、方向、前后台恢复和幂等关闭；旧 XcodeGen 工程在迁移期引用同一份播放器源码。
+- MobileVLCKit 准备脚本固定官方归档 URL 与 SHA-256，并将真机/模拟器 XCFramework 放入插件本地 binary target；Swift/Tauri iOS 实编译、签名、IPA 内容和真机媒体矩阵按当前安排后续统一验证。
+
+### P6：桌面完整能力与远程网关
+
+交付内容：
+
+- 迁移托盘、后台运行、窗口恢复、主题、通知和桌面文件操作。
+- 迁移外部播放器检测、启动、播放监控和定位文件。
+- 用 Rust HTTP/TLS 服务迁移远程网关、认证、配对、媒体会话和远程 RPC。
+- 保留远程 Renderer、ArtPlayer、HLS、字幕和转码回退。
+- 完成桌面资源打包、日志、崩溃恢复和安全能力审计。
+
+提交建议：
+
+1. `feat: 迁移 Tauri 桌面系统集成`
+2. `feat: 迁移外部播放器与媒体服务`
+3. `feat: 迁移桌面远程网关与配对`
+4. `feat: 完成 Tauri 桌面功能对等`
+
+门禁：桌面功能矩阵全部签收；远程 URL 和 RPC 兼容；应用关闭后 qBittorrent、torrent-core、VLC 和网关按策略退出。
+
+执行记录：
+
+- 已接入 Tauri 原生托盘、关闭到托盘、主窗口恢复和托盘扫描/退出动作；退出事件继续统一关闭 libVLC、qBittorrent 与 torrent-core。
+- 已接入跨 Windows、macOS、Linux 的开机启动管理，设置保存和恢复默认值后立即同步；浅色、深色、跟随系统会同步到原生窗口与 WebView 背景。
+- 已接入 Tauri 系统通知，自动扫描结果、调度错误和每日提醒同时保留 SQLite 提醒中心记录；补齐单条已读、全部已读和清空通知的公共 Repository 与 Tauri 命令。
+- 已迁移外部播放器探测、原生程序选择、无 shell 参数模板启动和文件管理器定位；媒体路径必须来自 SQLite 登记或应用下载目录，mpv/IINA 通过 JSON IPC、Windows PotPlayer 通过 GSMTC 回写 90% 已看状态。
+- 已建立独立 `ani-remote` Rust 核心，迁移固定 RPC 白名单与 scope、一次性配对、令牌摘要持久化和吊销、Host/Origin 防护、限流、本地 CA/TLS、Range、HLS、字幕、续播媒体会话及签名图片缓存。
+- 已使用平台凭据库主密钥和 AES-GCM 保护远程设备摘要与 TLS 私钥；凭据库或网关初始化失败会保留停止状态与 `lastError`，不会阻止 Tauri 主应用启动。
+- 已接通远程状态、配对、吊销和图片解析 commands、`TauriClient`、设置热重配和退出回收；移动编译排除网关依赖，设置页按平台能力隐藏远程入口。
+- 已新增独立 Tauri 远程 PWA 构建与桌面资源配置、跨语言契约金样及真实 HTTP 集成测试；Rust 14 项远程测试、Clippy、TypeScript 类型检查和远程 Renderer 构建通过，完整平台构建按当前安排后续统一验证。
+- 已迁移 Bangumi、AniList、Mikan 月度/季度采集、在线搜索和详情刷新，保留代理、限流、熔断、分页、来源局部失败与字段合并语义；补齐放送、职员、完结日期、时长和内容分级字段。
+- 已迁移单集候选资源预览；`TauriClientCore` 直接实现完整 `AppClient`，移除未迁移方法 Proxy，89 个业务方法均由 TypeScript 编译器校验。
+- 已新增 P6 桌面功能对等跨语言金样；Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查及 365 项 Node 回归通过，其中 364 项通过、1 项跳过。
+
+### P7：Android 与 iOS 完整应用闭环
+
+交付内容：
+
+- 将已完成的 Capacitor Android 数据基础迁移到 Tauri 宿主，保留原生 torrent 与 VLC 组件。
+- 将现有 iOS MobileVLCKit 播放器接入 Tauri iOS 宿主。
+- Android APK/AAB 必须内置 JNI torrent-core 与 `libvlc-all` 对应 ABI 运行库，不得通过远程桌面代理下载或播放。
+- iOS App/IPA 必须内置 AniTorrentCore XCFramework 与 MobileVLCKit，不得通过远程桌面代理下载或播放。
+- 接通移动首页、发现、追番、来源、搜索、下载、提醒、设置和播放器。
+- 完整迁移浅色、深色、跟随系统、用户主题选择与持久化，主题切换不得要求重启应用。
+- Android 使用前台服务与 WorkManager；iOS 使用 BGTask 尽力调度并遵守系统挂起限制。
+- 完成移动安全存储、文件导入导出、通知跳转、备份恢复和生命周期恢复。
+- 对 APK/AAB/IPA 执行负向检查，确认不包含远程 Web、远程网关、FFmpeg 或 qBittorrent-nox。
+
+提交建议：
+
+1. `feat: 迁移 Android Tauri 应用宿主`
+2. `feat: 完成 Android 本地业务闭环`
+3. `feat: 迁移 iOS Tauri 应用宿主`
+4. `feat: 完成 iOS 本地业务闭环`
+
+门禁：Android/iOS 在桌面端离线状态下，使用应用内置 torrent-core 完成确定性种子的添加、下载、暂停、恢复、文件选择和重启恢复，再使用内置 libVLC 播放下载文件并回写进度；浅色、深色、跟随系统和用户主题持久化通过；横竖屏、网络切换、后台恢复、低存储和权限拒绝有确定状态。
+
+执行记录：
+
+- Android 已接通前后台生命周期、横竖屏、网络状态、低存储状态、通知权限与通知页面导航；低于 256 MiB 时 Rust 下载命令拒绝新增和恢复任务。
+- Android 内置 torrent-core 已接通前台下载服务与唯一 WorkManager 恢复任务，任务状态变化会持久化恢复标识，Activity 重建不终止下载。
+- 已接入 Android Keystore AES-GCM 安全存储；qBittorrent 密码与来源 API Key 在 SQLite 中仅保存版本化引用。
+- 已接通系统文档选择器的本地 torrent 导入、SQLite 一致性备份导出、恢复前快照、损坏备份拒绝和失败保护。
+- 移动设置页已保留主题、外部 qBittorrent Web API、内置下载与 libVLC，隐藏桌面集成、FFprobe、外部播放器路径和托管 qBittorrent-nox；Rust 同时强制关闭恢复数据中的桌面专属能力。
+- Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、Android Renderer 构建及 365 项 Node 回归通过，其中 364 项通过、1 项跳过。Kotlin、APK/AAB 内容和 Android 真机门禁按当前安排后续统一验证。
+- iOS 已接入 Tauri Swift Package 宿主、Keychain 安全存储、网络/方向/存储/通知权限状态、生命周期恢复和 BGAppRefreshTask 前台补跑标记。
+- iOS 已接通安全作用域 torrent/SQLite 文档导入导出、恢复后平台约束、系统通知页面跳转，以及来源同步后串行执行自动扫描的补跑闭环。
+- 已增加 APK/AAB/IPA 安装包负向内容门禁，拒绝远程 Web 资源、FFmpeg/FFprobe、托管 qBittorrent 和桌面网关证书进入移动产物。
+- Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、Tauri Renderer 构建及 Node 回归通过；Swift/Xcode、IPA 内容和 iOS 真机门禁按当前安排后续统一验证。
+
+### P8：默认切换、发布与旧宿主退役
+
+交付内容：
+
+- Tauri 成为默认桌面与移动构建入口。
+- 建立 Windows、macOS、Linux、Android 和 iOS 发布工作流、签名、校验和产物清单。
+- 验证安装升级、旧数据迁移、资源完整性、许可证和源码说明。
+- 冻结 Electron/Capacitor，在完整回归签收后归档 Electron 内核实现、依赖清单和最后可回退提交，再从默认源码与构建链移除旧宿主。
+- 更新 README、启动、发布、进度和故障排查文档。
+
+提交建议：
+
+1. `feat: 切换 Tauri 为默认应用宿主`
+2. `feat: 完成 Tauri 全平台发布工作流`
+3. `feat: 退役 Electron 与 Capacitor 宿主`
+4. `feat: 完成 Tauri 全平台迁移`
+
+门禁：五个平台生成可安装产物；升级不丢数据；桌面与移动功能矩阵签收；旧宿主移除前保留最后一个可回退标签和 Electron 内核归档清单。
+
+执行记录：
+
+- `dev`、`build` 和 `package:desktop` 已切换为 Tauri 唯一正式入口，Electron/Capacitor 命令已从活跃脚本移除。
+- 已建立 Windows、macOS x64/arm64、Linux、Android 和 iOS Tauri 发布工作流；发布版本由标签注入，安装包同时生成 SHA-256 与版本化 JSON 产物清单。
+- Windows 与 Android 发布任务要求项目自签凭据；macOS 使用临时签名，iOS 输出供用户自行重签的未签名 IPA，不依赖应用市场证书。
+- 桌面资源按平台配置打包 torrent-core、libVLC、托管 qBittorrent、FFmpeg/FFprobe、远程 Renderer 和许可证；移动配置仅保留本地核心、原生播放器和许可证边界。
+- 已由新版 Ani Tracker 标识重新生成 Tauri Windows/macOS/Linux/Android/iOS 图标，并替换 Android Tauri 工程残留的旧启动图标。
+- Electron 主进程、preload、客户端、配置与 Node 原生依赖，以及 Capacitor Android/iOS 宿主和桥接已移入 `archive/legacy-hosts`；回退提交固定为 `6caf060`。
+- Android libVLC 播放器源码已迁入正式 Tauri 插件目录，插件构建不再引用旧 `android/` 工程。
+- 活跃 Renderer 已移除 Electron/Capacitor 探测与回退；本地能力只接受 Tauri bridge，移动端追番操作、自动扫描、播放和主题不再被旧 Electron 判断错误隐藏。
+- 根依赖与锁文件已移除 Electron、Capacitor、better-sqlite3、electron-vlc-player、node-forge 和旧 XML 解析依赖；共享契约测试改由 Node 直接执行。
+- README、架构、启动、发布、进度、脚本和归档清单已按 Tauri 正式架构更新。
+- 已新增独立 actionlint 门禁；Windows 之外的桌面平台和 Android/iOS 原生功能由项目负责人依据 CI 产物手动验收。
+
+## 5. 每阶段统一验证
+
+每个阶段至少执行：
+
+1. `pnpm.cmd run typecheck`
+2. TypeScript / Node 确定性测试
+3. 对应 Rust workspace 测试与 Clippy
+4. `cargo fmt --check`
+5. Tauri 目标平台 build/check
+6. 活跃源码与依赖不得重新引用已归档旧宿主
+7. `git diff --check`
+8. 提交前检查 `git diff --cached --stat` 和 `git diff --cached`
+
+原生功能增加对应门禁：
+
+- torrent-core：CMake 构建、命令协议冒烟、恢复数据与退出检查。
+- libVLC：运行库加载、实际播放、轨道/字幕、硬解、全屏和资源释放。
+- SQLite：新建、逐版本迁移、事务回滚、备份恢复和旧数据库样本。
+- 移动：Kotlin/Swift 编译、模拟器、真机、包内容、权限和生命周期。
+- 远程：认证负向测试、来源限制、TLS、媒体 Range、RPC 兼容和令牌脱敏。
+
+## 6. 提交策略
+
+- 一个提交只解决一个可验证问题，不把全阶段压成超大提交。
+- 阶段提交必须以 `feat:` 或 `fix:` 开头，并用中文说明新增功能或修复内容。
+- 使用路径级 `git add`，不执行 `git add -A`，避免混入当前工作树的用户文件。
+- 生成目录、临时截图、Rust `target/`、Tauri 构建产物和移动中间产物不得提交。
+- 阶段门禁失败时继续在同阶段修复，不开始下一阶段。
+- 不重写、压缩或强推已有历史；远端推送仅在用户明确要求后执行。
+
+## 7. 当前基线与前置条件
+
+当前分支：`Tauri_迁移`
+
+当前已确认基础：
+
+- `AppClient`、平台能力和部分平台 Ports 已存在。
+- Android Capacitor 宿主、SQLite 启动基础、Keystore 和缓存目录已经完成。
+- Android `PlayerActivity` / libVLC 与 torrent JNI/Service 已存在。
+- iOS SwiftUI / MobileVLCKit 播放器工程已存在。
+- 桌面 Electron libVLC 双窗口、远程网关、SQLite 和下载服务可作为行为基线。
+- Windows torrent-core 已在本机成功构建、打包并校验。
+
+P0 执行记录：
+
+- Windows 已安装 Rust `1.97.1`、Cargo `1.97.1` 和 `x86_64-pc-windows-msvc` target。
+- 已固定 `@tauri-apps/api@2.11.1`、`@tauri-apps/cli@2.11.4` 和 Rust 工具链版本。
+- Rust workspace 测试、Clippy、格式检查、TypeScript 类型检查及 346 项 Node 回归测试通过；其中 345 项通过、1 项跳过、0 项失败。
+- Windows torrent-core 已成功构建、打包并校验，MSVC 编译修复已独立提交。
+- macOS、Linux、Android 和 iOS 仍须在对应系统或 CI 验证，不能用 Windows 本机结果替代。
+- 当前工作树含用户未提交内容；迁移提交必须逐文件暂存并保持这些修改不变。
+- Linux 原生 Wayland 的 libVLC 3 嵌入不作为首个切换门禁，首期正式支持 X11/XWayland；原生 Wayland 单独立项验证。
+
+## 8. 工作量与停止条件
+
+预计工作量：
+
+| 范围 | 预计人日 |
+| --- | ---: |
+| P0-P1 工具链与共存宿主 | 8-12 |
+| P2-P3 Rust 数据和核心业务 | 30-45 |
+| P4 下载与媒体 | 18-28 |
+| P5 全平台 libVLC | 20-30 |
+| P6 桌面与远程完整能力 | 18-28 |
+| P7 移动完整闭环 | 25-40 |
+| P8 发布与退役 | 10-16 |
+| 合计 | 129-199 |
+
+外部等待、真机采购、签名、商店审核和来源站点变化不计入开发人日。
+
+出现以下任一情况时停止切换、保留旧入口并重新审核：
+
+1. 旧 SQLite 数据无法可靠迁移或回滚。
+2. Windows/macOS libVLC 双窗口无法稳定同步或释放。
+3. Android/iOS torrent-core 无法在平台生命周期下保存恢复数据。
+4. Tauri 移动构建无法复用现有原生 VLC 界面且需要重写全部播放器 UI。
+5. 远程网关兼容迁移导致现有客户端协议破坏。
+6. 包体积、许可证、签名或商店政策出现不可接受风险。
+
+## 9. 已确认决策
+
+以下决策已经确认：
+
+1. 同意 Rust 核心承载后台业务，而不是保留 Node sidecar 作为正式架构。
+2. 同意迁移期保留 Electron / Capacitor，P8 后再退役。
+3. 同意移动端仅排除远程 Web/网关、FFmpeg/FFprobe/转码及无移动语义的桌面系统能力，其余跨平台业务和主题功能全部保留。
+   完整本地闭环强制包含内置 torrent-core、平台原生 libVLC 和主题系统，不接受远程代理降级。
+4. 同意 Linux 首期支持 X11/XWayland，原生 Wayland 后续单独验收。
+5. 同意按 P0-P8 顺序实施并按上述边界提交。
+6. 同意 P0 安装 Rust 工具链并增加 Tauri/Cargo 依赖。
+7. 同意业务存储依赖公共 Repository Ports 与 UnitOfWork，SQLite 为默认本地 Adapter，并为未来 MySQL Adapter 保持可替换边界。
+
+P0-P8 已按上述决策执行并分阶段提交；剩余工作仅为项目负责人执行对应平台的签名安装包和真机发布验收。

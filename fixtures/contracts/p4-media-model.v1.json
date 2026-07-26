@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "kind": "p4-media-model",
+  "payload": {
+    "mediaToolsStatus": {
+      "ffprobe": {
+        "available": true,
+        "command": "C:/Ani/resources/ffmpeg/win32-x64/ffprobe.exe",
+        "version": "ffprobe version 20230213-2296078"
+      },
+      "ffmpeg": {
+        "available": true,
+        "command": "C:/Ani/resources/ffmpeg/win32-x64/ffmpeg.exe",
+        "version": "ffmpeg version 6.1.1"
+      }
+    },
+    "scanResult": {
+      "taskId": "download-media-1",
+      "mediaFiles": [
+        {
+          "id": "media-0123456789abcdef",
+          "animeId": "anime-media-1",
+          "episodeId": "episode-media-1",
+          "downloadTaskId": "download-media-1",
+          "filePath": "C:/Anime/episode-01.mkv",
+          "fileName": "episode-01.mkv",
+          "size": 1048576,
+          "container": "mkv",
+          "declaredVideoCodec": "HEVC",
+          "detectedVideoCodec": "hevc",
+          "normalizedVideoCodec": "H.265/HEVC",
+          "resolution": "1920x1080",
+          "bitDepth": 10,
+          "audioCodecs": ["AAC"],
+          "subtitleTracks": ["chi / 简体 / ASS"],
+          "durationSeconds": 1440,
+          "downloadedAt": "2026-07-25T10:10:00.000Z",
+          "probedAt": "2026-07-25T10:11:00.000Z"
+        }
+      ],
+      "skippedFiles": [
+        {
+          "name": "cover.jpg",
+          "reason": "非视频文件"
+        }
+      ],
+      "errors": []
+    }
+  }
+}

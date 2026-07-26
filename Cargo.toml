@@ -1,0 +1,28 @@
+[workspace]
+members = [
+  "crates/ani-contracts",
+  "crates/ani-domain",
+  "crates/ani-repository",
+  "crates/ani-storage",
+  "crates/ani-sources",
+  "crates/ani-automation",
+  "crates/ani-downloads",
+  "crates/ani-media",
+  "crates/ani-remote",
+  "crates/tauri-plugin-ani-player",
+  "crates/tauri-plugin-ani-torrent",
+  "crates/tauri-plugin-ani-mobile",
+  "src-tauri"
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+license = "PolyForm-Noncommercial-1.0.0"
+
+[workspace.dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2.0"

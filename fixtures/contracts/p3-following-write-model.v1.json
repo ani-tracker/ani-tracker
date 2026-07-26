@@ -1,0 +1,91 @@
+{
+  "schemaVersion": 1,
+  "kind": "p3-following-write-model",
+  "payload": {
+    "myAnime": {
+      "id": "my-anime-p3-1",
+      "anime": {
+        "id": "anime-p3-1",
+        "title": "P3 契约番剧",
+        "originalTitle": "P3 Contract Anime",
+        "aliases": [
+          {
+            "id": "legacy-alias-1",
+            "animeId": "legacy-anime-id",
+            "alias": "P3 Alias",
+            "language": "en",
+            "priority": 10
+          }
+        ],
+        "premiereYear": 2026,
+        "premiereMonth": 7,
+        "season": "summer",
+        "externalIds": {
+          "bangumi": "p3-1"
+        },
+        "detail": {
+          "episodeCount": 12
+        }
+      },
+      "status": "watching",
+      "autoDownload": true,
+      "rssSubscriptions": [
+        {
+          "id": "rss-p3-1",
+          "myAnimeId": "my-anime-p3-1",
+          "name": "P3 RSS",
+          "url": "https://example.test/p3.xml",
+          "enabled": true,
+          "preferredSubtitleLanguages": ["chs"],
+          "createdAt": "2026-07-25T00:00:00.000Z",
+          "updatedAt": "2026-07-25T00:00:00.000Z"
+        }
+      ],
+      "preferredResolution": "1080p",
+      "preferredCodec": "H.265/HEVC",
+      "preferredBitDepth": 10,
+      "preferredSubtitleLanguages": ["chs", "cht"],
+      "addedAt": "2026-07-25T00:00:00.000Z",
+      "updatedAt": "2026-07-25T00:00:00.000Z"
+    },
+    "episode": {
+      "id": "episode-anime-p3-1-1",
+      "animeId": "anime-p3-1",
+      "episodeNo": 1,
+      "title": "第一集",
+      "status": "aired"
+    },
+    "preference": {
+      "id": "preference-p3-1",
+      "animeId": "anime-p3-1",
+      "episodeId": "episode-anime-p3-1-1",
+      "releaseId": "release-p3-1",
+      "isManualOverride": true
+    },
+    "watchProgressInput": {
+      "animeId": "anime-p3-1",
+      "watchedEpisodeCount": 1
+    },
+    "reportPlaybackProgressInput": {
+      "taskId": "download-p3-1",
+      "fileIndex": 0,
+      "percent": 92
+    },
+    "savePlaybackCheckpointInput": {
+      "taskId": "download-p3-1",
+      "fileIndex": 0,
+      "positionSeconds": 1380,
+      "durationSeconds": 1500,
+      "completed": false
+    },
+    "checkpoint": {
+      "taskId": "download-p3-1",
+      "fileIndex": 0,
+      "positionSeconds": 1380,
+      "durationSeconds": 1500,
+      "completed": false,
+      "watchedReported": true,
+      "updatedAt": "2026-07-25T00:30:00.000Z"
+    }
+  }
+}

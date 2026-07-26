@@ -1,0 +1,24 @@
+[package]
+name = "tauri-plugin-ani-torrent"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors = ["Ani Tracker contributors"]
+description = "Ani Tracker Tauri mobile torrent-core transport"
+exclude = ["/android/.gradle", "/android/build", "/ios/.build"]
+links = "tauri-plugin-ani-torrent"
+
+[dependencies]
+ani-downloads = { path = "../ani-downloads" }
+async-trait = "0.1"
+serde.workspace = true
+serde_json.workspace = true
+tauri = { version = "2", default-features = false }
+thiserror.workspace = true
+
+[build-dependencies]
+tauri-plugin = { version = "2", features = ["build"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }

@@ -49,7 +49,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { CachedImage } from "@/components/cached-image";
 import { Page, PageHeader } from "@/components/page-layout";
-import { appApi, isElectronClient } from "@/lib/api";
+import { appApi, isLocalClient } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import type { AnimeDetailResult } from "@shared/contracts";
 import type { Anime, MyAnime } from "@shared/domain";
@@ -118,7 +118,7 @@ export function AnimeDetailPage({
   const [activeSectionId, setActiveSectionId] = useState("detail-overview");
   const summaryRef = useRef<HTMLParagraphElement>(null);
   const programmaticSectionIdRef = useRef<string | null>(null);
-  const desktopClient = isElectronClient();
+  const localClient = isLocalClient();
 
   useEffect(() => {
     void loadDetail();
@@ -265,7 +265,7 @@ export function AnimeDetailPage({
 
   /** 主动补全外部详情，并保留当前页面内容。 */
   async function refreshDetail() {
-    if (!online || !desktopClient) return;
+    if (!online || !localClient) return;
     setRefreshing(true);
     try {
       const refreshed = await appApi.refreshAnimeDetail(animeId);
@@ -314,9 +314,9 @@ export function AnimeDetailPage({
     }
   }
 
-  /** 在桌面端调用系统浏览器，远程端使用标准新窗口。 */
+  /** 在本地应用调用系统浏览器，远程端使用标准新窗口。 */
   async function openExternal(url: string) {
-    if (desktopClient) {
+    if (localClient) {
       await appApi.openExternal(url);
       return;
     }
@@ -382,7 +382,7 @@ export function AnimeDetailPage({
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
-          {desktopClient && (
+          {localClient && (
             <Button
               disabled={refreshing || !online}
               onClick={() => void refreshDetail()}
@@ -395,7 +395,7 @@ export function AnimeDetailPage({
           )}
           <DetailMoreMenu
             externalLinks={viewModel.externalLinks}
-            followed={viewModel.followed && desktopClient}
+            followed={viewModel.followed && localClient}
             onOpenExternal={openExternal}
             onRemove={() => setRemoveDialogOpen(true)}
           />
@@ -470,7 +470,7 @@ export function AnimeDetailPage({
 
           <Card className="col-span-2 min-w-0 bg-primary/5 shadow-none xl:col-span-1 xl:self-start">
             <CardContent className="flex flex-col gap-2 p-4 sm:p-4">
-              {!desktopClient ? (
+              {!localClient ? (
                 result.myAnime ? (
                   <Button onClick={() => onOpenLibraryAction(animeId, "tasks")} variant="outline">
                     <ListTodo data-icon="inline-start" />查看追番
@@ -620,7 +620,7 @@ export function AnimeDetailPage({
               viewModel={viewModel}
               onOpenAction={(action) => onOpenLibraryAction(animeId, action)}
               onRemove={() => setRemoveDialogOpen(true)}
-              readOnly={!desktopClient}
+              readOnly={!localClient}
             />
           )}
 

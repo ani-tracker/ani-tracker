@@ -449,7 +449,7 @@ class TorrentCore {
     const int priority = std::clamp(params.get<int>("priority"), 0, 7);
     for (const int index : read_indexes(params, "fileIndexes")) {
       if (index >= 0 && index < static_cast<int>(priorities.size())) {
-        priorities[index] = lt::download_priority_t(priority);
+        priorities[index] = lt::download_priority_t(static_cast<std::uint8_t>(priority));
       }
     }
     handle.prioritize_files(priorities);

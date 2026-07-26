@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "kind": "p5-player-command",
+  "payload": {
+    "loadCommand": {
+      "type": "load",
+      "commandId": "command-contract-1",
+      "sessionId": "session-contract-1",
+      "startPositionSeconds": 42.5,
+      "source": {
+        "taskId": "download-contract-1",
+        "fileIndex": 0,
+        "title": "测试番 第 01 集",
+        "uri": "ani-player://session/session-contract-1/media",
+        "mode": "direct",
+        "durationSeconds": 1440,
+        "subtitles": [
+          {
+            "id": "subtitle-contract-1",
+            "label": "简体 ASS",
+            "language": "zh-Hans",
+            "type": "ass",
+            "uri": "ani-player://session/session-contract-1/subtitle/0",
+            "default": true
+          }
+        ]
+      }
+    },
+    "rejectedResult": {
+      "commandId": "command-contract-2",
+      "accepted": false,
+      "error": {
+        "code": "unsupported",
+        "message": "当前平台不支持画中画",
+        "recoverable": false,
+        "recoveryActions": []
+      }
+    },
+    "androidCapabilities": {
+      "backend": "libvlc",
+      "platform": "android",
+      "availability": "available",
+      "canSeek": true,
+      "canSetVolume": true,
+      "canMute": true,
+      "playbackRates": [0.5, 0.75, 1, 1.25, 1.5, 2],
+      "supportsAudioTracks": true,
+      "supportsSubtitleTracks": true,
+      "supportsAspectRatio": true,
+      "supportsFullscreen": true,
+      "supportsPictureInPicture": false,
+      "supportsPlaylistNavigation": true,
+      "supportsDirectPlayback": true,
+      "supportsTranscodingFallback": false,
+      "supportsHdr": true
+    },
+    "iosCapabilities": {
+      "backend": "libvlc",
+      "platform": "ios",
+      "availability": "available",
+      "canSeek": true,
+      "canSetVolume": true,
+      "canMute": true,
+      "playbackRates": [0.5, 0.75, 1, 1.25, 1.5, 2],
+      "supportsAudioTracks": true,
+      "supportsSubtitleTracks": true,
+      "supportsAspectRatio": true,
+      "supportsFullscreen": true,
+      "supportsPictureInPicture": false,
+      "supportsPlaylistNavigation": true,
+      "supportsDirectPlayback": true,
+      "supportsTranscodingFallback": false,
+      "supportsHdr": true
+    },
+    "playbackSession": {
+      "id": "session-contract-1",
+      "taskId": "download-contract-1",
+      "fileIndex": 0,
+      "fileName": "episode-01.mkv",
+      "mode": "direct",
+      "streamUrl": "ani-player://session/session-contract-1/media",
+      "expiresAt": "2026-07-25T13:00:00.000Z",
+      "durationSeconds": 1440,
+      "startPositionSeconds": 42.5,
+      "subtitles": []
+    }
+  }
+}

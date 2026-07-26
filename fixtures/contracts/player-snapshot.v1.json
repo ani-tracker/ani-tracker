@@ -1,0 +1,94 @@
+{
+  "schemaVersion": 1,
+  "kind": "player-snapshot",
+  "payload": {
+    "sessionId": "session-contract-001",
+    "sequence": 7,
+    "backend": "libvlc",
+    "platform": "tauri-desktop",
+    "status": "playing",
+    "capabilities": {
+      "backend": "libvlc",
+      "platform": "tauri-desktop",
+      "availability": "available",
+      "canSeek": true,
+      "canSetVolume": true,
+      "canMute": true,
+      "playbackRates": [0.5, 0.75, 1, 1.25, 1.5, 2],
+      "supportsAudioTracks": true,
+      "supportsSubtitleTracks": true,
+      "supportsAspectRatio": true,
+      "supportsFullscreen": true,
+      "supportsPictureInPicture": false,
+      "supportsPlaylistNavigation": true,
+      "supportsDirectPlayback": true,
+      "supportsTranscodingFallback": false,
+      "supportsHdr": true
+    },
+    "source": {
+      "taskId": "task-contract-001",
+      "fileIndex": 0,
+      "title": "Contract Episode 01",
+      "uri": "ani-media://session/session-contract-001/file/0",
+      "mode": "direct",
+      "durationSeconds": 1440,
+      "subtitles": [
+        {
+          "id": "subtitle-contract-001",
+          "label": "简体中文",
+          "language": "zh-CN",
+          "type": "ass",
+          "uri": "ani-media://session/session-contract-001/subtitle/0",
+          "default": true
+        }
+      ]
+    },
+    "playlist": {
+      "items": [
+        {
+          "id": "episode-contract-001",
+          "taskId": "task-contract-001",
+          "fileIndex": 0,
+          "title": "Contract Episode 01",
+          "episodeLabel": "第 01 集",
+          "durationSeconds": 1440
+        }
+      ],
+      "activeItemId": "episode-contract-001"
+    },
+    "positionSeconds": 360,
+    "durationSeconds": 1440,
+    "bufferedSeconds": 420,
+    "volume": 0.8,
+    "muted": false,
+    "playbackRate": 1.25,
+    "audioTracks": [
+      {
+        "id": "1",
+        "kind": "audio",
+        "label": "日语",
+        "language": "ja",
+        "selected": true
+      },
+      {
+        "id": "2",
+        "kind": "audio",
+        "label": "中文",
+        "language": "zh-CN",
+        "selected": false
+      }
+    ],
+    "subtitleTracks": [
+      {
+        "id": "subtitle-contract-001",
+        "kind": "subtitle",
+        "label": "简体中文",
+        "language": "zh-CN",
+        "selected": true
+      }
+    ],
+    "aspectRatio": "default",
+    "fullscreen": false,
+    "pictureInPicture": false
+  }
+}

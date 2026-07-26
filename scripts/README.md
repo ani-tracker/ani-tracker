@@ -1,173 +1,76 @@
-# 桌面构建脚本说明
+# 脚本说明
 
-本目录提供 Windows 与 macOS 共用的桌面开发构建流程。Windows 必须在 Git Bash 中执行 Bash 脚本；macOS 使用系统 Bash 环境。
+本目录只保留 Tauri、Rust 原生资源和发布链使用的脚本。已退役 Electron/Capacitor 脚本位于 `archive/legacy-hosts`，不应从当前分支执行。
 
-## 快速开始
+## 日常入口
 
-首次构建先检查并安装原生工具链：
+优先通过 `package.json` 调用：
 
-```bash
-bash scripts/setup-desktop-build-tools.sh --check-only
-bash scripts/setup-desktop-build-tools.sh
+```powershell
+pnpm.cmd dev
+pnpm.cmd build
+pnpm.cmd run package:desktop
+pnpm.cmd run typecheck
+pnpm.cmd run test:parsers
+pnpm.cmd run test:theme
+pnpm.cmd run test:rust
+pnpm.cmd run lint:rust
 ```
 
-日常开发优先使用增量重建：
+## torrent-core
 
-```bash
-bash scripts/incremental-rebuild.sh --run none
-```
+| 脚本 | 用途 |
+| --- | --- |
+| `prepare-desktop-torrent-core-dev.mjs` | Windows/macOS 准备依赖、构建并验证桌面核心 |
+| `prepare-android-torrent-dependencies.sh` | 交叉构建 Android Boost/OpenSSL/libtorrent 依赖 |
+| `prepare-ios-torrent-core.sh` | 构建 iOS C ABI 与 XCFramework |
+| `package-torrent-core-bundle.mjs` | 整理桌面 bundle 与依赖 |
+| `create-torrent-core-manifest.mjs` | 生成版本和 SHA-256 清单 |
+| `prepare-torrent-core-resources.mjs` | 校验并复制目标平台资源 |
 
-依赖或缓存异常时执行完全重建：
+## qBittorrent
 
-```bash
-bash scripts/clean-rebuild.sh --run none --kill-app
-```
+| 脚本 | 用途 |
+| --- | --- |
+| `prepare-qbittorrent-build-sources.mjs` | 准备固定版本源码与摘要 |
+| `build-qbittorrent-nox-windows.ps1` | 构建 Windows 无头运行时 |
+| `build-qbittorrent-nox-unix.sh` | 构建 macOS/Linux 无头运行时 |
+| `package-qbittorrent-bundle.mjs` | 整理可分发 bundle |
+| `verify-qbittorrent-bundle.mjs` | 校验版本、依赖、许可证和 WebUI |
+| `prepare-qbittorrent-resources.mjs` | 将目标资源复制到 `out/qbittorrent` |
+| `smoke-managed-qbittorrent.mjs` | 验证受管进程登录、任务 API 与退出 |
 
-`--run` 支持：
+## FFmpeg 与 libVLC
 
-- `preview`：构建后启动 Electron 预览，默认值。
-- `dev`：构建后启动开发服务。
-- `none`：只构建，不启动应用。
+| 脚本 | 用途 |
+| --- | --- |
+| `download-ffmpeg-resources.mjs` | 显式下载固定 FFmpeg/FFprobe 资源 |
+| `prepare-ffmpeg-resources.mjs` | 离线校验并整理桌面资源 |
+| `download-libvlc-archive.mjs` | 下载并验证官方 VLC 归档 |
+| `prepare-*-libvlc-dev.mjs` | 按 Windows/macOS/Linux 整理运行时并执行 Rust FFI 冒烟 |
+| `prepare-ios-libvlc.sh` | 准备 MobileVLCKit XCFramework |
+| `prepare-libvlc-resources.mjs` | 统一运行时布局、来源与许可证校验 |
 
-## 最小工具链
+桌面 libVLC 直接由 Rust C API Adapter 加载，不存在 Node 原生模块或宿主 ABI 重建。
 
-### Windows x64
+## Tauri 与发布
 
-`setup-desktop-build-tools.sh` 使用 `winget` 安装 Visual Studio 2022 Build Tools 的最小必要组件：
+| 脚本 | 用途 |
+| --- | --- |
+| `prepare-tauri-desktop-runtime.mjs` | 构建远程 Renderer并准备当前平台 libVLC |
+| `verify-tauri-mobile-package.mjs` | 检查 APK/AAB/IPA 必需内容与禁止内容 |
+| `set-tauri-release-version.mjs` | 同步发布版本 |
+| `create-tauri-release-manifest.mjs` | 生成发布产物 SHA-256 与 JSON 清单 |
+| `stop-workspace-processes.ps1` | 仅停止当前工作区的 Tauri/sidecar 进程 |
 
-- `Microsoft.VisualStudio.Workload.VCTools`
-- `Microsoft.VisualStudio.Component.VC.CMake.Project`
-- `Microsoft.VisualStudio.Component.Windows11SDK.26100`
+## 验证脚本
 
-不会安装 Visual Studio IDE、MFC、ATL、测试工具和分析器。安装仍需要数 GB 空间，并可能触发 UAC。
+- `run-node-tests.mjs`：编译并使用 Node 执行 `src/shared/__tests__`。
+- `verify-theme-contrast.mjs`：校验浅色、深色主题令牌和对比度。
 
-项目使用固定版本 `vcpkg 2025.06.13`。首次原生构建会自动克隆到 `.vcpkg/` 并安装 Boost、OpenSSL、zlib 等静态依赖，后续增量构建复用缓存。
+## 约束
 
-### macOS x64 / ARM64
-
-安装脚本检查 Xcode Command Line Tools；缺失时会触发系统安装窗口，完成后需要重新运行脚本。其他依赖由 Homebrew 安装：
-
-- CMake
-- Ninja
-- Boost
-- OpenSSL 3
-
-## 用户入口
-
-### `setup-desktop-build-tools.sh`
-
-安装和验证桌面原生构建工具链。
-
-- `--check-only`：只检查，不修改系统。
-- Windows：通过 winget 最小安装 MSVC、Windows SDK、CMake 和 Ninja。
-- macOS：准备 Xcode Command Line Tools 与 Homebrew 依赖。
-- 安装完成后调用项目原生构建器进行验证。
-
-### `clean-rebuild.sh`
-
-执行完全重建：
-
-1. 在删除文件前检查原生工具链。
-2. 可选终止当前工作区的 Electron 和原生 sidecar。
-3. 清理 `node_modules`、应用产物、CMake 当前平台产物和 TypeScript 意外输出。
-4. 可选执行 `pnpm store prune`。
-5. 重新安装依赖并执行类型检查。
-6. 编译 `torrent-core`、Electron 应用和 libVLC 原生绑定。
-7. 按 `--run` 启动预览、开发服务或直接结束。
-
-额外参数：
-
-- `--skip-store-prune`：保留 pnpm store。
-- `--kill-app`：构建前终止当前工作区进程。
-
-### `incremental-rebuild.sh`
-
-执行日常增量重建。它会清理应用产物和工具缓存，但保留：
-
-- `node_modules`
-- pnpm store
-- `.vcpkg/`
-- CMake 原生构建缓存
-- 已校验的 `.cache/libvlc/` 下载归档
-
-CMake 和 vcpkg 会自行判断未变化内容，因此仍会执行构建命令，但不会重复编译全部依赖。
-
-支持 `--kill-app` 和全部 `--run` 模式。
-
-## 内部辅助脚本
-
-以下脚本由用户入口调用，通常不需要直接执行。
-
-### `rebuild-common.sh`
-
-提供两个重建入口共用的能力：
-
-- 识别 Windows/macOS 和当前架构。
-- Windows 选择 `pnpm.cmd`，macOS 选择 `pnpm`。
-- 限制删除目标必须位于项目工作区内。
-- 检查原生构建工具链。
-- 编排 `torrent-core`、Electron、libVLC 和启动模式。
-
-### `prepare-desktop-torrent-core-dev.mjs`
-
-编译、打包并校验当前平台的 portable `torrent-core`：
-
-- Windows：自动加载 VS 2022 开发环境，维护固定版本 vcpkg，使用静态依赖构建。
-- macOS：使用 Homebrew 的 Boost 与 OpenSSL，并指定当前目标架构。
-- 输出到 `artifacts/torrent-core/<platform>-<arch>/`。
-- 生成文件清单、摘要和许可证，并执行运行校验。
-- `--check-only` 只验证工具链，不下载或编译。
-
-### `prepare-windows-libvlc-dev.mjs`
-
-准备 Windows x64 libVLC 开发运行时：
-
-1. 下载并校验固定摘要的 VLC 3.0.21 官方 ZIP。
-2. 整理运行时到 `out/libvlc/win32-x64/`。
-3. 按 Electron ABI 重编 `better-sqlite3` 和 `electron-vlc-player`。
-4. 校验原生绑定、运行时文件与许可证。
-5. 通过 Electron 执行 libVLC 烟测。
-
-macOS 对应流程由 `prepare-mac-libvlc-dev.mjs` 处理。
-
-### `stop-workspace-processes.ps1`
-
-Windows 内部进程清理器。只终止可执行文件位于当前项目目录内的：
-
-- Electron
-- qBittorrent-nox
-- torrent-core
-
-不会按进程名全局终止其他项目或系统中的同名进程。
-
-### `prepare-torrent-core-resources.mjs`
-
-校验并复制已生成的 `torrent-core` bundle。重建入口通过 `ANI_TORRENT_CORE_SOURCE_ROOT` 指向 `artifacts/torrent-core/`，确保 Electron 构建使用刚编译的当前平台核心。
-
-## 常见问题
-
-### 缺少 Visual Studio 2022 Build Tools
-
-执行：
-
-```bash
-bash scripts/setup-desktop-build-tools.sh
-```
-
-安装结束后重新打开 Git Bash，再执行重建脚本。
-
-### `EBUSY` 或输出目录被占用
-
-应用或 sidecar 仍在使用构建产物。执行：
-
-```bash
-bash scripts/incremental-rebuild.sh --kill-app --run none
-```
-
-### `no verified bundle for win32-x64`
-
-直接运行 `pnpm build` 时，尚未生成 Windows `torrent-core` bundle 会出现该警告。使用 `clean-rebuild.sh` 或 `incremental-rebuild.sh`，脚本会先编译原生核心并把产物传给 Electron 构建。
-
-### macOS 提示缺少 Xcode Command Line Tools
-
-运行安装脚本，完成 macOS 弹出的安装流程后，再次运行同一命令。
+- 下载脚本必须固定版本与 SHA-256，不得静默使用最新版本。
+- 资源脚本必须保留来源、许可证和目标架构信息。
+- 移动包不得包含远程 PWA、FFmpeg/FFprobe、转码或 qBittorrent-nox。
+- 临时目录、缓存、`out/`、Rust target 和平台构建目录不得提交。

@@ -1,0 +1,39 @@
+[package]
+name = "ani-remote"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ani-contracts = { path = "../ani-contracts" }
+ani-domain = { path = "../ani-domain" }
+async-trait = "0.1"
+axum = { version = "0.8", features = ["http1", "json", "tokio"] }
+axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }
+base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+hmac = "0.12"
+http = "1"
+if-addrs = "0.14"
+log = "0.4"
+mime_guess = "2"
+percent-encoding = "2"
+rand = "0.8"
+rcgen = { version = "0.14", features = ["pem", "x509-parser"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10"
+subtle = "2"
+thiserror.workspace = true
+time = "0.3"
+tokio = { version = "1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "sync", "time"] }
+tokio-util = { version = "0.7", features = ["io"] }
+url = "2"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

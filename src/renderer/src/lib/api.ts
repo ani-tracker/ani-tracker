@@ -3,8 +3,10 @@ import type {
   RemotePlaybackRequestMode,
   RemotePlaybackSession
 } from "@shared/contracts";
-
-type AppClient = NonNullable<Window["aniBridge"]>;
+import type { AppClient } from "@shared/app-client";
+import { createRemoteClient } from "@/lib/clients/remote-client";
+import { createTauriClient } from "@/lib/clients/tauri-client";
+import { getAppRuntime, isLocalAppRuntime, isTauriAppRuntime } from "@/lib/runtime";
 
 interface RemoteRpcResponse {
   result?: unknown;
@@ -15,42 +17,30 @@ interface RemoteRpcResponse {
 const REMOTE_TOKEN_STORAGE_KEY = "ani.remoteAccessToken";
 export const REMOTE_AUTH_CHANGED_EVENT = "ani:remote-auth-changed";
 const imageResolveRequests = new Map<string, Promise<string>>();
-const REMOTE_METHODS = new Set([
-  "getDashboard",
-  "listNotifications",
-  "getUnreadNotificationCount",
-  "markNotificationRead",
-  "markAllNotificationsRead",
-  "listMyAnime",
-  "listMyAnimeWatchProgress",
-  "setAnimeWatchProgress",
-  "reportPlaybackProgress",
-  "savePlaybackCheckpoint",
-  "listAnimeCatalog",
-  "getAnimeDetail",
-  "searchAnimeCatalog",
-  "listFansubs",
-  "listEpisodes",
-  "listEpisodePreferences",
-  "listDownloads",
-  "refreshDownloads",
-  "pauseDownload",
-  "resumeDownload"
-]);
 
 export interface RemotePairingState {
   needsPairing: boolean;
   remoteUrl?: string;
 }
 
-/** 判断当前渲染进程是否运行在 Electron 桌面端。 */
-export function isElectronClient(): boolean {
-  return Boolean(window.aniBridge);
+/** 判断当前渲染进程是否运行在 Tauri 本地应用。 */
+export function isLocalClient(): boolean {
+  return isLocalAppRuntime();
+}
+
+/** 判断当前渲染进程是否运行在 Tauri 本地应用。 */
+export function isTauriClient(): boolean {
+  return isTauriAppRuntime();
+}
+
+/** 判断当前渲染进程是否运行在 Android 本地应用。 */
+export function isAndroidClient(): boolean {
+  return getAppRuntime() === "android";
 }
 
 /** 返回 PWA 使用的同源远程地址，跨源接入留待 HTTPS 阶段。 */
 export function getRemoteBaseUrl(): string | undefined {
-  if (isElectronClient()) {
+  if (isLocalAppRuntime()) {
     return undefined;
   }
   return window.location.origin.replace(/\/+$/, "");
@@ -69,7 +59,7 @@ export function getRemotePairingState(): RemotePairingState {
 export async function pairRemoteDevice(code: string, deviceName: string): Promise<void> {
   const baseUrl = getRemoteBaseUrl();
   if (!baseUrl) {
-    throw new Error("Electron 桌面端不需要远程配对");
+    throw new Error("本地桌面端不需要远程配对");
   }
   const response = await fetch(`${baseUrl}/api/pair`, {
     method: "POST",
@@ -114,8 +104,8 @@ export function resolveCachedImageUrl(sourceUrl: string): Promise<string> {
 
 /** 按当前运行环境请求一次签名图片缓存地址。 */
 async function resolveCachedImageUrlOnce(sourceUrl: string): Promise<string> {
-  if (window.aniBridge) {
-    const result = await window.aniBridge.resolveCachedImageUrl(sourceUrl);
+  if (isLocalAppRuntime()) {
+    const result = await appApi.resolveCachedImageUrl(sourceUrl);
     return result.url;
   }
 
@@ -232,37 +222,19 @@ async function invokeRemote(baseUrl: string, method: string, args: unknown[]): P
   return payload.result;
 }
 
-/** 创建与 Electron bridge 同形的远程客户端代理。 */
-function createRemoteClient(baseUrl: string): AppClient {
-  const normalizedBaseUrl = baseUrl.replace(/\/+$/, "");
-
-  return new Proxy({} as AppClient, {
-    get(_target, property) {
-      if (typeof property !== "string") {
-        return undefined;
-      }
-      if (!REMOTE_METHODS.has(property)) {
-        return async () => {
-          throw new Error("当前远程客户端未开放此功能");
-        };
-      }
-
-      return (...args: unknown[]) => invokeRemote(normalizedBaseUrl, property, args);
-    }
-  });
-}
-
-/** 根据运行环境选择 Electron IPC 或远程 HTTP 客户端。 */
+/** 根据运行环境选择 Tauri 本地客户端或桌面网关远程客户端。 */
 function createAppClient(): AppClient {
-  if (window.aniBridge) {
-    console.info("[renderer] 使用 Electron IPC 客户端");
-    return window.aniBridge;
+  const runtime = getAppRuntime();
+  if (isTauriClient()) {
+    const platform = runtime === "android" || runtime === "ios" ? runtime : "tauri-desktop";
+    console.info("[renderer] 使用 Tauri invoke 客户端", { platform });
+    return createTauriClient(platform);
   }
-
   const remoteUrl = getRemoteBaseUrl();
   if (remoteUrl) {
     console.info("[renderer] 使用远程 HTTP 客户端", { remoteUrl });
-    return createRemoteClient(remoteUrl);
+    const normalizedBaseUrl = remoteUrl.replace(/\/+$/, "");
+    return createRemoteClient((method, args) => invokeRemote(normalizedBaseUrl, method, args));
   }
 
   return new Proxy({} as AppClient, {

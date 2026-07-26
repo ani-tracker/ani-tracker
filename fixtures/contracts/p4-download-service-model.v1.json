@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "kind": "p4-download-service-model",
+  "payload": {
+    "serviceStatus": {
+      "mode": "managed",
+      "state": "online",
+      "message": "qBittorrent-nox 运行中",
+      "taskCount": 2
+    },
+    "connectionTest": {
+      "ok": true,
+      "message": "连接正常",
+      "taskCount": 2
+    },
+    "managedStatus": {
+      "enabled": true,
+      "autoStart": true,
+      "running": true,
+      "webUiUrl": "http://127.0.0.1:18080/",
+      "platform": "windows",
+      "arch": "x86_64",
+      "binaryPath": "C:/Ani/resources/qbittorrent/win32-x64/qbittorrent-nox.exe",
+      "profileDir": "C:/Ani/data/qbittorrent",
+      "pid": 4321,
+      "lastStartedAt": "2026-07-25T10:00:00.000Z"
+    },
+    "embeddedStatus": {
+      "enabled": true,
+      "running": true,
+      "platform": "windows",
+      "arch": "x86_64",
+      "binaryPath": "C:/Ani/resources/torrent-core/win32-x64/ani-torrent-core.exe",
+      "dataDir": "C:/Ani/data/torrent-core",
+      "pid": 4322,
+      "version": "1.0.0",
+      "taskCount": 1,
+      "listenPort": 6881,
+      "lastStartedAt": "2026-07-25T10:01:00.000Z"
+    }
+  }
+}

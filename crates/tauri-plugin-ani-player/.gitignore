@@ -1,0 +1,6 @@
+/android/.gradle/
+/android/build/
+/android/.tauri/
+/ios/.build/
+/ios/Frameworks/*.xcframework
+!/ios/Frameworks/.gitkeep

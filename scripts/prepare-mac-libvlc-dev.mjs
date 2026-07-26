@@ -29,9 +29,8 @@ const targetDirectory = resolve(options.targetRoot, asset.targetKey);
 await downloadArchive(asset, archivePath, options.offline);
 await downloadSourceArchive(sourceArchivePath, options.offline);
 await stageRuntime(asset, archivePath, sourceArchivePath, options.targetRoot);
-rebuildNativeModules();
 verifyRuntime(options.targetRoot, options.arch);
-smokeTestRuntime(targetDirectory);
+smokeTestTauriRuntime();
 
 console.log(`[libvlc] macOS development runtime ready: ${targetDirectory}`);
 
@@ -120,11 +119,6 @@ async function extractSourceLicenses(sourceArchive, temporaryRoot) {
   return licenseRoot;
 }
 
-/** 使用当前 Electron ABI 和进程架构重编译桌面原生模块。 */
-function rebuildNativeModules() {
-  runCommand("pnpm", ["run", "rebuild:desktop-native"]);
-}
-
 /** 复用正式打包校验，确认整理后的运行时结构完整。 */
 function verifyRuntime(targetRoot, arch) {
   runCommand(process.execPath, [
@@ -137,18 +131,14 @@ function verifyRuntime(targetRoot, arch) {
   ]);
 }
 
-/** 通过 Electron 实际加载原生模块和 libVLC，拦截 ABI 或动态库错误。 */
-function smokeTestRuntime(runtimeDirectory) {
-  runCommand("pnpm", [
-    "exec",
-    "electron",
-    resolve("scripts/smoke-libvlc-runtime.cjs"),
-    runtimeDirectory
-  ], {
-    ...process.env,
-    ELECTRON_RUN_AS_NODE: "1",
-    ANI_LIBVLC_DIR: runtimeDirectory
-  });
+/** 通过 Rust 动态 FFI 创建并释放 libVLC 实例和媒体播放器。 */
+function smokeTestTauriRuntime() {
+  runCommand("cargo", [
+    "test",
+    "-p", "tauri-plugin-ani-player",
+    "loads_prepared_libvlc_runtime_when_available",
+    "--", "--nocapture"
+  ]);
 }
 
 /** 卸载本次创建的临时 DMG 挂载点，普通卸载失败时执行强制卸载。 */

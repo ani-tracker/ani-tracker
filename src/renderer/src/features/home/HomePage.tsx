@@ -11,8 +11,9 @@ import { Separator } from "@/components/ui/separator";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { MetricItem, MetricStrip, Page, PageActions, PageHeader, PageHeading } from "@/components/page-layout";
-import { appApi, isElectronClient } from "@/lib/api";
+import { appApi } from "@/lib/api";
 import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
+import { getAppCapabilities } from "@/lib/runtime";
 import { useAsyncData } from "@/lib/use-async-data";
 import type { AnimeStatus, MediaFile, MyAnime } from "@shared/domain";
 import type { MediaPlaybackTarget } from "@shared/player-selection";
@@ -45,11 +46,11 @@ export function HomePage({
   const [revision, setRevision] = useState(0);
   const [scanning, setScanning] = useState(false);
   const { data: homeData, loading, error } = useAsyncData(loadHomeData, [revision]);
-  const electronClient = isElectronClient();
+  const capabilities = getAppCapabilities();
 
   /** 手动执行一次自动扫描，并用最新结果刷新首页摘要。 */
   async function scanUpdates() {
-    if (!electronClient || scanning) return;
+    if (!capabilities.backgroundAutomation || scanning) return;
     setScanning(true);
     console.info("[home] manual scan started");
     try {
@@ -115,7 +116,7 @@ export function HomePage({
           description={`${formatReminderDate(data.dailyReminder.date)}，更新、下载与异常集中处理。`}
           title="今日追番"
         />
-        {electronClient && (
+        {capabilities.backgroundAutomation && (
           <PageActions>
             <Button disabled={scanning} onClick={() => void scanUpdates()}>
               <RefreshCw className={scanning ? "animate-spin" : undefined} data-icon="inline-start" />
@@ -316,8 +317,9 @@ export function HomePage({
                           {file.bitDepth && <Badge>{file.bitDepth}bit</Badge>}
                         </div>
                       </div>
-                      {electronClient && <div className="flex shrink-0 self-end gap-2 sm:self-auto">
-                        <Button
+                      {(capabilities.nativePlayer || capabilities.runtime === "desktop") && (
+                        <div className="flex shrink-0 self-end gap-2 sm:self-auto">
+                        {capabilities.nativePlayer && <Button
                           className="size-11 p-0 sm:size-9"
                           variant="outline"
                           aria-label="播放"
@@ -325,8 +327,8 @@ export function HomePage({
                           onClick={() => void playRecentMedia(file)}
                         >
                           <Play data-icon="inline-start" />
-                        </Button>
-                        <Button
+                        </Button>}
+                        {capabilities.runtime === "desktop" && <Button
                           className="size-11 p-0 sm:size-9"
                           variant="outline"
                           aria-label="定位文件"
@@ -334,8 +336,8 @@ export function HomePage({
                           onClick={() => void appApi.revealMedia(file.filePath)}
                         >
                           <FolderOpen data-icon="inline-start" />
-                        </Button>
-                      </div>}
+                        </Button>}
+                      </div>)}
                     </div>
                     {index < recentCompletedPreview.length - 1 && <Separator />}
                   </Fragment>
@@ -390,7 +392,7 @@ export function HomePage({
         </Card>
       </div>
 
-      {electronClient && (
+      {capabilities.sourceManagement && (
         <section className="min-w-0 border-y py-4" aria-labelledby="home-source-health-title">
           <div className="mb-2 flex items-center justify-between gap-3">
             <h2 className="text-sm font-semibold" id="home-source-health-title">下载源状态</h2>

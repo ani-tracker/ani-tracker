@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, type AppShellStatus } from "@/components/app-shell";
+import { WindowControls } from "@/components/window-controls";
 import { AnimeDetailPage, type AnimeDetailLibraryAction } from "@/features/anime-detail/AnimeDetailPage";
 import {
   DiscoveryPage,
@@ -31,8 +32,14 @@ import { PlayerDesignPreview } from "@/features/player/PlayerDesignPreview";
 import { DesktopPlayerPage } from "@/features/player/DesktopPlayerPage";
 import { DesktopVlcHostPage } from "@/features/player/DesktopVlcHostPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
-import { appApi, getRemotePairingState, isElectronClient, REMOTE_AUTH_CHANGED_EVENT } from "@/lib/api";
-import type { DownloadServiceStatus } from "@shared/contracts";
+import {
+  appApi,
+  getRemotePairingState,
+  isTauriClient,
+  REMOTE_AUTH_CHANGED_EVENT
+} from "@/lib/api";
+import { getAppCapabilities, getAppRuntime } from "@/lib/runtime";
+import type { DownloadServiceStatus, MobilePlatformStatus } from "@shared/contracts";
 import type { Anime } from "@shared/domain";
 import type { MyAnimePageIntent } from "@/features/my-anime/MyAnimePage";
 import {
@@ -109,8 +116,45 @@ function toDownloadShellStatus(status: DownloadServiceStatus): AppShellStatus {
   return { state: "error", label: "下载服务异常", detail };
 }
 
+/** 移动端资源约束优先覆盖下载服务状态，避免继续触发不可恢复操作。 */
+function applyMobileShellStatus(
+  status: AppShellStatus,
+  mobileStatus: MobilePlatformStatus | null
+): AppShellStatus {
+  if (!mobileStatus) return status;
+  if (mobileStatus.storage === "critical") {
+    return {
+      state: "error",
+      label: "存储空间不足",
+      detail: "可用空间低于 256 MiB，新增和恢复下载已暂停"
+    };
+  }
+  if (mobileStatus.network === "offline") {
+    return {
+      state: "idle",
+      label: "当前离线",
+      detail: "本地数据可用，下载任务等待网络恢复"
+    };
+  }
+  if (mobileStatus.network === "limited") {
+    return {
+      state: "idle",
+      label: "网络待验证",
+      detail: "联网操作将等待系统确认网络可用"
+    };
+  }
+  if (mobileStatus.storage === "low") {
+    return {
+      state: "idle",
+      label: "存储空间偏低",
+      detail: "建议清理空间后再添加大型下载"
+    };
+  }
+  return status;
+}
+
 /** 根据导航标识渲染对应业务页面。 */
-function renderPage(page: PageId, electronClient: boolean, options: RenderPageOptions) {
+function renderPage(page: PageId, localClient: boolean, options: RenderPageOptions) {
   switch (page) {
     case "home":
       return (
@@ -121,7 +165,7 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
         />
       );
     case "myAnime":
-      return electronClient ? (
+      return localClient ? (
         <MyAnimePage
           intent={options.myAnimeIntent}
           onIntentHandled={options.onMyAnimeIntentHandled}
@@ -130,7 +174,7 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
         />
       ) : <RemoteMyAnimePage onOpenAnimeDetail={options.onOpenAnimeDetail} />;
     case "discovery":
-      return electronClient ? (
+      return localClient ? (
         <DiscoveryPage
           onOpenAnimeDetail={options.onOpenAnimeDetail}
           onOpenSchedule={options.onOpenDiscoverySchedule}
@@ -139,7 +183,7 @@ function renderPage(page: PageId, electronClient: boolean, options: RenderPageOp
     case "releaseSearch":
       return <ReleaseSearchPage initialIntent={options.releaseSearchIntent} />;
     case "downloads":
-      return electronClient ? <DownloadsPage /> : <RemoteDownloadsPage />;
+      return localClient ? <DownloadsPage /> : <RemoteDownloadsPage />;
     case "notifications":
       return <NotificationsPage />;
     case "sources":
@@ -160,7 +204,7 @@ export function App() {
   if (playerPreview) {
     return <PlayerDesignPreview mode={playerPreview} />;
   }
-  const desktopPlayerTarget = isElectronClient()
+  const desktopPlayerTarget = getAppRuntime() === "desktop"
     ? resolveDesktopPlayerWindowInput(window.location.search)
     : null;
   if (desktopPlayerTarget) {
@@ -197,18 +241,23 @@ function MainApplication() {
     label: "状态读取中",
     detail: "正在连接服务"
   });
+  const [mobileStatus, setMobileStatus] = useState<MobilePlatformStatus | null>(null);
   const contentRef = useRef<HTMLElement | null>(null);
   const detailViewRef = useRef<AnimeDetailState | null>(null);
   const discoveryScheduleRef = useRef<DiscoveryScheduleState | null>(null);
   detailViewRef.current = detailView;
   discoveryScheduleRef.current = discoverySchedule;
-  const electronClient = isElectronClient();
-  const desktopPlatform = window.aniBridge?.platform;
-  const framelessWindow = electronClient && (desktopPlatform === "win32" || desktopPlatform === "darwin");
-  const remotePlayerTaskId = electronClient
-    ? undefined
-    : resolveRemotePlayerTaskId(window.location.pathname);
-  const availableNavItems = electronClient
+  const runtime = getAppRuntime();
+  const capabilities = getAppCapabilities();
+  const desktopClient = runtime === "desktop";
+  const localClient = capabilities.localData;
+  const framelessWindow = capabilities.windowControls
+    && desktopClient
+    && isTauriClient();
+  const remotePlayerTaskId = runtime === "remote"
+    ? resolveRemotePlayerTaskId(window.location.pathname)
+    : undefined;
+  const availableNavItems = localClient
     ? navItems
     : navItems.filter((item) => remotePageIds.includes(item.id));
 
@@ -286,7 +335,7 @@ function MainApplication() {
 
   /** 从详情页打开追番规则、资源或任务面板。 */
   function openLibraryAction(animeId: string, action: AnimeDetailLibraryAction) {
-    if (!electronClient) {
+    if (!localClient) {
       leaveDetailToPage("myAnime");
       return;
     }
@@ -318,6 +367,18 @@ function MainApplication() {
 
   /** 按默认播放器配置打开独立内置窗口或调用外部播放器。 */
   async function playMedia(target: MediaPlaybackTarget): Promise<void> {
+    if (runtime === "android" || runtime === "ios") {
+      if (!target.taskId) {
+        throw new Error("当前媒体缺少下载任务关联，无法使用移动内置播放器");
+      }
+      const mobileTarget = {
+        taskId: target.taskId,
+        ...(target.fileIndex === undefined ? {} : { fileIndex: target.fileIndex })
+      };
+      await appApi.openDesktopPlayerWindow(mobileTarget);
+      console.info("[player] 已打开移动原生播放器", mobileTarget);
+      return;
+    }
     const settings = await appApi.getSettings();
     if (!usesBuiltinPlayer(settings)) {
       await appApi.playMedia(target.filePath);
@@ -387,7 +448,7 @@ function MainApplication() {
   }, []);
 
   useEffect(() => {
-    if (!electronClient && pairingState.needsPairing) {
+    if (runtime === "remote" && pairingState.needsPairing) {
       return;
     }
     let active = true;
@@ -398,7 +459,7 @@ function MainApplication() {
       const sequence = ++refreshSequence;
       const [unreadResult, serviceResult] = await Promise.allSettled([
         appApi.getUnreadNotificationCount(),
-        electronClient ? appApi.getDownloadServiceStatus() : Promise.resolve(null)
+        localClient ? appApi.getDownloadServiceStatus() : Promise.resolve(null)
       ]);
       if (!active || sequence !== refreshSequence) {
         return;
@@ -409,7 +470,7 @@ function MainApplication() {
         console.warn("[app-shell] 未读提醒数量刷新失败", unreadResult.reason);
       }
 
-      if (!electronClient) {
+      if (!localClient) {
         setShellStatus({ state: "online", label: "桌面端在线", detail: "远程同步已连接" });
       } else if (serviceResult.status === "fulfilled" && serviceResult.value) {
         setShellStatus(toDownloadShellStatus(serviceResult.value));
@@ -423,7 +484,7 @@ function MainApplication() {
 
     void refreshShellState();
     const refreshTimer = window.setInterval(() => void refreshShellState(), 30_000);
-    const unsubscribeDownloadStatus = electronClient
+    const unsubscribeDownloadStatus = localClient
       ? appApi.onDownloadServiceStatusChanged(() => void refreshShellState())
       : undefined;
     window.addEventListener("focus", refreshShellState);
@@ -433,13 +494,87 @@ function MainApplication() {
       unsubscribeDownloadStatus?.();
       window.removeEventListener("focus", refreshShellState);
     };
-  }, [electronClient, pairingState.needsPairing]);
+  }, [localClient, pairingState.needsPairing, runtime]);
+
+  useEffect(() => {
+    if (runtime !== "android" && runtime !== "ios") return;
+    let active = true;
+
+    /** 刷新移动运行约束，并消费通知要求打开的页面。 */
+    async function refreshMobileRuntime() {
+      try {
+        const [status, intent, backgroundRefreshDue] = await Promise.all([
+          appApi.getMobilePlatformStatus?.(),
+          appApi.consumeMobileNavigation?.(),
+          appApi.consumeMobileBackgroundRefresh?.()
+        ]);
+        if (active && status) setMobileStatus(status);
+        if (active && intent) navigatePage(intent.pageId);
+        if (active && backgroundRefreshDue) {
+          void appApi.syncSourcesNow()
+            .then(() => appApi.runAutomationOnce())
+            .then(() => console.info("[mobile-runtime] iOS 后台补跑完成"))
+            .catch((error) => console.warn("[mobile-runtime] iOS 后台补跑失败", error));
+        }
+      } catch (error) {
+        console.warn("[mobile-runtime] 移动平台状态刷新失败", error);
+      }
+    }
+
+    void refreshMobileRuntime();
+    const timer = window.setInterval(() => void refreshMobileRuntime(), 30_000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") void refreshMobileRuntime();
+    };
+    window.addEventListener("focus", refreshMobileRuntime);
+    window.addEventListener("online", refreshMobileRuntime);
+    window.addEventListener("offline", refreshMobileRuntime);
+    window.addEventListener("orientationchange", refreshMobileRuntime);
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshMobileRuntime);
+      window.removeEventListener("online", refreshMobileRuntime);
+      window.removeEventListener("offline", refreshMobileRuntime);
+      window.removeEventListener("orientationchange", refreshMobileRuntime);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [runtime]);
+
+  useEffect(() => {
+    if ((runtime !== "android" && runtime !== "ios") || !isTauriClient()) return;
+    let disposed = false;
+    let unregister: (() => Promise<void>) | undefined;
+
+    /** 将系统通知点击携带的白名单页面映射到本地主导航。 */
+    void import("@tauri-apps/plugin-notification")
+      .then(({ onAction }) => onAction((notification) => {
+        const pageId = notification.extra?.aniPageId;
+        if (pageId === "home" || pageId === "downloads" || pageId === "notifications") {
+          navigatePage(pageId);
+        }
+      }))
+      .then((listener) => {
+        if (disposed) {
+          void listener.unregister();
+        } else {
+          unregister = () => listener.unregister();
+        }
+      })
+      .catch((error) => console.warn("[mobile-runtime] 系统通知导航监听失败", error));
+
+    return () => {
+      disposed = true;
+      void unregister?.();
+    };
+  }, [runtime]);
 
   if (remotePlayerTaskId) {
     return <RemotePlayerPage taskId={remotePlayerTaskId} />;
   }
 
-  if (!electronClient && pairingState.needsPairing) {
+  if (runtime === "remote" && pairingState.needsPairing) {
     return <RemotePairingPage onPaired={() => setPairingState(getRemotePairingState())} />;
   }
 
@@ -454,12 +589,13 @@ function MainApplication() {
         : discoverySchedule
           ? { title: "新番时间表", onBack: () => window.history.back() }
           : undefined}
-      status={shellStatus}
+      status={applyMobileShellStatus(shellStatus, mobileStatus)}
       unreadCount={unreadCount}
       framelessWindow={framelessWindow}
+      windowControls={framelessWindow ? <WindowControls /> : undefined}
     >
       <div className={detailView || discoverySchedule ? "hidden" : undefined}>
-        {renderPage(activePage, electronClient, {
+        {renderPage(activePage, localClient, {
           onOpenAnimeDetail: openAnimeDetail,
           onOpenDownloads: () => navigatePage("downloads"),
           onOpenLibraryAction: openLibraryAction,
@@ -478,7 +614,7 @@ function MainApplication() {
           onOpenAnimeDetail={openAnimeDetail}
         />
       )}
-      {detailView && electronClient && detailActionHostActive && (
+      {detailView && localClient && detailActionHostActive && (
         <MyAnimePage
           actionOnly
           intent={myAnimeIntent}

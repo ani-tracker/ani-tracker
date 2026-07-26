@@ -1,0 +1,17 @@
+[package]
+name = "ani-storage"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+ani-domain = { path = "../ani-domain" }
+ani-repository = { path = "../ani-repository" }
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+log = "0.4"
+rusqlite = { version = "0.32", features = ["backup", "bundled"] }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+url = "2"

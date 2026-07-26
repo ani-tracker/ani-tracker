@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#14816f" />
+    <link rel="icon" href="./icons/ani-tracker-32.png" sizes="32x32" type="image/png" />
+    <title>Ani Tracker</title>
+    <script>
+      (() => {
+        try {
+          const snapshot = JSON.parse(localStorage.getItem("ani.theme.snapshot") || "null");
+          if (!snapshot) return;
+          const root = document.documentElement;
+          const dark = snapshot.resolvedTheme === "dark";
+          root.classList.toggle("dark", dark);
+          root.style.colorScheme = dark ? "dark" : "light";
+          root.dataset.themePack = snapshot.themePackId || "default";
+          if (snapshot.radius) root.style.setProperty("--radius", snapshot.radius);
+          if (snapshot.tokens && typeof snapshot.tokens === "object") {
+            Object.entries(snapshot.tokens).forEach(([name, value]) => {
+              if (typeof value === "string") root.style.setProperty(`--${name}`, value);
+            });
+          }
+        } catch {
+          localStorage.removeItem("ani.theme.snapshot");
+        }
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="../src/mobile-main.tsx"></script>
+  </body>
+</html>

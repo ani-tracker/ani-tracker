@@ -1,136 +1,110 @@
 # Ani Tracker 架构与设计
 
-最近核对：2026-07-21
+最近核对：2026-07-26
 
-本文描述当前实现，不记录阶段计划。功能完成度以 [实现状态](progress.md) 为准。
+本文描述 Tauri 2 正式架构。功能完成度见 [实现状态](progress.md)，迁移过程见 [Tauri 2 迁移记录](tauri-2-migration-plan.md)。
 
 ## 产品边界
 
-Ani Tracker 是本地优先的桌面追番工具。桌面主机负责元数据采集、资源匹配、下载、媒体探测、播放器调用和自动化；局域网设备通过受限的 HTTPS PWA 查看数据、控制任务和播放媒体。
+Ani Tracker 是覆盖桌面与移动端的本地优先追番应用。五个平台共享业务契约、Rust 核心和 React UI；平台插件只处理原生生命周期、下载、播放器、安全存储和系统 API。
 
-当前不提供云同步、公开互联网服务或真实内置 BT 核心。
-
-## 技术栈
-
-- Electron、React 18、TypeScript、electron-vite。
-- Tailwind CSS、shadcn/ui 风格组件、Radix UI、lucide-react。
-- better-sqlite3、qBittorrent Web API、ffprobe、FFmpeg。
-- ArtPlayer、hls.js、Node.js `node:test`、pnpm。
+桌面端承担媒体探测、转码、远程 HTTPS 网关和桌面系统集成。Android/iOS 是独立本地应用，不依赖桌面在线，不加载远程网页，也不打包 FFmpeg/FFprobe 或转码服务。
 
 ## 运行架构
 
 ```text
-Desktop Renderer              Remote HTTPS PWA
-       | preload IPC                 | allowlisted RPC
-       +---------------+-------------+
-                       v
-                Electron Main Process
-                       |
-       +---------------+----------------+
-       |               |                |
-  SQLite Repository  Domain Services  Platform Adapters
-                       |                |
-              Metadata / Sources   qBittorrent / FFmpeg
-              Automation / Media   Player / Tray / OS
+Local React Renderer                 Desktop Remote PWA
+         | Tauri invoke/events              | HTTPS RPC
+         +------------------+----------------+
+                            v
+                       Tauri Host
+                            |
+        +-------------------+-------------------+
+        |                   |                   |
+  Application services   Repository Ports   Platform Ports
+        |                   |                   |
+ sources/download/media   SQLite Adapter   torrent/libVLC/OS
 ```
 
-### 进程职责
+### 层次职责
 
-- Renderer：页面状态、表单、交互反馈和响应式展示，不直接访问 Node.js 或本地文件。
-- Preload：通过 `window.aniBridge` 暴露显式 IPC 方法，不透传任意频道。
-- Main：组装 Repository、业务服务、调度器、远程网关和平台能力。
-- Shared：保存领域模型、IPC 输入输出、主题协议和持久化版本。
-
-新增主进程能力时，先在 `src/shared/contracts.ts` 定义契约，再连接 IPC、preload 和客户端。
-
-## 持久化
-
-当前只使用 SQLite：
-
-- `createRepositoryRuntime` 延迟创建 `SqliteAppRepository`，初始化失败时直接报错，不回退 JSON。
-- 数据库启用 WAL、外键、busy timeout、事务和索引。
-- 空库在单个事务中写入平台默认设置和生产 seed。
-- 当前应用数据版本为 `20`，SQLite schema 版本为 `13`。
-- 设置、番剧目录、追番、单集、来源绑定、资源缓存、下载、媒体和通知均由同一 Repository 接口管理。
-
-旧 JSON Repository 和自动迁移回退路径已移除。后续 schema 变化应继续使用幂等兼容逻辑或显式分版本迁移，不能依赖重建用户数据库。
-
-## 核心服务
-
-| 边界 | 当前实现 |
+| 层 | 职责 |
 | --- | --- |
-| 元数据 | Bangumi、AniList、Mikan 月度采集；详情按来源合并并缓存 |
-| 资源来源 | RSS、Torznab、DMHY、Mikan、AniBT、ACGNX、Nyaa、ACG.RIP 适配器 |
-| 网络保护 | 按来源代理、同域串行、最小间隔、请求合并、403/429 熔断 |
-| 来源同步 | 每日增量同步、启动补跑、条件请求、跨重启缓存 |
-| 资源匹配 | 标题/别名、集数、字幕组、分辨率、编码、位深、字幕和热度评分 |
-| 下载 | 外部或托管 qBittorrent；任务确认、控制、文件优先级和状态合并 |
-| 媒体 | 文件扫描、ffprobe 探测、完成任务后台入库 |
-| 播放器 | 平台探测与适配；IINA 支持进度回写，其他适配器仅负责启动 |
-| 自动化 | 手动/定时扫描、候选选择、自动下载、每日提醒和通知 |
-| 远程 | 本地 CA、HTTPS 配对、方法白名单、媒体 Range/HLS 和外部播放器票据 |
-| 图片 | 桌面协议与远程 HTTP 共用的磁盘缓存、签名 URL 和容量淘汰 |
-| 桌面集成 | 托盘、关闭后后台运行、开机启动、系统通知和主题同步 |
+| `src/renderer/src` | 页面、状态、交互和响应式布局，只依赖 `AppClient` |
+| `src/shared` | TypeScript 领域模型、客户端接口和跨平台契约 |
+| `ani-contracts` | Rust 序列化 DTO、版本与稳定错误 |
+| `ani-domain` | 追番、单集、设置和领域规则 |
+| `ani-repository` | 数据库无关 Repository Ports、UnitOfWork 和错误模型 |
+| `ani-storage` | SQLite 连接、schema、迁移、备份和事务 Adapter |
+| `ani-sources` | 元数据、RSS、Torznab、站点适配、网络策略和缓存 |
+| `ani-downloads` | 下载引擎端口、状态编排、恢复和任务路由 |
+| `ani-media` | 媒体关联、桌面探测和播放器会话 |
+| `ani-automation` | 来源同步、自动扫描、提醒和平台调度入口 |
+| `ani-remote` | 仅桌面启用的 HTTPS、配对、RPC、图片和媒体网关 |
+| `src-tauri` | 服务装配、commands、events、窗口、托盘和生命周期 |
+| `tauri-plugin-ani-*` | Android/iOS torrent、libVLC、安全存储和系统插件 |
 
-## 关键业务流
+业务 crate 不依赖 Tauri 类型。Tauri command 只暴露业务动作，不开放任意 SQL、任意路径、任意 shell 或通配网络能力。
 
-### 新番与追番
+## 数据架构
 
-1. 元数据 Provider 采集指定月份。
-2. 合并服务优先用 external id，标题和别名作为辅助匹配。
-3. Repository 更新本地番剧目录。
-4. 用户加入追番后保存全局偏好、单集覆盖和来源绑定。
+SQLite 是当前桌面与移动端默认 Adapter，应用数据版本为 22，Schema 版本为 18。
 
-### 搜索与下载
+- 业务服务只依赖分域 Repository trait 和 UnitOfWork。
+- SQL 方言、连接、迁移、备份、WAL、外键与 busy timeout 归 `ani-storage` 所有。
+- 复合写入通过显式提交或回滚保证一致性。
+- 桌面首次启动可发现旧数据库，先备份再只复制迁移，原数据不删除。
+- Android/iOS 使用应用私有目录；敏感凭据由 Keystore、Keychain 或桌面凭据库保存，SQLite 只存引用。
 
-1. 根据标题、原名和别名生成查询词。
-2. `ReleaseSourceService` 调用启用来源，并保留部分成功结果。
-3. 标题解析器补全集数、字幕组和媒体属性。
-4. 匹配器评分排序；用户操作或自动化选择候选。
-5. qBittorrent 返回真实任务后再持久化关联，避免长期保存伪任务。
+未来 MySQL 通过独立 Adapter 实现现有 Repository Ports，不修改页面、`AppClient`、Tauri commands 或领域服务。面向公网时由受控服务连接 MySQL，客户端不持有数据库直连凭据。
 
-### 媒体与播放
+## 下载与媒体
 
-1. 下载刷新发现 completed 或 seeding 任务。
-2. 后台扫描器读取文件并调用 ffprobe，失败时回退文件名信息。
-3. MediaFile 与番剧、单集和下载任务关联。
-4. 本地播放器由 Adapter Factory 选择；IINA 播放超过 90% 时回写已观看。
+### 下载
 
-### 远程访问
+- `ani-downloads` 统一任务 DTO、状态、错误和引擎路由。
+- 桌面 torrent-core 使用受管 NDJSON sidecar；Android 通过 JNI/前台服务；iOS 通过稳定 C ABI/XCFramework。
+- 外部 qBittorrent Web API 全平台可用；托管 qBittorrent-nox 仅桌面启用。
+- 切换引擎只影响新任务，已有任务继续由原引擎管理。
 
-1. 用户显式开启局域网 HTTPS，并安装本地 CA。
-2. 远程设备使用一次性配对码换取独立令牌。
-3. 网关只暴露注册表中的低风险方法，拒绝任意文件路径、凭据和本地危险操作。
-4. 媒体使用短期会话读取原文件或 FFmpeg HLS；外部播放器使用独立内存票据。
+### 播放
 
-## 客户端边界
+- 桌面使用 Rust 动态加载 libVLC 3，并由原生视频窗与透明 Tauri 控制窗协作。
+- Android 使用 LibVLC `PlayerActivity`；iOS 使用 MobileVLCKit 与 SwiftUI 播放页。
+- 播放器共享命令、能力、结构化错误、递增快照、续播和已看规则。
+- 桌面远程 PWA 使用 ArtPlayer、Range 与 HLS；移动应用不包含此页面。
 
-桌面端包含：首页、我的追番、新番发现、资源搜索、下载队列、提醒中心、下载源和设置。
+### 桌面媒体
 
-远程端只开放：首页、我的追番、新番发现、下载队列和提醒中心。远程追番与发现使用受限页面，不暴露下载源配置、完整设置、本地路径和删除文件能力。
+FFprobe/FFmpeg、媒体扫描、转码、外部播放器和文件管理器仅编入桌面。移动端由 libVLC 直接解析和播放媒体，不提供伪装的 FFprobe/转码入口。
 
-所有页面必须提供加载、空数据、局部错误或整页错误状态，运行时异常不能表现为纯白屏。
+## 平台能力
 
-## 安全与日志
+页面通过 `PlatformCapabilities` 决定能力可见性：本地数据、来源管理、内置下载、托管进程、原生播放、媒体扫描、后台自动化、窗口控制、远程网关和文件导出均为显式字段。
 
-- 元数据和资源请求统一经过受控 HTTP 客户端，不记录凭据和令牌。
-- 远程网关校验 Host、Origin、请求体大小、频率和设备权限。
-- 本地 CA 私钥和远程设备凭据使用 Electron `safeStorage` 保护。
-- 关键启动、同步、下载、扫描、播放器和回退路径记录结构化日志。
-- 用户可恢复错误应转为页面错误、Toast 或通知；不可恢复初始化错误由主进程记录并阻止错误状态继续运行。
+未知浏览器只能识别为远程客户端；只有 Tauri bridge 可以进入桌面、Android 或 iOS 本地运行时。远程客户端使用固定 RPC 白名单，不能隐式回退到本地能力。
+
+## 安全与可靠性
+
+- 网络请求执行协议、主机、端口、响应大小、限流和熔断策略。
+- 远程网关校验 Host、Origin、令牌 scope、频率和媒体会话。
+- 本地文件命令只接受数据库登记路径或应用受控目录。
+- 移动包执行负向内容检查，拒绝远程 PWA、FFmpeg/FFprobe、转码和 qBittorrent-nox。
+- 关键启动、迁移、同步、下载、播放和退出路径记录结构化日志，不记录令牌或密码。
+- Renderer 保留错误边界、加载态、空状态和可恢复错误反馈，运行时异常不得形成白屏。
 
 ## 扩展原则
 
-- 新元数据来源实现 Provider 接口，新资源站点实现 Source Adapter。
-- 新下载内核实现 `TorrentEngine`，不得把协议差异扩散到页面。
-- 新播放器实现 `PlayerAdapter`，进度监控作为可选能力。
-- 新平台差异收敛到 Provider、Service 或 Adapter，不在页面散布平台判断。
-- 仅在确有替换需求或重复业务规则时抽象，避免为未确定需求预建层级。
+- 新存储实现 Repository Ports；新数据库不得渗透到业务层。
+- 新来源实现 Metadata/Release Source 端口并复用网络策略。
+- 新下载核心实现统一 Engine/Transport，不改变页面任务模型。
+- 新播放器实现 PlayerTransport，不绕过受控媒体会话。
+- 平台差异放在 capability、service 或 adapter 中，不在页面散布宿主探测。
+- 只有在存在真实替换或重复规则时增加抽象，保持高内聚和明确依赖方向。
 
 ## 当前限制
 
-- `EmbeddedTorrentEngine` 仍是占位实现。
-- 托管 qBittorrent 资源暂不覆盖 macOS arm64 和 Linux x64。
-- PotPlayer、独立 mpv 和通用播放器没有播放进度回写。
-- madVR 或外部渲染器链路尚未实现。
-- 元数据冲突解释、更多站点适配器和跨平台真机验收仍需继续完善。
+- Linux 首期内置视频窗支持 X11/XWayland；原生 Wayland 需单独验收。
+- iOS 遵循系统后台限制，不承诺挂起后持续下载。
+- 未声明进度协议的外部播放器不回写观看进度。
+- madVR 或其他外部渲染器链路尚未实现。
