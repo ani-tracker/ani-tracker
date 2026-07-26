@@ -144,9 +144,9 @@ export function AppShell({
     }
   }
 
-  /** 平滑滚动到新番发现页顶部。 */
+  /** 立即回到新番发现页顶部，避免动态测量虚拟列表在平滑滚动期间出现空白。 */
   function scrollDiscoveryToTop() {
-    mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+    mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
     console.info("[discovery] 已回到页面顶部");
   }
 
