@@ -10,7 +10,7 @@ if [[ -z "${VCPKG_ROOT:-}" || ! -x "${VCPKG_ROOT}/vcpkg" ]]; then
   echo "VCPKG_ROOT 必须指向已 bootstrap 的 vcpkg" >&2
   exit 1
 fi
-for command in cmake xcodebuild; do
+for command in cmake xcodebuild xcrun; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "缺少 iOS torrent-core 构建命令：${command}" >&2
     exit 1
@@ -18,6 +18,7 @@ for command in cmake xcodebuild; do
 done
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${repo_root}/scripts/verify-ios-xcframework.sh"
 source_root="${repo_root}/native/torrent-core"
 manifest_root="${repo_root}/native/torrent-dependencies"
 cache_root="${repo_root}/.cache/ios-torrent"
@@ -117,5 +118,6 @@ xcodebuild -create-xcframework \
   -framework "${device_framework}" \
   -framework "${simulator_framework}" \
   -output "${output_path}"
+verify_ios_xcframework "${output_path}" AniTorrentCore 13.0
 
 echo "iOS torrent-core 已生成：${output_path}"

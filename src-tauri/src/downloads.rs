@@ -27,7 +27,9 @@ use ani_sources::{parse_release_title, HttpMethod, NativeHttpClient, NativeHttpR
 use ani_storage::Storage;
 use chrono::{SecondsFormat, Utc};
 use serde_json::Value;
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(desktop)]
+use tauri::Manager;
 #[cfg(any(target_os = "android", target_os = "ios"))]
 use tauri_plugin_ani_torrent::{AniTorrentExt, MobileTorrentCoreTransport};
 

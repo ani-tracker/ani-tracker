@@ -2,7 +2,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
 use ani_domain::{AppSettings, AutomationRunResult, NotificationRecord};
-use tauri::{AppHandle, Manager, Runtime, Theme, Window, WindowEvent};
+#[cfg(desktop)]
+use tauri::Theme;
+use tauri::{AppHandle, Manager, Runtime, Window, WindowEvent};
 use tauri_plugin_notification::NotificationExt;
 
 #[cfg(desktop)]
@@ -123,6 +125,8 @@ impl AppSystemIntegrationState {
             }
             apply_native_theme(app, next.theme);
         }
+        #[cfg(mobile)]
+        let _ = (app, previous);
 
         log::info!(
             "Tauri 系统集成设置已应用 minimize_to_tray={} launch_at_login={} theme={:?}",
@@ -179,6 +183,8 @@ pub(crate) fn handle_window_event<R: Runtime>(window: &Window<R>, event: &Window
         }
         _ => {}
     }
+    #[cfg(mobile)]
+    let _ = (window, event);
 }
 
 /// 显示自动扫描结果的原生系统通知。

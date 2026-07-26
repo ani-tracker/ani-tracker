@@ -1,4 +1,6 @@
-use std::path::{Path, PathBuf};
+#[cfg(desktop)]
+use std::path::Path;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -188,6 +190,8 @@ impl AppManagedQbittorrentState {
         settings: &AppSettings,
         engine: Option<&QbittorrentEngine>,
     ) -> QbittorrentManagedStatus {
+        #[cfg(mobile)]
+        let _ = engine;
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         {
             let running = {
@@ -230,7 +234,10 @@ impl AppManagedQbittorrentState {
 
     /// 返回当前进程实际 WebUI 地址，未运行时回退到设置地址。
     pub(crate) async fn runtime_base_url(&self, settings: &AppSettings) -> String {
+        #[cfg(desktop)]
         let mut runtime = self.runtime.lock().await;
+        #[cfg(mobile)]
+        let runtime = self.runtime.lock().await;
         #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
         refresh_child_status(&mut runtime);
         runtime

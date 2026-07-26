@@ -393,8 +393,10 @@ final class AniMobilePlugin: Plugin {
     /** 返回应用数据卷的重要用途可用空间。 */
     private func availableStorageBytes() -> Int64? {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return (try? base.resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]))
-            ?.volumeAvailableCapacityForImportantUsage
+        let values = try? base.resourceValues(
+            forKeys: [.volumeAvailableCapacityForImportantUsageKey]
+        )
+        return values?.volumeAvailableCapacityForImportantUsage
     }
 
     /** 线程安全更新生命周期。 */
@@ -488,7 +490,7 @@ final class AniMobilePlugin: Plugin {
     private static func notificationPermission(_ status: UNAuthorizationStatus) -> String {
         if #available(iOS 14.0, *), status == .ephemeral { return "granted" }
         switch status {
-        case .authorized, .provisional: return "granted"
+        case .authorized, .provisional, .ephemeral: return "granted"
         case .denied: return "denied"
         case .notDetermined: return "prompt"
         @unknown default: return "prompt"

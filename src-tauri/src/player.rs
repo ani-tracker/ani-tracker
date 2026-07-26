@@ -21,7 +21,9 @@ use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use tauri::window::{Color, WindowBuilder};
 #[cfg(target_os = "macos")]
 use tauri::LogicalPosition;
-use tauri::{AppHandle, Emitter, Manager, Runtime, Window, WindowEvent};
+#[cfg(desktop)]
+use tauri::Manager;
+use tauri::{AppHandle, Emitter, Runtime, Window, WindowEvent};
 #[cfg(desktop)]
 use tauri::{PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 use tauri_plugin_ani_player::AniPlayerExt;
@@ -268,7 +270,10 @@ impl AppPlayerState {
         #[cfg(not(target_os = "macos"))]
         {
             #[cfg(mobile)]
-            return Err("移动原生播放器不支持桌面窗口拖动".to_owned());
+            {
+                let _ = input;
+                return Err("移动原生播放器不支持桌面窗口拖动".to_owned());
+            }
             #[cfg(desktop)]
             {
                 if !matches!(input, DesktopPlayerWindowDragInput::Start { .. }) {

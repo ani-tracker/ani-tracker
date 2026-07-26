@@ -1,11 +1,14 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+#[cfg(desktop)]
 use std::time::Duration;
 
 use ani_contracts::{DesktopMediaToolsStatus, MediaToolStatus};
 use ani_domain::{AppSettings, DownloadTask, MediaFile, ReportPlaybackProgressInput};
-use ani_media::{DownloadMediaScanner, FfprobeMediaProbe, MediaScanResult};
+#[cfg(desktop)]
+use ani_media::FfprobeMediaProbe;
+use ani_media::{DownloadMediaScanner, MediaScanResult};
 #[cfg(desktop)]
 use ani_remote::RemoteMediaTools;
 use ani_repository::{
@@ -15,6 +18,7 @@ use ani_repository::{
 use ani_storage::Storage;
 use serde_json::Value;
 use tauri::{AppHandle, Manager};
+#[cfg(desktop)]
 use tokio::process::Command;
 use tokio::sync::Mutex as AsyncMutex;
 

@@ -6,7 +6,7 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "iOS MobileVLCKit 只能在 macOS 上准备" >&2
   exit 1
 fi
-for command in curl shasum tar; do
+for command in curl shasum tar xcrun; do
   if ! command -v "${command}" >/dev/null 2>&1; then
     echo "缺少 iOS MobileVLCKit 准备命令：${command}" >&2
     exit 1
@@ -18,6 +18,7 @@ readonly archive_name="MobileVLCKit-3.7.3-319ed2c0-79128878.tar.xz"
 readonly archive_sha256="0d04059906962ddc9a7bd1ebaa12e1f9ae85eb2466116a97a2f46886dd27a0a9"
 readonly archive_url="https://download.videolan.org/pub/cocoapods/prod/${archive_name}"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${repo_root}/scripts/verify-ios-xcframework.sh"
 cache_root="${repo_root}/.cache/ios-libvlc/${version}"
 archive_path="${cache_root}/${archive_name}"
 extract_root="${cache_root}/extract"
@@ -46,4 +47,5 @@ fi
 
 rm -rf "${output_path}"
 cp -R "${source_path}" "${output_path}"
+verify_ios_xcframework "${output_path}" MobileVLCKit 16.0
 echo "iOS MobileVLCKit ${version} 已准备：${output_path}"

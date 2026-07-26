@@ -11,6 +11,16 @@ fn map_window_error(action: &str, error: tauri::Error) -> AppCommandError {
     }
 }
 
+/// 返回移动端不支持桌面窗口操作的稳定命令错误。
+#[cfg(mobile)]
+fn unsupported_window_operation(action: &str) -> AppCommandError {
+    log::warn!("移动端拒绝桌面窗口操作 action={action}");
+    AppCommandError {
+        code: "window_operation_unsupported".to_string(),
+        message: format!("移动端不支持{action}"),
+    }
+}
+
 /// 读取当前窗口是否最大化。
 #[tauri::command]
 pub(crate) fn get_window_state(window: WebviewWindow) -> Result<AppWindowState, AppCommandError> {
@@ -23,10 +33,18 @@ pub(crate) fn get_window_state(window: WebviewWindow) -> Result<AppWindowState, 
 /// 最小化当前 Tauri 窗口。
 #[tauri::command]
 pub(crate) fn minimize_window(window: WebviewWindow) -> Result<(), AppCommandError> {
-    log::info!("执行窗口最小化 label={}", window.label());
-    window
-        .minimize()
-        .map_err(|error| map_window_error("最小化窗口", error))
+    #[cfg(desktop)]
+    {
+        log::info!("执行窗口最小化 label={}", window.label());
+        window
+            .minimize()
+            .map_err(|error| map_window_error("最小化窗口", error))
+    }
+    #[cfg(mobile)]
+    {
+        let _ = window;
+        Err(unsupported_window_operation("最小化窗口"))
+    }
 }
 
 /// 在最大化和还原状态之间切换当前 Tauri 窗口。
@@ -34,28 +52,36 @@ pub(crate) fn minimize_window(window: WebviewWindow) -> Result<(), AppCommandErr
 pub(crate) fn toggle_maximize_window(
     window: WebviewWindow,
 ) -> Result<AppWindowState, AppCommandError> {
-    let maximized = window
-        .is_maximized()
-        .map_err(|error| map_window_error("读取窗口状态", error))?;
-    if maximized {
-        window
-            .unmaximize()
-            .map_err(|error| map_window_error("还原窗口", error))?;
-    } else {
-        window
-            .maximize()
-            .map_err(|error| map_window_error("最大化窗口", error))?;
-    }
+    #[cfg(desktop)]
+    {
+        let maximized = window
+            .is_maximized()
+            .map_err(|error| map_window_error("读取窗口状态", error))?;
+        if maximized {
+            window
+                .unmaximize()
+                .map_err(|error| map_window_error("还原窗口", error))?;
+        } else {
+            window
+                .maximize()
+                .map_err(|error| map_window_error("最大化窗口", error))?;
+        }
 
-    let next = AppWindowState {
-        maximized: !maximized,
-    };
-    log::info!(
-        "窗口最大化状态已切换 label={} maximized={}",
-        window.label(),
-        next.maximized
-    );
-    Ok(next)
+        let next = AppWindowState {
+            maximized: !maximized,
+        };
+        log::info!(
+            "窗口最大化状态已切换 label={} maximized={}",
+            window.label(),
+            next.maximized
+        );
+        Ok(next)
+    }
+    #[cfg(mobile)]
+    {
+        let _ = window;
+        Err(unsupported_window_operation("切换窗口最大化状态"))
+    }
 }
 
 /// 关闭当前 Tauri 窗口。
