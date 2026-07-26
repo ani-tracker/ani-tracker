@@ -8,7 +8,7 @@
 - Rust 1.97.1，以及当前平台的 Tauri 2 系统依赖。
 - Windows：Visual Studio 2022 C++ Build Tools、WebView2、CMake/Ninja。
 - macOS：Xcode Command Line Tools；iOS 还需要完整 Xcode、CocoaPods 和签名环境。
-- Linux：WebKitGTK 4.1、AppIndicator、X11、OpenSSL 和构建工具。
+- Linux：WebKitGTK 4.1、AppIndicator、X11、OpenSSL、VLC 3、FFmpeg、rustup 和构建工具；Debian/Ubuntu 会在首次桌面启动时自动检查并通过 APT 补齐，Rust 版本继续由 `rust-toolchain.toml` 固定。
 - Android：JDK 17+、Android SDK 35、NDK `27.2.12479018`、Rust Android targets。
 
 安装 JavaScript 依赖：
@@ -25,7 +25,9 @@ pnpm.cmd install --frozen-lockfile
 pnpm.cmd dev
 ```
 
-`dev` 先构建桌面远程 Renderer、准备当前平台 libVLC，再启动 `tauri dev`。torrent-core、托管 qBittorrent 与 FFmpeg/FFprobe 使用已有开发资源；首次启用对应能力前按“资源维护”准备并校验。libVLC 步骤可能联网下载固定摘要的官方归档。
+`dev` 会准备当前平台 libVLC、构建桌面远程 Renderer，再启动 `tauri dev`。Linux 首次运行会执行 `prepare:tauri:linux-deps`，仅在系统包缺失时通过 `sudo apt-get` 安装桌面编译、打包、中文字体和 Secret Service 依赖；可先用 `pnpm run prepare:tauri:linux-deps -- --check` 只检查而不安装。Linux 开发构建会从固定源码构建并整理 torrent-core，为尚未准备的托管 qBittorrent 创建空资源边界；正式打包校验仍要求所有发布二进制完整。FFmpeg/FFprobe 使用系统依赖。Windows/macOS 的 libVLC 步骤可能联网下载固定摘要的官方归档，Linux 使用系统提供的 VLC 3.0.x。
+
+WSL 没有可无提示解锁的默认 Secret Service collection。WSL 运行时会在当前用户的 `userData/remote-secrets` 下自动生成独立随机主密钥并强制使用 `0600` 权限；Windows、macOS 和原生 Linux 继续使用系统凭据库。
 
 只调试 React Renderer：
 

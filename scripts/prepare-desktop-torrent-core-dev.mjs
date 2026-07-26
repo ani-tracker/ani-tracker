@@ -6,7 +6,7 @@ import process from "node:process";
 
 const VCPKG_VERSION = "2025.06.13";
 const options = parseArgs(process.argv.slice(2));
-if (!["darwin", "win32"].includes(process.platform)) {
+if (!["darwin", "linux", "win32"].includes(process.platform)) {
   throw new Error(`[torrent-core] desktop development build does not support ${process.platform}`);
 }
 
@@ -15,7 +15,9 @@ const buildDirectory = resolve("native/torrent-core/build/portable-release");
 const artifactRoot = resolve("artifacts/torrent-core");
 const buildEnvironment = process.platform === "win32"
   ? await prepareWindowsBuildEnvironment(options.arch, !options.checkOnly)
-  : prepareMacBuildEnvironment();
+  : process.platform === "darwin"
+    ? prepareMacBuildEnvironment()
+    : prepareLinuxBuildEnvironment();
 
 if (options.checkOnly) {
   console.log(`[torrent-core] native build prerequisites ready: ${targetName}`);
@@ -23,7 +25,12 @@ if (options.checkOnly) {
 }
 
 configureCore(buildEnvironment, options.arch);
-runCommand("cmake", ["--build", buildDirectory, "--config", "Release"], buildEnvironment);
+const buildArgs = ["--build", buildDirectory, "--config", "Release"];
+if (process.platform === "linux" && process.env.WSL_DISTRO_NAME) {
+  // WSL 默认按宿主逻辑核心数并行，首次编译 libtorrent 容易耗尽分配给虚拟机的内存。
+  buildArgs.push("--parallel", "2");
+}
+runCommand("cmake", buildArgs, buildEnvironment);
 runCommand(process.execPath, [
   resolve("scripts/package-torrent-core-bundle.mjs"),
   "--platform", process.platform,
@@ -34,13 +41,13 @@ runCommand(process.execPath, [
 runCommand(process.execPath, [
   resolve("scripts/prepare-torrent-core-resources.mjs"),
   "--source", artifactRoot,
+  "--target", resolve("out/torrent-core"),
   "--platform", process.platform,
   "--arch", options.arch,
-  "--required",
-  "--verify-only"
+  "--required"
 ]);
 
-console.log(`[torrent-core] desktop development bundle ready: ${join(artifactRoot, targetName)}`);
+console.log(`[torrent-core] desktop development bundle ready: ${join("out/torrent-core", targetName)}`);
 
 /** 为 Windows 定位 VS 工具链、CMake、Ninja 和固定版本 vcpkg。 */
 async function prepareWindowsBuildEnvironment(arch, installDependencies) {
@@ -166,6 +173,16 @@ function prepareMacBuildEnvironment() {
     opensslPrefix,
     environment.CMAKE_PREFIX_PATH
   ].filter(Boolean).join(";");
+  return environment;
+}
+
+/** 为 Linux 验证 C++、CMake、Ninja 与原生依赖发现工具。 */
+function prepareLinuxBuildEnvironment() {
+  const environment = { ...process.env };
+  ensureCommand("cmake", environment, "CMake 3.24+");
+  ensureCommand("ninja", environment, "Ninja");
+  ensureCommand("c++", environment, "a C++17 compiler");
+  ensureCommand("pkg-config", environment, "pkg-config");
   return environment;
 }
 

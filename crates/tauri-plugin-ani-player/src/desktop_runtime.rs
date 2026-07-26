@@ -12,6 +12,8 @@ use ani_media::player::{unsupported, PlayerTransport, PlayerTransportError};
 use async_trait::async_trait;
 use libloading::Library;
 
+#[cfg(test)]
+use crate::desktop::platform_directory;
 use crate::desktop::{DesktopVideoTarget, DesktopWindowController};
 
 const PLAYBACK_RATES: &[f64] = &[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
@@ -184,19 +186,34 @@ fn load_library(path: &Path) -> Result<Library, PlayerTransportError> {
             LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS,
         )
     }
-    .map_err(|error| PlayerTransportError::Unavailable(error.to_string()))?;
+    .map_err(|error| {
+        PlayerTransportError::Unavailable(format!(
+            "加载 libVLC 失败 path={} error={error}",
+            path.display()
+        ))
+    })?;
     Ok(library.into())
 }
 
 #[cfg(not(target_os = "windows"))]
 fn load_library(path: &Path) -> Result<Library, PlayerTransportError> {
-    unsafe { Library::new(path) }
-        .map_err(|error| PlayerTransportError::Unavailable(error.to_string()))
+    unsafe { Library::new(path) }.map_err(|error| {
+        PlayerTransportError::Unavailable(format!(
+            "加载 libVLC 失败 path={} error={error}",
+            path.display()
+        ))
+    })
 }
 
 unsafe fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T, PlayerTransportError> {
-    let symbol = unsafe { library.get::<T>(name) }
-        .map_err(|error| PlayerTransportError::Unavailable(error.to_string()))?;
+    let symbol = unsafe { library.get::<T>(name) }.map_err(|error| {
+        let symbol_name = String::from_utf8_lossy(name)
+            .trim_end_matches('\0')
+            .to_owned();
+        PlayerTransportError::Unavailable(format!(
+            "加载 libVLC 符号失败 symbol={symbol_name} error={error}"
+        ))
+    })?;
     Ok(*symbol)
 }
 
@@ -227,6 +244,13 @@ impl VlcRuntime {
         library_path: &Path,
         plugin_directory: Option<&Path>,
     ) -> Result<Self, PlayerTransportError> {
+        log::info!(
+            "正在初始化 Tauri 桌面 libVLC library={} plugins={}",
+            library_path.display(),
+            plugin_directory
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<system>".to_owned())
+        );
         let api = Arc::new(VlcApi::load(library_path)?);
         let version = api.version();
         if !version.starts_with("3.0.") {
@@ -720,12 +744,18 @@ fn resolve_runtime(roots: &[PathBuf]) -> Result<(PathBuf, Option<PathBuf>), Play
     for root in roots {
         for library in library_candidates(root) {
             if library.is_file() {
-                return Ok((
-                    library,
-                    plugin_candidates(root)
-                        .into_iter()
-                        .find(|path| path.is_dir()),
-                ));
+                let plugins = plugin_candidates(root)
+                    .into_iter()
+                    .find(|path| path.is_dir());
+                log::info!(
+                    "已定位 Tauri 桌面 libVLC library={} plugins={}",
+                    library.display(),
+                    plugins
+                        .as_deref()
+                        .map(|path| path.display().to_string())
+                        .unwrap_or_else(|| "<missing>".to_owned())
+                );
+                return Ok((library, plugins));
             }
         }
     }
@@ -757,6 +787,7 @@ fn library_candidates(root: &Path) -> Vec<PathBuf> {
 
 fn plugin_candidates(root: &Path) -> Vec<PathBuf> {
     vec![
+        root.join("vlc/plugins"),
         root.join("plugins"),
         root.join("lib/vlc/plugins"),
         root.join("VLC.app/Contents/MacOS/plugins"),
@@ -786,19 +817,32 @@ fn system_library_candidates() -> Vec<PathBuf> {
     }
 }
 
-fn runtime_options(_plugin_directory: Option<&Path>) -> Result<Vec<CString>, PlayerTransportError> {
-    let mut values = vec![
+fn runtime_options(plugin_directory: Option<&Path>) -> Result<Vec<CString>, PlayerTransportError> {
+    if let Some(directory) = plugin_directory {
+        std::env::set_var("VLC_PLUGIN_PATH", directory);
+        log::info!(
+            "已配置 Tauri 桌面 libVLC 插件目录 path={}",
+            directory.display()
+        );
+    }
+    let values = vec![
         "--no-video-title-show".to_owned(),
         "--audio-time-stretch".to_owned(),
         "--network-caching=1000".to_owned(),
         "--file-caching=500".to_owned(),
     ];
     #[cfg(target_os = "windows")]
-    values.push("--avcodec-hw=d3d11va".to_owned());
+    let values = {
+        let mut values = values;
+        values.push("--avcodec-hw=d3d11va".to_owned());
+        values
+    };
     #[cfg(target_os = "macos")]
-    values.push("--avcodec-hw=videotoolbox".to_owned());
-    #[cfg(target_os = "linux")]
-    values.push("--avcodec-hw=any".to_owned());
+    let values = {
+        let mut values = values;
+        values.push("--avcodec-hw=videotoolbox".to_owned());
+        values
+    };
     values
         .into_iter()
         .map(|value| {
@@ -988,7 +1032,7 @@ fn ms_to_seconds(value: i64) -> f64 {
 mod tests {
     use super::*;
 
-    /// Windows 固定启用 D3D11VA，且不传递已被 libVLC 移除的插件参数。
+    /// 桌面端使用平台硬解策略，且不传递已被 libVLC 移除的插件参数。
     #[test]
     fn builds_desktop_runtime_options() {
         let options = runtime_options(Some(Path::new("C:/vlc/plugins")))
@@ -1005,7 +1049,9 @@ mod tests {
             .iter()
             .any(|value| value == "--avcodec-hw=videotoolbox"));
         #[cfg(target_os = "linux")]
-        assert!(options.iter().any(|value| value == "--avcodec-hw=any"));
+        assert!(!options
+            .iter()
+            .any(|value| value.starts_with("--avcodec-hw=")));
     }
 
     /// VLC 状态码必须稳定映射到跨平台快照状态。
@@ -1020,28 +1066,49 @@ mod tests {
     /// 本地已准备 VLC 运行库时验证依赖搜索和核心符号可加载。
     #[test]
     fn loads_prepared_libvlc_runtime_when_available() {
+        let required = std::env::var("ANI_REQUIRE_PREPARED_LIBVLC").as_deref() == Ok("1");
+        let native_target = platform_directory();
+        let target = std::env::var("ANI_LIBVLC_TARGET").unwrap_or_else(|_| native_target.clone());
+        assert_eq!(
+            target, native_target,
+            "libVLC smoke target must match the native test binary"
+        );
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../out/libvlc")
-            .join(if cfg!(target_os = "windows") {
-                "win32-x64"
-            } else if cfg!(target_os = "macos") {
-                "darwin-x64"
-            } else {
-                "linux-x64"
-            });
+            .join(&target);
+        println!("[libvlc-smoke] target={target} root={}", root.display());
         let Some(library) = library_candidates(&root)
             .into_iter()
             .find(|path| path.is_file())
         else {
+            assert!(
+                !required,
+                "required prepared libVLC core library is missing: {}",
+                root.display()
+            );
             return;
         };
-
-        let api = VlcApi::load(&library).expect("load prepared libvlc");
-
-        assert!(api.version().starts_with("3.0."));
         let plugins = plugin_candidates(&root)
             .into_iter()
             .find(|path| path.is_dir());
+        if required {
+            assert!(
+                plugins.is_some(),
+                "required prepared libVLC plugin directory is missing: {}",
+                root.display()
+            );
+        }
+        println!(
+            "[libvlc-smoke] library={} plugins={}",
+            library.display(),
+            plugins
+                .as_deref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "<missing>".to_owned())
+        );
+        let api = VlcApi::load(&library)
+            .unwrap_or_else(|error| panic!("load prepared libVLC failed: {error}"));
+        assert!(api.version().starts_with("3.0."));
         let options = runtime_options(plugins.as_deref()).expect("build runtime options");
         let option_pointers = options.iter().map(|item| item.as_ptr()).collect::<Vec<_>>();
         let instance = unsafe {

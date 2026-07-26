@@ -1087,6 +1087,15 @@ fn resolve_torrent_core_binary(app: &AppHandle) -> PathBuf {
     if let Ok(resources) = app.path().resource_dir() {
         roots.push(resources.join("torrent-core"));
     }
+    #[cfg(debug_assertions)]
+    if let Some(workspace) = Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
+        // Tauri dev 会从 src-tauri 启动宿主，显式加入工作区根目录下的已整理资源。
+        roots.extend([
+            workspace.join("out/torrent-core"),
+            workspace.join("resources/torrent-core"),
+            workspace.join("native/torrent-core/build/portable-release"),
+        ]);
+    }
     roots.extend([
         current.join("out/torrent-core"),
         current.join("resources/torrent-core"),

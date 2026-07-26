@@ -1,5 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+#[cfg(target_os = "linux")]
+use std::{io::Write, os::unix::fs::OpenOptionsExt};
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -29,6 +31,8 @@ use crate::media::AppMediaState;
 
 const KEYRING_SERVICE: &str = "com.ani.tracker.remote";
 const KEYRING_ACCOUNT: &str = "remote-master-key-v1";
+#[cfg(target_os = "linux")]
+const WSL_MASTER_KEY_FILE: &str = "remote-master-key-v1.key";
 const ENCRYPTED_FILE_HEADER: &[u8; 8] = b"ANIRSEC1";
 const IMAGE_SIGNING_SECRET: &str = "image-signing-key-v1";
 
@@ -47,8 +51,9 @@ impl PlatformRemoteSecretStore {
     }
 
     async fn master_key(&self) -> Result<&[u8; 32], String> {
+        let directory = self.directory.clone();
         self.master_key
-            .get_or_try_init(|| async { load_or_create_master_key().await })
+            .get_or_try_init(|| async move { load_or_create_master_key(&directory).await })
             .await
     }
 
@@ -535,8 +540,13 @@ impl TauriRemoteMediaRepository {
     }
 }
 
-async fn load_or_create_master_key() -> Result<[u8; 32], String> {
-    tauri::async_runtime::spawn_blocking(|| {
+async fn load_or_create_master_key(directory: &Path) -> Result<[u8; 32], String> {
+    let directory = directory.to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        #[cfg(target_os = "linux")]
+        if is_windows_subsystem_for_linux() {
+            return load_or_create_wsl_master_key(&directory);
+        }
         let entry = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
             .map_err(|error| format!("打开系统凭据库失败：{error}"))?;
         match entry.get_secret() {
@@ -555,6 +565,47 @@ async fn load_or_create_master_key() -> Result<[u8; 32], String> {
     })
     .await
     .map_err(|error| error.to_string())?
+}
+
+/// 在 WSL 用户数据目录中读取或创建仅当前用户可读的随机主密钥。
+#[cfg(target_os = "linux")]
+fn load_or_create_wsl_master_key(directory: &Path) -> Result<[u8; 32], String> {
+    std::fs::create_dir_all(directory)
+        .map_err(|error| format!("创建 WSL 远程安全目录失败：{error}"))?;
+    let path = directory.join(WSL_MASTER_KEY_FILE);
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            return <[u8; 32]>::try_from(bytes).map_err(|_| "WSL 远程主密钥长度无效".to_owned());
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("读取 WSL 远程主密钥失败：{error}")),
+    }
+
+    let mut key = [0_u8; 32];
+    OsRng.fill_bytes(&mut key);
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|error| format!("创建 WSL 远程主密钥失败：{error}"))?;
+    file.write_all(&key)
+        .and_then(|_| file.sync_all())
+        .map_err(|error| format!("写入 WSL 远程主密钥失败：{error}"))?;
+    log::warn!(
+        "WSL 使用用户数据文件保存远程主密钥：path={}",
+        path.display()
+    );
+    Ok(key)
+}
+
+/// 判断当前 Linux 进程是否运行在 Windows Subsystem for Linux 中。
+#[cfg(target_os = "linux")]
+fn is_windows_subsystem_for_linux() -> bool {
+    std::env::var_os("WSL_DISTRO_NAME").is_some()
+        || std::fs::read_to_string("/proc/sys/kernel/osrelease")
+            .map(|release| release.to_ascii_lowercase().contains("microsoft"))
+            .unwrap_or(false)
 }
 
 async fn load_or_create_secret(

@@ -21,7 +21,7 @@ pnpm.cmd run lint:rust
 
 | 脚本 | 用途 |
 | --- | --- |
-| `prepare-desktop-torrent-core-dev.mjs` | Windows/macOS 准备依赖、构建并验证桌面核心 |
+| `prepare-desktop-torrent-core-dev.mjs` | Windows/macOS/Linux 准备依赖、构建并整理桌面核心 |
 | `prepare-android-torrent-dependencies.sh` | 交叉构建 Android Boost/OpenSSL/libtorrent 依赖 |
 | `prepare-ios-torrent-core.sh` | 构建 iOS C ABI 与 XCFramework |
 | `package-torrent-core-bundle.mjs` | 整理桌面 bundle 与依赖 |
@@ -47,6 +47,7 @@ pnpm.cmd run lint:rust
 | `download-ffmpeg-resources.mjs` | 显式下载固定 FFmpeg/FFprobe 资源 |
 | `prepare-ffmpeg-resources.mjs` | 离线校验并整理桌面资源 |
 | `download-libvlc-archive.mjs` | 下载并验证官方 VLC 归档 |
+| `prepare-linux-desktop-dependencies.mjs` | 检查并通过 APT 安装 Linux 桌面编译与打包依赖 |
 | `prepare-*-libvlc-dev.mjs` | 按 Windows/macOS/Linux 整理运行时并执行 Rust FFI 冒烟 |
 | `prepare-ios-libvlc.sh` | 准备 MobileVLCKit XCFramework |
 | `prepare-libvlc-resources.mjs` | 统一运行时布局、来源与许可证校验 |

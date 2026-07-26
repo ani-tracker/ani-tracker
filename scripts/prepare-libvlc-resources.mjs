@@ -118,10 +118,12 @@ async function stageLinuxRuntime(source, destination, sharedDataRoot) {
     join(source, "plugins")
   ]);
   if (!pluginSource) throw new Error(`[libvlc] Linux plugin directory missing: ${source}`);
-  await copyRequired(pluginSource, join(destination, "plugins"));
+  const pluginDestination = join(destination, "vlc", "plugins");
+  await copyRequired(pluginSource, pluginDestination);
+  await rm(join(pluginDestination, "plugins.dat"), { force: true });
 
   const dataSource = sharedDataRoot && await isDirectory(sharedDataRoot) ? sharedDataRoot : undefined;
-  if (dataSource) await copyRequired(dataSource, join(destination, "share"));
+  if (dataSource) await copyDereferenced(dataSource, join(destination, "share"));
 }
 
 /** 为复制出的 Linux ELF 设置相对 RPATH，避免依赖 runner 的绝对目录。 */
@@ -206,7 +208,10 @@ async function verifyNormalizedRuntime(directory, asset, requireUpstreamLicenses
   for (const path of coreCandidates) {
     if (!path || !(await isFileOrSymlink(path))) throw new Error(`[libvlc] core library missing: ${path ?? directory}`);
   }
-  const pluginFiles = (await listFiles(join(directory, "plugins"))).filter((path) => {
+  const pluginDirectory = asset.platform === "linux"
+    ? join(directory, "vlc", "plugins")
+    : join(directory, "plugins");
+  const pluginFiles = (await listFiles(pluginDirectory)).filter((path) => {
     if (asset.platform === "win32") return path.endsWith(".dll");
     if (asset.platform === "darwin") return path.endsWith(".dylib");
     return /\.so(?:\.|$)/.test(path);
@@ -237,6 +242,11 @@ async function verifyNormalizedRuntime(directory, asset, requireUpstreamLicenses
 /** 复制必需文件或目录并保留相对符号链接。 */
 async function copyRequired(source, destination) {
   await cp(source, destination, { recursive: true, dereference: false, verbatimSymlinks: true });
+}
+
+/** 复制共享数据并展开指向目录外部的系统符号链接。 */
+async function copyDereferenced(source, destination) {
+  await cp(source, destination, { recursive: true, dereference: true });
 }
 
 /** 复制存在的可选共享目录。 */

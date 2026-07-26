@@ -44,25 +44,46 @@ runCommand(process.execPath, [
   "--required",
   "--verify-only"
 ]);
+diagnoseRuntime(resolve(options.targetRoot, asset.targetKey));
 runCommand("cargo", [
   "test",
   "-p", "tauri-plugin-ani-player",
   "loads_prepared_libvlc_runtime_when_available",
   "--", "--nocapture"
-]);
+], {
+  ...process.env,
+  ANI_LIBVLC_TARGET: asset.targetKey,
+  ANI_REQUIRE_PREPARED_LIBVLC: "1"
+});
 
 console.log(`[libvlc] Linux Tauri runtime ready: ${resolve(options.targetRoot, asset.targetKey)}`);
 
 /** 执行子命令并保留原始日志，任何非零退出码都会终止准备流程。 */
-function runCommand(command, args) {
+function runCommand(command, args, environment = process.env) {
   const result = spawnSync(command, args, {
     cwd: process.cwd(),
-    env: process.env,
+    env: environment,
     stdio: "inherit"
   });
   if (result.error) throw result.error;
   if (result.status !== 0) {
     throw new Error(`[libvlc] command failed (${result.status ?? "unknown"}): ${command}`);
+  }
+}
+
+/** 输出 Linux 核心动态库依赖，并在存在未解析依赖时立即失败。 */
+function diagnoseRuntime(targetDirectory) {
+  const library = resolve(targetDirectory, "libvlc.so.5");
+  const result = spawnSync("ldd", [library], {
+    cwd: process.cwd(),
+    env: process.env,
+    encoding: "utf8"
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw result.error;
+  if (result.status !== 0 || /\bnot found\b/.test(result.stdout ?? "")) {
+    throw new Error(`[libvlc] unresolved Linux runtime dependency: ${library}`);
   }
 }
 
