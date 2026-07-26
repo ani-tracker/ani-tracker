@@ -61,7 +61,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 | 检查 | 结果 |
 | --- | --- |
 | `pnpm.cmd run typecheck` | 通过 |
-| `pnpm.cmd run test:parsers` | 40/40 通过；退役 Node 主进程测试不再进入活跃入口 |
+| `pnpm.cmd run test:parsers` | 42/42 通过；退役 Node 主进程测试不再进入活跃入口 |
 | `pnpm.cmd run test:theme` | 浅色/深色各 38 个令牌通过 |
 | `pnpm.cmd run test:mobile-package` | 移动原生能力、许可证与 iOS 未签名策略 11/11 通过 |
 | `pnpm.cmd run test:retired-hosts` | 旧宿主门禁单元测试 5/5 通过 |
@@ -71,7 +71,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 | Renderer 模块边界 | 本地 313 个模块、远程 245 个模块通过 |
 | Rust workspace 测试 | 通过 |
 | Rustfmt / Clippy | 通过 |
-| YAML 工作流解析 | 通过 |
+| `actionlint 1.7.12` | 全部 GitHub Actions 工作流通过 |
 
 ## 后续统一验证
 
