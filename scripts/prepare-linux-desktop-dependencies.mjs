@@ -21,7 +21,6 @@ const REQUIRED_PACKAGES = Object.freeze([
   "patchelf",
   "pax-utils",
   "pkg-config",
-  "rustup",
   "vlc",
   "wget"
 ]);
@@ -33,6 +32,7 @@ if (process.platform !== "linux") {
 
 ensureCommand("apt-get");
 ensureCommand("dpkg-query");
+ensureCommand("rustup");
 
 const missingPackages = REQUIRED_PACKAGES.filter((packageName) => !isPackageInstalled(packageName));
 if (missingPackages.length === 0) {

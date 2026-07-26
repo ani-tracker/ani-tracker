@@ -17,6 +17,7 @@ import {
   DESKTOP_LIBVLC_VERSION,
   findDesktopLibVlcAsset
 } from "./libvlc-resource-manifest.mjs";
+import { patchMacRuntimeInstallNames } from "./libvlc-macos-relocation.mjs";
 
 const options = parseArgs(process.argv.slice(2));
 const asset = findDesktopLibVlcAsset(options.platform, options.arch);
@@ -50,7 +51,9 @@ if (asset.platform === "linux") await stageLinuxRuntime(sourceDirectory, targetD
 
 const runtimePatches = asset.platform === "linux"
   ? await patchLinuxRpaths(targetDirectory, options.required)
-  : [];
+  : asset.platform === "darwin"
+    ? await patchMacRuntimeInstallNames(targetDirectory, options.required)
+    : [];
 await stageLicenses(sourceDirectory, targetDirectory, options.licenseRoot, options.required);
 const sourceCodeUrl = options.sourceCodeUrl
   ?? (asset.platform === "linux"

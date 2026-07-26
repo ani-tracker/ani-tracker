@@ -19,8 +19,18 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "rust-toolchain.toml"
+      - "scripts/libvlc-macos-relocation.mjs"
+      - "scripts/libvlc-macos-relocation.test.mjs"
+      - "scripts/libvlc-resource-manifest.mjs"
+      - "scripts/prepare-libvlc-resources.mjs"
+      - "scripts/prepare-linux-desktop-dependencies.mjs"
+      - "scripts/prepare-linux-libvlc-dev.mjs"
+      - "scripts/prepare-mac-libvlc-dev.mjs"
+      - "scripts/prepare-tauri-gate-resources.mjs"
+      - "scripts/prepare-windows-libvlc-dev.mjs"
       - "scripts/verify-tauri-mobile-package.mjs"
       - "scripts/verify-tauri-mobile-package.test.mjs"
+      - "vite.remote.config.ts"
       - "vite.tauri.config.ts"
   pull_request:
     paths:
@@ -35,8 +45,18 @@ on:
       - "package.json"
       - "pnpm-lock.yaml"
       - "rust-toolchain.toml"
+      - "scripts/libvlc-macos-relocation.mjs"
+      - "scripts/libvlc-macos-relocation.test.mjs"
+      - "scripts/libvlc-resource-manifest.mjs"
+      - "scripts/prepare-libvlc-resources.mjs"
+      - "scripts/prepare-linux-desktop-dependencies.mjs"
+      - "scripts/prepare-linux-libvlc-dev.mjs"
+      - "scripts/prepare-mac-libvlc-dev.mjs"
+      - "scripts/prepare-tauri-gate-resources.mjs"
+      - "scripts/prepare-windows-libvlc-dev.mjs"
       - "scripts/verify-tauri-mobile-package.mjs"
       - "scripts/verify-tauri-mobile-package.test.mjs"
+      - "vite.remote.config.ts"
       - "vite.tauri.config.ts"
 
 permissions:
@@ -56,10 +76,20 @@ jobs:
         include:
           - target: windows-x64
             runner: windows-2022
+            platform: win32
+            arch: x64
           - target: macos-arm64
             runner: macos-15
+            platform: darwin
+            arch: arm64
+          - target: macos-x64
+            runner: macos-15-intel
+            platform: darwin
+            arch: x64
           - target: linux-x64
             runner: ubuntu-22.04
+            platform: linux
+            arch: x64
 
     steps:
       - uses: actions/checkout@v4
@@ -102,20 +132,28 @@ jobs:
 
       - name: Prepare Windows Tauri libVLC runtime
         if: runner.os == 'Windows'
-        run: pnpm run prepare:tauri:win-libvlc
+        run: pnpm run prepare:tauri:win-libvlc -- --arch "${{ matrix.arch }}"
 
       - name: Prepare macOS Tauri libVLC runtime
         if: runner.os == 'macOS'
-        run: pnpm run prepare:tauri:mac-libvlc
+        run: pnpm run prepare:tauri:mac-libvlc -- --arch "${{ matrix.arch }}"
 
       - name: Prepare Linux Tauri libVLC runtime
         if: runner.os == 'Linux'
-        run: pnpm run prepare:tauri:linux-libvlc
+        run: pnpm run prepare:tauri:linux-libvlc -- --arch "${{ matrix.arch }}"
 
-      - name: Check TypeScript contracts and Renderer
+      - name: Prepare compile-only Tauri resources
+        shell: bash
+        run: |
+          pnpm run build:tauri:remote-renderer
+          node scripts/prepare-tauri-gate-resources.mjs \
+            --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}"
+
+      - name: Check TypeScript contracts, Renderer and libVLC scripts
         run: |
           pnpm run typecheck
           pnpm run test:mobile-package
+          node --test scripts/libvlc-macos-relocation.test.mjs
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
