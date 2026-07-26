@@ -17,6 +17,8 @@ import {
   Star
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
+import { useAppScrollContainer } from "@/components/app-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -39,6 +41,7 @@ import { FilterToolbar, Page, PageActions, PageHeader, PageHeading } from "@/com
 import { YearPicker } from "@/components/year-picker";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { useVirtualizerScrollMargin } from "@/hooks/use-virtualizer-scroll-margin";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import { createDefaultMyAnimePreferences } from "@shared/my-anime-policy";
 import type { Anime, MyAnime, Season } from "@shared/domain";
@@ -413,60 +416,147 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
           ))}
         </div>
       ) : (
-        <div className="grid grid-cols-2 gap-x-3 gap-y-6 sm:grid-cols-3 lg:grid-cols-4 xl:gap-x-4 2xl:grid-cols-5">
-          {visibleItems.map((anime) => (
-            <DiscoveryAnimeCard
-              adding={addingAnimeId === anime.id}
-              anime={anime}
-              followed={followedIds.has(anime.id)}
-              key={anime.id}
-              onAdd={addToMyAnime}
-              onOpenDetail={onOpenAnimeDetail}
-              onOpenExternal={openExternalId}
-            />
-          ))}
-
-          {visibleItems.length === 0 && (
-            <Empty className="col-span-full">
-              <EmptyHeader>
-                <EmptyMedia variant="icon">
-                  {emptyCatalog ? <CalendarPlus /> : <Search />}
-                </EmptyMedia>
-                <EmptyTitle>{emptyCatalog ? "当前季度暂无本地目录" : "没有匹配的新番"}</EmptyTitle>
-                <EmptyDescription>
-                  {emptyCatalog
-                    ? "采集当前季度后即可浏览新番数据。"
-                    : appliedKeyword ? "请更换关键词后重试。" : "请调整月份后重试。"}
-                </EmptyDescription>
-              </EmptyHeader>
-              <EmptyContent>
-                {emptyCatalog ? (
-                  <Button onClick={() => void collectSeason(false)} disabled={collecting}>
-                    <CalendarPlus data-icon="inline-start" />
-                    {collectingLabel}
-                  </Button>
-                ) : (
-                  <Button
-                    variant="outline"
-                    onClick={() => {
-                      setKeyword("");
-                      setAppliedKeyword("");
-                      setSearchItems([]);
-                      searchRequestId.current += 1;
-                      setSearching(false);
-                      if (!appliedKeyword) setSelectedMonth(null);
-                    }}
-                  >
-                    <RotateCcw data-icon="inline-start" />
-                    清除筛选
-                  </Button>
-                )}
-              </EmptyContent>
-            </Empty>
-          )}
-        </div>
+        visibleItems.length > 0 ? (
+          <VirtualDiscoveryGrid
+            addingAnimeId={addingAnimeId}
+            followedIds={followedIds}
+            items={visibleItems}
+            onAdd={addToMyAnime}
+            onOpenDetail={onOpenAnimeDetail}
+            onOpenExternal={openExternalId}
+          />
+        ) : (
+          <Empty>
+            <EmptyHeader>
+              <EmptyMedia variant="icon">
+                {emptyCatalog ? <CalendarPlus /> : <Search />}
+              </EmptyMedia>
+              <EmptyTitle>{emptyCatalog ? "当前季度暂无本地目录" : "没有匹配的新番"}</EmptyTitle>
+              <EmptyDescription>
+                {emptyCatalog
+                  ? "采集当前季度后即可浏览新番数据。"
+                  : appliedKeyword ? "请更换关键词后重试。" : "请调整月份后重试。"}
+              </EmptyDescription>
+            </EmptyHeader>
+            <EmptyContent>
+              {emptyCatalog ? (
+                <Button onClick={() => void collectSeason(false)} disabled={collecting}>
+                  <CalendarPlus data-icon="inline-start" />
+                  {collectingLabel}
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setKeyword("");
+                    setAppliedKeyword("");
+                    setSearchItems([]);
+                    searchRequestId.current += 1;
+                    setSearching(false);
+                    if (!appliedKeyword) setSelectedMonth(null);
+                  }}
+                >
+                  <RotateCcw data-icon="inline-start" />
+                  清除筛选
+                </Button>
+              )}
+            </EmptyContent>
+          </Empty>
+        )
       )}
     </Page>
+  );
+}
+
+interface VirtualDiscoveryGridProps {
+  addingAnimeId: string | null;
+  followedIds: Set<string>;
+  items: Anime[];
+  onAdd: (anime: Anime) => Promise<void>;
+  onOpenDetail?: (animeId: string) => void;
+  onOpenExternal: (externalId: ExternalIdBadge) => Promise<void>;
+}
+
+/** 返回与新番卡片 Tailwind 断点一致的当前列数。 */
+function getDiscoveryColumnCount(viewportWidth: number): number {
+  if (viewportWidth >= 1536) return 5;
+  if (viewportWidth >= 1024) return 4;
+  if (viewportWidth >= 640) return 3;
+  return 2;
+}
+
+/** 跟踪视口断点，确保虚拟行与响应式网格列数一致。 */
+function useDiscoveryColumnCount(): number {
+  const [columnCount, setColumnCount] = useState(() => getDiscoveryColumnCount(window.innerWidth));
+  useEffect(() => {
+    const updateColumnCount = () => setColumnCount(getDiscoveryColumnCount(window.innerWidth));
+    window.addEventListener("resize", updateColumnCount);
+    return () => window.removeEventListener("resize", updateColumnCount);
+  }, []);
+  return columnCount;
+}
+
+/** 按响应式行虚拟化新番网格，避免长目录一次挂载全部卡片。 */
+function VirtualDiscoveryGrid({
+  addingAnimeId,
+  followedIds,
+  items,
+  onAdd,
+  onOpenDetail,
+  onOpenExternal
+}: VirtualDiscoveryGridProps) {
+  const columnCount = useDiscoveryColumnCount();
+  const rows = useMemo(
+    () => Array.from(
+      { length: Math.ceil(items.length / columnCount) },
+      (_, rowIndex) => items.slice(rowIndex * columnCount, (rowIndex + 1) * columnCount)
+    ),
+    [columnCount, items]
+  );
+  const scrollContainerRef = useAppScrollContainer();
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const scrollMargin = useVirtualizerScrollMargin(scrollContainerRef, gridRef);
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    estimateSize: () => 410,
+    getItemKey: (index) => rows[index]?.[0]?.id ?? index,
+    getScrollElement: () => scrollContainerRef.current,
+    overscan: 3,
+    scrollMargin
+  });
+
+  return (
+    <div
+      ref={gridRef}
+      className="relative min-w-0"
+      style={{ height: virtualizer.getTotalSize() }}
+    >
+      {virtualizer.getVirtualItems().map((virtualRow) => {
+        const row = rows[virtualRow.index];
+        if (!row) return null;
+        return (
+          <div
+            className="absolute left-0 top-0 grid w-full grid-cols-2 gap-x-3 pb-6 sm:grid-cols-3 lg:grid-cols-4 xl:gap-x-4 2xl:grid-cols-5"
+            data-index={virtualRow.index}
+            key={row[0]?.id ?? virtualRow.index}
+            ref={virtualizer.measureElement}
+            style={{ transform: `translateY(${virtualRow.start - scrollMargin}px)` }}
+          >
+            {row.map((anime) => (
+              <DiscoveryAnimeCard
+                adding={addingAnimeId === anime.id}
+                anime={anime}
+                followed={followedIds.has(anime.id)}
+                key={anime.id}
+                onAdd={onAdd}
+                onOpenDetail={onOpenDetail}
+                onOpenExternal={onOpenExternal}
+              />
+            ))}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

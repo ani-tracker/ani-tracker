@@ -1,5 +1,14 @@
 import { ArrowLeft, ArrowUp, Bell, Link2, Menu, X, type LucideIcon } from "lucide-react";
-import { type CSSProperties, type MutableRefObject, type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  createContext,
+  type CSSProperties,
+  type MutableRefObject,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useRef,
+  useState
+} from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -28,6 +37,7 @@ import { cn } from "@/lib/cn";
 const APP_LOGO_SRC = "./icons/ani-tracker-mark.png";
 const dragRegionStyle = { WebkitAppRegion: "drag" } as CSSProperties;
 const noDragRegionStyle = { WebkitAppRegion: "no-drag" } as CSSProperties;
+const AppScrollContainerContext = createContext<MutableRefObject<HTMLElement | null> | null>(null);
 
 export interface AppNavigationItem {
   id: string;
@@ -69,6 +79,12 @@ function useExpandedDesktopSidebar() {
   }, []);
 
   return expanded;
+}
+
+/** 返回应用主内容滚动容器，供长列表虚拟化共享滚动状态。 */
+export function useAppScrollContainer(): MutableRefObject<HTMLElement | null> {
+  const fallbackRef = useRef<HTMLElement | null>(null);
+  return useContext(AppScrollContainerContext) ?? fallbackRef;
 }
 
 /** 渲染 Stitch 规范下统一的桌面侧栏、移动导航 Sheet 与内容滚动区。 */
@@ -296,7 +312,9 @@ export function AppShell({
             )}
           </header>
 
-          <div className="mx-auto min-h-full w-full max-w-[1600px] p-[var(--app-content-padding)]">{children}</div>
+          <AppScrollContainerContext.Provider value={mainRef}>
+            <div className="mx-auto min-h-full w-full max-w-[1600px] p-[var(--app-content-padding)]">{children}</div>
+          </AppScrollContainerContext.Provider>
         </SidebarInset>
 
         {showDiscoveryScrollTop && (

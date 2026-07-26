@@ -91,7 +91,7 @@ pub(crate) async fn revoke_remote_device(
     }
 }
 
-/// 为本地桌面 Renderer 生成受签名保护的图片缓存地址。
+/// 为 Renderer 解析平台适用的图片地址。
 #[tauri::command]
 pub(crate) async fn resolve_cached_image_url(
     source_url: String,
@@ -99,23 +99,16 @@ pub(crate) async fn resolve_cached_image_url(
 ) -> Result<ImageCacheResolveResult, AppCommandError> {
     #[cfg(desktop)]
     {
-        use tauri::Manager;
-
-        let state = app
-            .try_state::<crate::remote::AppRemoteGatewayState>()
-            .ok_or_else(|| map_remote_error("解析缓存图片地址", "远程网关状态未装配"))?;
-        let url = state
-            .resolve_image_url(&source_url)
-            .await
+        let _ = app;
+        let url = crate::image_cache::resolve_local_image_url(&source_url)
             .map_err(|error| map_remote_error("解析缓存图片地址", error))?;
         Ok(ImageCacheResolveResult { url })
     }
     #[cfg(not(desktop))]
     {
-        let _ = (source_url, app);
-        Err(map_remote_error(
-            "解析缓存图片地址",
-            "移动端图片缓存不依赖桌面远程网关",
-        ))
+        let _ = app;
+        let url = crate::image_cache::resolve_public_image_url(&source_url)
+            .map_err(|error| map_remote_error("解析图片地址", error))?;
+        Ok(ImageCacheResolveResult { url })
     }
 }

@@ -9,6 +9,7 @@ mod commands;
 mod downloads;
 #[cfg(desktop)]
 mod external_player;
+mod image_cache;
 mod media;
 mod player;
 mod qbittorrent_managed;
@@ -40,6 +41,11 @@ pub fn run() {
         tauri_plugin_autostart::MacosLauncher::LaunchAgent,
         None,
     ));
+    #[cfg(desktop)]
+    let builder = builder.register_asynchronous_uri_scheme_protocol(
+        "ani-image",
+        image_cache::handle_protocol_request,
+    );
     let builder = builder
         .setup(|app| {
             let storage_state = storage::initialize(app.handle())?;

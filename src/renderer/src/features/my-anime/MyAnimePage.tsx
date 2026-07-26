@@ -1,6 +1,8 @@
 import { AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, CircleOff, Download, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { toast } from "sonner";
+import { useAppScrollContainer } from "@/components/app-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -24,6 +26,7 @@ import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatPercent } from "@/lib/format";
+import { useVirtualizerScrollMargin } from "@/hooks/use-virtualizer-scroll-margin";
 import {
   AnimeDownloadTaskSheet,
   isCompletedDownload,
@@ -1047,27 +1050,18 @@ export function MyAnimePage({
           </FilterToolbar>
 
           {visibleItems.length > 0 ? (
-            <div className="flex min-w-0 flex-col border-y">
-              {visibleItems.map((item) => (
-                <MyAnimeRow
-                  key={item.id}
-                  item={item}
-                  watchProgress={watchProgress[item.anime.id] ?? {
-                    animeId: item.anime.id,
-                    watchedEpisodeCount: 0,
-                    totalEpisodeCount: item.anime.detail?.episodeCount ?? 0
-                  }}
-                  defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
-                  downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
-                  onOpenActive={() => openDownloadDetail(item, "active")}
-                  onOpenCompleted={() => openDownloadDetail(item, "completed")}
-                  onOpenDetail={() => onOpenAnimeDetail?.(item.anime.id)}
-                  onOpenDownloads={() => void openAnimeDownloads(item)}
-                  onOpenRules={() => openRulesDrawer(item)}
-                  onRemove={() => setRemoveTarget(item)}
-                />
-              ))}
-            </div>
+            <VirtualMyAnimeList
+              downloadTasks={downloadTasks}
+              fansubNames={fansubNames}
+              items={visibleItems}
+              watchProgress={watchProgress}
+              onOpenActive={(item) => openDownloadDetail(item, "active")}
+              onOpenCompleted={(item) => openDownloadDetail(item, "completed")}
+              onOpenDetail={(item) => onOpenAnimeDetail?.(item.anime.id)}
+              onOpenDownloads={(item) => void openAnimeDownloads(item)}
+              onOpenRules={openRulesDrawer}
+              onRemove={setRemoveTarget}
+            />
           ) : (
             <Empty className="min-h-72">
               <EmptyHeader>
@@ -1217,6 +1211,89 @@ export function MyAnimePage({
       />
 
     </>
+  );
+}
+
+interface VirtualMyAnimeListProps {
+  downloadTasks: DownloadTask[];
+  fansubNames: Map<string, string>;
+  items: MyAnime[];
+  watchProgress: Record<string, AnimeWatchProgress>;
+  onOpenActive: (item: MyAnime) => void;
+  onOpenCompleted: (item: MyAnime) => void;
+  onOpenDetail: (item: MyAnime) => void;
+  onOpenDownloads: (item: MyAnime) => void;
+  onOpenRules: (item: MyAnime) => void;
+  onRemove: (item: MyAnime) => void;
+}
+
+/** 仅挂载视口附近的追番条目，并按真实行高修正滚动位置。 */
+function VirtualMyAnimeList({
+  downloadTasks,
+  fansubNames,
+  items,
+  watchProgress,
+  onOpenActive,
+  onOpenCompleted,
+  onOpenDetail,
+  onOpenDownloads,
+  onOpenRules,
+  onRemove
+}: VirtualMyAnimeListProps) {
+  const scrollContainerRef = useAppScrollContainer();
+  const listRef = useRef<HTMLDivElement | null>(null);
+  const scrollMargin = useVirtualizerScrollMargin(scrollContainerRef, listRef);
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    estimateSize: () => 152,
+    getItemKey: (index) => items[index]?.id ?? index,
+    getScrollElement: () => scrollContainerRef.current,
+    overscan: 5,
+    scrollMargin
+  });
+
+  return (
+    <div className="min-w-0 border-y">
+      <div
+        ref={listRef}
+        className="relative min-w-0"
+        style={{ height: virtualizer.getTotalSize() }}
+      >
+        {virtualizer.getVirtualItems().map((virtualItem) => {
+          const item = items[virtualItem.index];
+          if (!item) return null;
+          return (
+            <div
+              className={cn(
+                "absolute left-0 top-0 w-full border-b",
+                virtualItem.index === items.length - 1 && "border-b-0"
+              )}
+              data-index={virtualItem.index}
+              key={item.id}
+              ref={virtualizer.measureElement}
+              style={{ transform: `translateY(${virtualItem.start - scrollMargin}px)` }}
+            >
+              <MyAnimeRow
+                item={item}
+                watchProgress={watchProgress[item.anime.id] ?? {
+                  animeId: item.anime.id,
+                  watchedEpisodeCount: 0,
+                  totalEpisodeCount: item.anime.detail?.episodeCount ?? 0
+                }}
+                defaultFansubName={fansubNames.get(item.defaultFansubGroupId ?? "") ?? "未设置"}
+                downloadSummary={summarizeAnimeDownloads(downloadTasks, item.anime.id)}
+                onOpenActive={() => onOpenActive(item)}
+                onOpenCompleted={() => onOpenCompleted(item)}
+                onOpenDetail={() => onOpenDetail(item)}
+                onOpenDownloads={() => onOpenDownloads(item)}
+                onOpenRules={() => onOpenRules(item)}
+                onRemove={() => onRemove(item)}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 

@@ -9,9 +9,9 @@ use ani_domain::{
     SetAnimeWatchProgressInput,
 };
 use ani_remote::{
-    parse_trusted_origins, GatewayConfig, ImageCache, RemoteDeviceAuth, RemoteGateway,
-    RemoteGatewayDependencies, RemoteMediaRepository, RemoteMediaSessionService, RemoteRpcHandler,
-    RemoteRpcService, RemoteSecretStore, RemoteTlsCertificateStore,
+    parse_trusted_origins, GatewayConfig, ImageCache, ImageCacheAsset, RemoteDeviceAuth,
+    RemoteGateway, RemoteGatewayDependencies, RemoteMediaRepository, RemoteMediaSessionService,
+    RemoteRpcHandler, RemoteRpcService, RemoteSecretStore, RemoteTlsCertificateStore,
 };
 use ani_repository::prelude::*;
 use ani_storage::Storage;
@@ -297,19 +297,17 @@ impl AppRemoteGatewayState {
             .map_err(|error| error.to_string())
     }
 
-    /// 为本地 Renderer 返回同一 Rust 网关上的签名图片 URL。
-    pub(crate) async fn resolve_image_url(&self, source_url: &str) -> Result<String, String> {
-        let path = self
-            .image_cache
+    /// 读取本地 Renderer 所需图片，命中缓存或按安全策略下载。
+    pub(crate) async fn load_image_asset(
+        &self,
+        source_url: &str,
+    ) -> Result<ImageCacheAsset, String> {
+        self.image_cache
             .as_ref()
             .ok_or_else(|| "远程图片缓存未完成初始化".to_owned())?
-            .create_remote_path(source_url)
-            .map_err(|error| error.to_string())?;
-        let status = self.status().await;
-        if !status.running {
-            return Err("远程图片网关尚未运行".to_owned());
-        }
-        Ok(format!("{}{}", status.base_url, path))
+            .get(source_url)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// 应用退出时停止监听和媒体进程。
