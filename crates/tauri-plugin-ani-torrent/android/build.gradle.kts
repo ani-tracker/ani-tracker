@@ -10,6 +10,13 @@ val targetAbis = ((findProperty("aniAndroidAbis") as String?) ?: "arm64-v8a")
     .split(',')
     .map(String::trim)
     .filter(String::isNotEmpty)
+val generatedLicenseAssets = layout.buildDirectory.dir("generated/licenseAssets")
+val prepareLicenseAssets = tasks.register<Sync>("prepareLicenseAssets") {
+    into(generatedLicenseAssets)
+    from(project.layout.projectDirectory.dir("../../../resources/torrent-core/licenses")) {
+        into("licenses/torrent-core")
+    }
+}
 
 android {
     namespace = "dev.ani.tracker.torrent"
@@ -63,8 +70,12 @@ android {
     }
 
     sourceSets {
-        getByName("main").assets.srcDir("../../../resources/torrent-core/licenses")
+        getByName("main").assets.srcDir(generatedLicenseAssets)
     }
+}
+
+tasks.named("preBuild").configure {
+    dependsOn(prepareLicenseAssets)
 }
 
 dependencies {

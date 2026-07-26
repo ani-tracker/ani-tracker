@@ -408,7 +408,7 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、Android Renderer 构建及 365 项 Node 回归通过，其中 364 项通过、1 项跳过。Kotlin、APK/AAB 内容和 Android 真机门禁按当前安排后续统一验证。
 - iOS 已接入 Tauri Swift Package 宿主、Keychain 安全存储、网络/方向/存储/通知权限状态、生命周期恢复和 BGAppRefreshTask 前台补跑标记。
 - iOS 已接通安全作用域 torrent/SQLite 文档导入导出、恢复后平台约束、系统通知页面跳转，以及来源同步后串行执行自动扫描的补跑闭环。
-- 已增加 APK/AAB/IPA 安装包负向内容门禁，拒绝远程 Web 资源、FFmpeg/FFprobe、托管 qBittorrent 和桌面网关证书进入移动产物；本地主 Renderer 与远程 PWA 进一步拆分入口和 API Adapter，模块图会拒绝 ArtPlayer、HLS.js 与远程转码客户端回流移动包。
+- 已增加 APK/AAB/IPA 安装包双向内容门禁：拒绝远程 Web 资源、FFmpeg/FFprobe、托管 qBittorrent 和桌面网关证书进入移动产物，同时强制 Android 携带 ARM64 torrent-core/LibVLC、iOS 携带 AniTorrentCore/MobileVLCKit 及对应许可证；本地主 Renderer 与远程 PWA 进一步拆分入口和 API Adapter，模块图会拒绝 ArtPlayer、HLS.js 与远程转码客户端回流移动包。
 - Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、本地/远程 Renderer 构建及 Node 回归通过；Swift/Xcode、IPA 内容和 iOS 真机门禁按当前安排后续统一验证。
 
 ### P8：默认切换、发布与旧宿主退役

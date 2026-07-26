@@ -68,7 +68,7 @@ Android/iOS 只打包移动本地闭环：
 - Android LibVLC 或 iOS MobileVLCKit。
 - 本地主 Renderer、SQLite、主题、通知和平台插件。
 
-移动产物负向检查会拒绝远程 Web/网关资源、FFmpeg、FFprobe、HLS/转码、托管 qBittorrent 和桌面证书材料。本地主 Renderer 与远程 PWA 使用独立入口和 API Adapter；Vite 在模块图阶段拒绝本地包引入远程页面、远程 HTTP 客户端、ArtPlayer 或 HLS.js，并为产物写入可复核的边界证明。
+移动产物检查会拒绝远程 Web/网关资源、FFmpeg、FFprobe、HLS/转码、托管 qBittorrent 和桌面证书材料；同时强制 Android 包含 ARM64 `libani_torrent_core.so`、LibVLC JNI 运行库，iOS 包含 `AniTorrentCore.framework`、`MobileVLCKit.framework`，两端均必须携带应用、torrent-core 和 VLC 许可证。本地主 Renderer 与远程 PWA 使用独立入口和 API Adapter；Vite 在模块图阶段拒绝本地包引入远程页面、远程 HTTP 客户端、ArtPlayer 或 HLS.js，并为产物写入可复核的边界证明。
 
 ## 本地命令
 

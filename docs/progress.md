@@ -9,7 +9,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 | 项目 | 当前状态 |
 | --- | --- |
 | 应用宿主 | Tauri 2 |
-| 持久化 | SQLite；数据版本 22，Schema 版本 18 |
+| 持久化 | SQLite；数据版本 23，Schema 版本 18 |
 | 数据边界 | Repository Ports + UnitOfWork；预留 MySQL Adapter |
 | 桌面平台 | Windows、macOS、Linux |
 | 移动平台 | Android、iOS/iPadOS |
@@ -57,7 +57,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 | `pnpm.cmd run typecheck` | 通过 |
 | `pnpm.cmd run test:parsers` | 40/40 通过；退役 Node 主进程测试不再进入活跃入口 |
 | `pnpm.cmd run test:theme` | 浅色/深色各 38 个令牌通过 |
-| `pnpm.cmd run test:mobile-package` | iOS 未签名可重签包策略 4/4 通过 |
+| `pnpm.cmd run test:mobile-package` | 移动原生能力、许可证与 iOS 未签名策略 11/11 通过 |
 | Tauri 主 Renderer | 生产构建通过 |
 | 桌面远程 Renderer | 生产构建通过 |
 | Renderer 模块边界 | 本地 313 个模块、远程 245 个模块通过 |

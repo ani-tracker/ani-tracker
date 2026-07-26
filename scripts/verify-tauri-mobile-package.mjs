@@ -21,6 +21,24 @@ const FORBIDDEN_ENTRIES = [
   { name: "桌面远程网关证书", pattern: /(?:^|\/)(?:server\.(?:pem|key)|ani-remote-ca\.(?:pem|key))$/i }
 ];
 
+const REQUIRED_ENTRIES = {
+  android: [
+    { name: "ARM64 内置 torrent-core", pattern: /^(?:base\/)?lib\/arm64-v8a\/libani_torrent_core\.so$/i },
+    { name: "ARM64 LibVLC 核心", pattern: /^(?:base\/)?lib\/arm64-v8a\/libvlc\.so$/i },
+    { name: "ARM64 LibVLC JNI", pattern: /^(?:base\/)?lib\/arm64-v8a\/libvlcjni\.so$/i },
+    { name: "torrent-core 许可证", pattern: /^(?:base\/)?assets\/licenses\/torrent-core\/libtorrent-BSD-3-Clause\.txt$/i },
+    { name: "libVLC 来源说明", pattern: /^(?:base\/)?assets\/licenses\/vlc\/SOURCE\.md$/i },
+    { name: "Ani Tracker 许可证", pattern: /^(?:base\/)?assets\/licenses\/ani-tracker\/LICENSE\.txt$/i }
+  ],
+  ios: [
+    { name: "内置 AniTorrentCore", pattern: /^Payload\/[^/]+\.app\/Frameworks\/AniTorrentCore\.framework\/AniTorrentCore$/i },
+    { name: "内置 MobileVLCKit", pattern: /^Payload\/[^/]+\.app\/Frameworks\/MobileVLCKit\.framework\/MobileVLCKit$/i },
+    { name: "torrent-core 许可证", pattern: /^Payload\/[^/]+\.app\/licenses\/torrent-core\/libtorrent-BSD-3-Clause\.txt$/i },
+    { name: "libVLC 来源说明", pattern: /^Payload\/[^/]+\.app\/licenses\/vlc\/SOURCE\.md$/i },
+    { name: "Ani Tracker 许可证", pattern: /^Payload\/[^/]+\.app\/licenses\/ani-tracker-LICENSE\.txt$/i }
+  ]
+};
+
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
   await main(process.argv.slice(2));
 }
@@ -45,7 +63,7 @@ async function main(args) {
   console.log(`[mobile-package] ${options.platform} 安装包内容检查通过：${archives.length} 个产物`);
 }
 
-/** 检查移动安装包不得包含桌面专属资源。 */
+/** 检查移动安装包必须包含本地原生闭环，同时不得混入桌面专属资源。 */
 export function verifyEntries(platform, archive, entries) {
   if (entries.length === 0) {
     throw new Error(`[mobile-package] 安装包为空或 ZIP 目录不可读：${archive}`);
@@ -59,6 +77,13 @@ export function verifyEntries(platform, archive, entries) {
   }
   if (platform === "ios" && !entries.some((entry) => /^Payload\/[^/]+\.app\//i.test(entry.replaceAll("\\", "/")))) {
     throw new Error(`[mobile-package] iOS IPA 缺少 Payload/*.app：${archive}`);
+  }
+  const normalizedEntries = entries.map((entry) => entry.replaceAll("\\", "/"));
+  const missing = REQUIRED_ENTRIES[platform].filter(
+    ({ pattern }) => !normalizedEntries.some((entry) => pattern.test(entry))
+  );
+  if (missing.length > 0) {
+    throw new Error(`[mobile-package] ${platform} 安装包缺少发布必需能力：${missing.map((item) => item.name).join("、")}`);
   }
 }
 
