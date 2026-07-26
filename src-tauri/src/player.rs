@@ -2,13 +2,13 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ani_contracts::{
     DesktopPlaybackSessionInput, DesktopPlayerWindowDragInput, DesktopPlayerWindowInput,
     PlaybackSession, PlaybackSubtitle, PlayerAvailability, PlayerBackend, PlayerCapabilities,
     PlayerCommand, PlayerCommandAction, PlayerCommandResult, PlayerHostPlatform, PlayerMediaMode,
-    PlayerSubtitleType,
+    PlayerSnapshot, PlayerSubtitleType,
 };
 #[cfg(mobile)]
 use ani_contracts::{PlayerMediaSource, PlayerSubtitleSource};
@@ -25,7 +25,7 @@ use tauri::LogicalPosition;
 use tauri::Manager;
 use tauri::{AppHandle, Emitter, Runtime, Window, WindowEvent};
 #[cfg(desktop)]
-use tauri::{PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{PhysicalPosition, PhysicalSize, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_ani_player::AniPlayerExt;
 #[cfg(desktop)]
 use tauri_plugin_ani_player::{DesktopVideoTarget, DesktopWindowController};
@@ -37,6 +37,8 @@ pub(crate) const PLAYER_SNAPSHOT_EVENT: &str = "player-snapshot";
 const PLAYER_WINDOW_WIDTH: f64 = 1120.0;
 const PLAYER_WINDOW_HEIGHT: f64 = 630.0;
 const SESSION_TTL_HOURS: i64 = 4;
+const PLAYER_SERVICE_READY_TIMEOUT: Duration = Duration::from_secs(15);
+const PLAYER_SERVICE_READY_POLL_INTERVAL: Duration = Duration::from_millis(25);
 
 #[derive(Clone)]
 struct ResolvedPlaybackSession {
@@ -158,6 +160,7 @@ impl AppPlayerState {
             .inner_size(PLAYER_WINDOW_WIDTH, PLAYER_WINDOW_HEIGHT)
             .min_inner_size(640.0, 360.0)
             .decorations(false)
+            .shadow(false)
             .background_color(Color(0, 0, 0, 255))
             .visible(false)
             .build()
@@ -192,19 +195,16 @@ impl AppPlayerState {
                 return Err(format!("创建 libVLC 控制层失败：{error}"));
             }
         };
-        sync_window_bounds(&video, &controls)?;
+        let initial_position = video
+            .outer_position()
+            .map_err(|error| format!("读取视频窗口初始位置失败：{error}"))?;
+        controls
+            .set_position(initial_position)
+            .map_err(|error| format!("定位 libVLC 控制层失败：{error}"))?;
+        let controls_window = controls.as_ref().window();
+        sync_video_window_bounds(&controls_window, &video)?;
 
         let target = resolve_video_target(&video)?;
-        let controller = Arc::new(TauriPlayerWindowController {
-            app: self.app.clone(),
-        });
-        let transport = self
-            .app
-            .ani_player()
-            .create_desktop_transport(target, controller);
-        *self.service.write().await = Some(Arc::new(PlayerService::new(transport)));
-        self.start_snapshot_polling();
-
         video
             .show()
             .map_err(|error| format!("显示 libVLC 视频窗口失败：{error}"))?;
@@ -214,6 +214,16 @@ impl AppPlayerState {
         controls
             .set_focus()
             .map_err(|error| format!("聚焦 libVLC 控制层失败：{error}"))?;
+
+        let controller = Arc::new(TauriPlayerWindowController {
+            app: self.app.clone(),
+        });
+        let transport = self
+            .app
+            .ani_player()
+            .create_desktop_transport(target, controller);
+        *self.service.write().await = Some(Arc::new(PlayerService::new(transport)));
+        self.start_snapshot_polling();
         log::info!(
             "Tauri 桌面播放器窗口已打开 task_id={} file_index={:?}",
             input.task_id,
@@ -389,12 +399,19 @@ impl DesktopWindowController for TauriPlayerWindowController {
             .app
             .get_webview_window(PLAYER_CONTROL_WINDOW_LABEL)
             .ok_or_else(|| "播放器控制层不存在".to_owned())?;
-        video
-            .set_fullscreen(fullscreen)
-            .map_err(|error| format!("切换视频窗口全屏失败：{error}"))?;
+        let controls_maximized = controls
+            .is_maximized()
+            .map_err(|error| format!("读取播放器控制层最大化状态失败：{error}"))?;
         controls
             .set_fullscreen(fullscreen)
             .map_err(|error| format!("切换控制层全屏失败：{error}"))?;
+        let controls_window = controls.as_ref().window();
+        sync_video_window_bounds(&controls_window, &video)?;
+        log::info!(
+            "Tauri 播放器窗口模式已同步 fullscreen={} controls_maximized={}",
+            fullscreen,
+            controls_maximized
+        );
         Ok(fullscreen)
     }
 
@@ -575,22 +592,49 @@ fn next_drag_position(state: DesktopWindowDragState, screen_x: f64, screen_y: f6
 }
 
 #[cfg(desktop)]
-fn sync_window_bounds<R: Runtime>(
+fn sync_video_window_bounds<R: Runtime>(
+    controls: &Window<R>,
     video: &Window<R>,
-    controls: &WebviewWindow<R>,
 ) -> Result<(), String> {
-    let position: PhysicalPosition<i32> = video
+    let position: PhysicalPosition<i32> = controls
         .outer_position()
-        .map_err(|error| format!("读取视频窗口位置失败：{error}"))?;
-    let size: PhysicalSize<u32> = video
+        .map_err(|error| format!("读取控制层位置失败：{error}"))?;
+    let controls_outer_size: PhysicalSize<u32> = controls
+        .outer_size()
+        .map_err(|error| format!("读取控制层外框尺寸失败：{error}"))?;
+    let video_outer_size: PhysicalSize<u32> = video
+        .outer_size()
+        .map_err(|error| format!("读取视频窗口外框尺寸失败：{error}"))?;
+    let video_inner_size: PhysicalSize<u32> = video
         .inner_size()
-        .map_err(|error| format!("读取视频窗口尺寸失败：{error}"))?;
-    controls
+        .map_err(|error| format!("读取视频窗口内容尺寸失败：{error}"))?;
+    let target_inner_size =
+        inner_size_for_outer_bounds(controls_outer_size, video_outer_size, video_inner_size);
+    video
         .set_position(position)
-        .map_err(|error| format!("同步控制层位置失败：{error}"))?;
-    controls
-        .set_size(size)
-        .map_err(|error| format!("同步控制层尺寸失败：{error}"))
+        .map_err(|error| format!("同步视频窗口位置失败：{error}"))?;
+    video
+        .set_size(target_inner_size)
+        .map_err(|error| format!("同步视频窗口尺寸失败：{error}"))
+}
+
+/// 扣除视频窗原生边框，使其物理外框与透明控制层完全重合。
+#[cfg(desktop)]
+fn inner_size_for_outer_bounds(
+    target_outer_size: PhysicalSize<u32>,
+    current_outer_size: PhysicalSize<u32>,
+    current_inner_size: PhysicalSize<u32>,
+) -> PhysicalSize<u32> {
+    let frame_width = current_outer_size
+        .width
+        .saturating_sub(current_inner_size.width);
+    let frame_height = current_outer_size
+        .height
+        .saturating_sub(current_inner_size.height);
+    PhysicalSize::new(
+        target_outer_size.width.saturating_sub(frame_width).max(1),
+        target_outer_size.height.saturating_sub(frame_height).max(1),
+    )
 }
 
 #[cfg(target_os = "windows")]
@@ -758,12 +802,39 @@ impl AppPlayerState {
 
     /// 返回当前平台播放器能力；窗口未打开时给出明确不可用状态。
     pub(crate) async fn capabilities(&self) -> PlayerCapabilities {
+        let started_at = Instant::now();
+        let mut waiting_logged = false;
+        loop {
+            if let Some(service) = self.service.read().await.clone() {
+                return service.capabilities().await.unwrap_or_else(|error| {
+                    unavailable_capabilities(format!("读取 libVLC 能力失败：{error}"))
+                });
+            }
+            #[cfg(desktop)]
+            if self
+                .app
+                .get_webview_window(PLAYER_CONTROL_WINDOW_LABEL)
+                .is_none()
+            {
+                return unavailable_capabilities("播放器窗口尚未打开".to_owned());
+            }
+            if started_at.elapsed() >= PLAYER_SERVICE_READY_TIMEOUT {
+                return unavailable_capabilities("libVLC 初始化超时".to_owned());
+            }
+            if !waiting_logged {
+                log::info!("播放器控制层正在等待 libVLC 服务初始化");
+                waiting_logged = true;
+            }
+            tokio::time::sleep(PLAYER_SERVICE_READY_POLL_INTERVAL).await;
+        }
+    }
+
+    /// 返回当前播放器完整快照，用于补偿控制页订阅建立前丢失的事件。
+    pub(crate) async fn snapshot(&self) -> Result<Option<PlayerSnapshot>, String> {
         let service = self.service.read().await.clone();
         match service {
-            Some(service) => service.capabilities().await.unwrap_or_else(|error| {
-                unavailable_capabilities(format!("读取 libVLC 能力失败：{error}"))
-            }),
-            None => unavailable_capabilities("播放器窗口尚未打开".to_owned()),
+            Some(service) => service.snapshot().await.map_err(|error| error.to_string()),
+            None => Ok(None),
         }
     }
 
@@ -794,24 +865,12 @@ impl AppPlayerState {
                 return;
             }
             match event {
-                WindowEvent::Moved(position) => {
+                WindowEvent::Moved(_)
+                | WindowEvent::Resized(_)
+                | WindowEvent::ScaleFactorChanged { .. } => {
                     if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
-                        if let Err(error) = video.set_position(*position) {
-                            log::warn!("同步 libVLC 视频窗口位置失败 error={error}");
-                        }
-                    }
-                }
-                WindowEvent::Resized(size) => {
-                    if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
-                        if let Err(error) = video.set_size(*size) {
-                            log::warn!("同步 libVLC 视频窗口尺寸失败 error={error}");
-                        }
-                    }
-                }
-                WindowEvent::ScaleFactorChanged { new_inner_size, .. } => {
-                    if let Some(video) = window.app_handle().get_window(PLAYER_VIDEO_WINDOW_LABEL) {
-                        if let Err(error) = video.set_size(*new_inner_size) {
-                            log::warn!("同步 libVLC 视频窗口 DPI 尺寸失败 error={error}");
+                        if let Err(error) = sync_video_window_bounds(window, &video) {
+                            log::warn!("同步 libVLC 视频窗口物理边界失败 error={error}");
                         }
                     }
                 }
@@ -1015,5 +1074,27 @@ mod tests {
         assert_eq!(next_drag_position(state, 410.0, 235.0), (190.0, 135.0));
         assert!(valid_screen_point(410.0, 235.0));
         assert!(!valid_screen_point(f64::NAN, 235.0));
+    }
+
+    /// 视频窗内容尺寸需扣除自身边框，保证双窗口物理外框完全重合。
+    #[cfg(desktop)]
+    #[test]
+    fn compensates_video_window_frame_size() {
+        assert_eq!(
+            inner_size_for_outer_bounds(
+                PhysicalSize::new(1920, 1080),
+                PhysicalSize::new(1136, 646),
+                PhysicalSize::new(1120, 630),
+            ),
+            PhysicalSize::new(1904, 1064)
+        );
+        assert_eq!(
+            inner_size_for_outer_bounds(
+                PhysicalSize::new(8, 8),
+                PhysicalSize::new(32, 32),
+                PhysicalSize::new(8, 8),
+            ),
+            PhysicalSize::new(1, 1)
+        );
     }
 }

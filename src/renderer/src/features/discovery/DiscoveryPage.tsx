@@ -16,9 +16,9 @@ import {
   Search,
   Star
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { useAppScrollContainer } from "@/components/app-shell";
+import { useAppScrollContainer, useAppScrollToTopHandler } from "@/components/app-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -524,6 +524,10 @@ function VirtualDiscoveryGrid({
     overscan: 3,
     scrollMargin
   });
+  const scrollToTop = useCallback(() => {
+    virtualizer.scrollToOffset(0, { align: "start", behavior: "auto" });
+  }, [virtualizer]);
+  useAppScrollToTopHandler(scrollToTop);
 
   return (
     <div

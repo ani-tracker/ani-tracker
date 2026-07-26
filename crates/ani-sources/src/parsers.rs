@@ -1285,6 +1285,22 @@ mod tests {
         assert!(first[0].id.len() <= 200);
     }
 
+    /// 验证缺少 GUID、链接和下载地址的 RSS 条目仍会生成非空稳定标识。
+    #[test]
+    fn generates_id_for_sparse_rss_items() {
+        let rss = source("mikan", "蜜柑计划 RSS", "https://mikanani.me/");
+        let xml = "<rss><channel><item /></channel></rss>";
+
+        let first = parse_rss_releases(xml, &rss, Some("https://mikanani.me/RSS/Bangumi"))
+            .expect("parse sparse RSS");
+        let second = parse_rss_releases(xml, &rss, Some("https://mikanani.me/RSS/Bangumi"))
+            .expect("parse sparse RSS again");
+
+        assert_eq!(first[0].id, "mikan:RSS Item 1");
+        assert_eq!(first[0].id, second[0].id);
+        assert!(!first[0].id.trim().is_empty());
+    }
+
     /// 验证 AniBT 的超长 releaseId 同样生成稳定且可持久化的资源标识。
     #[test]
     fn hashes_oversized_anibt_release_identifiers() {

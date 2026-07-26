@@ -1,7 +1,7 @@
 use ani_contracts::{
     AppCommandError, DesktopPlaybackSessionInput, DesktopPlayerWindowDragInput,
     DesktopPlayerWindowInput, PlaybackSession, PlayerCapabilities, PlayerCommand,
-    PlayerCommandResult,
+    PlayerCommandResult, PlayerSnapshot,
 };
 use tauri::State;
 
@@ -76,6 +76,17 @@ pub(crate) async fn get_desktop_player_capabilities(
     state: State<'_, AppPlayerState>,
 ) -> Result<PlayerCapabilities, AppCommandError> {
     Ok(state.capabilities().await)
+}
+
+/// 读取当前 libVLC 完整快照，供控制页在事件订阅完成后补拉状态。
+#[tauri::command]
+pub(crate) async fn get_desktop_player_snapshot(
+    state: State<'_, AppPlayerState>,
+) -> Result<Option<PlayerSnapshot>, AppCommandError> {
+    state
+        .snapshot()
+        .await
+        .map_err(|message| command_error("player_snapshot_read_failed", message))
 }
 
 /// 向统一播放器服务发送一条命令。

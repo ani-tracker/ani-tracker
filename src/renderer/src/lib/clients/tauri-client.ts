@@ -676,9 +676,16 @@ class TauriClientCore implements AppClient {
   onDesktopPlayerSnapshot(listener: (snapshot: PlayerSnapshot) => void): () => void {
     let disposed = false;
     let unlisten: UnlistenFn | undefined;
-    void listen<PlayerSnapshot>(PLAYER_SNAPSHOT_EVENT, (event) => listener(event.payload)).then((dispose) => {
+    void listen<PlayerSnapshot>(PLAYER_SNAPSHOT_EVENT, (event) => listener(event.payload)).then(async (dispose) => {
       if (disposed) dispose();
       else unlisten = dispose;
+      if (disposed) return;
+      try {
+        const snapshot = await invoke<PlayerSnapshot | null>("get_desktop_player_snapshot");
+        if (!disposed && snapshot) listener(snapshot);
+      } catch (error) {
+        console.error("[tauri-client] 播放器快照补拉失败", error);
+      }
     }).catch((error) => {
       console.error("[tauri-client] 播放器快照订阅失败", error);
     });

@@ -582,7 +582,23 @@ impl VlcRuntime {
             ms_to_seconds(unsafe { (self.api.media_player_get_time)(self.player()) });
         let duration_seconds =
             ms_to_seconds(unsafe { (self.api.media_player_get_length)(self.player()) });
-        snapshot.status = player_status(vlc_state);
+        let reported_status = player_status(vlc_state);
+        let next_status = resolve_advancing_player_status(
+            snapshot.status.clone(),
+            reported_status.clone(),
+            snapshot.position_seconds,
+            position_seconds,
+        );
+        if next_status == PlayerStatus::Playing
+            && reported_status != PlayerStatus::Playing
+            && snapshot.status != PlayerStatus::Playing
+        {
+            log::info!(
+                "libVLC 播放时间已推进，播放器状态恢复为 playing session_id={}",
+                snapshot.session_id
+            );
+        }
+        snapshot.status = next_status;
         snapshot.position_seconds = position_seconds;
         if duration_seconds > 0.0 {
             snapshot.duration_seconds = duration_seconds;
@@ -1018,6 +1034,29 @@ fn player_status(value: c_uint) -> PlayerStatus {
     }
 }
 
+/// 播放时间前进时纠正 libVLC 偶发滞留的 loading/buffering 状态。
+fn resolve_advancing_player_status(
+    previous_status: PlayerStatus,
+    reported_status: PlayerStatus,
+    previous_position_seconds: f64,
+    position_seconds: f64,
+) -> PlayerStatus {
+    if position_seconds > previous_position_seconds
+        && matches!(
+            reported_status,
+            PlayerStatus::Loading | PlayerStatus::Buffering
+        )
+        && matches!(
+            previous_status,
+            PlayerStatus::Loading | PlayerStatus::Buffering | PlayerStatus::Playing
+        )
+    {
+        PlayerStatus::Playing
+    } else {
+        reported_status
+    }
+}
+
 fn parse_track_id(value: &str) -> Result<c_int, PlayerTransportError> {
     value
         .parse()
@@ -1082,6 +1121,29 @@ mod tests {
         assert_eq!(player_status(5), PlayerStatus::Idle);
         assert_eq!(player_status(6), PlayerStatus::Ended);
         assert_eq!(player_status(7), PlayerStatus::Error);
+    }
+
+    /// 播放时间推进后不能继续向控制页报告缓冲状态。
+    #[test]
+    fn restores_playing_status_when_position_advances() {
+        assert_eq!(
+            resolve_advancing_player_status(
+                PlayerStatus::Loading,
+                PlayerStatus::Buffering,
+                0.0,
+                0.25,
+            ),
+            PlayerStatus::Playing
+        );
+        assert_eq!(
+            resolve_advancing_player_status(
+                PlayerStatus::Buffering,
+                PlayerStatus::Buffering,
+                1.0,
+                1.0,
+            ),
+            PlayerStatus::Buffering
+        );
     }
 
     /// 本地已准备 VLC 运行库时验证依赖搜索和核心符号可加载。

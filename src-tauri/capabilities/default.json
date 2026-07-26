@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Ani Tracker 主窗口所需的最小 Tauri 核心权限",
-  "windows": ["main"],
+  "description": "Ani Tracker 主窗口与播放器控制层所需的最小 Tauri 核心权限",
+  "windows": ["main", "ani-player-controls"],
   "permissions": ["core:default", "core:window:allow-start-dragging"]
 }

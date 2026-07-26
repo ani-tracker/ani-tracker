@@ -232,6 +232,7 @@ pub fn run() {
             commands::player::create_desktop_playback_session,
             commands::player::close_desktop_playback_session,
             commands::player::get_desktop_player_capabilities,
+            commands::player::get_desktop_player_snapshot,
             commands::player::dispatch_desktop_player_command,
             commands::remote::get_remote_gateway_status,
             commands::remote::create_remote_pairing_code,

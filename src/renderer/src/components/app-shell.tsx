@@ -4,6 +4,7 @@ import {
   type CSSProperties,
   type MutableRefObject,
   type ReactNode,
+  useCallback,
   useContext,
   useEffect,
   useRef,
@@ -38,6 +39,8 @@ const APP_LOGO_SRC = "./icons/ani-tracker-mark.png";
 const dragRegionStyle = { WebkitAppRegion: "drag" } as CSSProperties;
 const noDragRegionStyle = { WebkitAppRegion: "no-drag" } as CSSProperties;
 const AppScrollContainerContext = createContext<MutableRefObject<HTMLElement | null> | null>(null);
+type AppScrollToTopRegistrar = (handler: () => void) => () => void;
+const AppScrollToTopContext = createContext<AppScrollToTopRegistrar | null>(null);
 
 export interface AppNavigationItem {
   id: string;
@@ -87,6 +90,12 @@ export function useAppScrollContainer(): MutableRefObject<HTMLElement | null> {
   return useContext(AppScrollContainerContext) ?? fallbackRef;
 }
 
+/** 注册虚拟列表感知的回顶处理器，卸载时自动恢复普通滚动。 */
+export function useAppScrollToTopHandler(handler: () => void): void {
+  const register = useContext(AppScrollToTopContext);
+  useEffect(() => register?.(handler), [handler, register]);
+}
+
 /** 渲染 Stitch 规范下统一的桌面侧栏、移动导航 Sheet 与内容滚动区。 */
 export function AppShell({
   activePageId,
@@ -104,10 +113,19 @@ export function AppShell({
   const [showDiscoveryScrollTop, setShowDiscoveryScrollTop] = useState(false);
   const expandedDesktopSidebar = useExpandedDesktopSidebar();
   const mainRef = useRef<HTMLElement | null>(null);
+  const scrollToTopHandlerRef = useRef<(() => void) | null>(null);
   const activeItem = items.find((item) => item.id === activePageId) ?? items[0];
   const notificationsItem = items.find((item) => item.id === "notifications");
   const visibleUnreadCount = Math.min(unreadCount, 99);
   const discoveryScrollTopEnabled = activePageId === "discovery" && !secondaryView;
+
+  /** 保存当前页面的虚拟列表回顶处理器，并避免旧页面卸载时清除新处理器。 */
+  const registerScrollToTopHandler = useCallback<AppScrollToTopRegistrar>((handler) => {
+    scrollToTopHandlerRef.current = handler;
+    return () => {
+      if (scrollToTopHandlerRef.current === handler) scrollToTopHandlerRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const scrollContainer = mainRef.current;
@@ -146,8 +164,10 @@ export function AppShell({
 
   /** 立即回到新番发现页顶部，避免动态测量虚拟列表在平滑滚动期间出现空白。 */
   function scrollDiscoveryToTop() {
-    mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
-    console.info("[discovery] 已回到页面顶部");
+    const virtualScrollToTop = scrollToTopHandlerRef.current;
+    if (virtualScrollToTop) virtualScrollToTop();
+    else mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
+    console.info("[discovery] 已回到页面顶部", { virtualized: Boolean(virtualScrollToTop) });
   }
 
   return (
@@ -313,7 +333,9 @@ export function AppShell({
           </header>
 
           <AppScrollContainerContext.Provider value={mainRef}>
-            <div className="mx-auto min-h-full w-full max-w-[1600px] p-[var(--app-content-padding)]">{children}</div>
+            <AppScrollToTopContext.Provider value={registerScrollToTopHandler}>
+              <div className="mx-auto min-h-full w-full max-w-[1600px] p-[var(--app-content-padding)]">{children}</div>
+            </AppScrollToTopContext.Provider>
           </AppScrollContainerContext.Provider>
         </SidebarInset>
 
