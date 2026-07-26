@@ -40,7 +40,11 @@ impl DownloadTaskStore for MemoryStore {
         Ok(tasks.clone())
     }
 
-    fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>> {
+    fn remove_download_task(
+        &self,
+        task_id: &str,
+        _delete_files: bool,
+    ) -> RepositoryResult<Vec<DownloadTask>> {
         let mut tasks = self.tasks.lock().expect("lock tasks");
         tasks.retain(|task| task.id != task_id && task.torrent_hash.as_deref() != Some(task_id));
         Ok(tasks.clone())

@@ -1,5 +1,5 @@
 import { AlertTriangle, LoaderCircle } from "lucide-react";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,6 +15,7 @@ import type { ButtonVariant } from "@/components/ui/button";
 interface ConfirmActionDialogProps {
   cancelLabel?: string;
   confirmLabel?: string;
+  content?: ReactNode;
   description: string;
   onConfirm: () => Promise<void> | void;
   onOpenChange: (open: boolean) => void;
@@ -27,6 +28,7 @@ interface ConfirmActionDialogProps {
 export function ConfirmActionDialog({
   cancelLabel = "取消",
   confirmLabel = "确认",
+  content,
   description,
   onConfirm,
   onOpenChange,
@@ -59,6 +61,7 @@ export function ConfirmActionDialog({
           </div>
           <AlertDialogDescription>{description}</AlertDialogDescription>
         </AlertDialogHeader>
+        {content}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={confirming}>{cancelLabel}</AlertDialogCancel>
           <AlertDialogAction

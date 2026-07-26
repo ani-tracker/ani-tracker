@@ -1583,8 +1583,12 @@ impl<'connection> SqliteRepository<'connection> {
         self.list_downloads()
     }
 
-    /// 删除下载任务，并根据剩余任务恢复关联单集状态。
-    fn remove_download_task(&self, task_id: &str) -> Result<Vec<DownloadTask>, StorageError> {
+    /// 删除下载任务，按文件删除结果清理媒体索引，并恢复关联单集状态。
+    fn remove_download_task(
+        &self,
+        task_id: &str,
+        delete_files: bool,
+    ) -> Result<Vec<DownloadTask>, StorageError> {
         let existing = self
             .list_downloads()?
             .into_iter()
@@ -1593,6 +1597,12 @@ impl<'connection> SqliteRepository<'connection> {
             return self.list_downloads();
         };
         self.with_transaction(|connection| {
+            if delete_files {
+                connection.execute(
+                    "DELETE FROM media_file WHERE download_task_id = ?1",
+                    [&existing.id],
+                )?;
+            }
             connection.execute(
                 "DELETE FROM download_task WHERE id = ?1 OR torrent_hash = ?1",
                 [task_id],
@@ -1600,7 +1610,10 @@ impl<'connection> SqliteRepository<'connection> {
             restore_linked_episode_after_download_removal(connection, &existing)?;
             Ok(())
         })?;
-        info!("Rust 下载任务记录已删除：task_id={}", existing.id);
+        info!(
+            "Rust 下载任务记录已删除：task_id={}, delete_files={delete_files}",
+            existing.id
+        );
         self.list_downloads()
     }
 
@@ -2322,8 +2335,13 @@ impl DownloadRepository for SqliteRepository<'_> {
     }
 
     /// 通过 SQLite 适配器删除下载任务。
-    fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>> {
-        SqliteRepository::remove_download_task(self, task_id).map_err(RepositoryError::from)
+    fn remove_download_task(
+        &self,
+        task_id: &str,
+        delete_files: bool,
+    ) -> RepositoryResult<Vec<DownloadTask>> {
+        SqliteRepository::remove_download_task(self, task_id, delete_files)
+            .map_err(RepositoryError::from)
     }
 }
 

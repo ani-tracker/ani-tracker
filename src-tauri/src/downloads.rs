@@ -143,8 +143,12 @@ impl DownloadTaskStore for SharedDownloadTaskStore {
         })
     }
 
-    fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>> {
-        self.with_repository(|repository| repository.remove_download_task(task_id))
+    fn remove_download_task(
+        &self,
+        task_id: &str,
+        delete_files: bool,
+    ) -> RepositoryResult<Vec<DownloadTask>> {
+        self.with_repository(|repository| repository.remove_download_task(task_id, delete_files))
     }
 }
 

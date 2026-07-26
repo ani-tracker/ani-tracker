@@ -64,6 +64,7 @@ export function DownloadsPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [mutatingTaskId, setMutatingTaskId] = useState<string | null>(null);
   const [removeTarget, setRemoveTarget] = useState<DownloadTask | null>(null);
+  const [deleteFilesOnRemove, setDeleteFilesOnRemove] = useState(false);
   const [mutatingFileId, setMutatingFileId] = useState<string | null>(null);
   const [scanningTaskId, setScanningTaskId] = useState<string | null>(null);
   const [downloadUrl, setDownloadUrl] = useState("");
@@ -95,14 +96,18 @@ export function DownloadsPage() {
   }, []);
 
   /** 对下载任务执行暂停、继续或移除操作。 */
-  async function mutateTask(taskId: string, action: "pause" | "resume" | "remove"): Promise<boolean> {
+  async function mutateTask(
+    taskId: string,
+    action: "pause" | "resume" | "remove",
+    deleteFiles = false
+  ): Promise<boolean> {
     setMutatingTaskId(taskId);
     try {
       const updated = action === "pause"
         ? await appApi.pauseDownload(taskId)
         : action === "resume"
           ? await appApi.resumeDownload(taskId)
-          : await appApi.removeDownload(taskId, false);
+          : await appApi.removeDownload(taskId, deleteFiles);
       setTasks(updated);
       setError(null);
       return true;
@@ -410,16 +415,44 @@ export function DownloadsPage() {
       </Tabs>
 
       <ConfirmActionDialog
-        confirmLabel="移除任务"
+        confirmLabel={deleteFilesOnRemove ? "删除任务和文件" : "移除任务"}
+        content={removeTarget?.files.some((file) => file.progress > 0) ? (
+          <div
+            className={cn(
+              "flex items-start gap-3 rounded-md border p-3",
+              deleteFilesOnRemove && "border-destructive bg-destructive/5"
+            )}
+          >
+            <Checkbox
+              checked={deleteFilesOnRemove}
+              id="downloads-delete-files"
+              onCheckedChange={(checked) => setDeleteFilesOnRemove(checked === true)}
+            />
+            <label className="min-w-0 cursor-pointer" htmlFor="downloads-delete-files">
+              <span className="block text-sm font-medium">同时删除已下载文件</span>
+              <span className="mt-1 block text-xs text-muted-foreground">
+                文件删除后无法从应用内恢复。
+              </span>
+            </label>
+          </div>
+        ) : undefined}
         description={removeTarget
-          ? `下载任务「${removeTarget.name}」将从队列中移除，已下载文件会保留。`
+          ? deleteFilesOnRemove
+            ? `下载任务「${removeTarget.name}」及其已下载文件将被永久删除。`
+            : `下载任务「${removeTarget.name}」将从队列中移除，已下载文件会保留。`
           : "该下载任务将从队列中移除。"}
         onConfirm={async () => {
-          if (removeTarget && !(await mutateTask(removeTarget.id, "remove"))) {
+          if (removeTarget && !(await mutateTask(removeTarget.id, "remove", deleteFilesOnRemove))) {
             throw new Error("下载任务移除失败");
           }
+          toast.success(deleteFilesOnRemove ? "任务和已下载文件已删除" : "任务已移除，文件已保留");
         }}
-        onOpenChange={(open) => !open && setRemoveTarget(null)}
+        onOpenChange={(open) => {
+          if (!open) {
+            setRemoveTarget(null);
+            setDeleteFilesOnRemove(false);
+          }
+        }}
         open={Boolean(removeTarget)}
         title="确认移除下载任务？"
       />

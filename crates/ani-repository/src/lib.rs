@@ -304,8 +304,12 @@ pub trait DownloadRepository {
     /// 幂等保存下载任务及其文件快照。
     fn upsert_download_task(&self, task: &DownloadTask) -> RepositoryResult<Vec<DownloadTask>>;
 
-    /// 删除一条下载任务记录，不直接操作引擎或下载文件。
-    fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>>;
+    /// 删除下载任务，并按真实文件删除结果清理关联媒体索引。
+    fn remove_download_task(
+        &self,
+        task_id: &str,
+        delete_files: bool,
+    ) -> RepositoryResult<Vec<DownloadTask>>;
 }
 
 /// 媒体文件关联与探测结果存储端口。

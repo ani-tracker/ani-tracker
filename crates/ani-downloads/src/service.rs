@@ -14,8 +14,12 @@ pub trait DownloadTaskStore: Send + Sync {
     /// 幂等保存任务和文件快照。
     fn upsert_download_task(&self, task: &DownloadTask) -> RepositoryResult<Vec<DownloadTask>>;
 
-    /// 仅删除业务任务记录。
-    fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>>;
+    /// 删除业务任务记录，并按真实文件删除结果清理关联索引。
+    fn remove_download_task(
+        &self,
+        task_id: &str,
+        delete_files: bool,
+    ) -> RepositoryResult<Vec<DownloadTask>>;
 }
 
 impl<T> DownloadTaskStore for T
@@ -30,8 +34,12 @@ where
         DownloadRepository::upsert_download_task(self, task)
     }
 
-    fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>> {
-        DownloadRepository::remove_download_task(self, task_id)
+    fn remove_download_task(
+        &self,
+        task_id: &str,
+        delete_files: bool,
+    ) -> RepositoryResult<Vec<DownloadTask>> {
+        DownloadRepository::remove_download_task(self, task_id, delete_files)
     }
 }
 
@@ -217,7 +225,7 @@ impl DownloadTaskService {
             .remove(engine_task_id(&task), delete_files)
             .await
             .map_err(|error| DownloadServiceError::engine(task.engine.clone(), "remove", error))?;
-        Ok(self.store.remove_download_task(&task.id)?)
+        Ok(self.store.remove_download_task(&task.id, delete_files)?)
     }
 
     /// 更新文件优先级并同步本地选择状态。
@@ -284,7 +292,7 @@ impl DownloadTaskService {
             }
             self.store.upsert_download_task(&task)?;
             if let Some(stored) = matched.filter(|stored| stored.id != task.id) {
-                self.store.remove_download_task(&stored.id)?;
+                self.store.remove_download_task(&stored.id, false)?;
                 current.retain(|item| item.id != stored.id);
             }
             current.retain(|item| item.id != task.id);

@@ -751,18 +751,69 @@ fn removes_download_snapshot_and_rolls_back_invalid_files() {
         .expect("save removal episode two");
     let task = p4_download_task();
     DownloadRepository::upsert_download_task(&repository, &task).expect("save removable task");
+    MediaRepository::upsert_media_files(
+        &repository,
+        &[MediaFile {
+            id: "p4-removal-media".to_owned(),
+            anime_id: "anime-p3-1".to_owned(),
+            episode_id: Some("episode-anime-p3-1-1".to_owned()),
+            download_task_id: Some(task.id.clone()),
+            file_path: "C:/video/episode-1.mkv".to_owned(),
+            file_name: "episode-1.mkv".to_owned(),
+            size: 1024,
+            container: Some("mkv".to_owned()),
+            declared_video_codec: Some("HEVC".to_owned()),
+            detected_video_codec: Some("hevc".to_owned()),
+            normalized_video_codec: "H.265/HEVC".to_owned(),
+            resolution: Some("1920x1080".to_owned()),
+            bit_depth: Some(10),
+            audio_codecs: vec!["AAC".to_owned()],
+            subtitle_tracks: vec!["chi / ASS".to_owned()],
+            duration_seconds: Some(1440),
+            downloaded_at: Some("2026-07-25T00:00:00.000Z".to_owned()),
+            probed_at: Some("2026-07-25T00:01:00.000Z".to_owned()),
+        }],
+    )
+    .expect("save removable media");
+    repository
+        .save_playback_checkpoint(&SavePlaybackCheckpointInput {
+            task_id: task.id.clone(),
+            file_index: Some(0),
+            position_seconds: 10.0,
+            duration_seconds: 100.0,
+            completed: None,
+        })
+        .expect("save removable checkpoint");
 
     let remaining = DownloadRepository::remove_download_task(
         &repository,
         task.torrent_hash.as_deref().expect("task hash"),
+        false,
     )
     .expect("remove task by hash");
     assert!(remaining.is_empty());
+    assert_eq!(
+        MediaRepository::list_media_files(&repository)
+            .expect("list preserved media")
+            .len(),
+        1
+    );
+    assert!(repository
+        .get_playback_checkpoint(&task.id, Some(0))
+        .expect("read removed checkpoint")
+        .is_none());
     assert!(repository
         .list_episodes("anime-p3-1")
         .expect("list restored episodes")
         .iter()
         .all(|episode| episode.status == EpisodeStatus::Aired));
+
+    DownloadRepository::upsert_download_task(&repository, &task).expect("restore removable task");
+    DownloadRepository::remove_download_task(&repository, &task.id, true)
+        .expect("remove task and media");
+    assert!(MediaRepository::list_media_files(&repository)
+        .expect("list deleted media")
+        .is_empty());
 
     let mut invalid = p4_download_task();
     invalid.id = "p4-invalid-task".to_owned();
