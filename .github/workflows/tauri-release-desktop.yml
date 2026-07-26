@@ -197,6 +197,17 @@ jobs:
           if ($certificate.Subject -ne $certificate.Issuer) {
             throw "Windows signing certificate must be self-signed"
           }
+          $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
+          try {
+            $chain.ChainPolicy.TrustMode = [System.Security.Cryptography.X509Certificates.X509ChainTrustMode]::CustomRootTrust
+            $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+            [void]$chain.ChainPolicy.CustomTrustStore.Add($certificate)
+            if (-not $chain.Build($certificate) -or $chain.ChainElements.Count -ne 1) {
+              throw "Windows signing certificate failed cryptographic self-signature validation"
+            }
+          } finally {
+            $chain.Dispose()
+          }
           if ($certificate.NotAfter -le (Get-Date)) {
             throw "Windows self-signing certificate has expired"
           }
@@ -231,15 +242,26 @@ jobs:
         run: |
           $thumbprint = "${{ steps.windows-signing.outputs.thumbprint }}"
           if (-not $thumbprint) { throw "Windows signing certificate was not imported" }
-          $config = '{"bundle":{"windows":{"certificateThumbprint":"' + $thumbprint + '","digestAlgorithm":"sha256","timestampUrl":"http://timestamp.digicert.com"}}}'
+          $config = @{
+            bundle = @{
+              resources = @{ "../.tauri-remote-pwa/" = "remote-pwa/" }
+              windows = @{
+                certificateThumbprint = $thumbprint
+                digestAlgorithm = "sha256"
+                timestampUrl = "http://timestamp.digicert.com"
+              }
+            }
+          } | ConvertTo-Json -Depth 5 -Compress
           pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}" --config $config
 
       - name: Build macOS ad-hoc and Linux bundles
         if: matrix.platform != 'win32'
         shell: bash
         run: |
-          pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}"
+          pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}" --config src-tauri/tauri.remote.conf.json
 
+      - name: Verify Renderer module boundaries
+        run: pnpm run verify:tauri:renderer-boundaries
 
       - name: Verify macOS ad-hoc signature
         if: matrix.platform == 'darwin'

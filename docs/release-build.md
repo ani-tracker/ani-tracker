@@ -13,7 +13,7 @@
 | `tauri-release-android.yml` | Android arm64 | 自签 `.apk` |
 | `tauri-release-ios.yml` | iOS arm64 | 未签名 `.ipa`，由用户重签 |
 
-发布工作流支持 `workflow_dispatch` 和 `v*` 标签。版本必须符合语义版本，发布脚本会同步 `package.json`、Tauri 配置与 Cargo 包版本，并为每组产物生成 SHA-256 和版本化 `manifest.json`。任何 `.github/workflows` 修改都会触发固定版本及摘要的 actionlint 门禁。
+发布工作流支持 `workflow_dispatch` 和 `v*` 标签。版本必须符合语义版本，发布脚本会同步 `package.json`、Tauri 配置与 Cargo 包版本，并为每组产物生成 SHA-256 和版本化 `manifest.json`。任何 `.github/workflows` 修改都会触发固定版本及摘要的 actionlint 门禁。macOS 同时产出 Intel/Apple Silicon 的临时签名 DMG，iOS 则固定产出供用户自行重签的 ARM64 IPA。
 
 ## 签名凭据
 
@@ -68,7 +68,7 @@ Android/iOS 只打包移动本地闭环：
 - Android LibVLC 或 iOS MobileVLCKit。
 - 本地主 Renderer、SQLite、主题、通知和平台插件。
 
-移动产物负向检查会拒绝远程 Web/网关资源、FFmpeg、FFprobe、HLS/转码、托管 qBittorrent 和桌面证书材料。
+移动产物负向检查会拒绝远程 Web/网关资源、FFmpeg、FFprobe、HLS/转码、托管 qBittorrent 和桌面证书材料。本地主 Renderer 与远程 PWA 使用独立入口和 API Adapter；Vite 在模块图阶段拒绝本地包引入远程页面、远程 HTTP 客户端、ArtPlayer 或 HLS.js，并为产物写入可复核的边界证明。
 
 ## 本地命令
 
@@ -84,7 +84,7 @@ pnpm.cmd run package:tauri:android
 pnpm.cmd run package:tauri:ios
 ```
 
-Android 正式命令只生成 ARM64 自签 APK，不再生成应用市场使用的 AAB。iOS 命令生成 ARM64 设备版未签名 IPA，并强制检查包内不存在 `_CodeSignature` 或 `embedded.mobileprovision`。
+Android 正式命令只生成 ARM64 自签 APK，不再生成应用市场使用的 AAB。iOS 命令先生成未签名 ARM64 设备 App，再按标准 `Payload/*.app` 结构封装为 IPA，并强制检查包内不存在 `_CodeSignature` 或 `embedded.mobileprovision`。
 
 桌面正式打包前需按目标平台准备资源。CI 使用固定版本和摘要完成该步骤；本地可分别执行 `prepare:desktop-torrent-core-dev`、`prepare:qbittorrent`、`prepare:ffmpeg` 和对应 `prepare:tauri:*:libvlc` 命令。
 

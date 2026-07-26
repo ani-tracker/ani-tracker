@@ -100,7 +100,43 @@ jobs:
         run: pnpm exec tauri android build --target aarch64 --apk --ci
 
       - name: Verify mobile package boundaries
-        run: pnpm run verify:tauri:android-package
+        run: |
+          pnpm run verify:tauri:renderer-boundaries -- --renderer local
+          pnpm run verify:tauri:android-package
+
+      - name: Verify Android self-signature
+        shell: bash
+        run: |
+          certificate_path="${RUNNER_TEMP}/ani-tracker-release.pem"
+          keytool -exportcert -rfc \
+            -keystore "${ANI_ANDROID_KEYSTORE_PATH}" \
+            -storepass "${ANI_ANDROID_KEYSTORE_PASSWORD}" \
+            -alias "${ANI_ANDROID_KEY_ALIAS}" > "${certificate_path}"
+          subject="$(openssl x509 -in "${certificate_path}" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')"
+          issuer="$(openssl x509 -in "${certificate_path}" -noout -issuer -nameopt RFC2253 | sed 's/^issuer=//')"
+          if [[ -z "${subject}" || "${subject}" != "${issuer}" ]]; then
+            echo "Android release certificate must be self-signed" >&2
+            exit 1
+          fi
+          openssl verify -CAfile "${certificate_path}" "${certificate_path}"
+          openssl x509 -in "${certificate_path}" -checkend 0 -noout
+          certificate_digest="$(openssl x509 -in "${certificate_path}" -noout -fingerprint -sha256 | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+
+          verified=0
+          while IFS= read -r -d '' apk; do
+            signature_output="$("${ANDROID_HOME}/build-tools/36.0.0/apksigner" verify --verbose --print-certs "$apk")"
+            printf '%s\n' "${signature_output}"
+            normalized_output="$(printf '%s' "${signature_output}" | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+            if [[ "${normalized_output}" != *"${certificate_digest}"* ]]; then
+              echo "APK signature does not match configured self-signing certificate: ${apk}" >&2
+              exit 1
+            fi
+            verified=$((verified + 1))
+          done < <(find src-tauri/gen/android/app/build/outputs -type f -name '*.apk' -print0)
+          if [[ "$verified" -eq 0 ]]; then
+            echo "No Android APK found for self-signature verification" >&2
+            exit 1
+          fi
 
       - name: Collect Android assets and checksums
         shell: bash

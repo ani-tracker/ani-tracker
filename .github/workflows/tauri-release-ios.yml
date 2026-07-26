@@ -68,10 +68,14 @@ jobs:
         run: pnpm run init:tauri:ios
 
       - name: Build unsigned Tauri IPA for user re-signing
-        run: pnpm exec tauri ios build --target aarch64 --ci --no-sign
+        run: |
+          pnpm exec tauri ios build --target aarch64 --ci --no-sign
+          bash scripts/package-unsigned-ios-ipa.sh
 
       - name: Verify mobile package boundaries
-        run: pnpm run verify:tauri:ios-package -- --require-unsigned
+        run: |
+          pnpm run verify:tauri:renderer-boundaries -- --renderer local
+          pnpm run verify:tauri:ios-package -- --require-unsigned
 
       - name: Collect iOS assets and checksums
         shell: bash

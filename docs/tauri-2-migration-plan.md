@@ -408,8 +408,8 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、Android Renderer 构建及 365 项 Node 回归通过，其中 364 项通过、1 项跳过。Kotlin、APK/AAB 内容和 Android 真机门禁按当前安排后续统一验证。
 - iOS 已接入 Tauri Swift Package 宿主、Keychain 安全存储、网络/方向/存储/通知权限状态、生命周期恢复和 BGAppRefreshTask 前台补跑标记。
 - iOS 已接通安全作用域 torrent/SQLite 文档导入导出、恢复后平台约束、系统通知页面跳转，以及来源同步后串行执行自动扫描的补跑闭环。
-- 已增加 APK/AAB/IPA 安装包负向内容门禁，拒绝远程 Web 资源、FFmpeg/FFprobe、托管 qBittorrent 和桌面网关证书进入移动产物。
-- Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、Tauri Renderer 构建及 Node 回归通过；Swift/Xcode、IPA 内容和 iOS 真机门禁按当前安排后续统一验证。
+- 已增加 APK/AAB/IPA 安装包负向内容门禁，拒绝远程 Web 资源、FFmpeg/FFprobe、托管 qBittorrent 和桌面网关证书进入移动产物；本地主 Renderer 与远程 PWA 进一步拆分入口和 API Adapter，模块图会拒绝 ArtPlayer、HLS.js 与远程转码客户端回流移动包。
+- Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、本地/远程 Renderer 构建及 Node 回归通过；Swift/Xcode、IPA 内容和 iOS 真机门禁按当前安排后续统一验证。
 
 ### P8：默认切换、发布与旧宿主退役
 
@@ -434,7 +434,7 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 
 - `dev`、`build` 和 `package:desktop` 已切换为 Tauri 唯一正式入口，Electron/Capacitor 命令已从活跃脚本移除。
 - 已建立 Windows、macOS x64/arm64、Linux、Android 和 iOS Tauri 发布工作流；发布版本由标签注入，安装包同时生成 SHA-256 与版本化 JSON 产物清单。
-- Windows 与 Android 发布任务要求项目自签凭据；macOS 使用临时签名，iOS 输出供用户自行重签的未签名 IPA，不依赖应用市场证书。
+- Windows 与 Android 发布任务要求项目长期自签凭据并校验证书；macOS 使用 ad-hoc 临时签名并输出 x64/arm64 DMG；iOS 将未签名 ARM64 设备 App 封装为供用户自行重签的 IPA，不依赖应用市场证书。
 - 桌面资源按平台配置打包 torrent-core、libVLC、托管 qBittorrent、FFmpeg/FFprobe、远程 Renderer 和许可证；移动配置仅保留本地核心、原生播放器和许可证边界。
 - 已由新版 Ani Tracker 标识重新生成 Tauri Windows/macOS/Linux/Android/iOS 图标，并替换 Android Tauri 工程残留的旧启动图标。
 - Electron 主进程、preload、客户端、配置与 Node 原生依赖，以及 Capacitor Android/iOS 宿主和桥接已移入 `archive/legacy-hosts`；回退提交固定为 `6caf060`。

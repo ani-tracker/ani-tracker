@@ -45,6 +45,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 - iOS 生命周期、BGTask 补跑、Keychain、安全作用域文件、通知导航和备份恢复。
 - 移动设置保留完整业务与主题；隐藏并强制关闭 FFmpeg/FFprobe、转码、远程网关和桌面进程能力。
 - Windows/Android 自签、macOS 临时签名、iOS 未签名可重签包的发布工作流，以及 SHA-256、JSON 产物清单和独立 actionlint 门禁。
+- 本地主 Renderer 与远程 PWA 已拆分入口和 API Adapter；移动构建的模块图会拒绝远程页面、ArtPlayer、HLS.js 与远程转码客户端。
 - 全平台 Logo 已替换，Tauri 与生成的 Android/iOS 工程使用统一品牌资源。
 
 ## 验证结果
@@ -59,6 +60,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 | `pnpm.cmd run test:mobile-package` | iOS 未签名可重签包策略 4/4 通过 |
 | Tauri 主 Renderer | 生产构建通过 |
 | 桌面远程 Renderer | 生产构建通过 |
+| Renderer 模块边界 | 本地 313 个模块、远程 245 个模块通过 |
 | Rust workspace 测试 | 通过 |
 | Rustfmt / Clippy | 通过 |
 | YAML 工作流解析 | 通过 |

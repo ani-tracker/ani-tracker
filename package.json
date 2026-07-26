@@ -59,7 +59,7 @@
     "dev:tauri:ios": "tauri ios dev",
     "package:tauri:android:debug": "pnpm run prepare:torrent-core:android && tauri android build --debug --apk --ci && pnpm run verify:tauri:renderer-boundaries -- --renderer local && pnpm run verify:tauri:android-package",
     "package:tauri:android": "pnpm run prepare:torrent-core:android && tauri android build --target aarch64 --apk --ci && pnpm run verify:tauri:renderer-boundaries -- --renderer local && pnpm run verify:tauri:android-package",
-    "package:tauri:ios": "pnpm run prepare:torrent-core:ios && pnpm run prepare:tauri:ios-libvlc && tauri ios build --target aarch64 --ci --no-sign && pnpm run verify:tauri:renderer-boundaries -- --renderer local && pnpm run verify:tauri:ios-package -- --require-unsigned",
+    "package:tauri:ios": "pnpm run prepare:torrent-core:ios && pnpm run prepare:tauri:ios-libvlc && tauri ios build --target aarch64 --ci --no-sign && bash scripts/package-unsigned-ios-ipa.sh && pnpm run verify:tauri:renderer-boundaries -- --renderer local && pnpm run verify:tauri:ios-package -- --require-unsigned",
     "verify:tauri:android-package": "node scripts/verify-tauri-mobile-package.mjs --platform android",
     "verify:tauri:ios-package": "node scripts/verify-tauri-mobile-package.mjs --platform ios",
     "verify:tauri:renderer-boundaries": "node scripts/verify-renderer-boundaries.mjs",
