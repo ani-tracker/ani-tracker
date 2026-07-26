@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldDescription, FieldGroup, FieldLabel, FieldLegend, FieldSet } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
@@ -25,7 +26,6 @@ import { cn } from "@/lib/cn";
 import { formatBytes, formatPercent } from "@/lib/format";
 import {
   AnimeDownloadTaskSheet,
-  isActiveDownload,
   isCompletedDownload,
   type AnimeDownloadDetailFilter,
   type AnimeDownloadDetailState
@@ -64,6 +64,7 @@ import type {
   SubtitleLanguage,
   VideoBitDepth
 } from "@shared/domain";
+import { findEpisodeDownloadLink, summarizeAnimeDownloads } from "@shared/download-episode-links";
 import type { MediaPlaybackTarget } from "@shared/player-selection";
 import { formatSubtitleLanguages, formatVideoBitDepth, resolveSubtitleLanguages, subtitleLanguageText } from "@shared/release-metadata";
 
@@ -1847,6 +1848,7 @@ function AnimeDownloadPanel({
   onAddSelected: (releases: Release[]) => void;
 }) {
   const [groupCollapseOverrides, setGroupCollapseOverrides] = useState<Record<string, boolean>>({});
+  const [collectionResourcesOpen, setCollectionResourcesOpen] = useState(true);
   const [otherResourcesCollapsed, setOtherResourcesCollapsed] = useState(true);
   const [selectedRssSubscriptionId, setSelectedRssSubscriptionId] = useState("");
   const [selectedFamilyKeys, setSelectedFamilyKeys] = useState<Set<string>>(() => new Set());
@@ -2044,29 +2046,38 @@ function AnimeDownloadPanel({
     }
 
     return (
-      <section className="shrink-0 overflow-hidden border border-primary/20 bg-background">
-        <div className="flex min-h-11 items-center justify-between gap-3 bg-primary/5 px-3 py-2">
-          <span className="font-semibold">合集资源</span>
-          <Badge tone="primary-soft">{visibleCollectionFamilies.length} 个资源</Badge>
-        </div>
-        <div className="divide-y border-t border-primary/10">
-          {visibleCollectionFamilies.map((family) => (
-            <ReleaseDownloadRow
-              key={family.key}
-              addingReleaseId={addingReleaseId}
-              batchSelectable={classifyAnimeRelease(family.selectedRelease, target.anime) === "current"}
-              fansubNames={fansubNames}
-              family={family}
-              linkedTask={findReleaseDownloadTask(linkedTasks, family.selectedRelease)}
-              preferences={target}
-              selected={selectedFamilyKeys.has(family.key)}
-              onAddRelease={onAddRelease}
-              onToggleSelected={toggleFamilySelection}
-              onVersionChange={selectReleaseVersion}
-            />
-          ))}
-        </div>
-      </section>
+      <Collapsible open={collectionResourcesOpen} onOpenChange={setCollectionResourcesOpen} asChild>
+        <section className="shrink-0 overflow-hidden border border-primary/20 bg-background">
+          <CollapsibleTrigger asChild>
+            <Button className="h-auto min-h-11 w-full justify-between rounded-none px-3 py-2" type="button" variant="ghost">
+              <span className="flex min-w-0 items-center gap-2">
+                {collectionResourcesOpen ? <ChevronDown data-icon="inline-start" /> : <ChevronRight data-icon="inline-start" />}
+                <span className="font-semibold">合集资源</span>
+              </span>
+              <Badge tone="primary-soft">{visibleCollectionFamilies.length} 个资源</Badge>
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="divide-y border-t border-primary/10">
+              {visibleCollectionFamilies.map((family) => (
+                <ReleaseDownloadRow
+                  key={family.key}
+                  addingReleaseId={addingReleaseId}
+                  batchSelectable={classifyAnimeRelease(family.selectedRelease, target.anime) === "current"}
+                  fansubNames={fansubNames}
+                  family={family}
+                  linkedTask={findReleaseDownloadTask(linkedTasks, family.selectedRelease)}
+                  preferences={target}
+                  selected={selectedFamilyKeys.has(family.key)}
+                  onAddRelease={onAddRelease}
+                  onToggleSelected={toggleFamilySelection}
+                  onVersionChange={selectReleaseVersion}
+                />
+              ))}
+            </div>
+          </CollapsibleContent>
+        </section>
+      </Collapsible>
     );
   }
 
@@ -2941,7 +2952,7 @@ function EpisodeRulesPanel({
             {episodes.map((episode) => {
               const preference = episodePreferences.find((item) => item.episodeId === episode.id);
               const preview = releasePreviews[episode.id];
-              const linkedDownload = findEpisodeDownloadTask(downloadTasks, episode);
+              const linkedDownload = findEpisodeDownloadLink(downloadTasks, episode);
               const inheritedFansub = draft.defaultFansubGroupId
                 ? (fansubNames.get(draft.defaultFansubGroupId) ?? "默认字幕组")
                 : "未设置默认字幕组";
@@ -2959,7 +2970,7 @@ function EpisodeRulesPanel({
                       <span>当前字幕组：{effectiveFansub}</span>
                       {linkedDownload && (
                         <span>
-                          下载任务：{downloadStatusText[linkedDownload.status]} · {formatPercent(linkedDownload.progress)}
+                          下载任务：{linkedDownload.completed ? "已完成" : downloadStatusText[linkedDownload.task.status]} · {formatPercent(linkedDownload.progress)}
                         </span>
                       )}
                     </div>
@@ -3084,24 +3095,6 @@ function EpisodeRulesPanel({
       </CardContent>
     </Card>
   );
-}
-
-function findEpisodeDownloadTask(downloadTasks: DownloadTask[], episode: Episode): DownloadTask | undefined {
-  return downloadTasks.find((task) => task.episodeId === episode.id);
-}
-
-/** 汇总一部追番已关联的唯一集数。 */
-function summarizeAnimeDownloads(downloadTasks: DownloadTask[], animeId: string) {
-  const tasks = downloadTasks.filter((task) => task.animeId === animeId && task.episodeNo !== undefined);
-  return {
-    linked: countDownloadEpisodes(tasks),
-    completed: countDownloadEpisodes(tasks.filter(isCompletedDownload)),
-    active: countDownloadEpisodes(tasks.filter(isActiveDownload))
-  };
-}
-
-function countDownloadEpisodes(downloadTasks: DownloadTask[]): number {
-  return new Set(downloadTasks.map((task) => task.episodeNo).filter((value) => value !== undefined)).size;
 }
 
 function buildSearchTerms(item: MyAnime): string[] {

@@ -9,7 +9,8 @@ use ani_contracts::{
     QbittorrentManagedStatus,
 };
 use ani_domain::{
-    AppSettings, DownloadTask, Release, SubtitleLanguage, SubtitlePreference, TorrentEngineKind,
+    AppSettings, DownloadTask, Episode, Release, SubtitleLanguage, SubtitlePreference,
+    TorrentEngineKind, TorrentFile,
 };
 use ani_downloads::{
     DownloadEngine, DownloadEngineConfig, DownloadEngineRegistry, DownloadServiceError,
@@ -18,8 +19,11 @@ use ani_downloads::{
 };
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 use ani_downloads::{ProcessTorrentCoreTransport, TorrentCoreProcessOptions};
-use ani_repository::{DownloadRepository, RepositoryError, RepositoryResult, SettingsRepository};
-use ani_sources::{HttpMethod, NativeHttpClient, NativeHttpRequest};
+use ani_repository::{
+    AnimeTrackingRepository, DownloadRepository, RepositoryError, RepositoryResult,
+    SettingsRepository,
+};
+use ani_sources::{parse_release_title, HttpMethod, NativeHttpClient, NativeHttpRequest};
 use ani_storage::Storage;
 use chrono::{SecondsFormat, Utc};
 use serde_json::Value;
@@ -45,6 +49,10 @@ struct SharedDownloadTaskStore {
     storage: Arc<Mutex<Storage>>,
 }
 
+trait DownloadAssociationRepository: DownloadRepository + AnimeTrackingRepository {}
+
+impl<T> DownloadAssociationRepository for T where T: DownloadRepository + AnimeTrackingRepository {}
+
 impl SharedDownloadTaskStore {
     /// 创建复用应用 SQLite 连接的下载存储适配器。
     fn new(storage: Arc<Mutex<Storage>>) -> Self {
@@ -54,7 +62,7 @@ impl SharedDownloadTaskStore {
     /// 在短临界区内执行 Repository 操作。
     fn with_repository<T>(
         &self,
-        operation: impl FnOnce(&dyn DownloadRepository) -> RepositoryResult<T>,
+        operation: impl FnOnce(&dyn DownloadAssociationRepository) -> RepositoryResult<T>,
     ) -> RepositoryResult<T> {
         let storage = self
             .storage
@@ -69,16 +77,174 @@ impl SharedDownloadTaskStore {
 
 impl DownloadTaskStore for SharedDownloadTaskStore {
     fn list_downloads(&self) -> RepositoryResult<Vec<DownloadTask>> {
-        self.with_repository(|repository| repository.list_downloads())
+        self.with_repository(|repository| {
+            let tasks = repository.list_downloads()?;
+            let mut episodes_by_anime = BTreeMap::new();
+            for anime_id in tasks.iter().filter_map(|task| task.anime_id.as_deref()) {
+                if !episodes_by_anime.contains_key(anime_id) {
+                    episodes_by_anime
+                        .insert(anime_id.to_owned(), repository.list_episodes(anime_id)?);
+                }
+            }
+            let mut changed = false;
+            for task in &tasks {
+                let Some(anime_id) = task.anime_id.as_deref() else {
+                    continue;
+                };
+                let Some(episodes) = episodes_by_anime.get(anime_id) else {
+                    continue;
+                };
+                let mut linked = task.clone();
+                let count = associate_torrent_files(
+                    &mut linked.files,
+                    linked.episode_id.as_deref(),
+                    linked.episode_no,
+                    episodes,
+                );
+                if count == 0 {
+                    continue;
+                }
+                repository.upsert_download_task(&linked)?;
+                changed = true;
+                log::info!(
+                    "Tauri 历史合集文件关联已补齐 task_id={} linked_files={}",
+                    linked.id,
+                    count
+                );
+            }
+            if changed {
+                repository.list_downloads()
+            } else {
+                Ok(tasks)
+            }
+        })
     }
 
     fn upsert_download_task(&self, task: &DownloadTask) -> RepositoryResult<Vec<DownloadTask>> {
-        self.with_repository(|repository| repository.upsert_download_task(task))
+        self.with_repository(|repository| {
+            let mut linked = task.clone();
+            if let Some(anime_id) = linked.anime_id.as_deref() {
+                let episodes = repository.list_episodes(anime_id)?;
+                let count = associate_torrent_files(
+                    &mut linked.files,
+                    linked.episode_id.as_deref(),
+                    linked.episode_no,
+                    &episodes,
+                );
+                if count > 0 {
+                    log::info!(
+                        "Tauri 下载文件单集关联已补齐 task_id={} linked_files={}",
+                        linked.id,
+                        count
+                    );
+                }
+            }
+            repository.upsert_download_task(&linked)
+        })
     }
 
     fn remove_download_task(&self, task_id: &str) -> RepositoryResult<Vec<DownloadTask>> {
         self.with_repository(|repository| repository.remove_download_task(task_id))
     }
+}
+
+/// 从合集视频文件名识别集数，并绑定到追番已有单集。
+fn associate_torrent_files(
+    files: &mut [TorrentFile],
+    task_episode_id: Option<&str>,
+    task_episode_no: Option<f64>,
+    episodes: &[Episode],
+) -> usize {
+    let video_file_count = files
+        .iter()
+        .filter(|file| is_video_file_name(&file.name))
+        .count();
+    let mut linked_count = 0;
+    for file in files {
+        if !is_video_file_name(&file.name) {
+            continue;
+        }
+        let existing_episode = file
+            .episode_id
+            .as_deref()
+            .and_then(|id| episodes.iter().find(|episode| episode.id == id))
+            .or_else(|| {
+                file.episode_no
+                    .and_then(|number| find_episode_by_number(episodes, number))
+            });
+        let candidate = existing_episode.or_else(|| {
+            let number = if video_file_count == 1 {
+                task_episode_no.or_else(|| parse_file_episode_no(&file.name))
+            } else {
+                parse_file_episode_no(&file.name)
+            }?;
+            find_episode_by_number(episodes, number)
+        });
+        let candidate = candidate.or_else(|| {
+            (video_file_count == 1)
+                .then_some(task_episode_id)
+                .flatten()
+                .and_then(|id| episodes.iter().find(|episode| episode.id == id))
+        });
+        let Some(episode) = candidate else {
+            continue;
+        };
+        if file.episode_id.as_deref() == Some(episode.id.as_str())
+            && file.episode_no == Some(episode.episode_no)
+        {
+            continue;
+        }
+        file.episode_id = Some(episode.id.clone());
+        file.episode_no = Some(episode.episode_no);
+        linked_count += 1;
+    }
+    linked_count
+}
+
+/// 从发布式文件名或纯数字文件名读取单集编号。
+fn parse_file_episode_no(file_name: &str) -> Option<f64> {
+    parse_release_title(file_name, &[])
+        .episode_no
+        .or_else(|| {
+            let base_name = file_name
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(file_name)
+                .rsplit_once('.')
+                .map(|(stem, _)| stem)
+                .unwrap_or(file_name)
+                .trim();
+            let digit_end = base_name
+                .char_indices()
+                .take_while(|(_, character)| character.is_ascii_digit() || *character == '.')
+                .map(|(index, character)| index + character.len_utf8())
+                .last()?;
+            let suffix = &base_name[digit_end..];
+            if suffix.chars().next().is_some_and(|character| {
+                !character.is_whitespace() && !matches!(character, '-' | '_' | 'v' | 'V')
+            }) {
+                return None;
+            }
+            base_name[..digit_end]
+                .trim_end_matches('.')
+                .parse::<f64>()
+                .ok()
+        })
+        .filter(|number| number.is_finite() && *number > 0.0)
+}
+
+/// 判断文件名是否属于可建立播放关联的视频文件。
+fn is_video_file_name(file_name: &str) -> bool {
+    let lower = file_name.to_ascii_lowercase();
+    [".mkv", ".mp4", ".avi", ".mov", ".webm", ".m4v", ".ts"]
+        .iter()
+        .any(|extension| lower.ends_with(extension))
+}
+
+fn find_episode_by_number(episodes: &[Episode], number: f64) -> Option<&Episode> {
+    episodes
+        .iter()
+        .find(|episode| (episode.episode_no - number).abs() < f64::EPSILON)
 }
 
 /// Tauri 生命周期内共享下载服务、引擎注册表和临时种子目录。
@@ -942,6 +1108,7 @@ fn resolve_torrent_core_binary(app: &AppHandle) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use ani_domain::EpisodeStatus;
     use serde_json::json;
 
     use super::*;
@@ -993,5 +1160,57 @@ mod tests {
         assert_eq!(config.max_upload_speed, 128);
         assert_eq!(config.seeding_limits.ratio_limit, 1.5);
         assert_eq!(config.seeding_limits.time_limit_minutes, 90);
+    }
+
+    /// 验证合集视频文件按文件名关联单集，非视频文件不会污染下载状态。
+    #[test]
+    fn associates_collection_video_files_with_episodes() {
+        let episodes = vec![
+            test_episode("episode-1", 1.0),
+            test_episode("episode-2", 2.0),
+        ];
+        let mut files = vec![
+            test_torrent_file(0, "Season/[Group] Anime - 01 [1080p].mkv"),
+            test_torrent_file(1, "Season/02.mkv"),
+            test_torrent_file(2, "Season/cover.jpg"),
+        ];
+
+        assert_eq!(
+            associate_torrent_files(&mut files, None, None, &episodes),
+            2
+        );
+        assert_eq!(files[0].episode_id.as_deref(), Some("episode-1"));
+        assert_eq!(files[0].episode_no, Some(1.0));
+        assert_eq!(files[1].episode_id.as_deref(), Some("episode-2"));
+        assert_eq!(files[2].episode_id, None);
+        assert_eq!(
+            associate_torrent_files(&mut files, None, None, &episodes),
+            0
+        );
+    }
+
+    fn test_episode(id: &str, episode_no: f64) -> Episode {
+        Episode {
+            id: id.to_owned(),
+            anime_id: "anime-1".to_owned(),
+            episode_no,
+            title: None,
+            air_time: None,
+            status: EpisodeStatus::Aired,
+        }
+    }
+
+    fn test_torrent_file(index: i64, name: &str) -> TorrentFile {
+        TorrentFile {
+            id: format!("file-{index}"),
+            index,
+            name: name.to_owned(),
+            episode_id: None,
+            episode_no: None,
+            size: 1_024,
+            progress: 1.0,
+            priority: 1,
+            selected: true,
+        }
     }
 }

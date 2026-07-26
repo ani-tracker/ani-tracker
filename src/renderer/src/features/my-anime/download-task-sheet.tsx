@@ -1,8 +1,9 @@
-import { Download, FolderOpen, Play } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, FolderOpen, Play } from "lucide-react";
 import { useState } from "react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Progress } from "@/components/ui/progress";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -13,7 +14,7 @@ import { cn } from "@/lib/cn";
 import { formatDateTime, formatPercent, formatSpeed } from "@/lib/format";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import { isActiveDownloadTask, isCompletedDownloadTask } from "@shared/download-status";
-import type { DownloadTask, MyAnime } from "@shared/domain";
+import type { DownloadTask, MyAnime, TorrentFile } from "@shared/domain";
 import type { MediaPlaybackTarget } from "@shared/player-selection";
 
 export type AnimeDownloadDetailFilter = "all" | "active" | "completed";
@@ -140,21 +141,25 @@ function DownloadTaskCard({
   const revealFile = resolveTaskFile(task, false);
   const playableFilePath = playableFile?.filePath;
   const revealFilePath = revealFile?.filePath;
-  const [activeFileAction, setActiveFileAction] = useState<"play" | "reveal" | null>(null);
+  const collectionFiles = task.files.filter((file) => file.selected && isVideoTaskFile(file));
+  const isCollection = collectionFiles.length > 1;
+  const [collectionOpen, setCollectionOpen] = useState(false);
+  const [activeFileAction, setActiveFileAction] = useState<string | null>(null);
   const [fileActionError, setFileActionError] = useState<string | null>(null);
 
   /** 播放已完成视频或在文件管理器中定位下载文件。 */
-  async function runFileAction(action: "play" | "reveal") {
-    const filePath = action === "play" ? playableFilePath : revealFilePath;
-    if (!filePath) return;
+  async function runFileAction(action: "play" | "reveal", target?: ResolvedTaskFile) {
+    const resolved = target ?? (action === "play" ? playableFile : revealFile);
+    if (!resolved) return;
+    const filePath = resolved.filePath;
 
-    setActiveFileAction(action);
+    setActiveFileAction(`${action}:${resolved.fileIndex}`);
     try {
-      if (action === "play" && onPlayMedia && playableFile) {
+      if (action === "play" && onPlayMedia) {
         await onPlayMedia({
-          filePath: playableFile.filePath,
+          filePath: resolved.filePath,
           taskId: task.id,
-          fileIndex: playableFile.fileIndex
+          fileIndex: resolved.fileIndex
         });
       } else if (action === "play") await appApi.playMedia(filePath);
       else await appApi.revealMedia(filePath);
@@ -191,14 +196,66 @@ function DownloadTaskCard({
         <DownloadTaskMeta label="上传速度" value={formatSpeed(task.uploadSpeed)} />
       </dl>
 
-      {isCompletedDownload(task) && (
+      {fileActionError && (
+        <Alert className="mt-4" variant="destructive">
+          <AlertTitle>文件操作失败</AlertTitle>
+          <AlertDescription>{fileActionError}</AlertDescription>
+        </Alert>
+      )}
+
+      {isCollection && (
+        <Collapsible className="mt-4 border-t pt-3" open={collectionOpen} onOpenChange={setCollectionOpen}>
+          <CollapsibleTrigger asChild>
+            <Button className="w-full justify-between" type="button" variant="secondary">
+              <span className="flex min-w-0 items-center gap-2">
+                {collectionOpen ? <ChevronDown data-icon="inline-start" /> : <ChevronRight data-icon="inline-start" />}
+                合集文件
+              </span>
+              <Badge>{collectionFiles.length} 集</Badge>
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-2 divide-y border-y">
+              {collectionFiles.map((file) => {
+                const target = resolveTorrentFile(task, file);
+                const completed = file.progress >= 1;
+                return (
+                  <div className="flex min-w-0 items-center gap-2 px-2 py-2" key={file.id}>
+                    <Badge tone={completed ? "green" : "neutral"}>
+                      {file.episodeNo !== undefined ? `第 ${file.episodeNo} 集` : `文件 ${file.index + 1}`}
+                    </Badge>
+                    <span className="min-w-0 flex-1 truncate text-xs" title={file.name}>{file.name}</span>
+                    <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatPercent(file.progress)}</span>
+                    <Button
+                      aria-label={`播放${file.episodeNo !== undefined ? `第 ${file.episodeNo} 集` : file.name}`}
+                      disabled={!completed || activeFileAction !== null}
+                      onClick={() => void runFileAction("play", target)}
+                      size="icon"
+                      title={completed ? "播放文件" : "文件尚未下载完成"}
+                      variant="ghost"
+                    >
+                      <Play />
+                    </Button>
+                    <Button
+                      aria-label={`定位${file.episodeNo !== undefined ? `第 ${file.episodeNo} 集` : file.name}`}
+                      disabled={activeFileAction !== null}
+                      onClick={() => void runFileAction("reveal", target)}
+                      size="icon"
+                      title="打开文件目录"
+                      variant="ghost"
+                    >
+                      <FolderOpen />
+                    </Button>
+                  </div>
+                );
+              })}
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
+
+      {!isCollection && isCompletedDownload(task) && (
         <div className="mt-4 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
-          {fileActionError && (
-            <Alert className="min-w-0 flex-1" variant="destructive">
-              <AlertTitle>文件操作失败</AlertTitle>
-              <AlertDescription>{fileActionError}</AlertDescription>
-            </Alert>
-          )}
           <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto">
             <Button
               aria-label="播放已完成视频"
@@ -273,12 +330,22 @@ interface ResolvedTaskFile {
 /** 选择任务中的完整文件，并生成播放器或文件管理器可用的目标。 */
 function resolveTaskFile(task: DownloadTask, videoOnly: boolean): ResolvedTaskFile | undefined {
   const completedFiles = task.files.filter((file) => file.selected && file.progress >= 1);
-  const videoFile = completedFiles.find((file) => /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i.test(file.name));
+  const videoFile = completedFiles.find(isVideoTaskFile);
   const targetFile = videoOnly ? videoFile : videoFile ?? completedFiles[0];
-  return targetFile ? {
-    filePath: joinDownloadFilePath(task.savePath, targetFile.name),
-    fileIndex: targetFile.index
-  } : undefined;
+  return targetFile ? resolveTorrentFile(task, targetFile) : undefined;
+}
+
+/** 将任务文件转换为播放器和文件管理器使用的目标。 */
+function resolveTorrentFile(task: DownloadTask, file: TorrentFile): ResolvedTaskFile {
+  return {
+    filePath: joinDownloadFilePath(task.savePath, file.name),
+    fileIndex: file.index
+  };
+}
+
+/** 判断下载文件是否为播放器支持的视频类型。 */
+function isVideoTaskFile(file: TorrentFile): boolean {
+  return /\.(mkv|mp4|avi|mov|webm|m4v|ts)$/i.test(file.name);
 }
 
 /** 按任务保存路径的格式拼接 qBittorrent 返回的相对文件名。 */
