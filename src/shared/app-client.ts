@@ -87,6 +87,8 @@ export interface AppClient {
   getMobilePlatformStatus?(): Promise<MobilePlatformStatus>;
   /** 读取并清除原生通知导航。 */
   consumeMobileNavigation?(): Promise<MobileNavigationIntent | undefined>;
+  /** 读取并清除原生后台调度要求的前台补跑标记。 */
+  consumeMobileBackgroundRefresh?(): Promise<boolean>;
   /** 由用户操作请求移动通知权限。 */
   requestMobileNotificationPermission?(): Promise<MobileNotificationPermission>;
 

@@ -67,7 +67,7 @@ pub(crate) fn initialize(app: &AppHandle) -> Result<AppStorageState, StorageErro
         legacy_database_paths,
         seed,
     })?;
-    #[cfg(target_os = "android")]
+    #[cfg(mobile)]
     let storage = {
         let mut storage = storage;
         storage.set_secure_store(Arc::new(crate::secure_store::PlatformSecureStore::new(

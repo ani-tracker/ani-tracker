@@ -164,6 +164,13 @@ class TauriClientCore implements AppClient {
       });
   }
 
+  /** 原子读取并清除移动后台调度要求的前台补跑标记。 */
+  async consumeMobileBackgroundRefresh(): Promise<boolean> {
+    return invoke<boolean>("consume_mobile_background_refresh").catch((error) => {
+      throw normalizeTauriError("consume_mobile_background_refresh", error);
+    });
+  }
+
   /** 由用户操作请求移动通知权限。 */
   async requestMobileNotificationPermission(): Promise<MobileNotificationPermission> {
     return invoke<MobileNotificationPermission>("request_mobile_notification_permission").catch((error) => {

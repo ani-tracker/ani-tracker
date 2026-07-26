@@ -14,7 +14,7 @@ mod player;
 mod qbittorrent_managed;
 #[cfg(desktop)]
 mod remote;
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 mod secure_store;
 mod source_sync;
 mod sources;
@@ -217,6 +217,7 @@ pub fn run() {
             commands::media::get_desktop_media_tools_status,
             commands::mobile::get_mobile_platform_status,
             commands::mobile::consume_mobile_navigation,
+            commands::mobile::consume_mobile_background_refresh,
             commands::mobile::request_mobile_notification_permission,
             commands::player::open_desktop_player_window,
             commands::player::close_desktop_player_window,

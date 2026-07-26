@@ -3,7 +3,7 @@ use ani_storage::SecureStoreError;
 use tauri::AppHandle;
 use tauri_plugin_ani_mobile::AniMobileExt;
 
-/// 将 Rust 安全存储端口连接到 Android Keystore 插件。
+/// 将 Rust 安全存储端口连接到 Android Keystore 或 iOS Keychain 插件。
 pub(crate) struct PlatformSecureStore {
     app: AppHandle,
 }
@@ -18,7 +18,7 @@ impl PlatformSecureStore {
 impl SecureStore for PlatformSecureStore {
     type Error = SecureStoreError;
 
-    /// 从 Android Keystore 保护的偏好中读取敏感值。
+    /// 从平台安全存储读取敏感值。
     fn read_secret(&self, reference: &SecretReference) -> Result<Option<SecretValue>, Self::Error> {
         let key = storage_key(reference)?;
         self.app
@@ -28,7 +28,7 @@ impl SecureStore for PlatformSecureStore {
             .map_err(|error| SecureStoreError(error.to_string()))
     }
 
-    /// 使用 Android Keystore AES-GCM 保存 UTF-8 敏感值。
+    /// 使用平台安全存储保存 UTF-8 敏感值。
     fn write_secret(
         &self,
         reference: &SecretReference,
@@ -43,7 +43,7 @@ impl SecureStore for PlatformSecureStore {
             .map_err(|error| SecureStoreError(error.to_string()))
     }
 
-    /// 删除 Android Keystore 保护的敏感值。
+    /// 删除平台安全存储中的敏感值。
     fn delete_secret(&self, reference: &SecretReference) -> Result<(), Self::Error> {
         let key = storage_key(reference)?;
         self.app

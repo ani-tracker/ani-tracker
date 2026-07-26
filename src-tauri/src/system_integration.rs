@@ -225,7 +225,14 @@ fn notify(app: &AppHandle, settings: &AppSettings, title: &str, body: &str) {
     if !enabled {
         return;
     }
-    if let Err(error) = app.notification().builder().title(title).body(body).show() {
+    if let Err(error) = app
+        .notification()
+        .builder()
+        .title(title)
+        .body(body)
+        .extra("aniPageId", "notifications")
+        .show()
+    {
         log::warn!("Tauri 系统通知发送失败 title={title} error={error}");
     }
 }

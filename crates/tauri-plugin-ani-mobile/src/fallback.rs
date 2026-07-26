@@ -35,6 +35,11 @@ impl<R: Runtime> AniMobile<R> {
         Ok(None)
     }
 
+    /// 非移动平台没有原生后台补跑标记。
+    pub fn consume_background_refresh(&self) -> crate::Result<bool> {
+        Ok(false)
+    }
+
     /// 拒绝在尚未实现的平台写入移动安全存储。
     pub fn secure_set(&self, _key: &str, _value: &str) -> crate::Result<()> {
         Err(crate::Error::UnsupportedPlatform)

@@ -509,10 +509,19 @@ function MainApplication() {
     /** 刷新移动运行约束，并消费通知要求打开的页面。 */
     async function refreshMobileRuntime() {
       try {
-        const status = await appApi.getMobilePlatformStatus?.();
+        const [status, intent, backgroundRefreshDue] = await Promise.all([
+          appApi.getMobilePlatformStatus?.(),
+          appApi.consumeMobileNavigation?.(),
+          appApi.consumeMobileBackgroundRefresh?.()
+        ]);
         if (active && status) setMobileStatus(status);
-        const intent = await appApi.consumeMobileNavigation?.();
         if (active && intent) navigatePage(intent.pageId);
+        if (active && backgroundRefreshDue) {
+          void appApi.syncSourcesNow()
+            .then(() => appApi.runAutomationOnce())
+            .then(() => console.info("[mobile-runtime] iOS 后台补跑完成"))
+            .catch((error) => console.warn("[mobile-runtime] iOS 后台补跑失败", error));
+        }
       } catch (error) {
         console.warn("[mobile-runtime] 移动平台状态刷新失败", error);
       }
@@ -536,6 +545,34 @@ function MainApplication() {
       window.removeEventListener("offline", refreshMobileRuntime);
       window.removeEventListener("orientationchange", refreshMobileRuntime);
       document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [runtime]);
+
+  useEffect(() => {
+    if ((runtime !== "android" && runtime !== "ios") || !isTauriClient()) return;
+    let disposed = false;
+    let unregister: (() => Promise<void>) | undefined;
+
+    /** 将系统通知点击携带的白名单页面映射到本地主导航。 */
+    void import("@tauri-apps/plugin-notification")
+      .then(({ onAction }) => onAction((notification) => {
+        const pageId = notification.extra?.aniPageId;
+        if (pageId === "home" || pageId === "downloads" || pageId === "notifications") {
+          navigatePage(pageId);
+        }
+      }))
+      .then((listener) => {
+        if (disposed) {
+          void listener.unregister();
+        } else {
+          unregister = () => listener.unregister();
+        }
+      })
+      .catch((error) => console.warn("[mobile-runtime] 系统通知导航监听失败", error));
+
+    return () => {
+      disposed = true;
+      void unregister?.();
     };
   }, [runtime]);
 

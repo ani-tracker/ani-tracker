@@ -4,7 +4,7 @@ use ani_contracts::AppCommandError;
 use ani_domain::AppSettings;
 use ani_repository::SettingsRepository;
 use tauri::{AppHandle, State};
-#[cfg(target_os = "android")]
+#[cfg(mobile)]
 use tauri_plugin_ani_mobile::AniMobileExt;
 use tauri_plugin_dialog::{DialogExt, FilePath};
 
@@ -42,12 +42,26 @@ pub(crate) async fn export_database_backup(
     };
 
     match selected {
-        FilePath::Path(path) => export_to_path(state.inner(), path).await?,
-        FilePath::Url(url) if url.scheme() == "file" => {
-            let path = url
-                .to_file_path()
-                .map_err(|_| runtime_error("导出数据备份", "file URL 无法转换为本地路径"))?;
+        FilePath::Path(path) => {
+            #[cfg(target_os = "ios")]
+            {
+                let url = url::Url::from_file_path(&path)
+                    .map_err(|_| runtime_error("导出 iOS 数据备份", "路径无法转换为 file URL"))?;
+                export_mobile_document(&app, state.inner(), url.as_str()).await?;
+            }
+            #[cfg(not(target_os = "ios"))]
             export_to_path(state.inner(), path).await?;
+        }
+        FilePath::Url(url) if url.scheme() == "file" => {
+            #[cfg(target_os = "ios")]
+            export_mobile_document(&app, state.inner(), url.as_str()).await?;
+            #[cfg(not(target_os = "ios"))]
+            {
+                let path = url
+                    .to_file_path()
+                    .map_err(|_| runtime_error("导出数据备份", "file URL 无法转换为本地路径"))?;
+                export_to_path(state.inner(), path).await?;
+            }
         }
         #[cfg(target_os = "android")]
         FilePath::Url(url) if url.scheme() == "content" => {
@@ -75,6 +89,29 @@ pub(crate) async fn export_database_backup(
     }
     log::info!("Tauri 数据备份已导出 file={file_name}");
     Ok(Some(file_name))
+}
+
+/// 创建一致性快照后交给移动原生插件写入系统文档。
+#[cfg(mobile)]
+async fn export_mobile_document(
+    app: &AppHandle,
+    state: &AppStorageState,
+    uri: &str,
+) -> Result<(), AppCommandError> {
+    let storage = Arc::clone(state.storage());
+    let snapshot = tauri::async_runtime::spawn_blocking(move || {
+        storage
+            .lock()
+            .map_err(|error| error.to_string())?
+            .create_manual_backup()
+            .map_err(|error| error.to_string())
+    })
+    .await
+    .map_err(|error| runtime_error("创建移动数据快照", error))?
+    .map_err(|error| runtime_error("创建移动数据快照", error))?;
+    app.ani_mobile()
+        .export_document(uri, &snapshot.to_string_lossy())
+        .map_err(|error| runtime_error("写入移动系统文档", error))
 }
 
 /// 选择并恢复 SQLite 备份，失败时重启原有下载配置。

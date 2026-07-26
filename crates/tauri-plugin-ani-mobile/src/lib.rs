@@ -7,15 +7,19 @@ use tauri::{
 #[cfg(target_os = "android")]
 mod android;
 mod error;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 mod fallback;
+#[cfg(target_os = "ios")]
+mod ios;
 
 pub use error::{Error, Result};
 
 #[cfg(target_os = "android")]
 pub use android::AniMobile;
-#[cfg(not(target_os = "android"))]
+#[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use fallback::AniMobile;
+#[cfg(target_os = "ios")]
+pub use ios::AniMobile;
 
 /// 原生端返回的移动运行状态，用于确定性处理生命周期与资源限制。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -55,7 +59,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
         .setup(|app, api| {
             #[cfg(target_os = "android")]
             let mobile = android::init(app, api)?;
-            #[cfg(not(target_os = "android"))]
+            #[cfg(target_os = "ios")]
+            let mobile = ios::init(app, api)?;
+            #[cfg(not(any(target_os = "android", target_os = "ios")))]
             let mobile = fallback::init(app, api)?;
             app.manage(mobile);
             Ok(())

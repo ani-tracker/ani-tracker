@@ -508,14 +508,32 @@ pub(super) fn resolve_selected_document(
     selected: FilePath,
     kind: &str,
 ) -> Result<(PathBuf, Option<TemporaryImportedDocument>), AppCommandError> {
-    #[cfg(not(target_os = "android"))]
+    #[cfg(not(mobile))]
     let _ = (app, kind);
     match selected {
-        FilePath::Path(path) => Ok((path, None)),
-        FilePath::Url(url) if url.scheme() == "file" => url
-            .to_file_path()
-            .map(|path| (path, None))
-            .map_err(|_| runtime_error("读取系统文件选择结果", "file URL 无法转换为本地路径")),
+        FilePath::Path(path) => {
+            #[cfg(target_os = "ios")]
+            {
+                let url = url::Url::from_file_path(&path).map_err(|_| {
+                    runtime_error("读取 iOS 系统文件选择结果", "路径无法转换为 file URL")
+                })?;
+                import_mobile_document(app, url.as_str(), kind)
+            }
+            #[cfg(not(target_os = "ios"))]
+            Ok((path, None))
+        }
+        FilePath::Url(url) if url.scheme() == "file" => {
+            #[cfg(target_os = "ios")]
+            {
+                import_mobile_document(app, url.as_str(), kind)
+            }
+            #[cfg(not(target_os = "ios"))]
+            {
+                url.to_file_path().map(|path| (path, None)).map_err(|_| {
+                    runtime_error("读取系统文件选择结果", "file URL 无法转换为本地路径")
+                })
+            }
+        }
         #[cfg(target_os = "android")]
         FilePath::Url(url) if url.scheme() == "content" => {
             let path = app
@@ -529,6 +547,20 @@ pub(super) fn resolve_selected_document(
             format!("不支持的文档协议：{}", url.scheme()),
         )),
     }
+}
+
+/// 通过移动原生插件复制安全作用域文档，并在命令完成时清理副本。
+#[cfg(mobile)]
+fn import_mobile_document(
+    app: &AppHandle,
+    uri: &str,
+    kind: &str,
+) -> Result<(PathBuf, Option<TemporaryImportedDocument>), AppCommandError> {
+    let path = app
+        .ani_mobile()
+        .import_document(uri, kind)
+        .map_err(|error| runtime_error("复制移动系统文档", error))?;
+    Ok((path.clone(), Some(TemporaryImportedDocument(path))))
 }
 
 /// 在命令结束时清理从移动系统文档提供器复制的临时文件。

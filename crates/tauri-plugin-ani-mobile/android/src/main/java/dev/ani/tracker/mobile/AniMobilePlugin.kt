@@ -115,6 +115,12 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /** Android 后台恢复由 WorkManager 直接处理，不要求 Renderer 补跑。 */
+    @Command
+    fun consumeBackgroundRefresh(invoke: Invoke) {
+        invoke.resolve(JSObject().put("due", false))
+    }
+
     /** 使用 Android Keystore 加密并保存一个敏感值。 */
     @Command
     fun secureSet(invoke: Invoke) {

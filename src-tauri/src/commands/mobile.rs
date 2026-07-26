@@ -23,6 +23,14 @@ pub(crate) fn consume_mobile_navigation(
         .map_err(|error| mobile_error("读取移动导航", error))
 }
 
+/// 原子读取并清除移动原生调度要求的前台补跑标记。
+#[tauri::command]
+pub(crate) fn consume_mobile_background_refresh(app: AppHandle) -> Result<bool, AppCommandError> {
+    app.ani_mobile()
+        .consume_background_refresh()
+        .map_err(|error| mobile_error("读取移动后台补跑标记", error))
+}
+
 /// 由明确用户操作请求移动通知权限，并返回归一化结果。
 #[tauri::command]
 pub(crate) fn request_mobile_notification_permission(

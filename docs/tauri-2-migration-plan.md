@@ -2,7 +2,7 @@
 
 最近更新：2026-07-26
 
-状态：P0-P6 已完成；P7 Android 本地业务闭环已完成，iOS Tauri 宿主与本地闭环进行中；跨平台完整构建门禁按计划后续统一验证
+状态：P0-P7 已完成；P8 默认切换、发布与旧宿主退役进行中；跨平台完整构建门禁按计划后续统一验证
 
 ## 1. 迁移目标
 
@@ -406,6 +406,10 @@ Rust 后台采用应用状态容器装配服务。业务模块不得依赖 Tauri
 - 已接通系统文档选择器的本地 torrent 导入、SQLite 一致性备份导出、恢复前快照、损坏备份拒绝和失败保护。
 - 移动设置页已保留主题、外部 qBittorrent Web API、内置下载与 libVLC，隐藏桌面集成、FFprobe、外部播放器路径和托管 qBittorrent-nox；Rust 同时强制关闭恢复数据中的桌面专属能力。
 - Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、Android Renderer 构建及 365 项 Node 回归通过，其中 364 项通过、1 项跳过。Kotlin、APK/AAB 内容和 Android 真机门禁按当前安排后续统一验证。
+- iOS 已接入 Tauri Swift Package 宿主、Keychain 安全存储、网络/方向/存储/通知权限状态、生命周期恢复和 BGAppRefreshTask 前台补跑标记。
+- iOS 已接通安全作用域 torrent/SQLite 文档导入导出、恢复后平台约束、系统通知页面跳转，以及来源同步后串行执行自动扫描的补跑闭环。
+- 已增加 APK/AAB/IPA 安装包负向内容门禁，拒绝远程 Web 资源、FFmpeg/FFprobe、托管 qBittorrent 和桌面网关证书进入移动产物。
+- Rust 工作区测试、Clippy、格式检查、TypeScript 类型检查、Tauri Renderer 构建及 Node 回归通过；Swift/Xcode、IPA 内容和 iOS 真机门禁按当前安排后续统一验证。
 
 ### P8：默认切换、发布与旧宿主退役
 

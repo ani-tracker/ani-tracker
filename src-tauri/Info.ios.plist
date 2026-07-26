@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>BGTaskSchedulerPermittedIdentifiers</key>
+  <array>
+    <string>com.ani.tracker.refresh</string>
+  </array>
+  <key>LSSupportsOpeningDocumentsInPlace</key>
+  <true/>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>用于连接局域网中的外部 qBittorrent Web API。</string>
+  <key>UIBackgroundModes</key>
+  <array>
+    <string>fetch</string>
+  </array>
+</dict>
+</plist>
