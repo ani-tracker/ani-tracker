@@ -2,11 +2,20 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-const [mobileGate, androidRelease, iosRelease, androidGradle] = await Promise.all([
+const [
+  mobileGate,
+  androidRelease,
+  iosRelease,
+  androidGradle,
+  iosTorrentScript,
+  playerError
+] = await Promise.all([
   readFile(".github/workflows/tauri-mobile.yml", "utf8"),
   readFile(".github/workflows/tauri-release-android.yml", "utf8"),
   readFile(".github/workflows/tauri-release-ios.yml", "utf8"),
-  readFile("src-tauri/gen/android/app/build.gradle.kts", "utf8")
+  readFile("src-tauri/gen/android/app/build.gradle.kts", "utf8"),
+  readFile("scripts/prepare-ios-torrent-core.sh", "utf8"),
+  readFile("crates/tauri-plugin-ani-player/src/error.rs", "utf8")
 ]);
 
 test("移动持续门禁真实编译两端产物并检查原生与包边界", () => {
@@ -33,4 +42,16 @@ test("iOS 正式发布保持未签名 IPA 与用户重签边界", () => {
   assert.match(iosRelease, /package-unsigned-ios-ipa\.sh/);
   assert.match(iosRelease, /verify:tauri:ios-package -- --require-unsigned/);
   assert.doesNotMatch(iosRelease, /APPLE_(?:CERTIFICATE|PROVISIONING_PROFILE)/);
+});
+
+test("iOS torrent-core 隔离设备与模拟器依赖并在构建前校验", () => {
+  assert.match(iosTorrentScript, /printf '%s\/device' "\$\{dependency_root\}"/);
+  assert.match(iosTorrentScript, /printf '%s\/simulator' "\$\{dependency_root\}"/);
+  assert.match(iosTorrentScript, /validate_dependencies "\$\{triplet\}"/);
+  assert.match(iosTorrentScript, /include\/boost\/version\.hpp/);
+  assert.match(iosTorrentScript, /lib\/libcrypto\.a/);
+});
+
+test("移动播放器注册错误支持 Tauri PluginInvokeError", () => {
+  assert.match(playerError, /PluginInvoke\(#\[from\] tauri::plugin::mobile::PluginInvokeError\)/);
 });

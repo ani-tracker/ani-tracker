@@ -21,16 +21,59 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source_root="${repo_root}/native/torrent-core"
 manifest_root="${repo_root}/native/torrent-dependencies"
 cache_root="${repo_root}/.cache/ios-torrent"
-install_root="${cache_root}/vcpkg_installed"
+dependency_root="${cache_root}/vcpkg_installed"
 framework_root="${repo_root}/crates/tauri-plugin-ani-torrent/ios/Frameworks"
 output_path="${framework_root}/AniTorrentCore.xcframework"
+
+dependency_install_root() {
+  local triplet="$1"
+  case "${triplet}" in
+    arm64-ios)
+      printf '%s/device' "${dependency_root}"
+      ;;
+    arm64-ios-simulator)
+      printf '%s/simulator' "${dependency_root}"
+      ;;
+    *)
+      echo "不支持的 iOS vcpkg triplet：${triplet}" >&2
+      return 1
+      ;;
+  esac
+}
+
+dependency_prefix() {
+  local triplet="$1"
+  printf '%s/%s' "$(dependency_install_root "${triplet}")" "${triplet}"
+}
+
+validate_dependencies() {
+  local triplet="$1"
+  local prefix
+  prefix="$(dependency_prefix "${triplet}")"
+  local missing=0
+  for relative_path in \
+    include/boost/version.hpp \
+    include/openssl/ssl.h \
+    lib/libcrypto.a \
+    lib/libssl.a; do
+    if [[ ! -f "${prefix}/${relative_path}" ]]; then
+      echo "iOS torrent-core 依赖缺失 triplet=${triplet} path=${prefix}/${relative_path}" >&2
+      missing=1
+    fi
+  done
+  if [[ "${missing}" -ne 0 ]]; then
+    return 1
+  fi
+  echo "iOS torrent-core 依赖已就绪 triplet=${triplet} prefix=${prefix}"
+}
 
 build_slice() {
   local name="$1"
   local sdk="$2"
   local triplet="$3"
   local build_root="${cache_root}/build/${name}"
-  local prefix="${install_root}/${triplet}"
+  local prefix
+  prefix="$(dependency_prefix "${triplet}")"
 
   cmake -S "${source_root}" -B "${build_root}" -G Xcode \
     -DCMAKE_SYSTEM_NAME=iOS \
@@ -49,12 +92,14 @@ build_slice() {
   cmake --build "${build_root}" --config Release --target AniTorrentCore
 }
 
-mkdir -p "${install_root}" "${framework_root}"
+mkdir -p "${dependency_root}" "${framework_root}"
 for triplet in arm64-ios arm64-ios-simulator; do
+  triplet_install_root="$(dependency_install_root "${triplet}")"
   "${VCPKG_ROOT}/vcpkg" install \
     --triplet="${triplet}" \
     --x-manifest-root="${manifest_root}" \
-    --x-install-root="${install_root}"
+    --x-install-root="${triplet_install_root}"
+  validate_dependencies "${triplet}"
 done
 
 build_slice device iphoneos arm64-ios
