@@ -87,6 +87,8 @@ test("iOS torrent-core 隔离设备与模拟器依赖并在构建前校验", () 
 test("iOS 原生插件校验 XCFramework 模块并显式提供切片搜索路径", () => {
   assert.match(iosTorrentCmake, /XCODE_ATTRIBUTE_MODULEMAP_FILE/);
   assert.match(iosTorrentCmake, /XCODE_ATTRIBUTE_CLANG_ENABLE_MODULES "YES"/);
+  assert.match(iosTorrentCmake, /TARGET_BUNDLE_DIR:AniTorrentCore>\/Headers\/AniTorrentCore\.h/);
+  assert.match(iosTorrentCmake, /TARGET_BUNDLE_DIR:AniTorrentCore>\/Modules\/module\.modulemap/);
   assert.match(iosTorrentModuleMap, /framework module AniTorrentCore/);
   assert.match(iosTorrentModuleMap, /umbrella header "AniTorrentCore\.h"/);
   assert.match(iosFrameworkVerifier, /Modules\/module\.modulemap/);

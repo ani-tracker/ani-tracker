@@ -104,4 +104,21 @@ if(ANI_BUILD_APPLE_FRAMEWORK)
       XCODE_ATTRIBUTE_PRODUCT_BUNDLE_IDENTIFIER "com.ani.tracker.torrent.core"
       OUTPUT_NAME "AniTorrentCore"
   )
+  add_custom_command(
+    TARGET AniTorrentCore
+    POST_BUILD
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:AniTorrentCore>/Headers"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "$<TARGET_BUNDLE_DIR:AniTorrentCore>/Modules"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/AniTorrentCore.h"
+      "$<TARGET_BUNDLE_DIR:AniTorrentCore>/Headers/AniTorrentCore.h"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${CMAKE_CURRENT_SOURCE_DIR}/include/ani/torrent_core_c.h"
+      "$<TARGET_BUNDLE_DIR:AniTorrentCore>/Headers/torrent_core_c.h"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+      "${ANI_TORRENT_CORE_MODULE_MAP}"
+      "$<TARGET_BUNDLE_DIR:AniTorrentCore>/Modules/module.modulemap"
+    COMMENT "Packaging AniTorrentCore framework headers and module map"
+    VERBATIM
+  )
 endif()
