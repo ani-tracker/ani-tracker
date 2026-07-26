@@ -651,6 +651,16 @@ pub fn evaluate_automatic_download(results: &[ReleaseMatchResult]) -> AutomaticD
     }
 }
 
+/// 判断资源是否完整覆盖自动下载要求的字幕语言；无法确认组成时按不满足处理。
+pub fn release_satisfies_subtitle_requirement(
+    release: &Release,
+    preferred_languages: &[String],
+    legacy_preference: Option<&str>,
+) -> bool {
+    let preferred = resolve_subtitle_requirement(preferred_languages, legacy_preference);
+    preferred.is_empty() || (subtitle_coverage(release, &preferred) - 1.0).abs() < f64::EPSILON
+}
+
 fn detect_resolution(title: &str) -> Option<ReleaseResolution> {
     if resolution_2160().is_match(title) {
         Some(ReleaseResolution::P2160)
@@ -1080,13 +1090,23 @@ fn matches_candidate_fansub(
 }
 
 fn resolve_preferred_subtitle_languages(anime: &MyAnime) -> Vec<SubtitleLanguage> {
-    let mut languages = anime
-        .preferred_subtitle_languages
+    resolve_subtitle_requirement(
+        &anime.preferred_subtitle_languages,
+        anime.preferred_subtitle.as_deref(),
+    )
+}
+
+/// 兼容多选字幕语言和旧版单值偏好，并返回固定顺序的要求集合。
+fn resolve_subtitle_requirement(
+    preferred_languages: &[String],
+    legacy_preference: Option<&str>,
+) -> Vec<SubtitleLanguage> {
+    let mut languages = preferred_languages
         .iter()
         .filter_map(|value| parse_subtitle_language(value))
         .collect::<Vec<_>>();
     if languages.is_empty() {
-        languages = match anime.preferred_subtitle.as_deref() {
+        languages = match legacy_preference {
             Some("multi") => vec![SubtitleLanguage::Chs, SubtitleLanguage::Cht],
             Some(value) => parse_subtitle_language(value).into_iter().collect(),
             None => Vec::new(),
@@ -1172,7 +1192,8 @@ mod tests {
     use super::{
         build_anime_release_search_terms, classify_anime_release, create_discovered_fansub_id,
         enrich_release_from_title, matches_anime_release_title, normalize_fansub_name,
-        parse_release_title, release_matches_episode, AnimeReleaseCompatibility,
+        parse_release_title, release_matches_episode, release_satisfies_subtitle_requirement,
+        AnimeReleaseCompatibility,
     };
 
     /// 验证标题解析覆盖季度、集数、编码、位深和字幕语言。
@@ -1278,6 +1299,43 @@ mod tests {
             end: 12.0,
         });
         assert!(release_matches_episode(&release, Some(8.0)));
+    }
+
+    /// 验证自动下载必须完整覆盖字幕语言要求，未知多语组成不能绕过门禁。
+    #[test]
+    fn enforces_complete_subtitle_coverage_for_automatic_downloads() {
+        let mut release = empty_release();
+        assert!(release_satisfies_subtitle_requirement(&release, &[], None));
+
+        let chinese_requirement = vec!["chs".to_owned(), "cht".to_owned()];
+        release.subtitle_languages = vec![SubtitleLanguage::Chs, SubtitleLanguage::Cht];
+        assert!(release_satisfies_subtitle_requirement(
+            &release,
+            &chinese_requirement,
+            None
+        ));
+
+        release.subtitle_languages = vec![SubtitleLanguage::Chs];
+        assert!(!release_satisfies_subtitle_requirement(
+            &release,
+            &chinese_requirement,
+            None
+        ));
+
+        release.subtitle_languages.clear();
+        release.subtitle = Some(SubtitlePreference::Multi);
+        assert!(!release_satisfies_subtitle_requirement(
+            &release,
+            &chinese_requirement,
+            None
+        ));
+
+        release.subtitle_languages = vec![SubtitleLanguage::Chs, SubtitleLanguage::Cht];
+        assert!(release_satisfies_subtitle_requirement(
+            &release,
+            &[],
+            Some("multi")
+        ));
     }
 
     fn test_anime() -> Anime {

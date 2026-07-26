@@ -9,6 +9,7 @@ use quick_xml::{Reader, XmlVersion};
 use regex::Regex;
 use scraper::{ElementRef, Html, Selector};
 use serde_json::{Map, Value};
+use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::release::enrich_release_from_title;
@@ -17,6 +18,7 @@ use crate::SourceError;
 const DEFAULT_DMHY_BASE_URL: &str = "https://share.dmhy.org/";
 const DEFAULT_MIKAN_BASE_URL: &str = "https://mikanani.me/";
 const DEFAULT_ACGNX_BASE_URL: &str = "https://share.acgnx.se/";
+const MAX_RELEASE_ID_BYTES: usize = 200;
 
 /// Mikan 番剧页中的字幕组订阅描述。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -484,16 +486,14 @@ fn map_rss_item(
         .or(guid)
         .map(str::to_owned);
     let source_meta = build_rss_source_meta(rss_url, source_url);
+    let identity = guid
+        .or(info_hash.as_deref())
+        .or(magnet_url.as_deref())
+        .or(torrent_url.as_deref())
+        .or(link)
+        .unwrap_or(&title);
     Release {
-        id: format!(
-            "{}:{}",
-            config.id,
-            guid.or(info_hash.as_deref())
-                .or(magnet_url.as_deref())
-                .or(torrent_url.as_deref())
-                .or(link)
-                .unwrap_or(&title)
-        ),
+        id: stable_release_id(&config.id, identity),
         title,
         source_id: config.id.clone(),
         source_name: config.name.clone(),
@@ -521,6 +521,19 @@ fn map_rss_item(
         source_meta,
         ..empty_release()
     }
+}
+
+/// 保留合法短标识，并为超长 RSS 标识生成跨同步稳定的固定长度哈希。
+fn stable_release_id(source_id: &str, identity: &str) -> String {
+    let candidate = format!("{source_id}:{identity}");
+    if !identity.trim().is_empty() && candidate.len() <= MAX_RELEASE_ID_BYTES {
+        return candidate;
+    }
+    let mut digest = Sha256::new();
+    digest.update(source_id.as_bytes());
+    digest.update([0]);
+    digest.update(identity.as_bytes());
+    format!("release:{:x}", digest.finalize())
 }
 
 fn build_rss_source_meta(
@@ -1206,6 +1219,7 @@ mod tests {
             Some("https://nyaa.si/?page=rss"),
         )
         .expect("parse RSS");
+        assert_eq!(releases[0].id, "rss:https://nyaa.si/view/1");
         assert_eq!(releases[0].seeders, Some(16));
         assert_eq!(releases[0].subtitle, Some(SubtitlePreference::Multi));
         assert_eq!(
@@ -1231,6 +1245,33 @@ mod tests {
         assert_eq!(releases[0].id, "anibt:rel-1");
         assert_eq!(releases[0].fansub_name.as_deref(), Some("Nix-Raws"));
         assert_eq!(releases[0].episode_no, Some(2.0));
+    }
+
+    /// 验证超长 RSS GUID 会生成稳定且可持久化的资源标识。
+    #[test]
+    fn hashes_oversized_rss_release_identifiers() {
+        let rss = source(
+            "rss-subscription:12345678-1234-1234-1234-123456789012",
+            "Mikan RSS",
+            "https://mikanani.me/",
+        );
+        let magnet = format!(
+            "magnet:?xt=urn:btih:1188285F8B296E1E7E2F622955F214B71E93D2DC&dn={}",
+            "long-title-".repeat(30)
+        );
+        let xml = format!(
+            "<rss><channel><item><title>[组] 测试番 - 01 [简体]</title><guid>{0}</guid><link>{0}</link></item></channel></rss>",
+            magnet.replace('&', "&amp;")
+        );
+
+        let first = parse_rss_releases(&xml, &rss, Some("https://mikanani.me/RSS/Bangumi"))
+            .expect("parse oversized RSS");
+        let second = parse_rss_releases(&xml, &rss, Some("https://mikanani.me/RSS/Bangumi"))
+            .expect("parse oversized RSS again");
+
+        assert_eq!(first[0].id, second[0].id);
+        assert!(first[0].id.starts_with("release:"));
+        assert!(first[0].id.len() <= 200);
     }
 
     /// 验证 Mikan 字幕组和 ACGNX JSON 映射。

@@ -30,8 +30,9 @@ pub use release::{
     detect_series_season_no, enrich_release_from_title, evaluate_automatic_download,
     is_meaningful_fansub_name, matches_anime_release_title, normalize_fansub_name,
     normalize_release_search_text, parse_release_title, rank_releases, release_matches_episode,
-    score_release, sort_releases_by_rules, AnimeReleaseCompatibility, ParsedReleaseTitle,
-    AUTOMATIC_DOWNLOAD_MIN_LEAD, AUTOMATIC_DOWNLOAD_MIN_MATCH_SCORE, AUTOMATIC_DOWNLOAD_MIN_SCORE,
+    release_satisfies_subtitle_requirement, score_release, sort_releases_by_rules,
+    AnimeReleaseCompatibility, ParsedReleaseTitle, AUTOMATIC_DOWNLOAD_MIN_LEAD,
+    AUTOMATIC_DOWNLOAD_MIN_MATCH_SCORE, AUTOMATIC_DOWNLOAD_MIN_SCORE,
 };
 pub use search::{
     build_acgrip_rss_url, build_anibt_anime_rss_url, build_dmhy_list_url, build_mikan_search_url,

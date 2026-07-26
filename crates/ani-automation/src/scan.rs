@@ -11,8 +11,9 @@ use ani_domain::{
 };
 use ani_repository::RepositoryResult;
 use ani_sources::{
-    evaluate_automatic_download, normalize_fansub_name, rank_releases, ReleaseSearchService,
-    ReleaseSearchStore, SourceError, SourceNetworkService,
+    evaluate_automatic_download, normalize_fansub_name, rank_releases,
+    release_satisfies_subtitle_requirement, ReleaseSearchService, ReleaseSearchStore, SourceError,
+    SourceNetworkService,
 };
 use async_trait::async_trait;
 use chrono::{DateTime, SecondsFormat, Utc};
@@ -299,11 +300,15 @@ impl AutomationRunService {
                 rss_url: Some(subscription.url.clone()),
                 tags: vec!["anime".to_owned(), "rss".to_owned()],
             };
-            let preferred_languages = if subscription.preferred_subtitle_languages.is_empty() {
-                anime.preferred_subtitle_languages.as_slice()
-            } else {
-                subscription.preferred_subtitle_languages.as_slice()
-            };
+            let (preferred_languages, legacy_preference) =
+                if subscription.preferred_subtitle_languages.is_empty() {
+                    (
+                        anime.preferred_subtitle_languages.as_slice(),
+                        anime.preferred_subtitle.as_deref(),
+                    )
+                } else {
+                    (subscription.preferred_subtitle_languages.as_slice(), None)
+                };
             let found = self
                 .search
                 .search_rss_subscription(
@@ -328,7 +333,20 @@ impl AutomationRunService {
                     error.message
                 );
             }
-            releases.extend(found.releases);
+            let (eligible, rejected) = filter_automatic_releases_by_subtitle(
+                found.releases,
+                preferred_languages,
+                legacy_preference,
+            );
+            if rejected > 0 {
+                log::info!(
+                    "Rust 自动扫描 RSS 字幕门禁：anime_id={}, subscription_id={}, rejected={}",
+                    anime.anime.id,
+                    subscription.id,
+                    rejected
+                );
+            }
+            releases.extend(eligible);
         }
         dedupe_releases(releases)
     }
@@ -376,7 +394,7 @@ impl AutomationRunService {
         let mut candidates = rss_candidates;
 
         if candidates.is_empty() {
-            let found = self
+            let mut found = self
                 .search
                 .search_anime(
                     store,
@@ -404,6 +422,21 @@ impl AutomationRunService {
                 )
                 .await
                 .map_err(|error| format!("搜索资源失败：{error}"))?;
+            let original_releases = std::mem::take(&mut found.releases);
+            let (eligible, rejected) = filter_automatic_releases_by_subtitle(
+                original_releases,
+                &anime.preferred_subtitle_languages,
+                anime.preferred_subtitle.as_deref(),
+            );
+            found.releases = eligible;
+            if rejected > 0 {
+                log::info!(
+                    "Rust 自动扫描全局来源字幕门禁：anime_id={}, episode_id={}, rejected={}",
+                    anime.anime.id,
+                    episode.id,
+                    rejected
+                );
+            }
             if let Err(error) = store.observe_automation_fansubs(&anime.anime.id, &found.releases) {
                 log::warn!(
                     "Rust 自动扫描字幕组观察失败：anime_id={}, error={}",
@@ -694,6 +727,23 @@ fn dedupe_releases(releases: Vec<Release>) -> Vec<Release> {
         .collect()
 }
 
+/// 仅保留完整覆盖字幕要求的自动下载候选，并返回被拒绝数量。
+fn filter_automatic_releases_by_subtitle(
+    releases: Vec<Release>,
+    preferred_languages: &[String],
+    legacy_preference: Option<&str>,
+) -> (Vec<Release>, usize) {
+    let total = releases.len();
+    let eligible = releases
+        .into_iter()
+        .filter(|release| {
+            release_satisfies_subtitle_requirement(release, preferred_languages, legacy_preference)
+        })
+        .collect::<Vec<_>>();
+    let rejected = total.saturating_sub(eligible.len());
+    (eligible, rejected)
+}
+
 fn resolve_download_path(settings: &AppSettings, anime: &MyAnime) -> String {
     if let Some(path) = anime
         .download_dir
@@ -839,6 +889,7 @@ mod tests {
 
     use ani_domain::{
         AnimeSourceBinding, EpisodePreference, FansubGroup, NotificationRecord, Release,
+        SubtitleLanguage, SubtitlePreference,
     };
     use ani_repository::{CachedReleaseQuery, ReleaseSearchCacheEntry};
     use ani_sources::{CircuitStateStore, NativeHttpConfig, ProxyMode};
@@ -1025,6 +1076,7 @@ mod tests {
         .expect("decode release");
         release.anime_id = Some(anime.anime.id.clone());
         release.fansub_group_id = None;
+        release.subtitle_languages = vec![SubtitleLanguage::Chs, SubtitleLanguage::Cht];
         let store = MemoryStore {
             anime: vec![anime.clone()],
             episodes: Mutex::new(vec![Episode {
@@ -1144,6 +1196,38 @@ mod tests {
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].download_task_id.as_deref(), Some("task-1"));
         assert_eq!(records[1].severity, NotificationSeverity::Error);
+    }
+
+    /// 验证自动扫描字幕门禁拒绝部分覆盖和组成未知的多语资源。
+    #[test]
+    fn filters_automatic_releases_by_required_subtitles() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-release-search-model.v1.json"
+        )))
+        .expect("decode release fixture");
+        let base: Release =
+            serde_json::from_value(fixture["payload"]["searchResult"]["releases"][0].clone())
+                .expect("decode release");
+        let mut complete = base.clone();
+        complete.id = "complete".to_owned();
+        complete.subtitle_languages = vec![SubtitleLanguage::Chs, SubtitleLanguage::Cht];
+        let mut partial = base.clone();
+        partial.id = "partial".to_owned();
+        partial.subtitle_languages = vec![SubtitleLanguage::Chs];
+        let mut unknown_multi = base;
+        unknown_multi.id = "unknown-multi".to_owned();
+        unknown_multi.subtitle_languages.clear();
+        unknown_multi.subtitle = Some(SubtitlePreference::Multi);
+
+        let (eligible, rejected) = filter_automatic_releases_by_subtitle(
+            vec![complete, partial, unknown_multi],
+            &["chs".to_owned(), "cht".to_owned()],
+            None,
+        );
+        assert_eq!(eligible.len(), 1);
+        assert_eq!(eligible[0].id, "complete");
+        assert_eq!(rejected, 2);
     }
 
     fn memory_store_with_episode() -> MemoryStore {
