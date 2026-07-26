@@ -33,6 +33,8 @@
 
 macOS 与 iOS 不需要 GitHub 签名 Secrets。
 
+本地执行 Android Release 时使用对应的 `ANI_ANDROID_KEYSTORE_PATH`、`ANI_ANDROID_KEYSTORE_PASSWORD`、`ANI_ANDROID_KEY_ALIAS` 和 `ANI_ANDROID_KEY_PASSWORD` 环境变量；正式 Gradle 任务缺少任一值会直接失败，不会生成未签名 APK。
+
 ## 自签名材料
 
 Windows 使用 PowerShell 生成可导出的代码签名证书：

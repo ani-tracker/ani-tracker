@@ -99,6 +99,10 @@ jobs:
           ANI_ANDROID_NATIVE_PREFIX: ${{ github.workspace }}/.cache/android-torrent/vcpkg_installed/arm64-android
         run: pnpm exec tauri android build --target aarch64 --apk --ci
 
+      - name: Test Android native security policies
+        working-directory: src-tauri/gen/android
+        run: ./gradlew :tauri-plugin-ani-mobile:testReleaseUnitTest --no-daemon
+
       - name: Verify mobile package boundaries
         run: |
           pnpm run verify:tauri:renderer-boundaries -- --renderer local

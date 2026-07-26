@@ -24,6 +24,14 @@ val releaseSigningEnabled = listOf(
     releaseKeyPassword
 ).all(String::isNotBlank)
 
+// 正式 Release 不允许静默退化为未签名 APK。
+if (gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) } && !releaseSigningEnabled) {
+    throw GradleException(
+        "Android Release 必须配置 ANI_ANDROID_KEYSTORE_PATH、ANI_ANDROID_KEYSTORE_PASSWORD、" +
+            "ANI_ANDROID_KEY_ALIAS 和 ANI_ANDROID_KEY_PASSWORD"
+    )
+}
+
 android {
     compileSdk = 36
     namespace = "com.ani.tracker"

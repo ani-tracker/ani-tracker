@@ -45,7 +45,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 - iOS 生命周期、BGTask 补跑、Keychain、安全作用域文件、通知导航和备份恢复。
 - Android/iOS 系统外链使用原生浏览器能力，并在 Rust 与原生端同时拒绝非 HTTP/HTTPS、无主机或携带凭据的地址。
 - 移动设置保留完整业务与主题；隐藏并强制关闭 FFmpeg/FFprobe、转码、远程网关和桌面进程能力。
-- Windows/Android 自签、macOS 临时签名、iOS 未签名可重签包的发布工作流，以及 SHA-256、JSON 产物清单和独立 actionlint 门禁。
+- Windows/Android 自签、macOS 临时签名、iOS 未签名可重签包的发布工作流，以及 SHA-256、JSON 产物清单和独立 actionlint 门禁；Android Gradle Release 缺少长期 JKS 时会直接失败。
 - 本地主 Renderer 与远程 PWA 已拆分入口和 API Adapter；移动构建的模块图会拒绝远程页面、ArtPlayer、HLS.js 与远程转码客户端。
 - 全平台 Logo 已替换，Tauri 与生成的 Android/iOS 工程使用统一品牌资源。
 - 已增加旧宿主防回流门禁，持续拒绝 Electron/Capacitor 依赖、脚本、活跃路径和 Renderer bridge 重新进入正式构建链。
