@@ -25,6 +25,10 @@ test("识别 VLC 私有依赖但保留系统动态库", () => {
     "libvlccore.dylib"
   );
   assert.equal(bundledLibraryRelativePath("/usr/lib/libSystem.B.dylib"), undefined);
+  assert.equal(
+    bundledLibraryRelativePath("@rpath/Sparkle.framework/Versions/A/Sparkle"),
+    undefined
+  );
 });
 
 test("为嵌套插件生成指向 lib 目录的 loader path", () => {

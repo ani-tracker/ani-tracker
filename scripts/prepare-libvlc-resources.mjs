@@ -45,15 +45,19 @@ if (!/^3\.0(?:\.|$)/.test(options.version)) {
 
 await rm(targetDirectory, { recursive: true, force: true });
 await mkdir(targetDirectory, { recursive: true });
+let stagedRuntimePatches = [];
 if (asset.platform === "win32") await stageWindowsRuntime(sourceDirectory, targetDirectory);
-if (asset.platform === "darwin") await stageMacRuntime(sourceDirectory, targetDirectory);
+if (asset.platform === "darwin") {
+  stagedRuntimePatches = await stageMacRuntime(sourceDirectory, targetDirectory);
+}
 if (asset.platform === "linux") await stageLinuxRuntime(sourceDirectory, targetDirectory, options.sharedDataRoot);
 
-const runtimePatches = asset.platform === "linux"
+const relocationPatches = asset.platform === "linux"
   ? await patchLinuxRpaths(targetDirectory, options.required)
   : asset.platform === "darwin"
     ? await patchMacRuntimeInstallNames(targetDirectory, options.required)
     : [];
+const runtimePatches = [...stagedRuntimePatches, ...relocationPatches];
 await stageLicenses(sourceDirectory, targetDirectory, options.licenseRoot, options.required);
 const sourceCodeUrl = options.sourceCodeUrl
   ?? (asset.platform === "linux"
@@ -91,8 +95,17 @@ async function stageMacRuntime(source, destination) {
     copyRequired(join(source, "lib"), join(destination, "lib")),
     copyRequired(join(source, "plugins"), join(destination, "plugins"))
   ]);
+  const interfacePlugin = join(destination, "plugins", "libmacosx_plugin.dylib");
+  const excludedInterfacePlugin = await isFileOrSymlink(interfacePlugin);
+  if (excludedInterfacePlugin) {
+    await rm(interfacePlugin, { force: true });
+    console.log(`[libvlc] 已排除 VLC 独立 macOS 界面插件：${interfacePlugin}`);
+  }
   await rm(join(destination, "plugins", "plugins.dat"), { force: true });
   await copyOptionalDirectories(source, destination, ["share", "lua"]);
+  return excludedInterfacePlugin
+    ? ["Excluded VLC's standalone macOS interface plugin because embedded libVLC does not use its Sparkle-based update UI."]
+    : [];
 }
 
 /** 整理 Linux 发行版提供的 libVLC 核心库和插件目录。 */

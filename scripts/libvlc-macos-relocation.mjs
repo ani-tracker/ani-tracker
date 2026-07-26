@@ -63,14 +63,23 @@ export function parseOtoolDependencies(output) {
     .filter(Boolean);
 }
 
-/** 将 VLC.app 或 @rpath 依赖转换为打包后 lib 目录内的相对路径。 */
+/** 将 VLC.app 中的 dylib 依赖转换为打包后 lib 目录内的相对路径。 */
 export function bundledLibraryRelativePath(dependency) {
   for (const prefix of ["@rpath/", "@executable_path/lib/"]) {
-    if (dependency.startsWith(prefix)) return dependency.slice(prefix.length);
+    if (dependency.startsWith(prefix)) {
+      return dylibRelativePath(dependency.slice(prefix.length));
+    }
   }
   const markerIndex = dependency.indexOf(VLC_APP_LIBRARY_MARKER);
   return markerIndex >= 0
-    ? dependency.slice(markerIndex + VLC_APP_LIBRARY_MARKER.length)
+    ? dylibRelativePath(dependency.slice(markerIndex + VLC_APP_LIBRARY_MARKER.length))
+    : undefined;
+}
+
+/** 仅接受实际随运行时复制的 dylib，排除 Sparkle 等 Framework 依赖。 */
+function dylibRelativePath(value) {
+  return value.endsWith(".dylib") && !value.includes(".framework/")
+    ? value
     : undefined;
 }
 

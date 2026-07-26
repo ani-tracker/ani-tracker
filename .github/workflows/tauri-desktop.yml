@@ -69,7 +69,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  mobile-package-contracts:
+    name: shared-mobile-package-contracts
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+
+      - name: Test mobile package contracts once
+        run: node --test scripts/verify-tauri-mobile-package.test.mjs
+
   desktop:
+    needs: mobile-package-contracts
     name: ${{ matrix.target }}
     runs-on: ${{ matrix.runner }}
     strategy:
@@ -154,10 +168,7 @@ jobs:
       - name: Check TypeScript contracts, Renderer and libVLC scripts
         run: |
           pnpm run typecheck
-          pnpm run test:mobile-package
-          node --test \
-            scripts/libvlc-macos-relocation.test.mjs \
-            scripts/prepare-tauri-gate-resources.test.mjs
+          node --test scripts/libvlc-macos-relocation.test.mjs scripts/prepare-tauri-gate-resources.test.mjs
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
