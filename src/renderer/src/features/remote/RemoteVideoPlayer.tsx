@@ -43,7 +43,7 @@ import {
   detectExternalPlayer
 } from "./external-player-launch";
 import type { PlaybackSessionClient } from "./playback-session-client";
-import type { RemotePlaylistItem } from "./remote-player-model";
+import type { RemotePlaylistItem } from "@/features/player/playback-list-model";
 
 const TOOLBAR_HIDE_DELAY_MS = 3_000;
 

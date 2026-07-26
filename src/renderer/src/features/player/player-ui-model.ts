@@ -1,7 +1,7 @@
 import { formatBytes } from "@/lib/format";
 import type { DownloadTask, Episode } from "@shared/domain";
 import type { RemotePlaybackSession } from "@shared/contracts";
-import type { RemotePlaylistItem } from "@/features/remote/remote-player-model";
+import type { RemotePlaylistItem } from "@/features/player/playback-list-model";
 
 export type PlayerEpisodeUiStatus = "playing" | "watched" | "ready" | "downloading" | "unavailable";
 

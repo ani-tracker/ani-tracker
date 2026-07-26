@@ -6,27 +6,16 @@ import {
   readPlaylistFileIndex,
   resolveInitialPlaylistItem,
   type RemotePlaylistItem
-} from "./remote-player-model";
-import {
-  desktopPlaybackSessionClient,
-  remotePlaybackSessionClient
-} from "./playback-session-client";
+} from "@/features/player/playback-list-model";
+import { remotePlaybackSessionClient } from "./playback-session-client";
 import type { Anime, DownloadTask, Episode } from "@shared/domain";
 
 interface RemotePlayerPageProps {
   taskId: string;
-  environment?: "desktop" | "remote";
-  initialFileIndex?: number;
-  onClose?: () => void;
 }
 
-/** 加载指定下载任务并承载桌面端或远程端共享播放器页面。 */
-export function RemotePlayerPage({
-  taskId,
-  environment = "remote",
-  initialFileIndex,
-  onClose
-}: RemotePlayerPageProps) {
+/** 加载指定下载任务并承载远程独立播放器页面。 */
+export function RemotePlayerPage({ taskId }: RemotePlayerPageProps) {
   const [playlist, setPlaylist] = useState<RemotePlaylistItem[]>([]);
   const [downloadTasks, setDownloadTasks] = useState<DownloadTask[]>([]);
   const [anime, setAnime] = useState<Anime>();
@@ -61,9 +50,7 @@ export function RemotePlayerPage({
         const initialItem = resolveInitialPlaylistItem(
           items,
           taskId,
-          environment === "remote"
-            ? readPlaylistFileIndex(window.location.search)
-            : initialFileIndex
+          readPlaylistFileIndex(window.location.search)
         );
         if (!initialItem) {
           setError("当前番剧没有已完成的可播放视频");
@@ -105,47 +92,37 @@ export function RemotePlayerPage({
     return () => {
       active = false;
     };
-  }, [environment, initialFileIndex, taskId]);
+  }, [taskId]);
 
   /** 切换播放项并更新地址，刷新后仍保持当前文件。 */
   const handleSelectItem = useCallback((item: RemotePlaylistItem): void => {
     setActiveItemId(item.id);
-    if (environment === "remote") {
-      const playerUrl = new URL(`/player/${encodeURIComponent(item.task.id)}`, window.location.origin);
-      if (item.fileIndex !== undefined) {
-        playerUrl.searchParams.set("file", String(item.fileIndex));
-      }
-      window.history.replaceState(null, "", `${playerUrl.pathname}${playerUrl.search}`);
-    } else {
-      window.history.replaceState({
-        aniView: "builtinPlayer",
-        taskId: item.task.id,
-        fileIndex: item.fileIndex
-      }, "");
+    const playerUrl = new URL(`/player/${encodeURIComponent(item.task.id)}`, window.location.origin);
+    if (item.fileIndex !== undefined) {
+      playerUrl.searchParams.set("file", String(item.fileIndex));
     }
+    window.history.replaceState(null, "", `${playerUrl.pathname}${playerUrl.search}`);
     document.title = `${item.fileName} - Ani Tracker`;
     console.info("[player] 播放列表切换文件", {
       taskId: item.task.id,
       fileIndex: item.fileIndex
     });
-  }, [environment]);
+  }, []);
 
   return <RemoteVideoPlayer
     key={activeItem?.id ?? "loading"}
     activeItem={activeItem}
-    allowExternalPlayback={environment === "remote"}
+    allowExternalPlayback
     anime={anime}
     downloadTasks={downloadTasks}
-    environment={environment}
+    environment="remote"
     episodes={episodes}
     error={error}
     loading={loading}
-    onClose={onClose ?? closePlayerTab}
+    onClose={closePlayerTab}
     onSelectItem={handleSelectItem}
     playlist={playlist}
-    sessionClient={environment === "desktop"
-      ? desktopPlaybackSessionClient
-      : remotePlaybackSessionClient}
+    sessionClient={remotePlaybackSessionClient}
   />;
 }
 

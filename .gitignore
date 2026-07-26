@@ -3,6 +3,7 @@ node_modules
 dist
 out
 .remote-pwa
+.tauri-remote-pwa
 release
 *.tsbuildinfo
 electron.vite.config.js

@@ -8,7 +8,7 @@ import { PlayerPlaylistSheet } from "./PlayerPlaylistSheet";
 import type { PlayerEpisodeUiItem } from "./player-ui-model";
 import type { RemotePlaybackRequestMode, RemotePlaybackSession } from "@shared/contracts";
 import type { Anime, DownloadTask, Episode } from "@shared/domain";
-import type { RemotePlaylistItem } from "@/features/remote/remote-player-model";
+import type { RemotePlaylistItem } from "@/features/player/playback-list-model";
 
 const PREVIEW_DESKTOP_FRAME_URL = "https://lh3.googleusercontent.com/aida-public/AB6AXuAgL2mdTyi1Xs9Yb1id3AmPBIeCFYvY3nrylRUwWUo4ZN0w9MExoBEQiABCj5Up9Wo9PyCbZ2YSrLVvfVANbuBTxvKjqOKEKtzcfpaquZdgnIlHdH9-FLekoQyXY0UgHLYciZh92dSS2hw9zOWX7ocE6pEGW6_ZOxFfPSaBbZDgs9Oa5QrWK8URPx2SazTvrW-Kg-1MDJPsJlc9jSKldT9YMKsgaqCiIXrYQYjOYbZinQxIHWfvR9YPnQn8o4N1znZbRfjKMNlavdoh";
 const PREVIEW_LANDSCAPE_FRAME_URL = "https://lh3.googleusercontent.com/aida-public/AB6AXuD8BzePUI2MmVa32TfyST_TnZ4O2188fprpF8JpHDSGtzjI7mbh2KQm1hYcktxVwwTqkkedkdCobDBczFz4Mhlm1qEIWruz02t2lGRka9ZqdEwjFU_KJHKloj5sR37Ndev9kwU8qE1tcPE9WjI0Ydx7WkPPF-iLuGBNSXZxSB6x-2PLSX85MHIsvsQ9pti4BH989tUvLFPbL269TQKRrmesVoJSNoDxTo8AeVeHyTrtYdJd5JBhfvlKcq053xClbSJSgsUlA5nQW4pk";

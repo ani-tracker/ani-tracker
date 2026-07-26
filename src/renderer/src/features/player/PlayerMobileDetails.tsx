@@ -11,7 +11,7 @@ import {
 import { Separator } from "@/components/ui/separator";
 import type { RemotePlaybackSession } from "@shared/contracts";
 import type { Anime, Episode } from "@shared/domain";
-import type { RemotePlaylistItem } from "@/features/remote/remote-player-model";
+import type { RemotePlaylistItem } from "@/features/player/playback-list-model";
 import { formatPlaybackTime } from "./player-ui-model";
 
 interface PlayerMobileDetailsProps {

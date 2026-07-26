@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { appApi } from "@/lib/api";
 import type { PlayerSnapshot } from "@shared/player-contract";
-import type { RemotePlaylistItem } from "@/features/remote/remote-player-model";
+import type { RemotePlaylistItem } from "@/features/player/playback-list-model";
 
 const CHECKPOINT_INTERVAL_MS = 10_000;
 const AUTO_NEXT_COUNTDOWN_SECONDS = 5;

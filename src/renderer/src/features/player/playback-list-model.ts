@@ -29,9 +29,7 @@ export function buildRemotePlaylist(tasks: DownloadTask[], currentTask: Download
         fileName: displayFileName(file.name),
         size: file.size
       }));
-    if (playableFiles.length > 0) {
-      return playableFiles;
-    }
+    if (playableFiles.length > 0) return playableFiles;
     return task.files.length === 0 && isCompletedTask(task)
       ? [{ id: `${task.id}:auto`, task, fileName: displayFileName(task.name) }]
       : [];
@@ -57,9 +55,7 @@ export function resolveInitialPlaylistItem(
 /** 返回播放器 URL 中合法的文件索引。 */
 export function readPlaylistFileIndex(search: string): number | undefined {
   const value = new URLSearchParams(search).get("file");
-  if (value === null || !/^\d+$/.test(value)) {
-    return undefined;
-  }
+  if (value === null || !/^\d+$/.test(value)) return undefined;
   const fileIndex = Number(value);
   return Number.isSafeInteger(fileIndex) ? fileIndex : undefined;
 }

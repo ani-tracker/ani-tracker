@@ -26,8 +26,8 @@ import {
   buildRemotePlaylist,
   resolveInitialPlaylistItem,
   type RemotePlaylistItem
-} from "@/features/remote/remote-player-model";
-import { desktopPlaybackSessionClient } from "@/features/remote/playback-session-client";
+} from "@/features/player/playback-list-model";
+import { desktopPlaybackSessionClient } from "./playback-session-client";
 import { PlayerChrome } from "./PlayerChrome";
 import { PlayerAutoNextPrompt } from "./PlayerAutoNextPrompt";
 import { PlayerErrorState } from "./PlayerErrorState";

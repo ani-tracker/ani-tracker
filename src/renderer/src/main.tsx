@@ -1,9 +1,9 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { App } from "./App";
+import { App } from "@/renderer-app";
 import { ErrorBoundary } from "./components/error-boundary";
 import { ThemeProvider, ThemeToaster } from "./components/theme-provider";
-import { appApi } from "./lib/api";
+import { appApi } from "@/lib/api";
 import { isLocalAppRuntime } from "./lib/runtime";
 import type { AppearanceSettings } from "@shared/theme";
 import "./styles/globals.css";

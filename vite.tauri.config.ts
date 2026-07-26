@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { rendererBoundaryPlugin } from "./vite.renderer-boundaries";
 
 const tauriDevHost = process.env.TAURI_DEV_HOST;
 
@@ -12,12 +13,14 @@ export default defineConfig({
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   resolve: {
-    alias: {
-      "@": resolve("src/renderer/src"),
-      "@shared": resolve("src/shared")
-    }
+    alias: [
+      { find: /^@\/renderer-app$/, replacement: resolve("src/renderer/src/App.tsx") },
+      { find: /^@\/lib\/api$/, replacement: resolve("src/renderer/src/lib/local-api.ts") },
+      { find: "@", replacement: resolve("src/renderer/src") },
+      { find: "@shared", replacement: resolve("src/shared") }
+    ]
   },
-  plugins: [react()],
+  plugins: [react(), rendererBoundaryPlugin("local")],
   server: {
     host: tauriDevHost || "127.0.0.1",
     port: 1420,

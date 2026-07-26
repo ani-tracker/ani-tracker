@@ -22,22 +22,12 @@ import { HomePage } from "@/features/home/HomePage";
 import { MyAnimePage } from "@/features/my-anime/MyAnimePage";
 import { NotificationsPage } from "@/features/notifications/NotificationsPage";
 import { ReleaseSearchPage } from "@/features/release-search/ReleaseSearchPage";
-import { RemotePairingPage } from "@/features/remote/RemotePairingPage";
-import { RemoteDiscoveryPage } from "@/features/remote/RemoteDiscoveryPage";
-import { RemoteDownloadsPage } from "@/features/remote/RemoteDownloadsPage";
-import { RemoteMyAnimePage } from "@/features/remote/RemoteMyAnimePage";
-import { RemotePlayerPage, resolveRemotePlayerTaskId } from "@/features/remote/RemotePlayerPage";
 import { SettingsPage } from "@/features/settings/SettingsPage";
 import { PlayerDesignPreview } from "@/features/player/PlayerDesignPreview";
 import { DesktopPlayerPage } from "@/features/player/DesktopPlayerPage";
 import { DesktopVlcHostPage } from "@/features/player/DesktopVlcHostPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
-import {
-  appApi,
-  getRemotePairingState,
-  isTauriClient,
-  REMOTE_AUTH_CHANGED_EVENT
-} from "@/lib/api";
+import { appApi, isTauriClient } from "@/lib/api";
 import { getAppCapabilities, getAppRuntime } from "@/lib/runtime";
 import type { DownloadServiceStatus, MobilePlatformStatus } from "@shared/contracts";
 import type { Anime } from "@shared/domain";
@@ -64,8 +54,6 @@ const navItems = [
   { id: "sources", label: "下载源", icon: Subtitles },
   { id: "settings", label: "设置", icon: Settings }
 ] satisfies Array<{ id: PageId; label: string; icon: typeof Home }>;
-
-const remotePageIds: PageId[] = ["home", "myAnime", "discovery", "downloads", "notifications"];
 
 interface AnimeDetailOrigin {
   pageId: PageId;
@@ -154,7 +142,7 @@ function applyMobileShellStatus(
 }
 
 /** 根据导航标识渲染对应业务页面。 */
-function renderPage(page: PageId, localClient: boolean, options: RenderPageOptions) {
+function renderPage(page: PageId, options: RenderPageOptions) {
   switch (page) {
     case "home":
       return (
@@ -165,25 +153,25 @@ function renderPage(page: PageId, localClient: boolean, options: RenderPageOptio
         />
       );
     case "myAnime":
-      return localClient ? (
+      return (
         <MyAnimePage
           intent={options.myAnimeIntent}
           onIntentHandled={options.onMyAnimeIntentHandled}
           onOpenAnimeDetail={options.onOpenAnimeDetail}
           onPlayMedia={options.onPlayMedia}
         />
-      ) : <RemoteMyAnimePage onOpenAnimeDetail={options.onOpenAnimeDetail} />;
+      );
     case "discovery":
-      return localClient ? (
+      return (
         <DiscoveryPage
           onOpenAnimeDetail={options.onOpenAnimeDetail}
           onOpenSchedule={options.onOpenDiscoverySchedule}
         />
-      ) : <RemoteDiscoveryPage onOpenAnimeDetail={options.onOpenAnimeDetail} />;
+      );
     case "releaseSearch":
       return <ReleaseSearchPage initialIntent={options.releaseSearchIntent} />;
     case "downloads":
-      return localClient ? <DownloadsPage /> : <RemoteDownloadsPage />;
+      return <DownloadsPage />;
     case "notifications":
       return <NotificationsPage />;
     case "sources":
@@ -234,7 +222,6 @@ function MainApplication() {
   const [detailRevision, setDetailRevision] = useState(0);
   const [myAnimeIntent, setMyAnimeIntent] = useState<MyAnimePageIntent | null>(null);
   const [releaseSearchIntent, setReleaseSearchIntent] = useState<ReleaseSearchIntent | null>(null);
-  const [pairingState, setPairingState] = useState(getRemotePairingState);
   const [unreadCount, setUnreadCount] = useState(0);
   const [shellStatus, setShellStatus] = useState<AppShellStatus>({
     state: "unknown",
@@ -250,16 +237,9 @@ function MainApplication() {
   const runtime = getAppRuntime();
   const capabilities = getAppCapabilities();
   const desktopClient = runtime === "desktop";
-  const localClient = capabilities.localData;
   const framelessWindow = capabilities.windowControls
     && desktopClient
     && isTauriClient();
-  const remotePlayerTaskId = runtime === "remote"
-    ? resolveRemotePlayerTaskId(window.location.pathname)
-    : undefined;
-  const availableNavItems = localClient
-    ? navItems
-    : navItems.filter((item) => remotePageIds.includes(item.id));
 
   /** 记录来源页面上下文并进入详情二级视图。 */
   function openAnimeDetail(animeId: string) {
@@ -335,10 +315,6 @@ function MainApplication() {
 
   /** 从详情页打开追番规则、资源或任务面板。 */
   function openLibraryAction(animeId: string, action: AnimeDetailLibraryAction) {
-    if (!localClient) {
-      leaveDetailToPage("myAnime");
-      return;
-    }
     setDetailActionHostActive(true);
     setMyAnimeIntent({ animeId, action, key: Date.now() });
     console.info("[anime-detail] library action opened in place", { animeId, action });
@@ -433,24 +409,6 @@ function MainApplication() {
   }, [detailView]);
 
   useEffect(() => {
-    /** 同步当前窗口与其他标签页的远程鉴权状态。 */
-    function refreshRemoteAuth() {
-      setPairingState(getRemotePairingState());
-      setActivePage("home");
-    }
-
-    window.addEventListener(REMOTE_AUTH_CHANGED_EVENT, refreshRemoteAuth);
-    window.addEventListener("storage", refreshRemoteAuth);
-    return () => {
-      window.removeEventListener(REMOTE_AUTH_CHANGED_EVENT, refreshRemoteAuth);
-      window.removeEventListener("storage", refreshRemoteAuth);
-    };
-  }, []);
-
-  useEffect(() => {
-    if (runtime === "remote" && pairingState.needsPairing) {
-      return;
-    }
     let active = true;
     let refreshSequence = 0;
 
@@ -459,7 +417,7 @@ function MainApplication() {
       const sequence = ++refreshSequence;
       const [unreadResult, serviceResult] = await Promise.allSettled([
         appApi.getUnreadNotificationCount(),
-        localClient ? appApi.getDownloadServiceStatus() : Promise.resolve(null)
+        appApi.getDownloadServiceStatus()
       ]);
       if (!active || sequence !== refreshSequence) {
         return;
@@ -470,9 +428,7 @@ function MainApplication() {
         console.warn("[app-shell] 未读提醒数量刷新失败", unreadResult.reason);
       }
 
-      if (!localClient) {
-        setShellStatus({ state: "online", label: "桌面端在线", detail: "远程同步已连接" });
-      } else if (serviceResult.status === "fulfilled" && serviceResult.value) {
+      if (serviceResult.status === "fulfilled" && serviceResult.value) {
         setShellStatus(toDownloadShellStatus(serviceResult.value));
       } else {
         setShellStatus({ state: "unknown", label: "服务状态未知", detail: "稍后自动重试" });
@@ -484,9 +440,7 @@ function MainApplication() {
 
     void refreshShellState();
     const refreshTimer = window.setInterval(() => void refreshShellState(), 30_000);
-    const unsubscribeDownloadStatus = localClient
-      ? appApi.onDownloadServiceStatusChanged(() => void refreshShellState())
-      : undefined;
+    const unsubscribeDownloadStatus = appApi.onDownloadServiceStatusChanged(() => void refreshShellState());
     window.addEventListener("focus", refreshShellState);
     return () => {
       active = false;
@@ -494,7 +448,7 @@ function MainApplication() {
       unsubscribeDownloadStatus?.();
       window.removeEventListener("focus", refreshShellState);
     };
-  }, [localClient, pairingState.needsPairing, runtime]);
+  }, []);
 
   useEffect(() => {
     if (runtime !== "android" && runtime !== "ios") return;
@@ -570,18 +524,10 @@ function MainApplication() {
     };
   }, [runtime]);
 
-  if (remotePlayerTaskId) {
-    return <RemotePlayerPage taskId={remotePlayerTaskId} />;
-  }
-
-  if (runtime === "remote" && pairingState.needsPairing) {
-    return <RemotePairingPage onPaired={() => setPairingState(getRemotePairingState())} />;
-  }
-
   return (
     <AppShell
       activePageId={activePage}
-      items={availableNavItems}
+      items={navItems}
       onNavigate={(pageId) => navigatePage(pageId as PageId)}
       contentRef={contentRef}
       secondaryView={detailView
@@ -595,7 +541,7 @@ function MainApplication() {
       windowControls={framelessWindow ? <WindowControls /> : undefined}
     >
       <div className={detailView || discoverySchedule ? "hidden" : undefined}>
-        {renderPage(activePage, localClient, {
+        {renderPage(activePage, {
           onOpenAnimeDetail: openAnimeDetail,
           onOpenDownloads: () => navigatePage("downloads"),
           onOpenLibraryAction: openLibraryAction,
@@ -614,7 +560,7 @@ function MainApplication() {
           onOpenAnimeDetail={openAnimeDetail}
         />
       )}
-      {detailView && localClient && detailActionHostActive && (
+      {detailView && detailActionHostActive && (
         <MyAnimePage
           actionOnly
           intent={myAnimeIntent}
