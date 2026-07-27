@@ -59,7 +59,9 @@ jobs:
             arch: x64
             bundles: deb,appimage
     env:
-      APPLE_SIGNING_IDENTITY: ${{ matrix.platform == 'darwin' && '-' || '' }}
+      APPLE_CERTIFICATE_BASE64: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
       WINDOWS_CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
       WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
 
@@ -137,6 +139,18 @@ jobs:
           for name in "${required[@]}"; do
             if [[ -z "${!name}" ]]; then
               echo "Missing required Windows self-signing secret: ${name}" >&2
+              exit 1
+            fi
+          done
+
+      - name: Require macOS self-signing secrets
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          required=(APPLE_CERTIFICATE_BASE64 APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY)
+          for name in "${required[@]}"; do
+            if [[ -z "${!name}" ]]; then
+              echo "Missing required macOS self-signing secret: ${name}" >&2
               exit 1
             fi
           done
@@ -224,6 +238,75 @@ jobs:
           Import-Certificate -FilePath $publicCertificatePath -CertStoreLocation Cert:\CurrentUser\TrustedPublisher | Out-Null
           "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
 
+      - name: Import macOS self-signing certificate
+        if: matrix.platform == 'darwin'
+        id: macos-signing
+        shell: bash
+        run: |
+          certificate_path="${RUNNER_TEMP}/ani-tracker-release.p12"
+          public_certificate_path="${RUNNER_TEMP}/ani-tracker-release.pem"
+          keychain_path="${RUNNER_TEMP}/ani-tracker-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+
+          printf '%s' "${APPLE_CERTIFICATE_BASE64}" | openssl base64 -d -A -out "${certificate_path}"
+          export ANI_MAC_P12_PASSWORD="${APPLE_CERTIFICATE_PASSWORD}"
+          openssl pkcs12 \
+            -in "${certificate_path}" \
+            -clcerts -nokeys \
+            -out "${public_certificate_path}" \
+            -passin env:ANI_MAC_P12_PASSWORD
+          unset ANI_MAC_P12_PASSWORD
+
+          subject="$(openssl x509 -in "${public_certificate_path}" -noout -subject -nameopt RFC2253 | sed 's/^subject=//')"
+          issuer="$(openssl x509 -in "${public_certificate_path}" -noout -issuer -nameopt RFC2253 | sed 's/^issuer=//')"
+          if [[ -z "${subject}" || "${subject}" != "${issuer}" ]]; then
+            echo "macOS signing certificate must be self-signed" >&2
+            exit 1
+          fi
+          openssl verify -CAfile "${public_certificate_path}" "${public_certificate_path}"
+          openssl x509 -in "${public_certificate_path}" -checkend 0 -noout
+          openssl x509 -in "${public_certificate_path}" -noout -purpose | grep -q '^Code signing : Yes$'
+          openssl x509 -in "${public_certificate_path}" -noout -subject -nameopt RFC2253 \
+            | grep -Fq "CN=${APPLE_SIGNING_IDENTITY}"
+
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          security import "${certificate_path}" \
+            -k "${keychain_path}" \
+            -P "${APPLE_CERTIFICATE_PASSWORD}" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "${keychain_password}" "${keychain_path}"
+          current_keychains="$(security list-keychains -d user | tr -d '\"')"
+          # GitHub 托管 runner 的钥匙串路径不包含空格。
+          security list-keychains -d user -s "${keychain_path}" ${current_keychains}
+          sudo security add-trusted-cert \
+            -d -r trustRoot \
+            -k /Library/Keychains/System.keychain \
+            "${public_certificate_path}"
+
+          identity_line="$(security find-identity -v -p codesigning "${keychain_path}" \
+            | grep -F "\"${APPLE_SIGNING_IDENTITY}\"" \
+            | head -n 1 || true)"
+          if [[ -z "${identity_line}" ]]; then
+            echo "macOS self-signing identity is unavailable after import" >&2
+            exit 1
+          fi
+          imported_sha1="$(printf '%s' "${identity_line}" | awk '{print $2}' | tr '[:upper:]' '[:lower:]')"
+          certificate_sha1="$(openssl x509 -in "${public_certificate_path}" -noout -fingerprint -sha1 \
+            | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          if [[ "${imported_sha1}" != "${certificate_sha1}" ]]; then
+            echo "Imported macOS identity does not match configured certificate" >&2
+            exit 1
+          fi
+          certificate_sha256="$(openssl x509 -in "${public_certificate_path}" -noout -fingerprint -sha256 \
+            | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+          echo "thumbprint=${certificate_sha1}" >> "${GITHUB_OUTPUT}"
+          echo "fingerprint_sha256=${certificate_sha256}" >> "${GITHUB_OUTPUT}"
+
       - name: Build remote PWA for desktop bundle
         run: pnpm run build:tauri:remote-renderer
 
@@ -254,7 +337,7 @@ jobs:
           } | ConvertTo-Json -Depth 5 -Compress
           pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}" --config $config
 
-      - name: Build macOS ad-hoc and Linux bundles
+      - name: Build self-signed macOS and Linux bundles
         if: matrix.platform != 'win32'
         shell: bash
         run: |
@@ -263,18 +346,39 @@ jobs:
       - name: Verify Renderer module boundaries
         run: pnpm run verify:tauri:renderer-boundaries
 
-      - name: Verify macOS ad-hoc signature
+      - name: Verify macOS self-signature
         if: matrix.platform == 'darwin'
         shell: bash
         run: |
+          expected_fingerprint="${{ steps.macos-signing.outputs.fingerprint_sha256 }}"
+          if [[ -z "${expected_fingerprint}" ]]; then
+            echo "macOS signing certificate fingerprint is unavailable" >&2
+            exit 1
+          fi
           verified=0
           while IFS= read -r -d '' app; do
             codesign --verify --deep --strict "$app"
-            codesign -dv --verbose=2 "$app" 2>&1 | grep -q 'Signature=adhoc'
+            signature_details="$(codesign -dv --verbose=4 "$app" 2>&1)"
+            printf '%s\n' "${signature_details}"
+            if printf '%s' "${signature_details}" | grep -q 'Signature=adhoc'; then
+              echo "macOS app must not use an ad-hoc signature: ${app}" >&2
+              exit 1
+            fi
+            certificate_prefix="${RUNNER_TEMP}/ani-tracker-codesign-${verified}-"
+            codesign -d --extract-certificates "${certificate_prefix}" "$app"
+            embedded_certificate="${certificate_prefix}0"
+            actual_fingerprint="$(openssl x509 -inform DER -in "${embedded_certificate}" \
+              -noout -fingerprint -sha256 \
+              | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
+            if [[ "${actual_fingerprint}" != "${expected_fingerprint}" ]]; then
+              echo "macOS app signature does not match configured self-signing certificate: ${app}" >&2
+              exit 1
+            fi
+            rm -f "${certificate_prefix}"*
             verified=$((verified + 1))
           done < <(find out/cargo-target/release/bundle -type d -name '*.app' -print0)
           if [[ "$verified" -eq 0 ]]; then
-            echo "No macOS app bundle found for ad-hoc signature verification" >&2
+            echo "No macOS app bundle found for self-signature verification" >&2
             exit 1
           fi
 
@@ -286,6 +390,10 @@ jobs:
           find out/cargo-target/release/bundle -type f \
             \( -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) \
             -exec cp {} "release-assets/${{ matrix.target }}/" \;
+          if [[ "${{ matrix.platform }}" == "darwin" ]]; then
+            cp "${RUNNER_TEMP}/ani-tracker-release.pem" \
+              "release-assets/${{ matrix.target }}/ani-tracker-macos-self-signed.pem"
+          fi
           pnpm run release:manifest -- \
             --root "release-assets/${{ matrix.target }}" \
             --target "${{ matrix.target }}" \
@@ -317,6 +425,21 @@ jobs:
           name: ani-tracker-${{ matrix.target }}
           path: release-assets/${{ matrix.target }}
           if-no-files-found: error
+
+      - name: Remove macOS self-signing material
+        if: always() && matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          thumbprint="${{ steps.macos-signing.outputs.thumbprint }}"
+          if [[ -n "${thumbprint}" ]]; then
+            sudo security delete-certificate \
+              -Z "${thumbprint}" \
+              /Library/Keychains/System.keychain || true
+          fi
+          security delete-keychain "${RUNNER_TEMP}/ani-tracker-signing.keychain-db" || true
+          rm -f \
+            "${RUNNER_TEMP}/ani-tracker-release.p12" \
+            "${RUNNER_TEMP}/ani-tracker-release.pem"
 
   publish:
     needs: desktop
