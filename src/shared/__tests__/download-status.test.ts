@@ -3,13 +3,18 @@ import { test } from "node:test";
 import {
   isActiveDownloadTask,
   isCompletedDownloadStatus,
-  isCompletedDownloadTask
+  isCompletedDownloadTask,
+  isFinishedDownloadTask,
+  isSeedingDownloadTask
 } from "../download-status";
 
 test("做种和进度已满的任务统一归类为已完成", () => {
   assert.equal(isCompletedDownloadStatus("seeding"), true);
   assert.equal(isCompletedDownloadTask({ status: "seeding", progress: 1 }), true);
+  assert.equal(isSeedingDownloadTask({ status: "seeding" }), true);
+  assert.equal(isFinishedDownloadTask({ status: "seeding", progress: 1 }), false);
   assert.equal(isCompletedDownloadTask({ status: "downloading", progress: 1 }), true);
+  assert.equal(isFinishedDownloadTask({ status: "downloading", progress: 1 }), true);
   assert.equal(isActiveDownloadTask({ status: "downloading", progress: 1 }), false);
 });
 

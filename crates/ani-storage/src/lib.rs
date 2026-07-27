@@ -21,7 +21,7 @@ pub use repository::SqliteRepository;
 /// 当前与 Electron 共用的 SQLite 结构版本。
 pub const SQLITE_SCHEMA_VERSION: u32 = 18;
 /// 当前与 TypeScript 共用的应用数据版本。
-pub const APP_DATA_VERSION: u32 = 23;
+pub const APP_DATA_VERSION: u32 = 24;
 
 /// 首次启动写入的最小应用数据。
 #[derive(Debug, Clone)]

@@ -70,6 +70,34 @@ pub enum TorrentEngineKind {
     Qbittorrent,
 }
 
+impl TorrentEngineKind {
+    /// 返回跨存储与协议稳定使用的下载引擎标识。
+    pub fn as_key(&self) -> &'static str {
+        match self {
+            Self::Embedded => "embedded",
+            Self::Qbittorrent => "qbittorrent",
+        }
+    }
+
+    /// 将引擎内任务标识转换为应用内唯一任务标识。
+    pub fn scope_task_id(&self, engine_task_id: &str) -> String {
+        let prefix = format!("{}:", self.as_key());
+        if engine_task_id.starts_with(&prefix) {
+            engine_task_id.to_owned()
+        } else {
+            format!("{prefix}{engine_task_id}")
+        }
+    }
+
+    /// 从应用任务标识中取回下载引擎使用的原始标识。
+    pub fn unscoped_task_id<'a>(&self, task_id: &'a str) -> &'a str {
+        task_id
+            .strip_prefix(self.as_key())
+            .and_then(|value| value.strip_prefix(':'))
+            .unwrap_or(task_id)
+    }
+}
+
 /// 番剧别名语言，与现有目录数据保持一致。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

@@ -181,9 +181,7 @@ impl AppMediaState {
                 repository
                     .list_downloads()?
                     .into_iter()
-                    .find(|task| {
-                        task.id == task_id || task.torrent_hash.as_deref() == Some(task_id)
-                    })
+                    .find(|task| task.id == task_id)
                     .ok_or_else(|| RepositoryError::RecordNotFound {
                         entity: "downloadTask".to_owned(),
                         id: task_id.to_owned(),

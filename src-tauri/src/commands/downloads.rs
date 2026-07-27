@@ -214,13 +214,19 @@ pub(crate) struct AddReleaseDownloadInput {
 pub(crate) async fn list_downloads(
     state: State<'_, AppDownloadState>,
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
+    let settings = state
+        .settings()
+        .map_err(|error| runtime_error("读取下载任务", error))?;
+    let engine = state
+        .default_engine(&settings)
+        .map_err(|error| map_download_error("读取下载任务", error))?;
     state
         .service()
-        .list()
+        .list_for_engine(&engine)
         .map_err(|error| map_download_error("读取下载任务", error))
 }
 
-/// 刷新默认引擎及历史任务所属引擎。
+/// 刷新当前默认引擎，其他引擎任务保留持久化快照。
 #[tauri::command]
 pub(crate) async fn refresh_downloads(
     state: State<'_, AppDownloadState>,
@@ -237,13 +243,6 @@ pub(crate) async fn refresh_downloads(
         .refresh(default_engine)
         .await
         .map_err(|error| map_download_error("刷新下载任务", error))?;
-    for failure in result.failures {
-        log::warn!(
-            "Tauri 历史下载引擎刷新失败 engine={:?} error={}",
-            failure.engine,
-            failure.message
-        );
-    }
     media_state.schedule_completed_scan(result.tasks.clone());
     Ok(result.tasks)
 }
@@ -254,9 +253,10 @@ pub(crate) async fn pause_download(
     task_id: String,
     state: State<'_, AppDownloadState>,
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
+    let engine = current_engine(&state, "暂停下载任务")?;
     state
         .service()
-        .pause(&task_id)
+        .pause(&task_id, &engine)
         .await
         .map_err(|error| map_download_error("暂停下载任务", error))
 }
@@ -269,9 +269,10 @@ pub(crate) async fn resume_download(
     state: State<'_, AppDownloadState>,
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
     ensure_mobile_storage_available(&app)?;
+    let engine = current_engine(&state, "恢复下载任务")?;
     state
         .service()
-        .resume(&task_id)
+        .resume(&task_id, &engine)
         .await
         .map_err(|error| map_download_error("恢复下载任务", error))
 }
@@ -283,9 +284,10 @@ pub(crate) async fn remove_download(
     delete_files: bool,
     state: State<'_, AppDownloadState>,
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
+    let engine = current_engine(&state, "删除下载任务")?;
     state
         .service()
-        .remove(&task_id, delete_files)
+        .remove(&task_id, delete_files, &engine)
         .await
         .map_err(|error| map_download_error("删除下载任务", error))
 }
@@ -298,9 +300,10 @@ pub(crate) async fn set_download_file_priority(
     priority: i64,
     state: State<'_, AppDownloadState>,
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
+    let engine = current_engine(&state, "更新下载文件优先级")?;
     state
         .service()
-        .set_file_priority(&task_id, &file_indexes, priority)
+        .set_file_priority(&task_id, &file_indexes, priority, &engine)
         .await
         .map_err(|error| map_download_error("更新下载文件优先级", error))
 }
@@ -609,6 +612,19 @@ fn map_download_error(action: &str, error: DownloadServiceError) -> AppCommandEr
         code: code.to_owned(),
         message: format!("{action}失败：{error}"),
     }
+}
+
+/// 读取命令执行时的当前下载引擎，隔离切换前页面残留操作。
+fn current_engine(
+    state: &AppDownloadState,
+    action: &str,
+) -> Result<ani_domain::TorrentEngineKind, AppCommandError> {
+    let settings = state
+        .settings()
+        .map_err(|error| runtime_error(action, error))?;
+    state
+        .default_engine(&settings)
+        .map_err(|error| map_download_error(action, error))
 }
 
 fn runtime_error(action: &str, error: impl std::fmt::Display) -> AppCommandError {

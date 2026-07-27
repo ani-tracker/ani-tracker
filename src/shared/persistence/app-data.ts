@@ -14,7 +14,7 @@ import type {
   ReleaseSourceSyncState
 } from "../domain";
 
-export const APP_DATA_VERSION = 23;
+export const APP_DATA_VERSION = 24;
 
 export interface AppDataFile {
   version: number;

@@ -1,3 +1,4 @@
+use ani_domain::TorrentEngineKind;
 use log::info;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
 use sha2::{Digest, Sha256};
@@ -292,7 +293,74 @@ fn migrate_app_data(
             stats.cleared_cache
         );
     }
+    if current_app_data_version < 24 {
+        let stats = migrate_download_task_engine_ids(transaction)?;
+        info!(
+            "SQLite 下载任务引擎身份迁移完成：tasks={}, references={}",
+            stats.updated_tasks, stats.updated_references
+        );
+    }
     Ok(())
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct DownloadTaskIdMigrationStats {
+    updated_tasks: usize,
+    updated_references: usize,
+}
+
+/// 为历史任务和关联记录补充下载引擎命名空间。
+fn migrate_download_task_engine_ids(
+    transaction: &Transaction<'_>,
+) -> Result<DownloadTaskIdMigrationStats, StorageError> {
+    let tasks = {
+        let mut statement = transaction.prepare("SELECT id, engine FROM download_task")?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        rows
+    };
+    transaction.execute_batch("PRAGMA defer_foreign_keys = ON;")?;
+    let mut stats = DownloadTaskIdMigrationStats::default();
+
+    for (legacy_id, engine_value) in tasks {
+        let engine = match engine_value.as_str() {
+            "embedded" => TorrentEngineKind::Embedded,
+            "qbittorrent" => TorrentEngineKind::Qbittorrent,
+            _ => {
+                return Err(StorageError::InvalidDomainValue {
+                    field: "download_task.engine",
+                    value: engine_value,
+                });
+            }
+        };
+        let scoped_id = engine.scope_task_id(&legacy_id);
+        if scoped_id == legacy_id {
+            continue;
+        }
+
+        stats.updated_tasks += transaction.execute(
+            "UPDATE download_task SET id = ?1 WHERE id = ?2",
+            params![&scoped_id, &legacy_id],
+        )?;
+        stats.updated_references += transaction.execute(
+            "UPDATE torrent_file
+             SET id = ?1 || ':' || CAST(file_index AS TEXT), download_task_id = ?1
+             WHERE download_task_id = ?2",
+            params![&scoped_id, &legacy_id],
+        )?;
+        for sql in [
+            "UPDATE media_file SET download_task_id = ?1 WHERE download_task_id = ?2",
+            "UPDATE playback_checkpoint SET task_id = ?1 WHERE task_id = ?2",
+            "UPDATE notification SET download_task_id = ?1 WHERE download_task_id = ?2",
+        ] {
+            stats.updated_references +=
+                transaction.execute(sql, params![&scoped_id, &legacy_id])?;
+        }
+    }
+    Ok(stats)
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

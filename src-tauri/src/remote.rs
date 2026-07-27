@@ -412,13 +412,20 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                 self.query(move |repository| repository.list_episode_preferences(&id))
                     .await
             }
-            "listDownloads" => serde_json::to_value(
-                self.downloads
-                    .service()
-                    .list()
-                    .map_err(|error| error.to_string())?,
-            )
-            .map_err(|error| error.to_string()),
+            "listDownloads" => {
+                let settings = self.downloads.settings()?;
+                let engine = self
+                    .downloads
+                    .default_engine(&settings)
+                    .map_err(|error| error.to_string())?;
+                serde_json::to_value(
+                    self.downloads
+                        .service()
+                        .list_for_engine(&engine)
+                        .map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())
+            }
             "refreshDownloads" => {
                 let settings = self.downloads.settings()?;
                 let engine = self
@@ -436,10 +443,15 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
             }
             "pauseDownload" => {
                 let id = string_arg(&args, 0)?;
+                let settings = self.downloads.settings()?;
+                let engine = self
+                    .downloads
+                    .default_engine(&settings)
+                    .map_err(|error| error.to_string())?;
                 serde_json::to_value(
                     self.downloads
                         .service()
-                        .pause(&id)
+                        .pause(&id, &engine)
                         .await
                         .map_err(|error| error.to_string())?,
                 )
@@ -447,10 +459,15 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
             }
             "resumeDownload" => {
                 let id = string_arg(&args, 0)?;
+                let settings = self.downloads.settings()?;
+                let engine = self
+                    .downloads
+                    .default_engine(&settings)
+                    .map_err(|error| error.to_string())?;
                 serde_json::to_value(
                     self.downloads
                         .service()
-                        .resume(&id)
+                        .resume(&id, &engine)
                         .await
                         .map_err(|error| error.to_string())?,
                 )
@@ -496,7 +513,7 @@ impl RemoteMediaRepository for TauriRemoteMediaRepository {
             Ok(repository
                 .list_downloads()?
                 .into_iter()
-                .find(|task| task.id == task_id || task.torrent_hash.as_deref() == Some(&task_id)))
+                .find(|task| task.id == task_id))
         })
         .await
     }

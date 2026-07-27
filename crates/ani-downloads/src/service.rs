@@ -71,18 +71,10 @@ pub struct DownloadAddRequest {
     pub context: DownloadTaskContext,
 }
 
-/// 刷新旧引擎失败时保留的诊断信息。
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DownloadRefreshFailure {
-    pub engine: TorrentEngineKind,
-    pub message: String,
-}
-
-/// 多引擎刷新结果，成功任务不会被单个旧引擎失败清空。
+/// 当前引擎刷新并恢复后的任务结果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct DownloadRefreshResult {
     pub tasks: Vec<DownloadTask>,
-    pub failures: Vec<DownloadRefreshFailure>,
 }
 
 /// 统一协调引擎路由、状态合并和 Repository 写入的任务服务。
@@ -100,6 +92,14 @@ impl DownloadTaskService {
     /// 读取持久化下载任务，供 Tauri 首屏和下载页使用。
     pub fn list(&self) -> Result<Vec<DownloadTask>, DownloadServiceError> {
         Ok(self.store.list_downloads()?)
+    }
+
+    /// 读取指定下载引擎的持久化任务快照。
+    pub fn list_for_engine(
+        &self,
+        engine: &TorrentEngineKind,
+    ) -> Result<Vec<DownloadTask>, DownloadServiceError> {
+        Ok(filter_tasks_by_engine(self.store.list_downloads()?, engine))
     }
 
     /// 通过指定引擎添加任务，附加业务元数据后原子持久化。
@@ -125,8 +125,8 @@ impl DownloadTaskService {
                     DownloadServiceError::engine(request.engine.clone(), "addTorrentFile", error)
                 })?,
         };
-        let task = apply_add_context(task, &request);
-        let tasks = self.store.upsert_download_task(&task)?;
+        let task = scope_engine_task(apply_add_context(task, &request));
+        let tasks = filter_tasks_by_engine(self.store.upsert_download_task(&task)?, &task.engine);
         log::info!(
             "下载任务已加入统一服务：task_id={}, engine={:?}",
             task.id,
@@ -135,57 +135,33 @@ impl DownloadTaskService {
         Ok(tasks)
     }
 
-    /// 刷新默认引擎和历史任务所属引擎，旧引擎失败时保留其他结果。
+    /// 仅刷新当前引擎，其他引擎任务保留 SQLite 快照等待切回恢复。
     pub async fn refresh(
         &self,
         default_engine: TorrentEngineKind,
     ) -> Result<DownloadRefreshResult, DownloadServiceError> {
         let existing = self.store.list_downloads()?;
-        let mut kinds = vec![default_engine.clone()];
-        for task in &existing {
-            if !kinds.contains(&task.engine) {
-                kinds.push(task.engine.clone());
-            }
-        }
-
-        let mut failures = Vec::new();
-        for kind in kinds {
-            let engine = match self.registry.require(&kind) {
-                Ok(engine) => engine,
-                Err(error) if kind != default_engine => {
-                    failures.push(DownloadRefreshFailure {
-                        engine: kind,
-                        message: error.to_string(),
-                    });
-                    continue;
-                }
-                Err(error) => return Err(error),
-            };
-            let engine_tasks = match engine.list_tasks().await {
-                Ok(tasks) => tasks,
-                Err(error) if kind != default_engine => {
-                    log::warn!("历史下载引擎刷新失败：engine={kind:?}, error={error}");
-                    failures.push(DownloadRefreshFailure {
-                        engine: kind,
-                        message: error.to_string(),
-                    });
-                    continue;
-                }
-                Err(error) => {
-                    return Err(DownloadServiceError::engine(kind, "listTasks", error));
-                }
-            };
-            self.merge_engine_snapshot(&existing, kind, engine_tasks)?;
-        }
-        Ok(DownloadRefreshResult {
-            tasks: self.store.list_downloads()?,
-            failures,
-        })
+        let engine = self.registry.require(&default_engine)?;
+        let engine_tasks = engine.list_tasks().await.map_err(|error| {
+            DownloadServiceError::engine(default_engine.clone(), "listTasks", error)
+        })?;
+        self.merge_engine_snapshot(&existing, default_engine.clone(), engine_tasks)?;
+        let tasks = filter_tasks_by_engine(self.store.list_downloads()?, &default_engine);
+        log::info!(
+            "当前下载引擎任务已恢复：engine={:?}, task_count={}",
+            default_engine,
+            tasks.len()
+        );
+        Ok(DownloadRefreshResult { tasks })
     }
 
     /// 暂停任务原属引擎，并立即持久化暂停状态。
-    pub async fn pause(&self, task_id: &str) -> Result<Vec<DownloadTask>, DownloadServiceError> {
-        let mut task = self.require_task(task_id)?;
+    pub async fn pause(
+        &self,
+        task_id: &str,
+        active_engine: &TorrentEngineKind,
+    ) -> Result<Vec<DownloadTask>, DownloadServiceError> {
+        let mut task = self.require_active_task(task_id, active_engine)?;
         let engine = self.registry.require(&task.engine)?;
         engine
             .pause(engine_task_id(&task))
@@ -194,12 +170,19 @@ impl DownloadTaskService {
         task.status = DownloadStatus::Paused;
         task.download_speed = 0;
         task.upload_speed = 0;
-        Ok(self.store.upsert_download_task(&task)?)
+        Ok(filter_tasks_by_engine(
+            self.store.upsert_download_task(&task)?,
+            &task.engine,
+        ))
     }
 
     /// 恢复任务原属引擎，并立即持久化活动状态。
-    pub async fn resume(&self, task_id: &str) -> Result<Vec<DownloadTask>, DownloadServiceError> {
-        let mut task = self.require_task(task_id)?;
+    pub async fn resume(
+        &self,
+        task_id: &str,
+        active_engine: &TorrentEngineKind,
+    ) -> Result<Vec<DownloadTask>, DownloadServiceError> {
+        let mut task = self.require_active_task(task_id, active_engine)?;
         let engine = self.registry.require(&task.engine)?;
         engine
             .resume(engine_task_id(&task))
@@ -210,7 +193,10 @@ impl DownloadTaskService {
         } else {
             DownloadStatus::Downloading
         };
-        Ok(self.store.upsert_download_task(&task)?)
+        Ok(filter_tasks_by_engine(
+            self.store.upsert_download_task(&task)?,
+            &task.engine,
+        ))
     }
 
     /// 先从任务原属引擎移除，再删除本地业务记录。
@@ -218,14 +204,31 @@ impl DownloadTaskService {
         &self,
         task_id: &str,
         delete_files: bool,
+        active_engine: &TorrentEngineKind,
     ) -> Result<Vec<DownloadTask>, DownloadServiceError> {
-        let task = self.require_task(task_id)?;
+        let task = self.require_active_task(task_id, active_engine)?;
         let engine = self.registry.require(&task.engine)?;
-        engine
-            .remove(engine_task_id(&task), delete_files)
-            .await
-            .map_err(|error| DownloadServiceError::engine(task.engine.clone(), "remove", error))?;
-        Ok(self.store.remove_download_task(&task.id, delete_files)?)
+        match engine.remove(engine_task_id(&task), delete_files).await {
+            Ok(()) => {}
+            Err(crate::DownloadEngineError::TaskNotFound(_)) if !delete_files => {
+                log::warn!(
+                    "下载引擎任务已不存在，继续清理本地快照：task_id={}, engine={:?}",
+                    task.id,
+                    task.engine
+                );
+            }
+            Err(error) => {
+                return Err(DownloadServiceError::engine(
+                    task.engine.clone(),
+                    "remove",
+                    error,
+                ));
+            }
+        }
+        Ok(filter_tasks_by_engine(
+            self.store.remove_download_task(&task.id, delete_files)?,
+            &task.engine,
+        ))
     }
 
     /// 更新文件优先级并同步本地选择状态。
@@ -234,9 +237,10 @@ impl DownloadTaskService {
         task_id: &str,
         file_indexes: &[i64],
         priority: i64,
+        active_engine: &TorrentEngineKind,
     ) -> Result<Vec<DownloadTask>, DownloadServiceError> {
         validate_file_priority(file_indexes, priority)?;
-        let mut task = self.require_task(task_id)?;
+        let mut task = self.require_active_task(task_id, active_engine)?;
         let known_indexes = task
             .files
             .iter()
@@ -264,16 +268,35 @@ impl DownloadTaskService {
                 file.selected = priority > 0;
             }
         }
-        Ok(self.store.upsert_download_task(&task)?)
+        Ok(filter_tasks_by_engine(
+            self.store.upsert_download_task(&task)?,
+            &task.engine,
+        ))
     }
 
-    /// 读取任务并兼容业务 ID 与真实 torrent hash。
+    /// 通过应用内唯一标识读取任务，禁止跨引擎使用原始 hash 匹配。
     fn require_task(&self, task_id: &str) -> Result<DownloadTask, DownloadServiceError> {
         self.store
             .list_downloads()?
             .into_iter()
-            .find(|task| task.id == task_id || task.torrent_hash.as_deref() == Some(task_id))
+            .find(|task| task.id == task_id)
             .ok_or_else(|| DownloadServiceError::TaskNotFound(task_id.to_owned()))
+    }
+
+    /// 校验任务属于当前引擎，阻止旧页面重新唤起已切走的引擎。
+    fn require_active_task(
+        &self,
+        task_id: &str,
+        active_engine: &TorrentEngineKind,
+    ) -> Result<DownloadTask, DownloadServiceError> {
+        let task = self.require_task(task_id)?;
+        if &task.engine != active_engine {
+            return Err(DownloadServiceError::invalid(
+                "taskId",
+                format!("任务属于 {}，请切回该下载引擎后重试", task.engine.as_key()),
+            ));
+        }
+        Ok(task)
     }
 
     /// 合并引擎动态字段和本地业务关联，替换首次占位任务。
@@ -284,8 +307,10 @@ impl DownloadTaskService {
         engine_tasks: Vec<DownloadTask>,
     ) -> Result<(), DownloadServiceError> {
         let mut current = existing.to_vec();
-        for mut task in engine_tasks {
+        for task in engine_tasks {
+            let mut task = task;
             task.engine = kind.clone();
+            task = scope_engine_task(task);
             let matched = find_existing_task(&current, &task);
             if let Some(stored) = matched.as_ref() {
                 task = merge_download_task(stored, task);
@@ -450,5 +475,27 @@ fn merge_download_task(stored: &DownloadTask, mut engine: DownloadTask) -> Downl
 }
 
 fn engine_task_id(task: &DownloadTask) -> &str {
-    task.torrent_hash.as_deref().unwrap_or(&task.id)
+    task.torrent_hash
+        .as_deref()
+        .unwrap_or_else(|| task.engine.unscoped_task_id(&task.id))
+}
+
+/// 将引擎快照转换为不会与其他引擎冲突的应用任务身份。
+fn scope_engine_task(mut task: DownloadTask) -> DownloadTask {
+    task.id = task.engine.scope_task_id(&task.id);
+    for file in &mut task.files {
+        file.id = format!("{}:{}", task.id, file.index);
+    }
+    task
+}
+
+/// 过滤指定引擎任务并保留 Repository 的稳定排序。
+fn filter_tasks_by_engine(
+    tasks: Vec<DownloadTask>,
+    engine: &TorrentEngineKind,
+) -> Vec<DownloadTask> {
+    tasks
+        .into_iter()
+        .filter(|task| &task.engine == engine)
+        .collect()
 }

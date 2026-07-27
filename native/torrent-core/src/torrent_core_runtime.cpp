@@ -49,6 +49,11 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
+class TaskNotFoundError final : public std::runtime_error {
+ public:
+  explicit TaskNotFoundError(const std::string& message) : std::runtime_error(message) {}
+};
+
 struct Command {
   std::string id;
   std::string method;
@@ -499,7 +504,7 @@ class TorrentCore {
     for (const auto& handle : session_.get_torrents()) {
       if (task_id(handle) == id) return handle;
     }
-    throw std::runtime_error("内置下载任务不存在: " + id);
+    throw TaskNotFoundError("内置下载任务不存在: " + id);
   }
 
   /** 将任务状态映射为 IPC JSON。 */
@@ -691,6 +696,8 @@ std::string Runtime::execute(std::string_view request_json) {
 
   try {
     return success_response(command.id, impl_->core.execute(command, impl_->stop_requested));
+  } catch (const TaskNotFoundError& error) {
+    return error_response(command.id, "TASK_NOT_FOUND", error.what());
   } catch (const std::exception& error) {
     return error_response(command.id, "CORE_ERROR", error.what());
   }

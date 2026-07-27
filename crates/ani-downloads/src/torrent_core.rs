@@ -331,6 +331,15 @@ fn protocol_error(message: impl Into<String>) -> DownloadEngineError {
     DownloadEngineError::Protocol(message.into())
 }
 
+/// 将 torrent-core 稳定错误码映射为统一下载引擎错误。
+pub fn map_torrent_core_error(code: &str, message: &str) -> DownloadEngineError {
+    match code {
+        "TASK_NOT_FOUND" => DownloadEngineError::TaskNotFound(message.to_owned()),
+        "CORE_STOPPED" => DownloadEngineError::Unavailable(message.to_owned()),
+        _ => DownloadEngineError::Protocol(format!("{message} ({code})")),
+    }
+}
+
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
 mod process {
     use std::fs;
@@ -345,7 +354,7 @@ mod process {
     use async_trait::async_trait;
     use serde_json::{json, Value};
 
-    use crate::{DownloadEngineError, TorrentCoreTransport};
+    use crate::{map_torrent_core_error, DownloadEngineError, TorrentCoreTransport};
 
     const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
     const DEFAULT_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
@@ -633,7 +642,7 @@ mod process {
                     .pointer("/error/message")
                     .and_then(Value::as_str)
                     .unwrap_or("torrent-core 请求失败");
-                return Err(DownloadEngineError::Protocol(format!("{message} ({code})")));
+                return Err(map_torrent_core_error(code, message));
             }
         }
 

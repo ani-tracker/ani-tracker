@@ -82,7 +82,7 @@ fn initializes_new_database_with_seed() {
     assert_eq!(storage.report().schema_version, SQLITE_SCHEMA_VERSION);
     assert_eq!(storage.report().app_data_version, APP_DATA_VERSION);
     assert_eq!(read_meta(&storage.connection, "schema_version"), "18");
-    assert_eq!(read_meta(&storage.connection, "app_data_version"), "23");
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
     assert_eq!(
         storage
             .connection
@@ -233,7 +233,7 @@ fn backs_up_and_migrates_legacy_versions() {
         "detail_json"
     ));
     assert_eq!(read_meta(&storage.connection, "schema_version"), "18");
-    assert_eq!(read_meta(&storage.connection, "app_data_version"), "23");
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
     assert_eq!(source_count(&storage.connection, "prowlarr"), 0);
     assert_eq!(source_proxy(&storage.connection, "anibt"), 0);
     storage.verify().expect("migrated database integrity");
@@ -329,7 +329,7 @@ fn migrates_historical_oversized_release_ids() {
     let migrated_task_id = storage
         .connection
         .query_row(
-            "SELECT release_id FROM download_task WHERE id = 'download-release-id'",
+            "SELECT release_id FROM download_task WHERE id = 'embedded:download-release-id'",
             [],
             |row| row.get::<_, String>(0),
         )
@@ -343,7 +343,7 @@ fn migrates_historical_oversized_release_ids() {
         )
         .expect("read migrated preference release id");
 
-    assert_eq!(read_meta(&storage.connection, "app_data_version"), "23");
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
     assert_eq!(migrated_task_id, migrated_preference_id);
     assert!(migrated_task_id.starts_with("release:"));
     assert!(migrated_task_id.len() <= 200);
@@ -351,7 +351,7 @@ fn migrates_historical_oversized_release_ids() {
         storage
             .connection
             .query_row(
-                "SELECT release_id FROM download_task WHERE id = 'download-empty-release-id'",
+                "SELECT release_id FROM download_task WHERE id = 'embedded:download-empty-release-id'",
                 [],
                 |row| row.get::<_, Option<String>>(0),
             )
@@ -382,10 +382,93 @@ fn migrates_historical_oversized_release_ids() {
     let migrated_task = DownloadRepository::list_downloads(&storage.repository())
         .expect("list migrated downloads")
         .into_iter()
-        .find(|task| task.id == "download-release-id")
+        .find(|task| task.id == "embedded:download-release-id")
         .expect("migrated download task");
     DownloadRepository::upsert_download_task(&storage.repository(), &migrated_task)
         .expect("migrated task must pass write validation");
+}
+
+/// 验证版本 24 为下载任务及全部关联记录补充引擎命名空间。
+#[test]
+fn migrates_download_task_engine_identity() {
+    let directory = TestDirectory::new("download-engine-id-migration");
+    let options = test_options(&directory, "active.sqlite");
+    let database_path = options.database_path.clone();
+    drop(Storage::open(options.clone()).expect("create current database"));
+
+    let legacy = Connection::open(&database_path).expect("open download migration fixture");
+    legacy
+        .execute(
+            "UPDATE app_meta SET value = '23' WHERE key = 'app_data_version'",
+            [],
+        )
+        .expect("downgrade app data version");
+    legacy
+        .execute_batch(
+            "INSERT INTO download_task (
+               id, engine, torrent_hash, name, status, progress, download_speed, upload_speed,
+               save_path, created_at, updated_at
+             ) VALUES (
+               'shared-hash', 'qbittorrent', 'shared-hash', '引擎迁移任务', 'paused',
+               0.5, 0, 0, 'C:/video', '2026-07-27T00:00:00.000Z',
+               '2026-07-27T00:00:00.000Z'
+             );
+             INSERT INTO torrent_file (
+               id, download_task_id, file_index, name, size, progress, priority, selected
+             ) VALUES ('shared-hash:0', 'shared-hash', 0, 'episode.mkv', 1024, 0.5, 1, 1);
+             INSERT INTO media_file (
+               id, anime_id, download_task_id, file_path, file_name, size,
+               normalized_video_codec, audio_codecs_json, subtitle_tracks_json
+             ) VALUES (
+               'engine-media', 'engine-anime', 'shared-hash', 'C:/video/episode.mkv',
+               'episode.mkv', 1024, 'H.265/HEVC', '[]', '[]'
+             );
+             INSERT INTO playback_checkpoint (
+               task_id, file_index, position_seconds, duration_seconds, completed,
+               watched_reported, updated_at
+             ) VALUES ('shared-hash', 0, 10, 100, 0, 0, '2026-07-27T00:00:00.000Z');
+             INSERT INTO notification (
+               id, kind, title, body, severity, download_task_id, created_at
+             ) VALUES (
+               'engine-notification', 'download', '下载任务', '等待恢复', 'info',
+               'shared-hash', '2026-07-27T00:00:00.000Z'
+             );",
+        )
+        .expect("insert legacy download relations");
+    drop(legacy);
+
+    let storage = Storage::open(options).expect("download identities must migrate");
+    let scoped_id = "qbittorrent:shared-hash";
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
+    for (table, column) in [
+        ("download_task", "id"),
+        ("torrent_file", "download_task_id"),
+        ("media_file", "download_task_id"),
+        ("playback_checkpoint", "task_id"),
+        ("notification", "download_task_id"),
+    ] {
+        let sql = format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?1");
+        assert_eq!(
+            storage
+                .connection
+                .query_row(&sql, [scoped_id], |row| row.get::<_, i64>(0))
+                .expect("count migrated download relation"),
+            1,
+            "{table}.{column} must reference scoped task id"
+        );
+    }
+    assert_eq!(
+        storage
+            .connection
+            .query_row(
+                "SELECT id FROM torrent_file WHERE download_task_id = ?1",
+                [scoped_id],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("read migrated torrent file id"),
+        "qbittorrent:shared-hash:0"
+    );
+    storage.verify().expect("migrated database integrity");
 }
 
 /// 验证 Tauri 首启只复制 Electron 数据库，不修改或删除源文件。
@@ -928,12 +1011,8 @@ fn removes_download_snapshot_and_rolls_back_invalid_files() {
         })
         .expect("save removable checkpoint");
 
-    let remaining = DownloadRepository::remove_download_task(
-        &repository,
-        task.torrent_hash.as_deref().expect("task hash"),
-        false,
-    )
-    .expect("remove task by hash");
+    let remaining = DownloadRepository::remove_download_task(&repository, &task.id, false)
+        .expect("remove task by scoped id");
     assert!(remaining.is_empty());
     assert_eq!(
         MediaRepository::list_media_files(&repository)
@@ -1620,7 +1699,7 @@ fn insert_p2_read_model_fixture(connection: &Connection) {
 /// 创建覆盖任务元数据和文件级单集关联的 P4 下载快照。
 fn p4_download_task() -> DownloadTask {
     DownloadTask {
-        id: "p4-download-task".to_owned(),
+        id: "embedded:p4-download-task".to_owned(),
         release_id: None,
         anime_id: Some("anime-p3-1".to_owned()),
         episode_id: None,
@@ -1646,7 +1725,7 @@ fn p4_download_task() -> DownloadTask {
         save_path: "C:/video".to_owned(),
         files: vec![
             TorrentFile {
-                id: "p4-hash:0".to_owned(),
+                id: "embedded:p4-download-task:0".to_owned(),
                 index: 0,
                 name: "episode-1.mkv".to_owned(),
                 episode_id: Some("episode-anime-p3-1-1".to_owned()),
@@ -1657,7 +1736,7 @@ fn p4_download_task() -> DownloadTask {
                 selected: true,
             },
             TorrentFile {
-                id: "p4-hash:1".to_owned(),
+                id: "embedded:p4-download-task:1".to_owned(),
                 index: 1,
                 name: "episode-2.mkv".to_owned(),
                 episode_id: Some("episode-anime-p3-1-2".to_owned()),

@@ -1583,7 +1583,7 @@ impl<'connection> SqliteRepository<'connection> {
         self.list_downloads()
     }
 
-    /// 删除下载任务，按文件删除结果清理媒体索引，并恢复关联单集状态。
+    /// 按应用内唯一标识删除下载任务，并恢复关联单集状态。
     fn remove_download_task(
         &self,
         task_id: &str,
@@ -1592,7 +1592,7 @@ impl<'connection> SqliteRepository<'connection> {
         let existing = self
             .list_downloads()?
             .into_iter()
-            .find(|task| task.id == task_id || task.torrent_hash.as_deref() == Some(task_id));
+            .find(|task| task.id == task_id);
         let Some(existing) = existing else {
             return self.list_downloads();
         };
@@ -1603,10 +1603,7 @@ impl<'connection> SqliteRepository<'connection> {
                     [&existing.id],
                 )?;
             }
-            connection.execute(
-                "DELETE FROM download_task WHERE id = ?1 OR torrent_hash = ?1",
-                [task_id],
-            )?;
+            connection.execute("DELETE FROM download_task WHERE id = ?1", [task_id])?;
             restore_linked_episode_after_download_removal(connection, &existing)?;
             Ok(())
         })?;
@@ -3293,6 +3290,14 @@ fn validate_episode(episode: &Episode) -> Result<(), StorageError> {
 /// 校验下载任务及其完整文件快照可安全写入 SQLite。
 fn validate_download_task(task: &DownloadTask) -> Result<(), StorageError> {
     validate_identifier("downloadTask.id", &task.id)?;
+    if task.id
+        != task
+            .engine
+            .scope_task_id(task.engine.unscoped_task_id(&task.id))
+        || task.engine.unscoped_task_id(&task.id) == task.id
+    {
+        return invalid_input("downloadTask.id", "下载任务标识必须包含所属引擎命名空间");
+    }
     if task.name.trim().is_empty() {
         return invalid_input("downloadTask.name", "下载任务名称不能为空");
     }
@@ -3335,6 +3340,9 @@ fn validate_download_task(task: &DownloadTask) -> Result<(), StorageError> {
     let mut file_indexes = HashSet::new();
     for file in &task.files {
         validate_identifier("torrentFile.id", &file.id)?;
+        if file.id != format!("{}:{}", task.id, file.index) {
+            return invalid_input("torrentFile.id", "种子文件标识必须隶属于下载任务");
+        }
         if !file_ids.insert(file.id.as_str()) {
             return invalid_input("torrentFile.id", "同一任务内文件标识不能重复");
         }
@@ -3431,10 +3439,7 @@ fn download_status_value(status: &DownloadStatus) -> &'static str {
 
 /// 返回下载引擎类型的 SQLite 字面量。
 fn torrent_engine_value(engine: &TorrentEngineKind) -> &'static str {
-    match engine {
-        TorrentEngineKind::Embedded => "embedded",
-        TorrentEngineKind::Qbittorrent => "qbittorrent",
-    }
+    engine.as_key()
 }
 
 /// 返回番剧别名语言的 SQLite 字面量。

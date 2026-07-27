@@ -39,6 +39,7 @@ bin-release/
 /native/torrent-core/build/
 /android/.gradle/
 /android/**/build/
+/crates/tauri-plugin-ani-mobile/android/.tauri/
 /artifacts/torrent-core/
 /.cache/qbittorrent-build/
 /artifacts/qbittorrent/

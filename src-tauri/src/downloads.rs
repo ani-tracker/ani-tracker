@@ -445,6 +445,16 @@ impl AppDownloadState {
                 .await
                 .map_err(|error| error.to_string())?;
         }
+        let restored = self
+            .service
+            .refresh(default_engine.clone())
+            .await
+            .map_err(|error| format!("恢复当前下载引擎任务失败：{error}"))?;
+        log::info!(
+            "Tauri 下载引擎切换完成：engine={:?}, restored_tasks={}",
+            default_engine,
+            restored.tasks.len()
+        );
         Ok(())
     }
 

@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use ani_downloads::{DownloadEngineError, TorrentCoreTransport};
+use ani_downloads::{map_torrent_core_error, DownloadEngineError, TorrentCoreTransport};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -109,7 +109,7 @@ impl TorrentCoreTransport for MobileTorrentCoreTransport {
             .pointer("/error/message")
             .and_then(Value::as_str)
             .unwrap_or("移动 torrent-core 请求失败");
-        Err(DownloadEngineError::Protocol(format!("{message} ({code})")))
+        Err(map_torrent_core_error(code, message))
     }
 
     /// 通过平台生命周期入口保存恢复数据并停止核心。
@@ -140,7 +140,7 @@ mod tests {
     #[derive(Default)]
     struct StubBackend {
         requests: Mutex<Vec<Value>>,
-        failure: Mutex<Option<String>>,
+        failure: Mutex<Option<(String, String)>>,
     }
 
     #[async_trait]
@@ -151,11 +151,11 @@ mod tests {
                 .lock()
                 .expect("lock requests")
                 .push(request.clone());
-            if let Some(message) = self.failure.lock().expect("lock failure").clone() {
+            if let Some((code, message)) = self.failure.lock().expect("lock failure").clone() {
                 return Ok(json!({
                     "id": request["id"],
                     "ok": "false",
-                    "error": { "code": "TEST", "message": message }
+                    "error": { "code": code, "message": message }
                 })
                 .to_string());
             }
@@ -202,7 +202,7 @@ mod tests {
     #[tokio::test]
     async fn maps_mobile_core_error() {
         let backend = Arc::new(StubBackend::default());
-        *backend.failure.lock().expect("lock") = Some("任务不存在".to_owned());
+        *backend.failure.lock().expect("lock") = Some(("TEST".to_owned(), "测试失败".to_owned()));
         let transport = MobileTorrentCoreTransport::new(backend);
 
         let error = transport
@@ -210,6 +210,24 @@ mod tests {
             .await
             .expect_err("request must fail");
 
-        assert!(error.to_string().contains("任务不存在 (TEST)"));
+        assert!(error.to_string().contains("测试失败 (TEST)"));
+    }
+
+    /// 验证移动核心任务缺失映射为可幂等处理的稳定错误。
+    #[tokio::test]
+    async fn maps_mobile_missing_task_error() {
+        let backend = Arc::new(StubBackend::default());
+        *backend.failure.lock().expect("lock") = Some((
+            "TASK_NOT_FOUND".to_owned(),
+            "内置下载任务不存在: missing".to_owned(),
+        ));
+        let transport = MobileTorrentCoreTransport::new(backend);
+
+        let error = transport
+            .execute("remove", json!({ "taskId": "missing" }))
+            .await
+            .expect_err("request must fail");
+
+        assert!(matches!(error, DownloadEngineError::TaskNotFound(_)));
     }
 }

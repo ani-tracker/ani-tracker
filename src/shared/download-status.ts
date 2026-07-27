@@ -42,3 +42,13 @@ export function isCompletedDownloadTask(task: DownloadProgressState): boolean {
 export function isActiveDownloadTask(task: DownloadProgressState): boolean {
   return isActiveDownloadStatus(task.status) && !isCompletedDownloadTask(task);
 }
+
+/** 判断任务是否正在由下载引擎执行做种。 */
+export function isSeedingDownloadTask(task: Pick<DownloadProgressState, "status">): boolean {
+  return task.status === "seeding";
+}
+
+/** 判断任务是否完成下载且当前没有执行做种。 */
+export function isFinishedDownloadTask(task: DownloadProgressState): boolean {
+  return isCompletedDownloadTask(task) && !isSeedingDownloadTask(task);
+}

@@ -46,7 +46,7 @@ impl DownloadTaskStore for MemoryStore {
         _delete_files: bool,
     ) -> RepositoryResult<Vec<DownloadTask>> {
         let mut tasks = self.tasks.lock().expect("lock tasks");
-        tasks.retain(|task| task.id != task_id && task.torrent_hash.as_deref() != Some(task_id));
+        tasks.retain(|task| task.id != task_id);
         Ok(tasks.clone())
     }
 }
@@ -56,6 +56,7 @@ struct FakeEngine {
     tasks: Mutex<Vec<DownloadTask>>,
     calls: Mutex<Vec<String>>,
     list_error: Option<DownloadEngineError>,
+    remove_error: Option<DownloadEngineError>,
     shutdown_error: Option<DownloadEngineError>,
 }
 
@@ -67,6 +68,7 @@ impl FakeEngine {
             tasks: Mutex::new(tasks),
             calls: Mutex::new(Vec::new()),
             list_error: None,
+            remove_error: None,
             shutdown_error: None,
         }
     }
@@ -75,6 +77,14 @@ impl FakeEngine {
     fn failing_list(kind: TorrentEngineKind) -> Self {
         Self {
             list_error: Some(DownloadEngineError::Unavailable("测试离线".to_owned())),
+            ..Self::new(kind, Vec::new())
+        }
+    }
+
+    /// 创建在删除时报告任务不存在的下载引擎替身。
+    fn missing_remove(kind: TorrentEngineKind) -> Self {
+        Self {
+            remove_error: Some(DownloadEngineError::TaskNotFound("missing".to_owned())),
             ..Self::new(kind, Vec::new())
         }
     }
@@ -193,7 +203,10 @@ impl DownloadEngine for FakeEngine {
             },
             Some(task_id),
         );
-        Ok(())
+        match self.remove_error.clone() {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
     }
 
     async fn shutdown(&self) -> Result<(), DownloadEngineError> {
@@ -275,6 +288,8 @@ async fn adds_associated_task_through_selected_engine() {
         .expect("add associated task");
 
     assert_eq!(tasks[0].anime_id.as_deref(), Some("anime-1"));
+    assert_eq!(tasks[0].id, "embedded:raw-id");
+    assert_eq!(tasks[0].files[0].id, "embedded:raw-id:0");
     assert_eq!(tasks[0].name, "测试任务");
     assert_eq!(tasks[0].release_id.as_deref(), Some("release-1"));
     assert_eq!(tasks[0].correlation_tag.as_deref(), Some("auto-1"));
@@ -284,7 +299,7 @@ async fn adds_associated_task_through_selected_engine() {
 /// 验证暂停、恢复、优先级和删除始终路由到任务创建时的引擎。
 #[tokio::test]
 async fn routes_task_controls_to_original_engine() {
-    let existing = task("qb-task", TorrentEngineKind::Qbittorrent, Some("qb-hash"));
+    let existing = stored_task("qb-task", TorrentEngineKind::Qbittorrent, Some("qb-hash"));
     let store = Arc::new(MemoryStore::with_tasks(vec![existing]));
     let embedded = Arc::new(FakeEngine::new(TorrentEngineKind::Embedded, Vec::new()));
     let qbittorrent = Arc::new(FakeEngine::new(TorrentEngineKind::Qbittorrent, Vec::new()));
@@ -297,17 +312,28 @@ async fn routes_task_controls_to_original_engine() {
         .expect("register qbittorrent");
     let service = DownloadTaskService::new(Arc::new(registry), store);
 
-    let paused = service.pause("qb-task").await.expect("pause task");
+    let paused = service
+        .pause("qbittorrent:qb-task", &TorrentEngineKind::Qbittorrent)
+        .await
+        .expect("pause task");
     assert_eq!(paused[0].status, DownloadStatus::Paused);
     let prioritized = service
-        .set_file_priority("qb-task", &[0], 0)
+        .set_file_priority(
+            "qbittorrent:qb-task",
+            &[0],
+            0,
+            &TorrentEngineKind::Qbittorrent,
+        )
         .await
         .expect("set priority");
     assert!(!prioritized[0].files[0].selected);
-    let resumed = service.resume("qb-task").await.expect("resume task");
+    let resumed = service
+        .resume("qbittorrent:qb-task", &TorrentEngineKind::Qbittorrent)
+        .await
+        .expect("resume task");
     assert_eq!(resumed[0].status, DownloadStatus::Downloading);
     assert!(service
-        .remove("qb-task", true)
+        .remove("qbittorrent:qb-task", true, &TorrentEngineKind::Qbittorrent,)
         .await
         .expect("remove task")
         .is_empty());
@@ -327,7 +353,7 @@ async fn routes_task_controls_to_original_engine() {
 /// 验证刷新真实哈希任务时合并占位任务业务元数据并移除旧标识。
 #[tokio::test]
 async fn merges_engine_snapshot_with_pending_task() {
-    let mut pending = task("pending-task", TorrentEngineKind::Embedded, None);
+    let mut pending = stored_task("pending-task", TorrentEngineKind::Embedded, None);
     pending.correlation_tag = Some("auto-correlation".to_owned());
     pending.anime_id = Some("anime-1".to_owned());
     pending.episode_id = Some("episode-1".to_owned());
@@ -350,9 +376,8 @@ async fn merges_engine_snapshot_with_pending_task() {
         .refresh(TorrentEngineKind::Embedded)
         .await
         .expect("refresh embedded");
-    assert!(result.failures.is_empty());
     assert_eq!(result.tasks.len(), 1);
-    assert_eq!(result.tasks[0].id, "actual-hash");
+    assert_eq!(result.tasks[0].id, "embedded:actual-hash");
     assert_eq!(result.tasks[0].anime_id.as_deref(), Some("anime-1"));
     assert_eq!(
         result.tasks[0].files[0].episode_id.as_deref(),
@@ -360,10 +385,10 @@ async fn merges_engine_snapshot_with_pending_task() {
     );
 }
 
-/// 验证历史引擎刷新失败不会清空默认引擎和本地任务。
+/// 验证刷新当前引擎不会唤起历史引擎，历史快照仍可切回读取。
 #[tokio::test]
 async fn isolates_inactive_engine_refresh_failure() {
-    let old = task(
+    let old = stored_task(
         "old-qb-task",
         TorrentEngineKind::Qbittorrent,
         Some("old-qb-hash"),
@@ -379,7 +404,7 @@ async fn isolates_inactive_engine_refresh_failure() {
     let mut registry = DownloadEngineRegistry::new();
     registry.register(embedded).expect("register embedded");
     registry
-        .register(qbittorrent)
+        .register(qbittorrent.clone())
         .expect("register qbittorrent");
     let service = DownloadTaskService::new(Arc::new(registry), store);
 
@@ -387,11 +412,110 @@ async fn isolates_inactive_engine_refresh_failure() {
         .refresh(TorrentEngineKind::Embedded)
         .await
         .expect("refresh with old engine failure");
-    assert_eq!(result.failures.len(), 1);
-    assert_eq!(result.failures[0].engine, TorrentEngineKind::Qbittorrent);
-    assert_eq!(result.tasks.len(), 2);
-    assert!(result.tasks.iter().any(|task| task.id == "old-qb-task"));
-    assert!(result.tasks.iter().any(|task| task.id == "embedded-task"));
+    assert_eq!(result.tasks.len(), 1);
+    assert_eq!(result.tasks[0].id, "embedded:embedded-task");
+    assert!(qbittorrent.recorded().is_empty());
+    let old_tasks = service
+        .list_for_engine(&TorrentEngineKind::Qbittorrent)
+        .expect("list inactive engine snapshot");
+    assert_eq!(old_tasks.len(), 1);
+    assert_eq!(old_tasks[0].id, "qbittorrent:old-qb-task");
+}
+
+/// 验证同一 torrent hash 在两个引擎中独立保存并可分别恢复控制。
+#[tokio::test]
+async fn isolates_same_hash_across_engine_switches() {
+    let embedded = Arc::new(FakeEngine::new(
+        TorrentEngineKind::Embedded,
+        vec![task(
+            "shared-hash",
+            TorrentEngineKind::Embedded,
+            Some("shared-hash"),
+        )],
+    ));
+    let qbittorrent = Arc::new(FakeEngine::new(
+        TorrentEngineKind::Qbittorrent,
+        vec![task(
+            "shared-hash",
+            TorrentEngineKind::Qbittorrent,
+            Some("shared-hash"),
+        )],
+    ));
+    let mut registry = DownloadEngineRegistry::new();
+    registry
+        .register(embedded.clone())
+        .expect("register embedded");
+    registry
+        .register(qbittorrent.clone())
+        .expect("register qbittorrent");
+    let service = DownloadTaskService::new(Arc::new(registry), Arc::new(MemoryStore::default()));
+
+    let embedded_tasks = service
+        .refresh(TorrentEngineKind::Embedded)
+        .await
+        .expect("restore embedded tasks")
+        .tasks;
+    let qbittorrent_tasks = service
+        .refresh(TorrentEngineKind::Qbittorrent)
+        .await
+        .expect("restore qbittorrent tasks")
+        .tasks;
+    assert_eq!(embedded_tasks[0].id, "embedded:shared-hash");
+    assert_eq!(qbittorrent_tasks[0].id, "qbittorrent:shared-hash");
+    assert_eq!(service.list().expect("list all tasks").len(), 2);
+
+    service
+        .pause("embedded:shared-hash", &TorrentEngineKind::Embedded)
+        .await
+        .expect("pause embedded task");
+    service
+        .pause("qbittorrent:shared-hash", &TorrentEngineKind::Qbittorrent)
+        .await
+        .expect("pause qbittorrent task");
+    assert!(embedded
+        .recorded()
+        .contains(&"pause:shared-hash".to_owned()));
+    assert!(qbittorrent
+        .recorded()
+        .contains(&"pause:shared-hash".to_owned()));
+    let calls_before = qbittorrent.recorded();
+    assert!(service
+        .resume("qbittorrent:shared-hash", &TorrentEngineKind::Embedded)
+        .await
+        .is_err());
+    assert_eq!(qbittorrent.recorded(), calls_before);
+}
+
+/// 验证引擎任务已消失时仅允许保留文件地移除本地快照。
+#[tokio::test]
+async fn removes_missing_engine_task_without_deleting_files() {
+    let existing = stored_task(
+        "missing-task",
+        TorrentEngineKind::Embedded,
+        Some("missing-hash"),
+    );
+    let engine = Arc::new(FakeEngine::missing_remove(TorrentEngineKind::Embedded));
+    let mut registry = DownloadEngineRegistry::new();
+    registry.register(engine).expect("register embedded");
+    let store = Arc::new(MemoryStore::with_tasks(vec![existing.clone()]));
+    let service = DownloadTaskService::new(Arc::new(registry), store);
+
+    assert!(service
+        .remove("embedded:missing-task", false, &TorrentEngineKind::Embedded,)
+        .await
+        .expect("remove stale local snapshot")
+        .is_empty());
+
+    let engine = Arc::new(FakeEngine::missing_remove(TorrentEngineKind::Embedded));
+    let mut registry = DownloadEngineRegistry::new();
+    registry.register(engine).expect("register embedded");
+    let store = Arc::new(MemoryStore::with_tasks(vec![existing]));
+    let service = DownloadTaskService::new(Arc::new(registry), store.clone());
+    assert!(service
+        .remove("embedded:missing-task", true, &TorrentEngineKind::Embedded,)
+        .await
+        .is_err());
+    assert_eq!(store.list_downloads().expect("task remains").len(), 1);
 }
 
 /// 验证未注册引擎和重复注册以稳定错误返回。
@@ -578,4 +702,14 @@ fn task(id: &str, engine: TorrentEngineKind, hash: Option<&str>) -> DownloadTask
         created_at: "2026-07-25T00:00:00.000Z".to_owned(),
         completed_at: None,
     }
+}
+
+/// 创建已经过应用引擎命名空间处理的持久化任务。
+fn stored_task(id: &str, engine: TorrentEngineKind, hash: Option<&str>) -> DownloadTask {
+    let mut task = task(id, engine, hash);
+    task.id = task.engine.scope_task_id(&task.id);
+    for file in &mut task.files {
+        file.id = format!("{}:{}", task.id, file.index);
+    }
+    task
 }
