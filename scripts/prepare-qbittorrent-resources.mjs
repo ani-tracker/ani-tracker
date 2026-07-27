@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { access, cp, mkdir, rm, stat } from "node:fs/promises";
+import { access, chmod, cp, lstat, mkdir, readdir, rm, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join, resolve } from "node:path";
 import process from "node:process";
@@ -86,15 +86,41 @@ if (!availableTargets.length) {
 await mkdir(options.targetRoot, { recursive: true });
 
 for (const target of availableTargets) {
-  await cp(join(options.sourceRoot, target.dir), join(options.targetRoot, target.dir), {
+  const targetDirectory = join(options.targetRoot, target.dir);
+  await cp(join(options.sourceRoot, target.dir), targetDirectory, {
     recursive: true,
     dereference: false,
     verbatimSymlinks: true
   });
+  if (target.platform === "darwin") {
+    const normalizedFiles = await ensureOwnerWritableFiles(targetDirectory);
+    console.log(`[qbittorrent] normalized macOS writable files: ${normalizedFiles}`);
+  }
   console.log(`[qbittorrent] copied ${target.dir} from ${target.binaryPath}`);
 }
 
 console.log(`[qbittorrent] resource output: ${options.targetRoot}`);
+
+/** 让 macOS 普通资源文件可被 Tauri 重复覆盖，同时保留执行位与符号链接。 */
+async function ensureOwnerWritableFiles(directory) {
+  let normalizedFiles = 0;
+  const entries = await readdir(directory, { withFileTypes: true });
+  for (const entry of entries) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      normalizedFiles += await ensureOwnerWritableFiles(path);
+      continue;
+    }
+    if (!entry.isFile()) continue;
+
+    const itemStat = await lstat(path);
+    if ((itemStat.mode & 0o200) === 0) {
+      await chmod(path, itemStat.mode | 0o200);
+      normalizedFiles += 1;
+    }
+  }
+  return normalizedFiles;
+}
 
 /** 查找目标平台中可托管启动的 qBittorrent-nox 文件。 */
 async function findBundledBinary(sourceRoot, target) {

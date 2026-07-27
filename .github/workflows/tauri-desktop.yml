@@ -26,6 +26,8 @@ on:
       - "scripts/prepare-linux-desktop-dependencies.mjs"
       - "scripts/prepare-linux-libvlc-dev.mjs"
       - "scripts/prepare-mac-libvlc-dev.mjs"
+      - "scripts/prepare-qbittorrent-resources.mjs"
+      - "scripts/prepare-qbittorrent-resources.test.mjs"
       - "scripts/prepare-tauri-gate-resources.mjs"
       - "scripts/prepare-tauri-gate-resources.test.mjs"
       - "scripts/prepare-windows-libvlc-dev.mjs"
@@ -53,6 +55,8 @@ on:
       - "scripts/prepare-linux-desktop-dependencies.mjs"
       - "scripts/prepare-linux-libvlc-dev.mjs"
       - "scripts/prepare-mac-libvlc-dev.mjs"
+      - "scripts/prepare-qbittorrent-resources.mjs"
+      - "scripts/prepare-qbittorrent-resources.test.mjs"
       - "scripts/prepare-tauri-gate-resources.mjs"
       - "scripts/prepare-tauri-gate-resources.test.mjs"
       - "scripts/prepare-windows-libvlc-dev.mjs"
@@ -168,7 +172,7 @@ jobs:
       - name: Check TypeScript contracts, Renderer and libVLC scripts
         run: |
           pnpm run typecheck
-          node --test scripts/libvlc-macos-relocation.test.mjs scripts/prepare-tauri-gate-resources.test.mjs
+          pnpm run test:desktop-gates
 
       - name: Check Rust formatting
         run: cargo fmt --all -- --check
