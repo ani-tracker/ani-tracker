@@ -5066,6 +5066,7 @@ dependencies = [
  "dunce",
  "libloading 0.8.9",
  "log",
+ "plist",
  "serde",
  "serde_json",
  "tauri",
@@ -5080,6 +5081,7 @@ version = "0.1.0"
 dependencies = [
  "ani-downloads",
  "async-trait",
+ "plist",
  "serde",
  "serde_json",
  "tauri",

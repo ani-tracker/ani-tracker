@@ -16,6 +16,8 @@ const [
   iosFrameworkVerifier,
   playerPackage,
   torrentPackage,
+  playerBuild,
+  torrentBuild,
   playerError,
   mobileError,
   playerController,
@@ -35,6 +37,8 @@ const [
   readFile("scripts/verify-ios-xcframework.sh", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Package.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-torrent/ios/Package.swift", "utf8"),
+  readFile("crates/tauri-plugin-ani-player/build.rs", "utf8"),
+  readFile("crates/tauri-plugin-ani-torrent/build.rs", "utf8"),
   readFile("crates/tauri-plugin-ani-player/src/error.rs", "utf8"),
   readFile("crates/tauri-plugin-ani-mobile/src/error.rs", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Sources/MobileVLCPlayerController.swift", "utf8"),
@@ -105,6 +109,14 @@ test("iOS 原生插件校验 XCFramework 模块并显式提供切片搜索路径
   assert.match(iosFrameworkVerifier, /arm64-apple-ios\$\{deployment_target\}-simulator/);
   assert.match(playerPackage, /xcframeworkSearchFlags\(named: "MobileVLCKit"\)/);
   assert.match(torrentPackage, /xcframeworkSearchFlags\(named: "AniTorrentCore"\)/);
+  assert.match(playerBuild, /link_ios_xcframework\("MobileVLCKit"\)/);
+  assert.match(torrentBuild, /link_ios_xcframework\("AniTorrentCore"\)/);
+  for (const buildScript of [playerBuild, torrentBuild]) {
+    assert.match(buildScript, /plist::Value::from_file/);
+    assert.match(buildScript, /cargo:rustc-link-search=framework=/);
+    assert.match(buildScript, /cargo:rustc-link-lib=framework=\{framework_name\}/);
+  }
+  assert.match(playerBuild, /cargo:rustc-link-lib=framework=SwiftUI/);
 });
 
 test("移动窗口命令不会编译桌面最小化与最大化 API", () => {
