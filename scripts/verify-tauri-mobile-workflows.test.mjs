@@ -6,6 +6,7 @@ const [
   mobileGate,
   androidRelease,
   iosRelease,
+  desktopRelease,
   androidGradle,
   androidRootGradle,
   androidPlayerGradle,
@@ -34,6 +35,7 @@ const [
   readFile(".github/workflows/tauri-mobile.yml", "utf8"),
   readFile(".github/workflows/tauri-release-android.yml", "utf8"),
   readFile(".github/workflows/tauri-release-ios.yml", "utf8"),
+  readFile(".github/workflows/tauri-release-desktop.yml", "utf8"),
   readFile("src-tauri/gen/android/app/build.gradle.kts", "utf8"),
   readFile("src-tauri/gen/android/build.gradle.kts", "utf8"),
   readFile("crates/tauri-plugin-ani-player/android/build.gradle.kts", "utf8"),
@@ -100,6 +102,20 @@ test("iOS 正式发布保持未签名 IPA 与用户重签边界", () => {
   assert.match(iosRelease, /package-unsigned-ios-ipa\.sh/);
   assert.match(iosRelease, /verify:tauri:ios-package -- --require-unsigned/);
   assert.doesNotMatch(iosRelease, /APPLE_(?:CERTIFICATE|PROVISIONING_PROFILE)/);
+});
+
+test("三端正式发布使用专用令牌与 Node 24 Release Action", () => {
+  const releaseWorkflows = [androidRelease, iosRelease, desktopRelease];
+  for (const releaseWorkflow of releaseWorkflows) {
+    assert.match(
+      releaseWorkflow,
+      /softprops\/action-gh-release@5018f9ec04d67dca7353bf3f40a0933e8d7ddf24/
+    );
+    assert.match(releaseWorkflow, /token: \$\{\{ secrets\.RELEASE_TOKEN \}\}/);
+    assert.match(releaseWorkflow, /if \[\[ -z "\$\{RELEASE_TOKEN\}" \]\]; then/);
+    assert.match(releaseWorkflow, /Missing required GitHub release secret: RELEASE_TOKEN/);
+    assert.doesNotMatch(releaseWorkflow, /ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION/);
+  }
 });
 
 test("iOS torrent-core 隔离设备与模拟器依赖并在构建前校验", () => {
