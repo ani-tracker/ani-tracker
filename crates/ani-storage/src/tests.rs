@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_domain::{
-    AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
+    AnimeSeasonSyncState, AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
     AnimeSourceExclusionScope, AnimeStatus, DownloadStatus, DownloadTask, Episode,
     EpisodePreference, EpisodeStatus, MediaFile, MyAnime, NotificationKind, NotificationRecord,
     NotificationSeverity, PlaybackCheckpoint, ReleaseSearchResult, ReleaseSourceConfig,
@@ -81,7 +81,7 @@ fn initializes_new_database_with_seed() {
     assert!(storage.report().created);
     assert_eq!(storage.report().schema_version, SQLITE_SCHEMA_VERSION);
     assert_eq!(storage.report().app_data_version, APP_DATA_VERSION);
-    assert_eq!(read_meta(&storage.connection, "schema_version"), "18");
+    assert_eq!(read_meta(&storage.connection, "schema_version"), "19");
     assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
     assert_eq!(
         storage
@@ -232,7 +232,7 @@ fn backs_up_and_migrates_legacy_versions() {
         "anime_catalog",
         "detail_json"
     ));
-    assert_eq!(read_meta(&storage.connection, "schema_version"), "18");
+    assert_eq!(read_meta(&storage.connection, "schema_version"), "19");
     assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
     assert_eq!(source_count(&storage.connection, "prowlarr"), 0);
     assert_eq!(source_proxy(&storage.connection, "anibt"), 0);
@@ -609,7 +609,7 @@ fn rejects_corrupt_manual_restore_without_mutating_active_database() {
 
     assert!(storage.restore_from(&corrupt).is_err());
     storage.verify().expect("active database remains valid");
-    assert_eq!(read_meta(&storage.connection, "schema_version"), "18");
+    assert_eq!(read_meta(&storage.connection, "schema_version"), "19");
 }
 
 /// 验证迁移事务失败后恢复原始版本和表结构。
@@ -1160,6 +1160,38 @@ fn reads_and_replaces_p3_anime_catalog() {
     assert!(detail.my_anime.is_some());
     assert!(!detail.stale);
     assert!(detail.partial_errors.is_empty());
+}
+
+/// 验证季度完成标记和 AniList 错误可跨重启持久化。
+#[test]
+fn persists_anime_season_sync_state() {
+    let directory = TestDirectory::new("anime-season-sync-state");
+    let options = test_options(&directory, "active.sqlite");
+    let storage = Storage::open(options.clone()).expect("create season state database");
+    let repository = storage.repository();
+    repository
+        .upsert_anime_season_sync_state(&AnimeSeasonSyncState {
+            year: 2026,
+            season: "summer".to_owned(),
+            last_attempt_at: Some("2026-07-28T06:00:00.000Z".to_owned()),
+            last_successful_sync_at: None,
+            completed_at: None,
+            last_anilist_error: Some("anilist: timeout".to_owned()),
+        })
+        .expect("save failed season state");
+    drop(storage);
+
+    let reopened = Storage::open(options).expect("reopen season state database");
+    let state = reopened
+        .repository()
+        .get_anime_season_sync_state(2026, "summer")
+        .expect("read season state")
+        .expect("saved season state");
+    assert_eq!(state.completed_at, None);
+    assert_eq!(
+        state.last_anilist_error.as_deref(),
+        Some("anilist: timeout")
+    );
 }
 
 /// 验证公共工作单元能回滚或提交复用事务的 Repository 写入。

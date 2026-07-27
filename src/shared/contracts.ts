@@ -80,6 +80,16 @@ export interface AnimeDiscoverySeasonResult {
   errors: string[];
 }
 
+/** 单个自然季度的新番目录后台同步状态。 */
+export interface AnimeSeasonSyncState {
+  year: number;
+  season: Season;
+  lastAttemptAt?: string;
+  lastSuccessfulSyncAt?: string;
+  completedAt?: string;
+  lastAnilistError?: string;
+}
+
 /** 新番关键词搜索返回的本地与在线聚合结果。 */
 export interface AnimeDiscoverySearchResult {
   keyword: string;

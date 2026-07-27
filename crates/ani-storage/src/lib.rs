@@ -19,7 +19,7 @@ use migration::{initialize_database, read_database_versions};
 pub use repository::SqliteRepository;
 
 /// 当前与 Electron 共用的 SQLite 结构版本。
-pub const SQLITE_SCHEMA_VERSION: u32 = 18;
+pub const SQLITE_SCHEMA_VERSION: u32 = 19;
 /// 当前与 TypeScript 共用的应用数据版本。
 pub const APP_DATA_VERSION: u32 = 24;
 

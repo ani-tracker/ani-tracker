@@ -8,6 +8,7 @@ use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 mod automation;
 mod commands;
+mod discovery_sync;
 mod downloads;
 #[cfg(desktop)]
 mod external_player;
@@ -93,6 +94,12 @@ pub fn run() {
                 source_state.clone(),
             );
             source_sync_state.start();
+            let discovery_sync_state = discovery_sync::AppDiscoverySyncState::new(
+                Arc::clone(storage_state.storage()),
+                storage_state.platform_defaults().clone(),
+                source_state.clone(),
+            );
+            discovery_sync_state.start();
             let download_state = downloads::AppDownloadState::new(
                 app.handle(),
                 Arc::clone(storage_state.storage()),
@@ -162,6 +169,7 @@ pub fn run() {
             app.manage(storage_state);
             app.manage(source_state);
             app.manage(source_sync_state);
+            app.manage(discovery_sync_state);
             app.manage(download_state);
             app.manage(media_state);
             app.manage(player_state);
@@ -200,6 +208,7 @@ pub fn run() {
             commands::data::remove_episode_preference,
             commands::data::list_anime_catalog,
             commands::data::search_anime_catalog,
+            commands::data::get_anime_season_sync_state,
             commands::data::collect_anime_month,
             commands::data::collect_anime_season,
             commands::data::get_anime_detail,
@@ -315,6 +324,11 @@ pub fn run() {
             }
             #[cfg(mobile)]
             log::info!("Tauri 移动宿主退出，原生播放器和下载资源交由平台生命周期释放");
+        }
+        if matches!(event, tauri::RunEvent::Resumed) {
+            if let Some(state) = app_handle.try_state::<discovery_sync::AppDiscoverySyncState>() {
+                state.wake();
+            }
         }
     });
 }

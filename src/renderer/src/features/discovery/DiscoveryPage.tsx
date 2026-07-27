@@ -79,6 +79,11 @@ const seasonText: Record<Season, string> = {
   fall: "秋季"
 };
 
+/** 去除稳定来源前缀，返回可直接展示的 AniList 错误。 */
+function normalizeAnilistError(error?: string): string | null {
+  return error?.replace(/^anilist:\s*/i, "").trim() || null;
+}
+
 /** Renders the seasonal anime catalog and its follow actions. */
 export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPageProps = {}) {
   const [target, setTarget] = useState<SeasonTarget>(getCurrentSeasonTarget);
@@ -94,6 +99,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
   const [collecting, setCollecting] = useState(false);
   const [addingAnimeId, setAddingAnimeId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  const [anilistSyncError, setAnilistSyncError] = useState<string | null>(null);
   const loadRequestId = useRef(0);
   const searchRequestId = useRef(0);
 
@@ -112,6 +118,26 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     void loadSeasonCatalog(target.year, target.season);
   }, [target.year, target.season]);
 
+  useEffect(() => {
+    let active = true;
+
+    /** 定期读取本地同步状态，使后台 AniList 失败能及时显示。 */
+    async function refreshSyncState() {
+      try {
+        const syncState = await appApi.getAnimeSeasonSyncState(target.year, target.season);
+        if (active) setAnilistSyncError(normalizeAnilistError(syncState?.lastAnilistError));
+      } catch (error) {
+        console.warn("[discovery] failed to refresh season sync state", error);
+      }
+    }
+
+    const timer = window.setInterval(() => void refreshSyncState(), 15_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [target.year, target.season]);
+
   /** Loads and merges the three local month catalogs in the selected season. */
   async function loadSeasonCatalog(year: number, season: Season) {
     const requestId = ++loadRequestId.current;
@@ -119,9 +145,10 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     setLoading(true);
 
     try {
-      const [catalogs, followed] = await Promise.all([
+      const [catalogs, followed, syncState] = await Promise.all([
         Promise.all(months.map((month) => appApi.listAnimeCatalog(year, month))),
-        appApi.listMyAnime()
+        appApi.listMyAnime(),
+        appApi.getAnimeSeasonSyncState(year, season)
       ]);
 
       if (requestId !== loadRequestId.current) {
@@ -130,6 +157,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
 
       setItems(mergeAnimeItems(catalogs.flat()));
       setMyAnime(followed);
+      setAnilistSyncError(normalizeAnilistError(syncState?.lastAnilistError));
       if (!appliedKeyword) {
         setMessage(null);
       }
@@ -159,11 +187,10 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
       const result = await appApi.collectAnimeSeason({ ...target, forceRefresh });
       await loadSeasonCatalog(target.year, target.season);
       setMessage({
-        tone: result.errors.length ? "error" : "success",
-        text: result.errors.length
-          ? `部分来源采集失败，已保留本地缓存：${result.errors[0]}`
-          : `季度采集完成：新增 ${result.addedCount}，更新 ${result.existingCount}，共 ${result.items.length} 部`
+        tone: "success",
+        text: `季度采集完成：新增 ${result.addedCount}，更新 ${result.existingCount}，共 ${result.items.length} 部`
       });
+      if (result.errors.length) setMessage(null);
       console.info("[discovery] season catalog collected", {
         ...target,
         itemCount: result.items.length,
@@ -463,6 +490,14 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
             </EmptyContent>
           </Empty>
         )
+      )}
+
+      {anilistSyncError && (
+        <Alert variant="destructive">
+          <AlertCircle />
+          <AlertTitle>AniList 同步失败</AlertTitle>
+          <AlertDescription>{anilistSyncError}</AlertDescription>
+        </Alert>
       )}
     </Page>
   );

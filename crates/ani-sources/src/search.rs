@@ -26,7 +26,10 @@ use crate::release::{
     matches_anime_release_title, normalize_release_search_text, release_matches_episode,
     AnimeReleaseCompatibility,
 };
-use crate::{CircuitStateStore, HttpMethod, NativeHttpRequest, SourceError, SourceNetworkService};
+use crate::{
+    CircuitStateStore, HttpMethod, NativeHttpRequest, NetworkRequestChannel, SourceError,
+    SourceNetworkService,
+};
 
 pub const MAX_RELEASE_SOURCE_FETCH_LIMIT: usize = 50;
 pub const MAX_RELEASE_SOURCE_RESULT_LIMIT: usize = 200;
@@ -105,12 +108,24 @@ where
 /// 组合来源网络、站点适配器、标题匹配和持久化缓存的搜索服务。
 pub struct ReleaseSearchService {
     network: Arc<SourceNetworkService>,
+    channel: NetworkRequestChannel,
 }
 
 impl ReleaseSearchService {
     /// 创建复用同一连接池、限流和熔断策略的搜索服务。
     pub fn new(network: Arc<SourceNetworkService>) -> Self {
-        Self { network }
+        Self {
+            network,
+            channel: NetworkRequestChannel::Interactive,
+        }
+    }
+
+    /// 创建使用独立后台限流与熔断状态的采集服务。
+    pub fn new_background(network: Arc<SourceNetworkService>) -> Self {
+        Self {
+            network,
+            channel: NetworkRequestChannel::Background,
+        }
     }
 
     /// 按任意关键词并行搜索全部启用来源，单源失败不会清空成功结果。
@@ -1121,20 +1136,24 @@ impl ReleaseSearchService {
     where
         S: ReleaseSearchStore + Sync,
     {
-        self.network
-            .execute(
-                store,
-                config,
-                NativeHttpRequest {
-                    source_id: config.id.clone(),
-                    method: HttpMethod::Get,
-                    url: url.to_owned(),
-                    headers,
-                    body: None,
-                    request_interval_ms: config.request_interval_ms.max(0) as u64,
-                },
-            )
-            .await
+        let request = NativeHttpRequest {
+            source_id: config.id.clone(),
+            method: HttpMethod::Get,
+            url: url.to_owned(),
+            headers,
+            body: None,
+            request_interval_ms: config.request_interval_ms.max(0) as u64,
+        };
+        match self.channel {
+            NetworkRequestChannel::Interactive => {
+                self.network.execute(store, config, request).await
+            }
+            NetworkRequestChannel::Background => {
+                self.network
+                    .execute_background(store, config, request)
+                    .await
+            }
+        }
     }
 }
 

@@ -560,6 +560,8 @@ class TorrentCore {
     result.put("progress", static_cast<double>(state.progress_ppm) / 1'000'000.0);
     result.put("downloadSpeed", state.download_payload_rate);
     result.put("uploadSpeed", state.upload_payload_rate);
+    result.put("totalSize", state.total_wanted);
+    result.put("downloadedSize", state.total_wanted_done);
     const auto remaining = std::max<std::int64_t>(0, state.total_wanted - state.total_wanted_done);
     result.put("etaSeconds", state.download_payload_rate > 0 ? remaining / state.download_payload_rate : 0);
     result.put("savePath", state.save_path);

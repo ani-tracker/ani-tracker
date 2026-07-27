@@ -186,7 +186,7 @@ fn path_error(action: &'static str, error: tauri::Error) -> StorageError {
 fn build_default_settings(directories: &AppDirectories) -> AppSettings {
     let mobile = cfg!(any(target_os = "android", target_os = "ios"));
     let managed_qbittorrent = !mobile;
-    let max_active_downloads = if mobile { 1 } else { 3 };
+    let max_active_downloads = 3;
     let upnp_enabled = !mobile;
     json!({
         "appearance": {
@@ -281,6 +281,10 @@ fn platform_settings_constraints_for(mobile: bool) -> Value {
             "defaultPlayerProfileId": "builtin",
             "players": [],
             "download": {
+                "defaultTorrentEngine": "embedded",
+                "embedded": {
+                    "enabled": true
+                },
                 "qbittorrent": {
                     "autoConnect": false,
                     "managed": {
@@ -649,8 +653,10 @@ mod tests {
             "defaultPlayerProfileId": "mpv",
             "players": [{ "id": "mpv" }],
             "download": {
+                "defaultTorrentEngine": "qbittorrent",
                 "defaultDownloadDir": "C:/invalid-downloads",
                 "temporaryDownloadDir": "C:/invalid-incomplete",
+                "embedded": { "enabled": false },
                 "qbittorrent": {
                     "baseUrl": "https://qb.example.test",
                     "managed": { "enabled": true }
@@ -665,6 +671,8 @@ mod tests {
 
         assert_eq!(settings["defaultPlayerProfileId"], "builtin");
         assert_eq!(settings["players"], json!([]));
+        assert_eq!(settings["download"]["defaultTorrentEngine"], "embedded");
+        assert_eq!(settings["download"]["embedded"]["enabled"], true);
         assert_eq!(
             settings["download"]["defaultDownloadDir"],
             "C:/invalid-downloads"

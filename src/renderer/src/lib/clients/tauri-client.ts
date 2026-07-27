@@ -11,6 +11,7 @@ import type {
   AnimeDiscoverySearchResult,
   AnimeDiscoverySeasonQuery,
   AnimeDiscoverySeasonResult,
+  AnimeSeasonSyncState,
   AnimeSourceBindingState,
   AnimeWatchProgress,
   AutomationRunResult,
@@ -416,6 +417,18 @@ class TauriClientCore implements AppClient {
     return invoke<AnimeDiscoverySeasonResult>("collect_anime_season", { query }).catch((error) => {
       throw normalizeTauriError("collect_anime_season", error);
     });
+  }
+
+  /** 读取指定季度的持久化后台同步状态。 */
+  async getAnimeSeasonSyncState(
+    year: number,
+    season: AnimeDiscoverySeasonQuery["season"]
+  ): Promise<AnimeSeasonSyncState | undefined> {
+    return invoke<AnimeSeasonSyncState | null>("get_anime_season_sync_state", { year, season })
+      .then((state) => state ?? undefined)
+      .catch((error) => {
+        throw normalizeTauriError("get_anime_season_sync_state", error);
+      });
   }
 
   /** 读取番剧详情页所需的本地聚合数据。 */

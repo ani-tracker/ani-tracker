@@ -1,9 +1,9 @@
 use ani_domain::{
-    Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeSourceBinding, AnimeSourceExclusion,
-    AnimeWatchProgress, AppSettings, DashboardData, DownloadTask, Episode, EpisodePreference,
-    FansubGroup, MediaFile, MyAnime, NotificationRecord, PlaybackCheckpoint, Release,
-    ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
-    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeSeasonSyncState, AnimeSourceBinding,
+    AnimeSourceExclusion, AnimeWatchProgress, AppSettings, DashboardData, DownloadTask, Episode,
+    EpisodePreference, FansubGroup, MediaFile, MyAnime, NotificationRecord, PlaybackCheckpoint,
+    Release, ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
+    RequestCircuitState, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use serde_json::Value;
 
@@ -114,6 +114,16 @@ pub trait AnimeCatalogRepository {
         month: i64,
         items: &[Anime],
     ) -> RepositoryResult<AnimeCatalogWriteResult>;
+
+    /// 读取指定季度的新番目录同步状态。
+    fn get_anime_season_sync_state(
+        &self,
+        year: i64,
+        season: &str,
+    ) -> RepositoryResult<Option<AnimeSeasonSyncState>>;
+
+    /// 保存指定季度的新番目录同步状态。
+    fn upsert_anime_season_sync_state(&self, state: &AnimeSeasonSyncState) -> RepositoryResult<()>;
 
     /// 聚合番剧详情页需要的本地数据。
     fn get_anime_detail(&self, anime_id: &str) -> RepositoryResult<AnimeDetailResult>;

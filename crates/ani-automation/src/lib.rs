@@ -17,10 +17,12 @@ use ani_sources::{
 use chrono::{DateTime, Datelike, Duration, Local, SecondsFormat, Utc};
 use futures_util::future::join_all;
 
+mod discovery_sync;
 mod episode_sync;
 mod reminder;
 mod scan;
 
+pub use discovery_sync::{months_for_season, AnimeDiscoverySyncService, AnimeDiscoverySyncStore};
 pub use episode_sync::{EpisodeSyncResult, EpisodeSyncService, EpisodeSyncStore};
 pub use reminder::{DailyReminderService, DailyReminderStore};
 pub use scan::{
@@ -30,7 +32,7 @@ pub use scan::{
 };
 
 const CACHE_RETENTION_DAYS: i64 = 90;
-const RELEASE_SOURCE_CIRCUIT_GROUP: &str = "release-source";
+const RELEASE_SOURCE_CIRCUIT_GROUP: &str = "release-source-background";
 
 /// 来源同步运行参数。
 #[derive(Debug, Clone, Default)]
@@ -140,7 +142,7 @@ impl SourceSyncService {
     /// 创建复用来源网络连接池的同步服务。
     pub fn new(network: Arc<SourceNetworkService>) -> Self {
         Self {
-            collector: ReleaseSearchService::new(network),
+            collector: ReleaseSearchService::new_background(network),
         }
     }
 

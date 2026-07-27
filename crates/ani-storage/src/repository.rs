@@ -3,16 +3,16 @@ use std::collections::{HashMap, HashSet};
 
 use ani_domain::{
     Anime, AnimeAlias, AnimeAliasLanguage, AnimeDetailPartialError, AnimeDetailResult,
-    AnimeDiscoverySearchResult, AnimeRating, AnimeRssSubscription, AnimeSourceBinding,
-    AnimeSourceBindingMatchMethod, AnimeSourceExclusion, AnimeSourceExclusionScope, AnimeStatus,
-    AnimeWatchProgress, AppSettings, DailyReminderItem, DailyReminderSummary, DashboardData,
-    DownloadStatus, DownloadTask, Episode, EpisodePreference, EpisodeStatus, EpisodeSummary,
-    FansubGroup, MediaFile, MyAnime, NormalizedVideoCodec, NotificationKind, NotificationRecord,
-    NotificationSeverity, PendingAction, PlaybackCheckpoint, Release, ReleaseResolution,
-    ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
-    SavePlaybackCheckpointInput, SecretReference, SecretValue, SecureStore,
-    SetAnimeWatchProgressInput, SourceHealth, SourceKind, SubtitleLanguage, SubtitlePreference,
-    TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
+    AnimeDiscoverySearchResult, AnimeRating, AnimeRssSubscription, AnimeSeasonSyncState,
+    AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
+    AnimeSourceExclusionScope, AnimeStatus, AnimeWatchProgress, AppSettings, DailyReminderItem,
+    DailyReminderSummary, DashboardData, DownloadStatus, DownloadTask, Episode, EpisodePreference,
+    EpisodeStatus, EpisodeSummary, FansubGroup, MediaFile, MyAnime, NormalizedVideoCodec,
+    NotificationKind, NotificationRecord, NotificationSeverity, PendingAction, PlaybackCheckpoint,
+    Release, ReleaseResolution, ReleaseSourceConfig, ReleaseSourceSyncState,
+    ReportPlaybackProgressInput, RequestCircuitState, SavePlaybackCheckpointInput, SecretReference,
+    SecretValue, SecureStore, SetAnimeWatchProgressInput, SourceHealth, SourceKind,
+    SubtitleLanguage, SubtitlePreference, TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
 };
 use ani_repository::{
     AnimeCatalogRepository, AnimeCatalogWriteResult, AnimeSourceBindingRepository,
@@ -348,6 +348,53 @@ impl<'connection> SqliteRepository<'connection> {
             return invalid_input("month", "月份必须在 1 到 12 之间");
         }
         self.persist_anime_catalog(items, Some((year, month)))
+    }
+
+    /// 读取指定季度的新番目录同步状态。
+    pub(crate) fn get_anime_season_sync_state(
+        &self,
+        year: i64,
+        season: &str,
+    ) -> Result<Option<AnimeSeasonSyncState>, StorageError> {
+        validate_anime_season(season)?;
+        self.connection
+            .query_row(
+                "SELECT * FROM anime_season_sync_state WHERE year = ?1 AND season = ?2",
+                params![year, season],
+                map_anime_season_sync_state_row,
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    /// 保存指定季度的新番目录同步状态。
+    pub(crate) fn upsert_anime_season_sync_state(
+        &self,
+        state: &AnimeSeasonSyncState,
+    ) -> Result<(), StorageError> {
+        validate_anime_season(&state.season)?;
+        self.connection.execute(
+            "INSERT INTO anime_season_sync_state (
+               year, season, last_attempt_at, last_successful_sync_at,
+               completed_at, last_anilist_error, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+             ON CONFLICT(year, season) DO UPDATE SET
+               last_attempt_at = excluded.last_attempt_at,
+               last_successful_sync_at = excluded.last_successful_sync_at,
+               completed_at = excluded.completed_at,
+               last_anilist_error = excluded.last_anilist_error,
+               updated_at = excluded.updated_at",
+            params![
+                state.year,
+                state.season,
+                state.last_attempt_at,
+                state.last_successful_sync_at,
+                state.completed_at,
+                state.last_anilist_error,
+                now_iso(),
+            ],
+        )?;
+        Ok(())
     }
 
     /// 聚合本地番剧、追番、单集和字幕组供详情页首屏使用。
@@ -2063,6 +2110,21 @@ impl AnimeCatalogRepository for SqliteRepository<'_> {
             .map_err(RepositoryError::from)
     }
 
+    /// 通过 SQLite 适配器读取季度同步状态。
+    fn get_anime_season_sync_state(
+        &self,
+        year: i64,
+        season: &str,
+    ) -> RepositoryResult<Option<AnimeSeasonSyncState>> {
+        SqliteRepository::get_anime_season_sync_state(self, year, season)
+            .map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存季度同步状态。
+    fn upsert_anime_season_sync_state(&self, state: &AnimeSeasonSyncState) -> RepositoryResult<()> {
+        SqliteRepository::upsert_anime_season_sync_state(self, state).map_err(RepositoryError::from)
+    }
+
     /// 通过 SQLite 适配器读取番剧详情。
     fn get_anime_detail(&self, anime_id: &str) -> RepositoryResult<AnimeDetailResult> {
         SqliteRepository::get_anime_detail(self, anime_id).map_err(RepositoryError::from)
@@ -3275,6 +3337,14 @@ fn validate_identifier(field: &'static str, value: &str) -> Result<(), StorageEr
         return invalid_input(field, "标识不能为空且不能超过 200 个字符");
     }
     Ok(())
+}
+
+/// 校验季度值属于稳定枚举。
+fn validate_anime_season(season: &str) -> Result<(), StorageError> {
+    if matches!(season, "winter" | "spring" | "summer" | "fall") {
+        return Ok(());
+    }
+    invalid_input("season", "季度必须是 winter、spring、summer 或 fall")
 }
 
 /// 校验单集标识、番剧关联和集数。
@@ -4707,6 +4777,18 @@ fn map_request_circuit_state_row(row: &Row<'_>) -> rusqlite::Result<RequestCircu
         last_request_at: row.get("last_request_at")?,
         failure_count: row.get("failure_count")?,
         backoff_until: row.get("backoff_until")?,
+    })
+}
+
+/// 映射 SQLite 新番季度同步状态。
+fn map_anime_season_sync_state_row(row: &Row<'_>) -> rusqlite::Result<AnimeSeasonSyncState> {
+    Ok(AnimeSeasonSyncState {
+        year: row.get("year")?,
+        season: row.get("season")?,
+        last_attempt_at: row.get("last_attempt_at")?,
+        last_successful_sync_at: row.get("last_successful_sync_at")?,
+        completed_at: row.get("completed_at")?,
+        last_anilist_error: row.get("last_anilist_error")?,
     })
 }
 

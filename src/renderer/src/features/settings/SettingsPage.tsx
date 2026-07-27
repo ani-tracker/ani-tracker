@@ -431,6 +431,9 @@ export function SettingsPage() {
     if (!draft) {
       return;
     }
+    if (!capabilities.externalQbittorrent && mode !== "embedded") {
+      return;
+    }
     const managed = mode === "managed";
     const embedded = mode === "embedded";
     setDraft({
@@ -719,7 +722,7 @@ export function SettingsPage() {
   const selectedPlayer = draft.players.find((player) => player.id === selectedPlayerId);
   const selectedCandidate = playerDetection?.candidates.find((candidate) => candidate.profileId === selectedPlayerId);
   const autoCandidate = playerDetection?.candidates.find((candidate) => candidate.profileId === playerDetection.detectedProfileId);
-  const torrentEngineMode = draft.download.defaultTorrentEngine === "embedded"
+  const torrentEngineMode = !capabilities.externalQbittorrent || draft.download.defaultTorrentEngine === "embedded"
     ? "embedded"
     : capabilities.managedQbittorrent && draft.download.qbittorrent.managed.enabled ? "managed" : "external";
   const embeddedSeedingLimits = draft.download.embedded.seedingLimits
@@ -1307,7 +1310,7 @@ export function SettingsPage() {
                   : "连接外部 qBittorrent WebUI。"}
             </CardDescription>
           </div>
-          <ToggleGroup
+          {capabilities.externalQbittorrent && <ToggleGroup
             aria-label="下载引擎"
             className={cn("grid w-full shrink-0 sm:w-auto", capabilities.managedQbittorrent ? "grid-cols-3" : "grid-cols-2")}
             onValueChange={(value) => value && updateTorrentEngineMode(value as "embedded" | "managed" | "external")}
@@ -1326,7 +1329,7 @@ export function SettingsPage() {
             <ToggleGroupItem className="h-auto min-h-9 whitespace-normal px-2" value="external">
               外部 qBittorrent WebUI
             </ToggleGroupItem>
-          </ToggleGroup>
+          </ToggleGroup>}
         </CardHeader>
         <CardContent className="pt-4 sm:pt-5">
           <div className="grid min-w-0 gap-5 lg:grid-cols-[minmax(0,1fr)_auto_minmax(0,1fr)]">

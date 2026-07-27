@@ -89,6 +89,23 @@ pub enum HttpMethod {
     Post,
 }
 
+/// 区分用户交互与后台采集，避免后台等待占用搜索限流通道。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) enum NetworkRequestChannel {
+    Interactive,
+    Background,
+}
+
+impl NetworkRequestChannel {
+    /// 返回用于限流键和熔断键的稳定名称。
+    fn key(self) -> &'static str {
+        match self {
+            Self::Interactive => "interactive",
+            Self::Background => "background",
+        }
+    }
+}
+
 /// 单次来源请求参数。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeHttpRequest {
@@ -176,24 +193,33 @@ where
 /// 多个传输实例共用的主机请求间隔控制器。
 #[derive(Clone, Default)]
 struct HostRateLimiter {
-    last_request_by_host: Arc<tokio::sync::Mutex<HashMap<String, Instant>>>,
+    slots: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<Option<Instant>>>>>>,
 }
 
 impl HostRateLimiter {
     /// 按主机串行等待最小请求间隔。
-    async fn wait(&self, host: &str, request_interval_ms: u64) {
+    async fn wait(&self, channel: NetworkRequestChannel, host: &str, request_interval_ms: u64) {
         let interval = Duration::from_millis(request_interval_ms.clamp(
             MIN_SOURCE_REQUEST_INTERVAL_MS,
             MAX_SOURCE_REQUEST_INTERVAL_MS,
         ));
-        let mut requests = self.last_request_by_host.lock().await;
-        if let Some(last_request) = requests.get(host) {
+        let key = format!("{}:{host}", channel.key());
+        let slot = {
+            let mut slots = self.slots.lock().await;
+            Arc::clone(
+                slots
+                    .entry(key)
+                    .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None))),
+            )
+        };
+        let mut last_request = slot.lock().await;
+        if let Some(last_request) = *last_request {
             let elapsed = last_request.elapsed();
             if elapsed < interval {
                 tokio::time::sleep(interval - elapsed).await;
             }
         }
-        requests.insert(host.to_owned(), Instant::now());
+        *last_request = Some(Instant::now());
     }
 }
 
@@ -246,13 +272,23 @@ impl NativeHttpClient {
         &self,
         request: NativeHttpRequest,
     ) -> Result<NativeHttpResponse, SourceError> {
+        self.execute_in_channel(NetworkRequestChannel::Interactive, request)
+            .await
+    }
+
+    /// 在指定调度通道执行请求，各通道独立等待最小间隔。
+    async fn execute_in_channel(
+        &self,
+        channel: NetworkRequestChannel,
+        request: NativeHttpRequest,
+    ) -> Result<NativeHttpResponse, SourceError> {
         let parsed = parse_http_url(&request.url)?;
         let host = parsed
             .host_str()
             .ok_or_else(|| SourceError::InvalidUrl("缺少请求主机".to_owned()))?
             .to_owned();
         self.rate_limiter
-            .wait(&host, request.request_interval_ms)
+            .wait(channel, &host, request.request_interval_ms)
             .await;
         let headers = build_headers(request.headers)?;
         let method = match request.method {
@@ -411,14 +447,51 @@ impl SourceNetworkService {
         &self,
         state_store: &S,
         source: &ReleaseSourceConfig,
+        request: NativeHttpRequest,
+    ) -> Result<NativeHttpResponse, SourceError> {
+        self.execute_in_channel(
+            state_store,
+            source,
+            request,
+            NetworkRequestChannel::Interactive,
+        )
+        .await
+    }
+
+    /// 在独立后台通道执行请求，不占用手动搜索的限流和熔断状态。
+    pub(crate) async fn execute_background<S: CircuitStateStore>(
+        &self,
+        state_store: &S,
+        source: &ReleaseSourceConfig,
+        request: NativeHttpRequest,
+    ) -> Result<NativeHttpResponse, SourceError> {
+        self.execute_in_channel(
+            state_store,
+            source,
+            request,
+            NetworkRequestChannel::Background,
+        )
+        .await
+    }
+
+    /// 执行指定调度通道的持久化限流和熔断流程。
+    async fn execute_in_channel<S: CircuitStateStore>(
+        &self,
+        state_store: &S,
+        source: &ReleaseSourceConfig,
         mut request: NativeHttpRequest,
+        channel: NetworkRequestChannel,
     ) -> Result<NativeHttpResponse, SourceError> {
         let parsed = parse_http_url(&request.url)?;
         let host = parsed
             .host_str()
             .ok_or_else(|| SourceError::InvalidUrl("缺少请求主机".to_owned()))?
             .to_ascii_lowercase();
-        let circuit_key = format!("{RELEASE_SOURCE_CIRCUIT_GROUP}:{}", source.id);
+        let circuit_group = match channel {
+            NetworkRequestChannel::Interactive => RELEASE_SOURCE_CIRCUIT_GROUP,
+            NetworkRequestChannel::Background => "release-source-background",
+        };
+        let circuit_key = format!("{circuit_group}:{}", source.id);
         let previous = state_store.get_circuit_state(&circuit_key)?;
         let now = Utc::now();
         self.circuit_breaker
@@ -433,11 +506,11 @@ impl SourceNetworkService {
         } else {
             &self.direct_client
         };
-        match client.execute(request).await {
+        match client.execute_in_channel(channel, request).await {
             Ok(response) if (200..400).contains(&response.status) => {
                 let state = self.circuit_breaker.record_success(
                     &circuit_key,
-                    RELEASE_SOURCE_CIRCUIT_GROUP,
+                    circuit_group,
                     Some(&host),
                     Utc::now(),
                 );
@@ -449,7 +522,7 @@ impl SourceNetworkService {
                 match self.circuit_breaker.record_http_failure(
                     previous.as_ref(),
                     &circuit_key,
-                    RELEASE_SOURCE_CIRCUIT_GROUP,
+                    circuit_group,
                     Some(&host),
                     response.status,
                     retry_after,
@@ -459,7 +532,7 @@ impl SourceNetworkService {
                     None => {
                         let state = self.circuit_breaker.record_success(
                             &circuit_key,
-                            RELEASE_SOURCE_CIRCUIT_GROUP,
+                            circuit_group,
                             Some(&host),
                             Utc::now(),
                         );
@@ -471,7 +544,13 @@ impl SourceNetworkService {
                 })
             }
             Err(error) => {
-                self.persist_transport_failure(state_store, previous.as_ref(), &circuit_key, &host);
+                self.persist_transport_failure(
+                    state_store,
+                    previous.as_ref(),
+                    &circuit_key,
+                    circuit_group,
+                    &host,
+                );
                 Err(error)
             }
         }
@@ -483,12 +562,13 @@ impl SourceNetworkService {
         state_store: &S,
         previous: Option<&RequestCircuitState>,
         circuit_key: &str,
+        circuit_group: &str,
         host: &str,
     ) {
         let state = self.circuit_breaker.record_failure(
             previous,
             circuit_key,
-            RELEASE_SOURCE_CIRCUIT_GROUP,
+            circuit_group,
             Some(host),
             None,
             Utc::now(),
@@ -767,9 +847,9 @@ mod tests {
 
     use super::{
         classify_transport_failure_detail, normalize_source_request_interval,
-        should_use_source_proxy, CircuitBreaker, CircuitStateStore, HttpMethod, NativeHttpClient,
-        NativeHttpConfig, NativeHttpRequest, ProxyMode, SourceError, SourceNetworkService,
-        ANIBT_MIN_REQUEST_INTERVAL_MS,
+        should_use_source_proxy, CircuitBreaker, CircuitStateStore, HostRateLimiter, HttpMethod,
+        NativeHttpClient, NativeHttpConfig, NativeHttpRequest, NetworkRequestChannel, ProxyMode,
+        SourceError, SourceNetworkService, ANIBT_MIN_REQUEST_INTERVAL_MS,
     };
 
     #[derive(Default)]
@@ -806,6 +886,31 @@ mod tests {
             }),
             Err(SourceError::InvalidProxy(_))
         ));
+    }
+
+    /// 验证后台采集等待不会占用手动搜索的主机限流槽。
+    #[tokio::test]
+    async fn isolates_background_and_interactive_rate_limits() {
+        let limiter = HostRateLimiter::default();
+        limiter
+            .wait(NetworkRequestChannel::Background, "example.test", 250)
+            .await;
+        let background_limiter = limiter.clone();
+        let background = tokio::spawn(async move {
+            background_limiter
+                .wait(NetworkRequestChannel::Background, "example.test", 250)
+                .await;
+        });
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        let interactive = tokio::time::timeout(
+            Duration::from_millis(100),
+            limiter.wait(NetworkRequestChannel::Interactive, "example.test", 250),
+        )
+        .await;
+
+        assert!(interactive.is_ok());
+        background.abort();
     }
 
     /// 网络错误分类不需要记录原始 URL 或请求内容。

@@ -1,15 +1,17 @@
 use std::sync::{Arc, Mutex};
 
 use ani_automation::{
-    AutomationDownloadReference, AutomationScanStore, EpisodeSyncStore, SourceSyncStore,
+    AnimeDiscoverySyncStore, AutomationDownloadReference, AutomationScanStore, EpisodeSyncStore,
+    SourceSyncStore,
 };
 use ani_domain::{
-    AnimeSourceBinding, AnimeSourceExclusion, Episode, FansubGroup, MyAnime, NotificationRecord,
-    Release, ReleaseSourceConfig, ReleaseSourceSyncState, RequestCircuitState,
+    Anime, AnimeSeasonSyncState, AnimeSourceBinding, AnimeSourceExclusion, Episode, FansubGroup,
+    MyAnime, NotificationRecord, Release, ReleaseSourceConfig, ReleaseSourceSyncState,
+    RequestCircuitState,
 };
 use ani_repository::{
-    ApplicationRepository, CachedReleaseQuery, ReleaseSearchCacheEntry, RepositoryError,
-    RepositoryResult,
+    AnimeCatalogWriteResult, ApplicationRepository, CachedReleaseQuery, ReleaseSearchCacheEntry,
+    RepositoryError, RepositoryResult,
 };
 use ani_sources::{
     AnimeSourceBindingStore, CircuitStateStore, NativeHttpConfig, ProxyMode, ReleaseSearchStore,
@@ -56,6 +58,32 @@ impl CircuitStateStore for SharedReleaseSearchStore {
     /// 保存来源熔断状态。
     fn save_circuit_state(&self, state: &RequestCircuitState) -> RepositoryResult<()> {
         self.with_repository(|repository| repository.upsert_request_circuit_state(state))
+    }
+}
+
+impl AnimeDiscoverySyncStore for SharedReleaseSearchStore {
+    /// 读取指定季度同步状态。
+    fn get_season_sync_state(
+        &self,
+        year: i64,
+        season: &str,
+    ) -> RepositoryResult<Option<AnimeSeasonSyncState>> {
+        self.with_repository(|repository| repository.get_anime_season_sync_state(year, season))
+    }
+
+    /// 保存指定季度同步状态。
+    fn save_season_sync_state(&self, state: &AnimeSeasonSyncState) -> RepositoryResult<()> {
+        self.with_repository(|repository| repository.upsert_anime_season_sync_state(state))
+    }
+
+    /// 合并季度目录。
+    fn save_season_catalog(&self, items: &[Anime]) -> RepositoryResult<AnimeCatalogWriteResult> {
+        self.with_repository(|repository| repository.upsert_anime_catalog(items))
+    }
+
+    /// 读取季度中的指定月份。
+    fn list_season_catalog_month(&self, year: i64, month: i64) -> RepositoryResult<Vec<Anime>> {
+        self.with_repository(|repository| repository.list_anime_catalog(Some(year), Some(month)))
     }
 }
 

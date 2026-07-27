@@ -1,5 +1,5 @@
 /** 桌面与 Android 共用的 SQLite 结构版本。 */
-export const SQLITE_SCHEMA_VERSION = 18;
+export const SQLITE_SCHEMA_VERSION = 19;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -43,6 +43,17 @@ CREATE TABLE IF NOT EXISTS anime_catalog (
 
 CREATE INDEX IF NOT EXISTS idx_anime_catalog_premiere_month
   ON anime_catalog (premiere_year, premiere_month);
+
+CREATE TABLE IF NOT EXISTS anime_season_sync_state (
+  year INTEGER NOT NULL,
+  season TEXT NOT NULL CHECK(season IN ('winter', 'spring', 'summer', 'fall')),
+  last_attempt_at TEXT,
+  last_successful_sync_at TEXT,
+  completed_at TEXT,
+  last_anilist_error TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (year, season)
+);
 
 CREATE TABLE IF NOT EXISTS anime_alias (
   id TEXT PRIMARY KEY,

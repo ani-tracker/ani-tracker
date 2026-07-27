@@ -21,6 +21,7 @@ import type {
   AnimeDiscoverySearchResult,
   AnimeDiscoverySeasonQuery,
   AnimeDiscoverySeasonResult,
+  AnimeSeasonSyncState,
   AnimeReleaseQuery,
   AnimeSourceBindingState,
   AnimeWatchProgress,
@@ -131,6 +132,8 @@ export interface AppClient {
   collectAnimeMonth(query: AnimeDiscoveryQuery): Promise<AnimeDiscoveryResult>;
   /** 采集指定季度番剧。 */
   collectAnimeSeason(query: AnimeDiscoverySeasonQuery): Promise<AnimeDiscoverySeasonResult>;
+  /** 读取指定季度的后台同步状态。 */
+  getAnimeSeasonSyncState(year: number, season: AnimeDiscoverySeasonQuery["season"]): Promise<AnimeSeasonSyncState | undefined>;
   /** 读取番剧详情。 */
   getAnimeDetail(animeId: string): Promise<AnimeDetailResult>;
   /** 强制刷新番剧详情。 */

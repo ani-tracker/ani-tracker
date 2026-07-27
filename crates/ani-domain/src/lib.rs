@@ -878,6 +878,22 @@ pub struct AnimeDiscoverySeasonResult {
     pub errors: Vec<String>,
 }
 
+/// 单个自然季度的新番目录后台同步状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeSeasonSyncState {
+    pub year: i64,
+    pub season: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_successful_sync_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_anilist_error: Option<String>,
+}
+
 /// 新番关键词搜索的本地与在线聚合结果。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

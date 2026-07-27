@@ -14,7 +14,10 @@ use serde_json::{json, Map, Value};
 use unicode_normalization::UnicodeNormalization;
 use url::Url;
 
-use crate::{CircuitStateStore, HttpMethod, NativeHttpRequest, SourceError, SourceNetworkService};
+use crate::{
+    CircuitStateStore, HttpMethod, NativeHttpRequest, NetworkRequestChannel, SourceError,
+    SourceNetworkService,
+};
 
 const BANGUMI_BASE_URL: &str = "https://api.bgm.tv/";
 const ANILIST_ENDPOINT: &str = "https://graphql.anilist.co";
@@ -38,6 +41,7 @@ pub struct AnimeMetadataCollection {
     pub items: Vec<Anime>,
     pub source: String,
     pub errors: Vec<String>,
+    pub successful_sources: Vec<String>,
 }
 
 /// 单部番剧详情刷新后的候选记录和局部错误。
@@ -69,6 +73,7 @@ impl Default for MetadataEndpoints {
 pub struct AnimeMetadataService {
     network: Arc<SourceNetworkService>,
     endpoints: MetadataEndpoints,
+    channel: NetworkRequestChannel,
 }
 
 impl AnimeMetadataService {
@@ -77,6 +82,16 @@ impl AnimeMetadataService {
         Self {
             network,
             endpoints: MetadataEndpoints::default(),
+            channel: NetworkRequestChannel::Interactive,
+        }
+    }
+
+    /// 创建使用独立后台限流与熔断状态的元数据采集服务。
+    pub fn new_background(network: Arc<SourceNetworkService>) -> Self {
+        Self {
+            network,
+            endpoints: MetadataEndpoints::default(),
+            channel: NetworkRequestChannel::Background,
         }
     }
 
@@ -92,6 +107,7 @@ impl AnimeMetadataService {
                 items: Vec::new(),
                 source: String::new(),
                 errors: Vec::new(),
+                successful_sources: Vec::new(),
             };
         }
         let results = tokio::join!(
@@ -651,21 +667,25 @@ impl AnimeMetadataService {
         use_proxy: bool,
         url: Url,
     ) -> Result<String, SourceError> {
-        let response = self
-            .network
-            .execute(
-                store,
-                &metadata_source(provider, use_proxy),
-                NativeHttpRequest {
-                    source_id: provider.to_owned(),
-                    method: HttpMethod::Get,
-                    url: url.to_string(),
-                    headers: metadata_headers(provider),
-                    body: None,
-                    request_interval_ms: 500,
-                },
-            )
-            .await?;
+        let source = metadata_source(provider, use_proxy);
+        let request = NativeHttpRequest {
+            source_id: provider.to_owned(),
+            method: HttpMethod::Get,
+            url: url.to_string(),
+            headers: metadata_headers(provider),
+            body: None,
+            request_interval_ms: 500,
+        };
+        let response = match self.channel {
+            NetworkRequestChannel::Interactive => {
+                self.network.execute(store, &source, request).await?
+            }
+            NetworkRequestChannel::Background => {
+                self.network
+                    .execute_background(store, &source, request)
+                    .await?
+            }
+        };
         Ok(response.text())
     }
 
@@ -699,24 +719,27 @@ impl AnimeMetadataService {
     {
         let mut headers = metadata_headers(provider);
         headers.insert("Content-Type".to_owned(), "application/json".to_owned());
-        let response = self
-            .network
-            .execute(
-                store,
-                &metadata_source(provider, use_proxy),
-                NativeHttpRequest {
-                    source_id: provider.to_owned(),
-                    method: HttpMethod::Post,
-                    url: url.to_string(),
-                    headers,
-                    body: Some(
-                        serde_json::to_vec(&body)
-                            .map_err(|error| SourceError::Parse(error.to_string()))?,
-                    ),
-                    request_interval_ms: 500,
-                },
-            )
-            .await?;
+        let source = metadata_source(provider, use_proxy);
+        let request = NativeHttpRequest {
+            source_id: provider.to_owned(),
+            method: HttpMethod::Post,
+            url: url.to_string(),
+            headers,
+            body: Some(
+                serde_json::to_vec(&body).map_err(|error| SourceError::Parse(error.to_string()))?,
+            ),
+            request_interval_ms: 500,
+        };
+        let response = match self.channel {
+            NetworkRequestChannel::Interactive => {
+                self.network.execute(store, &source, request).await?
+            }
+            NetworkRequestChannel::Background => {
+                self.network
+                    .execute_background(store, &source, request)
+                    .await?
+            }
+        };
         serde_json::from_slice(&response.body)
             .map_err(|error| SourceError::Parse(format!("{provider} JSON 解析失败：{error}")))
     }
@@ -731,12 +754,16 @@ fn collect_provider_results<const N: usize>(
         .collect::<Vec<_>>();
     let mut batches = Vec::new();
     let mut errors = Vec::new();
+    let mut successful_sources = Vec::new();
     for (source, result) in results {
         match result {
-            Ok(items) if !items.is_empty() => batches.push(AnimeMetadataBatch {
-                source: source.to_owned(),
-                items: unique_by_normalized_title(items),
-            }),
+            Ok(items) if !items.is_empty() => {
+                successful_sources.push(source.to_owned());
+                batches.push(AnimeMetadataBatch {
+                    source: source.to_owned(),
+                    items: unique_by_normalized_title(items),
+                });
+            }
             Ok(_) => errors.push(format!("{source}: 未返回新番数据")),
             Err(error) => errors.push(format!("{source}: {error}")),
         }
@@ -753,6 +780,7 @@ fn collect_provider_results<const N: usize>(
         },
         items: merge_anime_metadata_batches(&batches),
         errors,
+        successful_sources,
     }
 }
 
@@ -781,6 +809,7 @@ fn collect_search_provider_results<const N: usize>(
         source: sources.join("+"),
         items: merge_anime_metadata_batches(&batches),
         errors,
+        successful_sources: sources.into_iter().map(str::to_owned).collect(),
     }
 }
 
@@ -2317,7 +2346,9 @@ mod tests {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
-    use crate::{CircuitStateStore, NativeHttpConfig, ProxyMode, SourceNetworkService};
+    use crate::{
+        CircuitStateStore, NativeHttpConfig, NetworkRequestChannel, ProxyMode, SourceNetworkService,
+    };
 
     use super::{
         map_bangumi, merge_anime_metadata_batches, parse_mikan_candidates, parse_mikan_detail,
@@ -2563,6 +2594,7 @@ mod tests {
                 anilist: format!("{base}graphql"),
                 mikan: base,
             },
+            channel: NetworkRequestChannel::Interactive,
         };
         let result = service
             .search(&MemoryCircuitStore::default(), "测试番")

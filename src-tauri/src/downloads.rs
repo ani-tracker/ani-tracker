@@ -372,6 +372,12 @@ impl AppDownloadState {
         &self,
         settings: &AppSettings,
     ) -> Result<TorrentEngineKind, DownloadServiceError> {
+        #[cfg(mobile)]
+        {
+            let _ = settings;
+            return Ok(TorrentEngineKind::Embedded);
+        }
+        #[cfg(desktop)]
         match settings
             .pointer("/download/defaultTorrentEngine")
             .and_then(Value::as_str)

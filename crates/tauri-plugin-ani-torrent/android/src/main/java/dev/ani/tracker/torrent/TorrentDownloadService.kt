@@ -14,31 +14,45 @@ import android.os.IBinder
 import android.util.Log
 import org.json.JSONObject
 import java.io.File
+import java.util.Locale
 import java.util.concurrent.Callable
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /** 在 Android 前台服务中托管 libtorrent，并通过应用内 Binder 暴露 NDJSON 契约。 */
 class TorrentDownloadService : Service() {
-    private val executor = Executors.newSingleThreadExecutor { runnable ->
+    private val executor = Executors.newSingleThreadScheduledExecutor { runnable ->
         Thread(runnable, "ani-torrent-service")
     }
     private val binder = LocalBinder()
     private var nativeHandle = 0L
+    private var notificationVisible = false
+    private var lastNotificationSummary: DownloadSummary? = null
 
     /** 建立通知后异步恢复下载核心，满足前台服务启动时限。 */
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
         startCoreForeground()
-        executor.execute { ensureCoreStarted() }
+        executor.execute {
+            ensureCoreStarted()
+            refreshDownloadNotification()
+        }
+        executor.scheduleWithFixedDelay(
+            { runCatching(::refreshDownloadNotification).onFailure { error ->
+                Log.w(LOG_TAG, "torrent notification refresh failed", error)
+            } },
+            NOTIFICATION_REFRESH_SECONDS,
+            NOTIFICATION_REFRESH_SECONDS,
+            TimeUnit.SECONDS
+        )
         Log.i(LOG_TAG, "torrent foreground service created")
     }
 
     /** 保持服务可重建，并确保重复启动不会创建第二个 Session。 */
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         executor.execute { ensureCoreStarted() }
-        return START_STICKY
+        return if (hasActiveTasks(this)) START_STICKY else START_NOT_STICKY
     }
 
     /** 返回仅限应用进程使用的 Binder。 */
@@ -76,8 +90,8 @@ class TorrentDownloadService : Service() {
                 }
             }
             if (isSuccessfulResponse(response)) {
-                runCatching(::refreshRecoveryState).onFailure { error ->
-                    Log.w(LOG_TAG, "torrent recovery state refresh failed", error)
+                runCatching(::refreshDownloadNotification).onFailure { error ->
+                    Log.w(LOG_TAG, "torrent download state refresh failed", error)
                 }
             }
             response
@@ -131,24 +145,49 @@ class TorrentDownloadService : Service() {
         }
     }
 
-    /** 查询核心任务数并保存 WorkManager 是否需要恢复前台服务。 */
-    private fun refreshRecoveryState() {
-        val statusRequest = JSONObject().apply {
-            put("id", "android-recovery-status")
-            put("method", "status")
+    /** 聚合活动任务，更新恢复标记和前台通知。 */
+    private fun refreshDownloadNotification() {
+        if (nativeHandle == 0L) return
+        val listRequest = JSONObject().apply {
+            put("id", "android-notification-tasks")
+            put("method", "listTasks")
             put("params", JSONObject())
         }.toString()
-        val status = JSONObject(NativeTorrentCore.nativeExecute(nativeHandle, statusRequest))
-        val result = status.optJSONObject("result")
-        val rawCount = result?.opt("taskCount")
-        val taskCount = when (rawCount) {
-            is Number -> rawCount.toInt()
-            is String -> rawCount.toIntOrNull() ?: 0
-            else -> 0
+        val response = JSONObject(NativeTorrentCore.nativeExecute(nativeHandle, listRequest))
+        check(isJsonTrue(response.opt("ok"))) { "读取 Android 下载任务失败：$response" }
+        val tasks = response.optJSONObject("result")?.optJSONArray("tasks")
+        var activeCount = 0
+        var downloadSpeed = 0L
+        var uploadSpeed = 0L
+        var downloadedBytes = 0L
+        var totalBytes = 0L
+        if (tasks != null) {
+            for (index in 0 until tasks.length()) {
+                val task = tasks.optJSONObject(index) ?: continue
+                if (task.optString("status") !in ACTIVE_STATUSES) continue
+                activeCount += 1
+                downloadSpeed += jsonLong(task.opt("downloadSpeed"))
+                uploadSpeed += jsonLong(task.opt("uploadSpeed"))
+                downloadedBytes += jsonLong(task.opt("downloadedSize"))
+                totalBytes += jsonLong(task.opt("totalSize"))
+            }
         }
-        check(preferences().edit().putBoolean(ACTIVE_TASKS_KEY, taskCount > 0).commit()) {
+        val summary = DownloadSummary(
+            activeCount,
+            downloadSpeed.coerceAtLeast(0),
+            uploadSpeed.coerceAtLeast(0),
+            downloadedBytes.coerceAtLeast(0),
+            totalBytes.coerceAtLeast(0)
+        )
+        check(preferences().edit().putBoolean(ACTIVE_TASKS_KEY, summary.activeCount > 0).commit()) {
             "无法持久化 Android 下载恢复状态"
         }
+        if (summary.activeCount == 0) {
+            removeForegroundNotification()
+        } else if (summary != lastNotificationSummary || !notificationVisible) {
+            showForegroundNotification(summary)
+        }
+        lastNotificationSummary = summary
     }
 
     /** 创建低打扰下载通知渠道。 */
@@ -169,6 +208,11 @@ class TorrentDownloadService : Service() {
 
     /** 启动 dataSync 类型前台通知。 */
     private fun startCoreForeground() {
+        showForegroundNotification(null)
+    }
+
+    /** 创建启动占位或活动任务聚合通知。 */
+    private fun showForegroundNotification(summary: DownloadSummary?) {
         val launchIntent = packageManager.getLaunchIntentForPackage(packageName)?.apply {
             action = ACTION_OPEN_DOWNLOADS
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -181,11 +225,23 @@ class TorrentDownloadService : Service() {
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
         }
+        val progress = summary?.progressPercent ?: 0
         val notification = Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(getString(R.string.ani_torrent_notification_title))
-            .setContentText(getString(R.string.ani_torrent_notification_text))
+            .setContentTitle(summary?.let {
+                getString(R.string.ani_torrent_notification_title_active, it.activeCount)
+            } ?: getString(R.string.ani_torrent_notification_title))
+            .setContentText(summary?.let {
+                getString(
+                    R.string.ani_torrent_notification_progress,
+                    formatSpeed(it.downloadSpeed),
+                    formatSpeed(it.uploadSpeed),
+                    progress
+                )
+            } ?: getString(R.string.ani_torrent_notification_text))
+            .setProgress(100, progress, summary?.totalBytes == 0L)
             .setOngoing(true)
+            .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_PROGRESS)
             .setContentIntent(contentIntent)
             .build()
@@ -197,6 +253,29 @@ class TorrentDownloadService : Service() {
             )
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+        notificationVisible = true
+    }
+
+    /** 活动任务归零后立即退出前台并移除下载通知。 */
+    private fun removeForegroundNotification() {
+        if (!notificationVisible) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+        } else {
+            @Suppress("DEPRECATION")
+            stopForeground(true)
+        }
+        notificationVisible = false
+    }
+
+    /** 将字节每秒格式化为紧凑通知文本。 */
+    private fun formatSpeed(bytesPerSecond: Long): String {
+        val value = bytesPerSecond.coerceAtLeast(0).toDouble()
+        return when {
+            value >= 1024 * 1024 -> String.format(Locale.US, "%.1f MB/s", value / (1024 * 1024))
+            value >= 1024 -> String.format(Locale.US, "%.1f KB/s", value / 1024)
+            else -> "${value.toLong()} B/s"
         }
     }
 
@@ -232,6 +311,24 @@ class TorrentDownloadService : Service() {
         private const val NOTIFICATION_ID = 20021
         private const val REQUEST_TIMEOUT_SECONDS = 30L
         private const val SHUTDOWN_TIMEOUT_SECONDS = 12L
+        private const val NOTIFICATION_REFRESH_SECONDS = 1L
+        private val ACTIVE_STATUSES = setOf(
+            "queued", "checking", "fetching_metadata", "downloading", "stalled", "moving", "seeding"
+        )
+
+        /** 兼容 property_tree 字符串数字和标准 JSON 数字。 */
+        private fun jsonLong(value: Any?): Long = when (value) {
+            is Number -> value.toLong()
+            is String -> value.toDoubleOrNull()?.toLong() ?: 0L
+            else -> 0L
+        }
+
+        /** 兼容 property_tree 字符串布尔值和标准 JSON 布尔值。 */
+        private fun isJsonTrue(value: Any?): Boolean = when (value) {
+            is Boolean -> value
+            is String -> value.toBooleanStrictOrNull() == true
+            else -> false
+        }
 
         /** 启动下载前台服务；Android 8 及以上使用专用入口。 */
         fun start(context: Context) {
@@ -252,5 +349,18 @@ class TorrentDownloadService : Service() {
         fun hasActiveTasks(context: Context): Boolean = context
             .getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
             .getBoolean(ACTIVE_TASKS_KEY, false)
+    }
+
+    /** Android 通知需要的全局下载统计。 */
+    private data class DownloadSummary(
+        val activeCount: Int,
+        val downloadSpeed: Long,
+        val uploadSpeed: Long,
+        val downloadedBytes: Long,
+        val totalBytes: Long
+    ) {
+        val progressPercent: Int
+            get() = if (totalBytes <= 0L) 0 else
+                ((downloadedBytes.coerceAtMost(totalBytes) * 100) / totalBytes).toInt()
     }
 }
