@@ -12,9 +12,9 @@ const unsignedIosEntries = [
   "Payload/Ani Tracker.app/Info.plist",
   "Payload/Ani Tracker.app/Frameworks/AniTorrentCore.framework/AniTorrentCore",
   "Payload/Ani Tracker.app/Frameworks/MobileVLCKit.framework/MobileVLCKit",
-  "Payload/Ani Tracker.app/licenses/torrent-core/libtorrent-BSD-3-Clause.txt",
-  "Payload/Ani Tracker.app/licenses/vlc/SOURCE.md",
-  "Payload/Ani Tracker.app/licenses/ani-tracker-LICENSE.txt"
+  "Payload/Ani Tracker.app/assets/licenses/torrent-core/libtorrent-BSD-3-Clause.txt",
+  "Payload/Ani Tracker.app/assets/licenses/vlc/SOURCE.md",
+  "Payload/Ani Tracker.app/assets/licenses/ani-tracker-LICENSE.txt"
 ];
 
 const androidEntries = [

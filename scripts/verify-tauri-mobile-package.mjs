@@ -33,9 +33,9 @@ const REQUIRED_ENTRIES = {
   ios: [
     { name: "内置 AniTorrentCore", pattern: /^Payload\/[^/]+\.app\/Frameworks\/AniTorrentCore\.framework\/AniTorrentCore$/i },
     { name: "内置 MobileVLCKit", pattern: /^Payload\/[^/]+\.app\/Frameworks\/MobileVLCKit\.framework\/MobileVLCKit$/i },
-    { name: "torrent-core 许可证", pattern: /^Payload\/[^/]+\.app\/licenses\/torrent-core\/libtorrent-BSD-3-Clause\.txt$/i },
-    { name: "libVLC 来源说明", pattern: /^Payload\/[^/]+\.app\/licenses\/vlc\/SOURCE\.md$/i },
-    { name: "Ani Tracker 许可证", pattern: /^Payload\/[^/]+\.app\/licenses\/ani-tracker-LICENSE\.txt$/i }
+    { name: "torrent-core 许可证", pattern: /^Payload\/[^/]+\.app\/assets\/licenses\/torrent-core\/libtorrent-BSD-3-Clause\.txt$/i },
+    { name: "libVLC 来源说明", pattern: /^Payload\/[^/]+\.app\/assets\/licenses\/vlc\/SOURCE\.md$/i },
+    { name: "Ani Tracker 许可证", pattern: /^Payload\/[^/]+\.app\/assets\/licenses\/ani-tracker-LICENSE\.txt$/i }
   ]
 };
 
