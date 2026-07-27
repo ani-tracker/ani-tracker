@@ -166,7 +166,7 @@ test("Android HTTPS 使用系统证书验证器并在业务请求前初始化", 
 });
 
 test("来源网络失败日志仅保留定位所需的脱敏字段", () => {
-  assert.match(sourceNetwork, /Rust 来源网络请求失败：source_id=\{\}, host=\{\}, elapsed_ms=\{\}, error_category=\{\}/);
+  assert.match(sourceNetwork, /Rust 来源网络请求失败：source_id=\{\}, host=\{\}, elapsed_ms=\{\}, error_category=\{\}, failure_reason=\{\}/);
   assert.doesNotMatch(sourceNetwork, /Rust 来源网络请求失败[^\n]*error=\{\}/);
 });
 

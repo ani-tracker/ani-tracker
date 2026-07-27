@@ -12,7 +12,7 @@ import {
   Trash2,
   Upload
 } from "lucide-react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { Badge } from "@/components/ui/badge";

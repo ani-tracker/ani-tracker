@@ -3,6 +3,8 @@ use std::sync::Arc;
 use ani_repository::prelude::*;
 use log::LevelFilter;
 use tauri::Manager;
+#[cfg(target_os = "android")]
+use tauri_plugin_log::{RotationStrategy, Target, TargetKind};
 
 mod automation;
 mod commands;
@@ -26,12 +28,14 @@ mod system_integration;
 /// 装配并启动 Tauri 应用宿主。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let builder = tauri::Builder::default()
-        .plugin(
-            tauri_plugin_log::Builder::new()
-                .level(LevelFilter::Info)
-                .build(),
-        )
+    let builder = tauri::Builder::default();
+    #[cfg(not(target_os = "android"))]
+    let builder = builder.plugin(
+        tauri_plugin_log::Builder::new()
+            .level(LevelFilter::Info)
+            .build(),
+    );
+    let builder = builder
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_ani_mobile::init())
@@ -50,6 +54,26 @@ pub fn run() {
     let builder = builder
         .setup(|app| {
             let storage_state = storage::initialize(app.handle())?;
+            #[cfg(target_os = "android")]
+            app.handle().plugin(
+                tauri_plugin_log::Builder::new()
+                    .level(LevelFilter::Info)
+                    .rotation_strategy(RotationStrategy::KeepSome(5))
+                    .max_file_size(1024 * 1024)
+                    .targets([
+                        Target::new(TargetKind::Stdout),
+                        Target::new(TargetKind::Folder {
+                            path: storage_state.log_directory().to_path_buf(),
+                            file_name: Some("ani-tracker".to_owned()),
+                        }),
+                    ])
+                    .build(),
+            )?;
+            #[cfg(target_os = "android")]
+            log::info!(
+                "Android 文件日志已启用 directory={}",
+                storage_state.log_directory().display()
+            );
             let startup_settings = storage_state
                 .storage()
                 .lock()
@@ -186,6 +210,7 @@ pub fn run() {
             commands::data::upsert_source,
             commands::backup::export_database_backup,
             commands::backup::restore_database_backup,
+            commands::logs::export_logs,
             commands::sources::search_releases,
             commands::sources::search_anime_releases,
             commands::sources::search_rss_subscription_releases,

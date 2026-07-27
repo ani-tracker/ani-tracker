@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, HashMap};
+use std::error::Error as StdError;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -324,13 +325,61 @@ fn log_transport_failure(source_id: &str, host: &str, started_at: Instant, error
     } else {
         "other"
     };
+    let reason = transport_failure_reason(error);
     log::warn!(
-        "Rust 来源网络请求失败：source_id={}, host={}, elapsed_ms={}, error_category={}",
+        "Rust 来源网络请求失败：source_id={}, host={}, elapsed_ms={}, error_category={}, failure_reason={}",
         source_id,
         host,
         started_at.elapsed().as_millis(),
-        category
+        category,
+        reason
     );
+}
+
+/// 将错误链归类为不包含 URL 和请求参数的稳定失败原因。
+fn transport_failure_reason(error: &reqwest::Error) -> &'static str {
+    if error.is_timeout() {
+        return "timeout";
+    }
+    let mut current: Option<&(dyn StdError + 'static)> = Some(error);
+    while let Some(cause) = current {
+        if let Some(reason) = classify_transport_failure_detail(&cause.to_string()) {
+            return reason;
+        }
+        current = cause.source();
+    }
+    "unknown"
+}
+
+/// 从单层错误文本识别 DNS、TLS、代理和套接字失败类别。
+fn classify_transport_failure_detail(detail: &str) -> Option<&'static str> {
+    let detail = detail.to_ascii_lowercase();
+    if detail.contains("dns")
+        || detail.contains("failed to lookup")
+        || detail.contains("name or service not known")
+    {
+        return Some("dns");
+    }
+    if detail.contains("certificate")
+        || detail.contains("invalid peer certificate")
+        || detail.contains("tls")
+        || detail.contains("handshake")
+    {
+        return Some("tls");
+    }
+    if detail.contains("proxy") || detail.contains("tunnel") {
+        return Some("proxy");
+    }
+    if detail.contains("connection refused") {
+        return Some("connection_refused");
+    }
+    if detail.contains("network is unreachable") || detail.contains("no route to host") {
+        return Some("network_unreachable");
+    }
+    if detail.contains("connection reset") || detail.contains("broken pipe") {
+        return Some("connection_reset");
+    }
+    None
 }
 
 /// 组合直连/代理传输、持久化限流和熔断的来源网络服务。
@@ -717,9 +766,10 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::{
-        normalize_source_request_interval, should_use_source_proxy, CircuitBreaker,
-        CircuitStateStore, HttpMethod, NativeHttpClient, NativeHttpConfig, NativeHttpRequest,
-        ProxyMode, SourceError, SourceNetworkService, ANIBT_MIN_REQUEST_INTERVAL_MS,
+        classify_transport_failure_detail, normalize_source_request_interval,
+        should_use_source_proxy, CircuitBreaker, CircuitStateStore, HttpMethod, NativeHttpClient,
+        NativeHttpConfig, NativeHttpRequest, ProxyMode, SourceError, SourceNetworkService,
+        ANIBT_MIN_REQUEST_INTERVAL_MS,
     };
 
     #[derive(Default)]
@@ -756,6 +806,23 @@ mod tests {
             }),
             Err(SourceError::InvalidProxy(_))
         ));
+    }
+
+    /// 网络错误分类不需要记录原始 URL 或请求内容。
+    #[test]
+    fn classifies_sanitized_transport_failure_reasons() {
+        assert_eq!(
+            classify_transport_failure_detail("dns error: failed to lookup address"),
+            Some("dns")
+        );
+        assert_eq!(
+            classify_transport_failure_detail("invalid peer certificate: UnknownIssuer"),
+            Some("tls")
+        );
+        assert_eq!(
+            classify_transport_failure_detail("tcp connect error: Connection refused"),
+            Some("connection_refused")
+        );
     }
 
     /// 验证熔断失败次数跨请求指数退避并在成功后清零。

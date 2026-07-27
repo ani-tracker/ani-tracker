@@ -29,6 +29,7 @@ struct AppDirectories {
 pub(crate) struct AppStorageState {
     storage: Arc<Mutex<Storage>>,
     platform_defaults: AppSettings,
+    log_directory: PathBuf,
 }
 
 impl AppStorageState {
@@ -40,6 +41,11 @@ impl AppStorageState {
     /// 返回当前宿主生成的平台设置默认值。
     pub(crate) fn platform_defaults(&self) -> &AppSettings {
         &self.platform_defaults
+    }
+
+    /// 返回宿主实际使用的日志目录。
+    pub(crate) fn log_directory(&self) -> &Path {
+        &self.log_directory
     }
 }
 
@@ -101,6 +107,7 @@ pub(crate) fn initialize(app: &AppHandle) -> Result<AppStorageState, StorageErro
     Ok(AppStorageState {
         storage: Arc::new(Mutex::new(storage)),
         platform_defaults,
+        log_directory: directories.logs,
     })
 }
 
@@ -263,16 +270,13 @@ fn build_default_settings(directories: &AppDirectories) -> AppSettings {
 
 /// 返回宿主必须覆盖的设置片段，避免移动备份恢复桌面专属能力和无效路径。
 pub(crate) fn platform_settings_constraints(platform_defaults: &AppSettings) -> Value {
-    platform_settings_constraints_for(cfg!(mobile), cfg!(target_os = "android"), platform_defaults)
+    let _ = platform_defaults;
+    platform_settings_constraints_for(cfg!(mobile))
 }
 
 /// 生成可测试的平台约束，移动宿主不得启用桌面进程和路径能力。
-fn platform_settings_constraints_for(
-    mobile: bool,
-    android: bool,
-    platform_defaults: &AppSettings,
-) -> Value {
-    let mut constraints = if mobile {
+fn platform_settings_constraints_for(mobile: bool) -> Value {
+    if mobile {
         json!({
             "defaultPlayerProfileId": "builtin",
             "players": [],
@@ -299,24 +303,7 @@ fn platform_settings_constraints_for(
         })
     } else {
         json!({})
-    };
-    if android {
-        let mut download_paths = serde_json::Map::new();
-        for key in ["defaultDownloadDir", "temporaryDownloadDir"] {
-            if let Some(value) = platform_defaults
-                .get("download")
-                .and_then(|download| download.get(key))
-                .cloned()
-            {
-                download_paths.insert(key.to_owned(), value);
-            }
-        }
-        merge_settings_value(
-            &mut constraints,
-            json!({ "download": Value::Object(download_paths) }),
-        );
     }
-    constraints
 }
 
 /// 将平台强制设置递归覆盖到 Renderer 提交的补丁。
@@ -646,10 +633,9 @@ mod tests {
         assert_eq!(unique.len(), candidates.len());
     }
 
-    /// 验证 Android 设置约束会恢复应用路径并关闭桌面进程能力。
+    /// 验证移动设置约束保留自定义下载路径并关闭桌面进程能力。
     #[test]
-    fn constrains_restored_android_settings() {
-        let defaults = build_default_settings(&test_directories());
+    fn constrains_restored_mobile_settings() {
         let mut settings = json!({
             "defaultPlayerProfileId": "mpv",
             "players": [{ "id": "mpv" }],
@@ -666,20 +652,17 @@ mod tests {
             "network": { "remoteAccess": { "lanEnabled": true } }
         });
 
-        merge_settings_value(
-            &mut settings,
-            platform_settings_constraints_for(true, true, &defaults),
-        );
+        merge_settings_value(&mut settings, platform_settings_constraints_for(true));
 
         assert_eq!(settings["defaultPlayerProfileId"], "builtin");
         assert_eq!(settings["players"], json!([]));
         assert_eq!(
             settings["download"]["defaultDownloadDir"],
-            defaults["download"]["defaultDownloadDir"]
+            "C:/invalid-downloads"
         );
         assert_eq!(
             settings["download"]["temporaryDownloadDir"],
-            defaults["download"]["temporaryDownloadDir"]
+            "C:/invalid-incomplete"
         );
         assert_eq!(
             settings["download"]["qbittorrent"]["managed"]["enabled"],

@@ -8,6 +8,7 @@ import {
   type ReactNode
 } from "react";
 import { Toaster } from "@/components/ui/sonner";
+import { getAppRuntime } from "@/lib/runtime";
 import {
   THEME_TOKEN_NAMES,
   createDefaultAppearanceSettings,
@@ -19,6 +20,7 @@ import {
   type ThemePackManifest,
   type ThemeTokens
 } from "@shared/theme";
+import { resolveToastPresentation } from "@shared/toast-policy";
 
 const THEME_CACHE_KEY = "ani.theme.snapshot";
 
@@ -127,7 +129,21 @@ export function useTheme(): ThemeContextValue {
 /** 让 toast 外观跟随当前实际明暗模式。 */
 export function ThemeToaster() {
   const { resolvedTheme } = useTheme();
-  return <Toaster closeButton position="top-right" richColors theme={resolvedTheme} />;
+  const presentation = resolveToastPresentation(getAppRuntime());
+  return (
+    <Toaster
+      closeButton={presentation.closeButton}
+      containerAriaLabel="应用提示"
+      offset={presentation.mobile
+        ? { bottom: "calc(var(--safe-area-bottom) + 4.75rem)", left: "1rem", right: "1rem" }
+        : undefined}
+      position={presentation.position}
+      richColors
+      swipeDirections={presentation.swipeDirections}
+      theme={resolvedTheme}
+      visibleToasts={presentation.visibleToasts}
+    />
+  );
 }
 
 function resolveThemeMode(appearance: AppearanceSettings, systemDark: boolean): ResolvedThemeMode {

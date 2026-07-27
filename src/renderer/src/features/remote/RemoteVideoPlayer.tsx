@@ -8,7 +8,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent
 } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlayerChrome } from "@/features/player/PlayerChrome";
 import { PlayerAutoNextPrompt } from "@/features/player/PlayerAutoNextPrompt";

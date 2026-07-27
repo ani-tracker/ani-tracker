@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useId, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   Activity,
   Bell,
@@ -119,6 +119,7 @@ export function SettingsPage() {
   const [resetDialogOpen, setResetDialogOpen] = useState(false);
   const [restoreDialogOpen, setRestoreDialogOpen] = useState(false);
   const [backupAction, setBackupAction] = useState<"idle" | "exporting" | "restoring">("idle");
+  const [logExporting, setLogExporting] = useState(false);
   const [schedulerStatus, setSchedulerStatus] = useState<AutomationSchedulerStatus | null>(null);
   const [qbManagedStatus, setQbManagedStatus] = useState<QbittorrentManagedStatus | null>(null);
   const [qbManagedAction, setQbManagedAction] = useState<"idle" | "starting" | "stopping" | "restarting">("idle");
@@ -381,6 +382,20 @@ export function SettingsPage() {
       toast.error(error instanceof Error ? error.message : "数据备份导出失败");
     } finally {
       setBackupAction("idle");
+    }
+  }
+
+  /** 使用系统保存面板导出当前及轮转日志。 */
+  async function exportLogs() {
+    if (!appApi.exportLogs) return;
+    setLogExporting(true);
+    try {
+      const fileName = await appApi.exportLogs();
+      if (fileName) toast.success(`日志已导出：${fileName}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "日志导出失败");
+    } finally {
+      setLogExporting(false);
     }
   }
 
@@ -791,7 +806,6 @@ export function SettingsPage() {
               icon={<FolderCog className="h-4 w-4" />}
               label="默认下载目录"
               value={draft.download.defaultDownloadDir}
-              disabled={androidRuntime}
               onChange={(value) =>
                 setDraft({
                   ...draft,
@@ -805,7 +819,6 @@ export function SettingsPage() {
             <TextSetting
               label="临时下载目录"
               value={draft.download.temporaryDownloadDir ?? ""}
-              disabled={androidRuntime}
               onChange={(value) =>
                 setDraft({
                   ...draft,
@@ -852,7 +865,7 @@ export function SettingsPage() {
             <SettingRow label="数据库" value={draft.storage.databasePath} />
             <SettingRow label="缓存" value={draft.storage.cacheDir} />
             <SettingRow label="日志" value={draft.storage.logDir} />
-            {(appApi.exportDatabaseBackup || appApi.restoreDatabaseBackup) && (
+            {(appApi.exportDatabaseBackup || appApi.restoreDatabaseBackup || appApi.exportLogs) && (
               <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap">
                 {appApi.exportDatabaseBackup && (
                   <Button
@@ -874,6 +887,17 @@ export function SettingsPage() {
                   >
                     <RotateCcw data-icon="inline-start" />
                     {backupAction === "restoring" ? "恢复中" : "恢复数据备份"}
+                  </Button>
+                )}
+                {appApi.exportLogs && (
+                  <Button
+                    disabled={logExporting}
+                    onClick={() => void exportLogs()}
+                    type="button"
+                    variant="outline"
+                  >
+                    <Download data-icon="inline-start" />
+                    {logExporting ? "导出中" : "导出日志"}
                   </Button>
                 )}
               </div>

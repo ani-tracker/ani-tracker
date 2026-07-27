@@ -8,7 +8,7 @@ import {
   Search
 } from "lucide-react";
 import { type FocusEvent as ReactFocusEvent, useEffect, useMemo, useState } from "react";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";

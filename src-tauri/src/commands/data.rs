@@ -1,4 +1,12 @@
 use std::sync::{Arc, Mutex};
+#[cfg(any(mobile, test))]
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::Path,
+    sync::atomic::{AtomicU64, Ordering},
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use ani_contracts::AppCommandError;
 use ani_domain::{
@@ -121,6 +129,8 @@ pub(crate) async fn update_settings(
 ) -> Result<AppSettings, AppCommandError> {
     let defaults = state.platform_defaults().clone();
     crate::storage::constrain_settings_patch(&mut patch, &defaults);
+    #[cfg(mobile)]
+    validate_mobile_download_directories(&patch).await?;
     let settings = run_query("更新设置", Arc::clone(state.storage()), move |storage| {
         storage.repository().update_settings(&patch, &defaults)
     })
@@ -135,6 +145,87 @@ pub(crate) async fn update_settings(
     crate::remote::apply_settings(&app, &settings).await;
     crate::commands::downloads::emit_download_service_status_changed(&app);
     Ok(settings)
+}
+
+/// 在移动端线程池中验证用户配置的下载目录确实可写。
+#[cfg(mobile)]
+async fn validate_mobile_download_directories(patch: &Value) -> Result<(), AppCommandError> {
+    let directories = [
+        ("默认下载目录", "/download/defaultDownloadDir"),
+        ("临时下载目录", "/download/temporaryDownloadDir"),
+    ]
+    .into_iter()
+    .filter_map(|(label, pointer)| {
+        patch
+            .pointer(pointer)
+            .and_then(Value::as_str)
+            .map(|path| (label, path.trim().to_owned()))
+    })
+    .collect::<Vec<_>>();
+    if directories.is_empty() {
+        return Ok(());
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        for (label, path) in directories {
+            validate_writable_directory(label, Path::new(&path))?;
+        }
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|error| invalid_download_directory("验证下载目录", error))?
+    .map_err(|error| invalid_download_directory("保存下载设置", error))
+}
+
+/// 创建一次性探测文件，验证目录支持完整写入和删除流程。
+#[cfg(any(mobile, test))]
+fn validate_writable_directory(label: &str, directory: &Path) -> Result<(), String> {
+    if directory.as_os_str().is_empty() {
+        return Err(format!("{label}不能为空"));
+    }
+    if !directory.is_absolute() {
+        return Err(format!("{label}必须是绝对路径：{}", directory.display()));
+    }
+    fs::create_dir_all(directory)
+        .map_err(|error| format!("无法创建{label} {}：{error}", directory.display()))?;
+
+    static PROBE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let sequence = PROBE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let probe = directory.join(format!(
+        ".ani-tracker-write-test-{}-{timestamp}-{sequence}",
+        std::process::id()
+    ));
+    let write_result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&probe)
+            .map_err(|error| format!("{label}不可写 {}：{error}", directory.display()))?;
+        file.write_all(b"ani-tracker-directory-probe")
+            .and_then(|_| file.flush())
+            .map_err(|error| format!("{label}写入失败 {}：{error}", directory.display()))
+    })();
+    if let Err(error) = write_result {
+        let _ = fs::remove_file(&probe);
+        return Err(error);
+    }
+    fs::remove_file(&probe)
+        .map_err(|error| format!("{label}无法删除临时文件 {}：{error}", probe.display()))?;
+    Ok(())
+}
+
+/// 将移动下载目录错误转换为可直接展示的稳定命令错误。
+#[cfg(mobile)]
+fn invalid_download_directory(action: &str, error: impl std::fmt::Display) -> AppCommandError {
+    log::error!("Tauri 下载目录验证失败 action={action} error={error}");
+    AppCommandError {
+        code: "invalid_download_directory".to_owned(),
+        message: format!("{action}失败：{error}"),
+    }
 }
 
 /// 恢复当前平台默认设置。
@@ -810,4 +901,40 @@ pub(crate) async fn upsert_source(
         move |storage| storage.repository().upsert_source(&source),
     )
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_writable_directory;
+
+    /// 可写绝对目录通过验证且不会残留探测文件。
+    #[test]
+    fn validates_writable_download_directory_without_leaving_probe() {
+        let directory = std::env::temp_dir().join(format!(
+            "ani-download-directory-test-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&directory);
+
+        validate_writable_directory("默认下载目录", &directory).expect("validate directory");
+        assert_eq!(
+            std::fs::read_dir(&directory)
+                .expect("read directory")
+                .count(),
+            0
+        );
+        std::fs::remove_dir_all(directory).expect("remove test directory");
+    }
+
+    /// 相对路径不会被移动宿主接受。
+    #[test]
+    fn rejects_relative_download_directory() {
+        let error = validate_writable_directory(
+            "临时下载目录",
+            std::path::Path::new("relative/incomplete"),
+        )
+        .expect_err("reject relative directory");
+
+        assert!(error.contains("必须是绝对路径"));
+    }
 }

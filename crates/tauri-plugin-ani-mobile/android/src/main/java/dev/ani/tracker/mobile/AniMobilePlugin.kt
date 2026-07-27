@@ -9,7 +9,6 @@ import android.content.res.Configuration
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
-import android.os.Environment
 import android.os.StatFs
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -78,6 +77,37 @@ internal object ExternalUrlPolicy {
     }
 
     private val ALLOWED_SCHEMES = setOf("http", "https")
+}
+
+/** 描述 Android 应用专属外部存储中的固定目录布局。 */
+internal data class AndroidAppDirectoryLayout(
+    val userDataDir: File,
+    val databasePath: File,
+    val cacheDir: File,
+    val logDir: File,
+    val backupDir: File,
+    val incompleteDir: File,
+    val downloadDir: File
+)
+
+/** 统一生成 Android/data 下的应用目录，避免业务代码拼接不同路径。 */
+internal object AndroidAppDirectoryPolicy {
+    /** 使用系统返回的应用专属外部根目录生成完整目录布局。 */
+    fun resolve(externalFilesDir: File?, externalCacheDir: File?): AndroidAppDirectoryLayout {
+        val filesDir = requireNotNull(externalFilesDir) { "应用专属外部存储当前不可用" }
+        val cacheDir = externalCacheDir ?: File(filesDir, "cache")
+        return AndroidAppDirectoryLayout(
+            userDataDir = filesDir,
+            databasePath = File(filesDir, "database/$DATABASE_FILE_NAME"),
+            cacheDir = cacheDir,
+            logDir = File(filesDir, "logs"),
+            backupDir = File(filesDir, "backups"),
+            incompleteDir = File(cacheDir, "downloads"),
+            downloadDir = File(filesDir, "downloads")
+        )
+    }
+
+    private const val DATABASE_FILE_NAME = "ani-tracker.sqlite"
 }
 
 /** 提供 Android 生命周期、运行约束和 Keystore 安全存储。 */
@@ -194,37 +224,29 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
     @Command
     fun directories(invoke: Invoke) {
         try {
-            val filesDir = activity.filesDir
-            val userDataDir = activity.noBackupFilesDir
-            val databasePath = activity.getDatabasePath(DATABASE_FILE_NAME)
-            val cacheDir = activity.cacheDir
-            val logDir = File(filesDir, "logs")
-            val backupDir = File(filesDir, "backups")
-            val incompleteDir = File(filesDir, "incomplete")
-            val externalDownloadDir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            val downloadDir = externalDownloadDir ?: File(filesDir, "downloads")
+            val directories = applicationDirectories()
             listOf(
-                userDataDir,
-                databasePath.parentFile,
-                cacheDir,
-                logDir,
-                backupDir,
-                incompleteDir,
-                downloadDir
+                directories.userDataDir,
+                directories.databasePath.parentFile,
+                directories.cacheDir,
+                directories.logDir,
+                directories.backupDir,
+                directories.incompleteDir,
+                directories.downloadDir
             ).filterNotNull().forEach(::ensureDirectory)
 
             invoke.resolve(JSObject().apply {
-                put("userDataDir", userDataDir.absolutePath)
-                put("databasePath", databasePath.absolutePath)
-                put("cacheDir", cacheDir.absolutePath)
-                put("logDir", logDir.absolutePath)
-                put("backupDir", backupDir.absolutePath)
-                put("incompleteDir", incompleteDir.absolutePath)
-                put("downloadDir", downloadDir.absolutePath)
+                put("userDataDir", directories.userDataDir.absolutePath)
+                put("databasePath", directories.databasePath.absolutePath)
+                put("cacheDir", directories.cacheDir.absolutePath)
+                put("logDir", directories.logDir.absolutePath)
+                put("backupDir", directories.backupDir.absolutePath)
+                put("incompleteDir", directories.incompleteDir.absolutePath)
+                put("downloadDir", directories.downloadDir.absolutePath)
             })
             Log.i(
                 LOG_TAG,
-                "Android application directories prepared externalDownload=${externalDownloadDir != null}"
+                "Android application directories prepared root=${directories.userDataDir.absolutePath}"
             )
         } catch (error: Exception) {
             Log.e(LOG_TAG, "failed to prepare Android application directories", error)
@@ -293,7 +315,7 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
                 "backup" -> ".sqlite" to MAX_BACKUP_BYTES
                 else -> throw IllegalArgumentException("文档类型不受支持")
             }
-            val directory = File(activity.cacheDir, "ani-document-imports").apply { mkdirs() }
+            val directory = File(applicationDirectories().cacheDir, "ani-document-imports").apply { mkdirs() }
             val target = File(directory, "${args.kind}-${UUID.randomUUID()}$extension")
             try {
                 activity.contentResolver.openInputStream(uri).use { input ->
@@ -399,10 +421,9 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
         return state to manager.isActiveNetworkMetered
     }
 
-    /** 按实际应用下载目录所在分区的剩余空间返回 ok、low 或 critical。 */
+    /** 按应用专属外部目录所在分区的剩余空间返回 ok、low 或 critical。 */
     private fun storageStatus(): Pair<String, Long> {
-        val downloadDir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
-            ?: File(activity.filesDir, "downloads")
+        val downloadDir = applicationDirectories().downloadDir
         val availableBytes = StatFs(downloadDir.absolutePath).availableBytes
         val state = when {
             availableBytes < CRITICAL_STORAGE_BYTES -> "critical"
@@ -481,6 +502,12 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
         }
     }
 
+    /** 从当前 Activity 解析统一的应用专属外部目录布局。 */
+    private fun applicationDirectories(): AndroidAppDirectoryLayout = AndroidAppDirectoryPolicy.resolve(
+        activity.getExternalFilesDir(null),
+        activity.externalCacheDir
+    )
+
     /** 限制流复制大小，避免恶意文档耗尽应用存储。 */
     private fun copyWithLimit(input: java.io.InputStream, output: java.io.OutputStream, limit: Long) {
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -496,12 +523,17 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
     }
 
     /** 判断文件是否位于当前应用拥有的目录中。 */
-    private fun isPrivateFile(file: File): Boolean = listOf(
-        activity.filesDir,
-        activity.cacheDir,
-        activity.noBackupFilesDir
-    ).map(File::getCanonicalFile).any { root ->
-        file == root || file.path.startsWith(root.path + File.separator)
+    private fun isPrivateFile(file: File): Boolean {
+        val directories = applicationDirectories()
+        return listOf(
+            directories.userDataDir,
+            directories.cacheDir,
+            activity.filesDir,
+            activity.cacheDir,
+            activity.noBackupFilesDir
+        ).map(File::getCanonicalFile).any { root ->
+            file == root || file.path.startsWith(root.path + File.separator)
+        }
     }
 
     companion object {

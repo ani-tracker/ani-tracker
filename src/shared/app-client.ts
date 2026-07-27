@@ -218,6 +218,8 @@ export interface AppClient {
   exportDatabaseBackup?(): Promise<string | null>;
   /** 通过系统文件面板恢复 SQLite 数据备份。 */
   restoreDatabaseBackup?(): Promise<string | null>;
+  /** 通过系统文件面板导出当前及轮转日志。 */
+  exportLogs?(): Promise<string | null>;
 
   /** 探测桌面外部播放器。 */
   detectPlayers(profiles?: PlayerProfile[]): Promise<PlayerDetectionResult>;

@@ -1,7 +1,7 @@
 import { AlertTriangle, CalendarDays, Check, CheckCircle2, ChevronDown, ChevronRight, CircleOff, Download, Plus, RefreshCw, Rss, Save, Search, SlidersHorizontal, Trash2, Unlink } from "lucide-react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import { useAppScrollContainer } from "@/components/app-shell";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";

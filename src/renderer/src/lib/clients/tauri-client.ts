@@ -257,6 +257,13 @@ class TauriClientCore implements AppClient {
     });
   }
 
+  /** 导出当前及轮转日志，不执行分析或上传。 */
+  async exportLogs(): Promise<string | null> {
+    return invoke<string | null>("export_logs").catch((error) => {
+      throw normalizeTauriError("export_logs", error);
+    });
+  }
+
   /** 从 Rust SQLite Repository 读取提醒中心通知。 */
   async listNotifications(): Promise<NotificationRecord[]> {
     return invoke<NotificationRecord[]>("list_notifications").catch((error) => {
