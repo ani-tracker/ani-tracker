@@ -14,6 +14,7 @@ const [
   iosTorrentCmake,
   iosTorrentModuleMap,
   iosFrameworkVerifier,
+  iosConfigSource,
   playerPackage,
   torrentPackage,
   playerBuild,
@@ -35,6 +36,7 @@ const [
   readFile("native/torrent-core/CMakeLists.txt", "utf8"),
   readFile("native/torrent-core/apple/AniTorrentCore.modulemap", "utf8"),
   readFile("scripts/verify-ios-xcframework.sh", "utf8"),
+  readFile("src-tauri/tauri.ios.conf.json", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Package.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-torrent/ios/Package.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-player/build.rs", "utf8"),
@@ -45,6 +47,8 @@ const [
   readFile("crates/tauri-plugin-ani-player/ios/Sources/AniPlayerPlugin.swift", "utf8"),
   readFile("src-tauri/src/commands/window.rs", "utf8")
 ]);
+
+const iosConfig = JSON.parse(iosConfigSource);
 
 test("移动持续门禁真实编译两端产物并检查原生与包边界", () => {
   assert.match(mobileGate, /pull_request:/);
@@ -117,6 +121,11 @@ test("iOS 原生插件校验 XCFramework 模块并显式提供切片搜索路径
     assert.match(buildScript, /cargo:rustc-link-lib=framework=\{framework_name\}/);
   }
   assert.match(playerBuild, /cargo:rustc-link-lib=framework=SwiftUI/);
+  assert.deepEqual(iosConfig.bundle.iOS.frameworks, [
+    "SwiftUI",
+    "../crates/tauri-plugin-ani-player/ios/Frameworks/MobileVLCKit.xcframework",
+    "../crates/tauri-plugin-ani-torrent/ios/Frameworks/AniTorrentCore.xcframework"
+  ]);
 });
 
 test("移动窗口命令不会编译桌面最小化与最大化 API", () => {

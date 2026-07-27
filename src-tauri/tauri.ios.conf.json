@@ -9,7 +9,12 @@
       "../resources/torrent-core/licenses/": "licenses/torrent-core/"
     },
     "iOS": {
-      "minimumSystemVersion": "16.0"
+      "minimumSystemVersion": "16.0",
+      "frameworks": [
+        "SwiftUI",
+        "../crates/tauri-plugin-ani-player/ios/Frameworks/MobileVLCKit.xcframework",
+        "../crates/tauri-plugin-ani-torrent/ios/Frameworks/AniTorrentCore.xcframework"
+      ]
     }
   }
 }
