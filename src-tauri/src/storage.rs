@@ -498,7 +498,7 @@ fn default_release_sources() -> Vec<ReleaseSourceSeed> {
             "site_adapter",
             true,
             false,
-            3_000,
+            500,
             Some("https://anibt.net/"),
             None,
             &["anime", "bt", "anibt", "rss"],
@@ -609,7 +609,16 @@ mod tests {
             settings["storage"]["backupDir"],
             directories.backup.to_string_lossy().as_ref()
         );
-        assert_eq!(default_release_sources().len(), 7);
+        let release_sources = default_release_sources();
+        assert_eq!(release_sources.len(), 7);
+        assert_eq!(
+            release_sources
+                .iter()
+                .find(|source| source.id == "anibt")
+                .expect("AniBT 默认下载源")
+                .request_interval_ms,
+            500
+        );
     }
 
     /// 验证旧 Electron 数据库候选稳定去重且不包含活动库。

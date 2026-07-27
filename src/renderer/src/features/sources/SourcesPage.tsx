@@ -579,7 +579,7 @@ export function SourcesPage() {
                                 </div>
                                 <FieldDescription>
                                   {getSourceMinimumRequestIntervalMs(source) > 250
-                                    ? "AniBT 同域请求固定不低于 3000 毫秒，避免触发站点访问保护。"
+                                    ? "AniBT 同域请求固定不低于 500 毫秒，并遵循服务端退避响应头。"
                                     : "同一域名请求会串行执行，并遵循服务端退避响应头。"}
                                 </FieldDescription>
                               </Field>

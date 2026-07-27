@@ -45,7 +45,7 @@ pub use search::{
 pub const DEFAULT_SOURCE_REQUEST_INTERVAL_MS: u64 = 1_500;
 pub const MIN_SOURCE_REQUEST_INTERVAL_MS: u64 = 250;
 pub const MAX_SOURCE_REQUEST_INTERVAL_MS: u64 = 60_000;
-pub const ANIBT_MIN_REQUEST_INTERVAL_MS: u64 = 3_000;
+pub const ANIBT_MIN_REQUEST_INTERVAL_MS: u64 = 500;
 const RELEASE_SOURCE_CIRCUIT_GROUP: &str = "release-source";
 const FORBIDDEN_BACKOFF_SECONDS: &[u64] = &[10 * 60, 20 * 60, 30 * 60];
 const RATE_LIMIT_BACKOFF_SECONDS: &[u64] = &[60, 5 * 60, 15 * 60, 30 * 60];
@@ -920,6 +920,7 @@ mod tests {
     fn applies_source_proxy_and_site_interval_policy() {
         let request_url = url::Url::parse("https://api.anibt.net/rss").expect("parse AniBT URL");
         let source = test_source("anibt", true, 250);
+        assert_eq!(ANIBT_MIN_REQUEST_INTERVAL_MS, 500);
         assert!(!should_use_source_proxy(&source, &request_url));
         assert_eq!(
             normalize_source_request_interval(&source, &request_url),

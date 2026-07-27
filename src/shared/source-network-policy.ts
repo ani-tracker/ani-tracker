@@ -3,7 +3,7 @@ import type { ReleaseSourceConfig } from "./domain";
 export const DEFAULT_SOURCE_REQUEST_INTERVAL_MS = 1_500;
 export const MIN_SOURCE_REQUEST_INTERVAL_MS = 250;
 export const MAX_SOURCE_REQUEST_INTERVAL_MS = 60_000;
-export const ANIBT_MIN_REQUEST_INTERVAL_MS = 3_000;
+export const ANIBT_MIN_REQUEST_INTERVAL_MS = 500;
 
 type SourceRequestTarget = Pick<ReleaseSourceConfig, "id" | "name" | "baseUrl" | "rssUrl">;
 type SourceProxyTarget = SourceRequestTarget & Pick<ReleaseSourceConfig, "useProxy">;
