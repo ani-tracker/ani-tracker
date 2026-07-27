@@ -58,3 +58,5 @@ other.md
 #/docs/assets/
 /commonPrompt/
 .tmp
+/.cache/
+/.cargo/
