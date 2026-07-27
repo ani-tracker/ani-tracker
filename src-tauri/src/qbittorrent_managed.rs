@@ -73,11 +73,18 @@ impl AppManagedQbittorrentState {
         if let Ok(resources) = app.path().resource_dir() {
             roots.push(resources.join("qbittorrent"));
         }
+        #[cfg(all(debug_assertions, desktop))]
+        append_development_resource_roots(&mut roots);
         roots.extend([
             current.join("out/qbittorrent"),
             current.join("resources/qbittorrent"),
         ]);
         roots.dedup();
+        log::info!(
+            "托管 qBittorrent 资源解析已装配 target={} roots={}",
+            bundled_target_directory(),
+            display_paths(&roots)
+        );
         Self {
             runtime: Arc::new(Mutex::new(ManagedRuntime::default())),
             resource_roots: Arc::new(roots),
@@ -122,14 +129,18 @@ impl AppManagedQbittorrentState {
                     return Ok(status_snapshot(settings, &mut runtime, None));
                 }
             }
-            let plan = build_start_plan(settings, &self.resource_roots).await?;
-            let binary_path = plan
-                .binary_path
-                .as_ref()
-                .ok_or_else(|| "未找到项目内置的 qBittorrent-nox 二进制".to_owned())?;
-            tokio::fs::create_dir_all(&plan.profile_directory)
-                .await
-                .map_err(|error| format!("创建 qBittorrent profile 目录失败：{error}"))?;
+            let plan = match build_start_plan(settings, &self.resource_roots).await {
+                Ok(plan) => plan,
+                Err(error) => return Err(self.record_start_error(error).await),
+            };
+            let Some(binary_path) = plan.binary_path.as_ref() else {
+                let error = missing_binary_error(&self.resource_roots);
+                return Err(self.record_start_error(error).await);
+            };
+            if let Err(error) = tokio::fs::create_dir_all(&plan.profile_directory).await {
+                let error = format!("创建 qBittorrent profile 目录失败：{error}");
+                return Err(self.record_start_error(error).await);
+            }
             let mut command = Command::new(binary_path);
             command
                 .arg(format!("--webui-port={}", plan.web_ui_port))
@@ -139,15 +150,21 @@ impl AppManagedQbittorrentState {
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped());
-            apply_launch_environment(&mut command, binary_path)?;
+            if let Err(error) = apply_launch_environment(&mut command, binary_path) {
+                return Err(self.record_start_error(error).await);
+            }
             #[cfg(target_os = "windows")]
             {
                 use std::os::windows::process::CommandExt;
                 command.creation_flags(0x0800_0000);
             }
-            let mut child = command
-                .spawn()
-                .map_err(|error| format!("启动托管 qBittorrent 失败：{error}"))?;
+            let mut child = match command.spawn() {
+                Ok(child) => child,
+                Err(error) => {
+                    let error = format!("启动托管 qBittorrent 失败：{error}");
+                    return Err(self.record_start_error(error).await);
+                }
+            };
             let pid = child.id();
             let output = Arc::new(StdMutex::new(String::new()));
             if let Some(stdout) = child.stdout.take() {
@@ -182,6 +199,13 @@ impl AppManagedQbittorrentState {
             }
             Ok(self.status(settings).await)
         }
+    }
+
+    /// 保存启动阶段的真实错误，供状态栏和设置页稳定展示。
+    async fn record_start_error(&self, error: String) -> String {
+        self.runtime.lock().await.last_error = Some(error.clone());
+        log::error!("托管 qBittorrent 启动失败：{error}");
+        error
     }
 
     /// 先请求 WebUI 保存退出，超时后再终止并回收子进程。
@@ -405,20 +429,15 @@ fn resolve_binary(settings: &AppSettings, roots: &[PathBuf]) -> Option<PathBuf> 
                 .unwrap_or_else(|_| PathBuf::from("."))
                 .join(path)
         };
-        return path.is_file().then_some(path);
+        if path.is_file() {
+            return Some(path);
+        }
+        log::warn!(
+            "托管 qBittorrent 自定义二进制无效，回退内置资源 path={}",
+            path.display()
+        );
     }
-    let platform = if cfg!(target_os = "windows") {
-        "win32"
-    } else if cfg!(target_os = "macos") {
-        "darwin"
-    } else {
-        "linux"
-    };
-    let arch = match std::env::consts::ARCH {
-        "x86_64" => "x64",
-        "aarch64" => "arm64",
-        value => value,
-    };
+    let directory = bundled_target_directory();
     let names: &[&str] = if cfg!(target_os = "windows") {
         &["qbittorrent-nox.exe"]
     } else if cfg!(target_os = "macos") {
@@ -432,8 +451,8 @@ fn resolve_binary(settings: &AppSettings, roots: &[PathBuf]) -> Option<PathBuf> 
     };
     for root in roots {
         for directory in [
-            format!("{platform}-{arch}"),
-            platform.to_owned(),
+            directory.clone(),
+            bundled_platform().to_owned(),
             String::new(),
         ] {
             for name in names {
@@ -445,6 +464,56 @@ fn resolve_binary(settings: &AppSettings, roots: &[PathBuf]) -> Option<PathBuf> 
         }
     }
     None
+}
+
+/// 返回当前桌面目标使用的 qBittorrent 资源平台名。
+fn bundled_platform() -> &'static str {
+    if cfg!(target_os = "windows") {
+        "win32"
+    } else if cfg!(target_os = "macos") {
+        "darwin"
+    } else {
+        "linux"
+    }
+}
+
+/// 返回当前目标架构对应的资源目录名。
+fn bundled_target_directory() -> String {
+    let arch = match std::env::consts::ARCH {
+        "x86_64" => "x64",
+        "aarch64" => "arm64",
+        value => value,
+    };
+    format!("{}-{arch}", bundled_platform())
+}
+
+/// 生成包含目标和搜索根目录的缺失资源错误。
+fn missing_binary_error(roots: &[PathBuf]) -> String {
+    format!(
+        "未找到项目内置的 qBittorrent-nox 二进制（target={}，roots={}）",
+        bundled_target_directory(),
+        display_paths(roots)
+    )
+}
+
+/// 将候选根目录格式化为单行诊断信息。
+fn display_paths(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| path.to_string_lossy())
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+/// Tauri dev 显式加入工作区资源，避免宿主工作目录指向 src-tauri 时解析失败。
+#[cfg(all(debug_assertions, desktop))]
+fn append_development_resource_roots(roots: &mut Vec<PathBuf>) {
+    if let Some(workspace) = Path::new(env!("CARGO_MANIFEST_DIR")).parent() {
+        roots.extend([
+            workspace.join("out/qbittorrent"),
+            workspace.join("resources/qbittorrent"),
+        ]);
+    }
 }
 
 #[cfg(any(target_os = "windows", target_os = "macos", target_os = "linux"))]
@@ -689,6 +758,8 @@ fn now_iso() -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
     use serde_json::json;
 
     use super::*;
@@ -737,5 +808,67 @@ mod tests {
             managed_credentials(&settings),
             (DEFAULT_USERNAME.to_owned(), DEFAULT_PASSWORD.to_owned())
         );
+    }
+
+    /// 验证失效自定义路径不会阻断内置平台资源回退。
+    #[test]
+    fn falls_back_to_bundled_binary_when_override_is_invalid() {
+        let root = temporary_test_directory("resolver");
+        let binary = root
+            .join(bundled_target_directory())
+            .join(test_binary_relative_path());
+        std::fs::create_dir_all(binary.parent().expect("binary parent"))
+            .expect("create binary parent");
+        std::fs::write(&binary, b"test").expect("write binary");
+        let settings = json!({
+            "download": {
+                "qbittorrent": {
+                    "managed": {
+                        "binaryPath": root.join("missing-qbittorrent-nox")
+                    }
+                }
+            }
+        });
+
+        assert_eq!(
+            resolve_binary(&settings, std::slice::from_ref(&root)),
+            Some(binary)
+        );
+        std::fs::remove_dir_all(root).expect("remove resolver fixture");
+    }
+
+    /// 验证开发构建始终包含工作区 out/qbittorrent 资源根。
+    #[cfg(all(debug_assertions, desktop))]
+    #[test]
+    fn includes_workspace_qbittorrent_resources_in_development() {
+        let mut roots = Vec::new();
+        append_development_resource_roots(&mut roots);
+        let workspace = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("workspace root");
+        assert!(roots.contains(&workspace.join("out/qbittorrent")));
+    }
+
+    /// 创建当前测试进程独占的临时目录。
+    fn temporary_test_directory(label: &str) -> PathBuf {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "ani-qbittorrent-{label}-{}-{nonce}",
+            std::process::id()
+        ))
+    }
+
+    /// 返回当前平台测试使用的 qBittorrent 二进制相对路径。
+    fn test_binary_relative_path() -> PathBuf {
+        if cfg!(target_os = "windows") {
+            PathBuf::from("qbittorrent-nox.exe")
+        } else if cfg!(target_os = "macos") {
+            PathBuf::from("qbittorrent-nox.app/Contents/MacOS/qbittorrent-nox")
+        } else {
+            PathBuf::from("qbittorrent-nox")
+        }
     }
 }

@@ -4,7 +4,7 @@ use ani_contracts::{
     AppCommandError, DownloadServiceStatus, EmbeddedTorrentCoreStatus, QbittorrentManagedStatus,
     TorrentConnectionTestResult,
 };
-use ani_domain::{DownloadTask, Release};
+use ani_domain::{DownloadTask, Release, TorrentEngineKind};
 use ani_downloads::{
     AddTorrentOptions, DownloadAddRequest, DownloadServiceError, DownloadTaskContext,
 };
@@ -238,6 +238,22 @@ pub(crate) async fn refresh_downloads(
     let default_engine = state
         .default_engine(&settings)
         .map_err(|error| map_download_error("刷新下载任务", error))?;
+    if default_engine == TorrentEngineKind::Qbittorrent {
+        let managed = state
+            .managed_qbittorrent_status()
+            .await
+            .map_err(|error| runtime_error("读取托管 qBittorrent 状态", error))?;
+        if managed.enabled && !managed.running {
+            log::debug!(
+                "托管 qBittorrent 未运行，返回持久化任务快照 error={}",
+                managed.last_error.as_deref().unwrap_or("进程未启动")
+            );
+            return state
+                .service()
+                .list_for_engine(&default_engine)
+                .map_err(|error| map_download_error("刷新下载任务", error));
+        }
+    }
     let result = state
         .service()
         .refresh(default_engine)
