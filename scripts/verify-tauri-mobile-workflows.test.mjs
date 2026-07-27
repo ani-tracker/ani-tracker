@@ -155,7 +155,10 @@ test("Android HTTPS 使用系统证书验证器并在业务请求前初始化", 
   assert.match(mobilePluginCargo, /jni = \{ version = "0\.22\.4", default-features = false \}/);
   assert.match(mobilePluginCargo, /rustls-platform-verifier = "0\.7"/);
   assert.match(androidGradle, /cargo[\s\S]*metadata[\s\S]*--filter-platform[\s\S]*aarch64-linux-android/);
-  assert.match(androidGradle, /implementation\("rustls:rustls-platform-verifier:latest\.release"\)/);
+  assert.match(androidGradle, /verifierPackage\["version"\]/);
+  assert.match(androidGradle, /metadataSources\s*\{[\s\S]*?mavenPom\(\)[\s\S]*?artifact\(\)[\s\S]*?\}/);
+  assert.match(androidGradle, /implementation\("rustls:rustls-platform-verifier:\$\{rustlsPlatformVerifier\.version\}"\)/);
+  assert.doesNotMatch(androidGradle, /latest\.release/);
   assert.match(mobilePluginAndroid, /initializeRustlsPlatformVerifier\(activity\.applicationContext\)/);
   assert.match(mobilePluginAndroid, /private external fun initializeRustlsPlatformVerifier\(context: Context\): Boolean/);
   assert.match(mobilePluginRust, /rustls_platform_verifier::android::init_with_env\(env, context\)/);

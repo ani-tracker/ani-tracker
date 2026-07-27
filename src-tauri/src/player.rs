@@ -579,7 +579,7 @@ impl DesktopWindowController for TauriPlayerWindowController {
             controls
                 .set_fullscreen(fullscreen)
                 .map_err(|error| format!("切换控制层全屏失败：{error}"))?;
-            sync_video_window_bounds(controls_window, &video)?;
+            sync_video_window_bounds(&controls_window, &video)?;
         }
         self.fullscreen.store(fullscreen, Ordering::Release);
         log::info!(

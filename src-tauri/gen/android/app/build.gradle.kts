@@ -25,8 +25,13 @@ val releaseSigningEnabled = listOf(
     releaseKeyPassword
 ).all(String::isNotBlank)
 
-/** 通过 Cargo 元数据定位与 Rust verifier 版本配套的本地 Maven 仓库。 */
-fun findRustlsPlatformVerifierRepository(): File {
+data class RustlsPlatformVerifierArtifact(
+    val repository: File,
+    val version: String
+)
+
+/** 通过 Cargo 元数据定位与 Rust verifier 配套的本地 Maven 仓库和精确版本。 */
+fun findRustlsPlatformVerifierArtifact(): RustlsPlatformVerifierArtifact {
     val workspaceRoot = rootProject.projectDir.resolve("../../..").canonicalFile
     val metadataText = providers.exec {
         workingDir = workspaceRoot
@@ -50,13 +55,23 @@ fun findRustlsPlatformVerifierRepository(): File {
         ?: throw GradleException("Cargo 元数据缺少 rustls-platform-verifier-android")
     val manifestPath = verifierPackage["manifest_path"]?.toString()
         ?: throw GradleException("Android verifier 缺少 manifest_path")
-    return file(manifestPath).parentFile.resolve("maven")
+    val version = verifierPackage["version"]?.toString()?.takeIf(String::isNotBlank)
+        ?: throw GradleException("Android verifier 缺少 version")
+    return RustlsPlatformVerifierArtifact(
+        repository = file(manifestPath).parentFile.resolve("maven"),
+        version = version
+    )
 }
+
+val rustlsPlatformVerifier = findRustlsPlatformVerifierArtifact()
 
 repositories {
     maven {
-        url = uri(findRustlsPlatformVerifierRepository())
-        metadataSources { artifact() }
+        url = uri(rustlsPlatformVerifier.repository)
+        metadataSources {
+            mavenPom()
+            artifact()
+        }
     }
 }
 
@@ -128,7 +143,7 @@ rust {
 }
 
 dependencies {
-    implementation("rustls:rustls-platform-verifier:latest.release")
+    implementation("rustls:rustls-platform-verifier:${rustlsPlatformVerifier.version}")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")
