@@ -385,6 +385,34 @@ async fn merges_engine_snapshot_with_pending_task() {
     );
 }
 
+/// 验证引擎空保存路径不会覆盖本地已持久化的有效目录。
+#[tokio::test]
+async fn preserves_stored_save_path_when_engine_snapshot_is_empty() {
+    let stored = stored_task(
+        "existing-task",
+        TorrentEngineKind::Embedded,
+        Some("existing-hash"),
+    );
+    let mut snapshot = task(
+        "existing-hash",
+        TorrentEngineKind::Embedded,
+        Some("existing-hash"),
+    );
+    snapshot.save_path.clear();
+    let store = Arc::new(MemoryStore::with_tasks(vec![stored]));
+    let embedded = Arc::new(FakeEngine::new(TorrentEngineKind::Embedded, vec![snapshot]));
+    let mut registry = DownloadEngineRegistry::new();
+    registry.register(embedded).expect("register embedded");
+    let service = DownloadTaskService::new(Arc::new(registry), store);
+
+    let result = service
+        .refresh(TorrentEngineKind::Embedded)
+        .await
+        .expect("refresh embedded");
+
+    assert_eq!(result.tasks[0].save_path, "C:/Downloads");
+}
+
 /// 验证刷新当前引擎不会唤起历史引擎，历史快照仍可切回读取。
 #[tokio::test]
 async fn isolates_inactive_engine_refresh_failure() {

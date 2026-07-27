@@ -165,19 +165,30 @@ pub(crate) async fn play_media(
 #[tauri::command]
 pub(crate) fn reveal_media(
     file_path: String,
+    app: AppHandle,
     media: State<'_, AppMediaState>,
 ) -> Result<(), AppCommandError> {
     #[cfg(desktop)]
     {
+        let _ = app;
         crate::external_player::reveal_media(media.inner(), &file_path)
             .map_err(|error| map_external_error("定位媒体文件", error))
     }
-    #[cfg(not(desktop))]
+    #[cfg(target_os = "android")]
     {
-        let _ = (file_path, media);
+        let authorized = media
+            .authorize_media_path(&file_path)
+            .map_err(|error| map_external_error("验证下载文件", error))?;
+        app.ani_mobile()
+            .open_directory(&authorized.to_string_lossy())
+            .map_err(|error| map_external_error("打开下载目录", error))
+    }
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (file_path, app, media);
         Err(map_external_error(
             "定位媒体文件",
-            "移动端不提供桌面文件管理器",
+            "iOS 不提供应用目录浏览能力",
         ))
     }
 }

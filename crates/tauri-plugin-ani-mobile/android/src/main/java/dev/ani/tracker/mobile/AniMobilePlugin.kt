@@ -9,7 +9,9 @@ import android.content.res.Configuration
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.Environment
 import android.os.StatFs
+import android.provider.DocumentsContract
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.Base64
@@ -60,6 +62,11 @@ class ExportDocumentArgs {
 @InvokeArg
 class ExternalUrlArgs {
     lateinit var url: String
+}
+
+@InvokeArg
+class OpenDirectoryArgs {
+    lateinit var filePath: String
 }
 
 /** 规范移动系统可打开的外链，拒绝任意协议、无主机地址和内嵌凭据。 */
@@ -216,6 +223,47 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
             } catch (error: Exception) {
                 Log.e(LOG_TAG, "failed to open external URL", error)
                 invoke.reject("Android 系统无法打开外链", "open_external_failed", error)
+            }
+        }
+    }
+
+    /** 使用系统文档界面打开应用下载文件所在目录。 */
+    @Command
+    fun openDirectory(invoke: Invoke) {
+        val args = try {
+            invoke.parseArgs(OpenDirectoryArgs::class.java)
+        } catch (error: Exception) {
+            invoke.reject("目录参数无效", "invalid_directory", error)
+            return
+        }
+        activity.runOnUiThread {
+            try {
+                val file = File(args.filePath).canonicalFile
+                require(file.isFile) { "下载文件不存在" }
+                require(isPrivateFile(file)) { "仅允许打开 Ani Tracker 应用目录" }
+                val directory = requireNotNull(file.parentFile?.canonicalFile) { "下载文件没有父目录" }
+                val storageRoot = Environment.getExternalStorageDirectory().canonicalFile
+                require(directory.path.startsWith(storageRoot.path + File.separator)) {
+                    "系统文档界面仅支持主存储目录"
+                }
+                val relativePath = directory.relativeTo(storageRoot).invariantSeparatorsPath
+                val documentUri = DocumentsContract.buildDocumentUri(
+                    EXTERNAL_STORAGE_DOCUMENTS_AUTHORITY,
+                    "primary:$relativePath"
+                )
+                val intent = Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(documentUri, DocumentsContract.Document.MIME_TYPE_DIR)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                require(intent.resolveActivity(activity.packageManager) != null) {
+                    "系统没有可用的文件管理器"
+                }
+                activity.startActivity(intent)
+                Log.i(LOG_TAG, "Android download directory opened path=${directory.absolutePath}")
+                invoke.resolve()
+            } catch (error: Exception) {
+                Log.e(LOG_TAG, "failed to open Android download directory", error)
+                invoke.reject("Android 系统无法打开下载目录", "open_directory_failed", error)
             }
         }
     }
@@ -541,6 +589,8 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
         const val ACTION_OPEN_NOTIFICATIONS = "com.ani.tracker.OPEN_NOTIFICATIONS"
         const val EXTRA_PAGE_ID = "aniPageId"
         private const val LOG_TAG = "AniMobilePlugin"
+        private const val EXTERNAL_STORAGE_DOCUMENTS_AUTHORITY =
+            "com.android.externalstorage.documents"
         private const val PREFERENCES_NAME = "ani_secure_store"
         private const val DATABASE_FILE_NAME = "ani-tracker.sqlite"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"

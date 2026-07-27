@@ -469,6 +469,14 @@ fn merge_download_task(stored: &DownloadTask, mut engine: DownloadTask) -> Downl
     engine.correlation_tag = engine
         .correlation_tag
         .or_else(|| stored.correlation_tag.clone());
+    if engine.save_path.trim().is_empty() {
+        log::warn!(
+            "下载引擎返回空保存路径，保留持久化路径：task_id={}, engine={:?}",
+            stored.id,
+            stored.engine
+        );
+        engine.save_path = stored.save_path.clone();
+    }
     engine.created_at = stored.created_at.clone();
     engine.completed_at = engine.completed_at.or_else(|| stored.completed_at.clone());
     engine

@@ -63,6 +63,12 @@ class PlayerActivity : ComponentActivity() {
         }
     }
 
+    /** 方向变化时复用当前 Activity，并同步对应方向的系统栏状态。 */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        configureSystemBars()
+    }
+
     /** 返回前台时恢复生命周期暂停的媒体。 */
     override fun onStart() {
         super.onStart()

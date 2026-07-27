@@ -327,6 +327,12 @@ pub struct PlayerMediaSource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub file_index: Option<u32>,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anime_title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artwork_uri: Option<String>,
     pub uri: String,
     pub mode: PlayerMediaMode,
     #[serde(default, skip_serializing_if = "Option::is_none")]

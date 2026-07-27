@@ -12,6 +12,7 @@ import { WorkbenchSheet } from "@/components/workbench-sheet";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
 import { formatDateTime, formatPercent, formatSpeed } from "@/lib/format";
+import { getAppRuntime } from "@/lib/runtime";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import { isActiveDownloadTask, isCompletedDownloadTask } from "@shared/download-status";
 import type { DownloadTask, MyAnime, TorrentFile } from "@shared/domain";
@@ -136,14 +137,19 @@ function DownloadTaskCard({
   fansubNames: Map<string, string>;
   onPlayMedia?: (target: MediaPlaybackTarget) => Promise<void>;
 }) {
+  const runtime = getAppRuntime();
+  const mobileRuntime = runtime === "android" || runtime === "ios";
+  const androidRuntime = runtime === "android";
   const fansubName = (task.fansubGroupId ? fansubNames.get(task.fansubGroupId) : undefined) ?? task.fansubName ?? "未识别字幕组";
   const playableFile = resolveTaskFile(task, true);
   const revealFile = resolveTaskFile(task, false);
   const playableFilePath = playableFile?.filePath;
   const revealFilePath = revealFile?.filePath;
   const collectionFiles = task.files.filter((file) => file.selected && isVideoTaskFile(file));
+  const visibleFiles = mobileRuntime ? task.files.filter((file) => file.selected) : collectionFiles;
   const isCollection = collectionFiles.length > 1;
-  const [collectionOpen, setCollectionOpen] = useState(false);
+  const showFileList = mobileRuntime || isCollection;
+  const [collectionOpen, setCollectionOpen] = useState(mobileRuntime);
   const [activeFileAction, setActiveFileAction] = useState<string | null>(null);
   const [fileActionError, setFileActionError] = useState<string | null>(null);
 
@@ -203,22 +209,23 @@ function DownloadTaskCard({
         </Alert>
       )}
 
-      {isCollection && (
+      {showFileList && (
         <Collapsible className="mt-4 border-t pt-3" open={collectionOpen} onOpenChange={setCollectionOpen}>
           <CollapsibleTrigger asChild>
             <Button className="w-full justify-between" type="button" variant="secondary">
               <span className="flex min-w-0 items-center gap-2">
                 {collectionOpen ? <ChevronDown data-icon="inline-start" /> : <ChevronRight data-icon="inline-start" />}
-                合集文件
+                {mobileRuntime ? "下载文件" : "合集文件"}
               </span>
-              <Badge>{collectionFiles.length} 集</Badge>
+              <Badge>{visibleFiles.length} 个</Badge>
             </Button>
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="mt-2 divide-y border-y">
-              {collectionFiles.map((file) => {
+              {visibleFiles.map((file) => {
                 const target = resolveTorrentFile(task, file);
                 const completed = file.progress >= 1;
+                const playable = isVideoTaskFile(file);
                 return (
                   <div className="flex min-w-0 items-center gap-2 px-2 py-2" key={file.id}>
                     <Badge tone={completed ? "green" : "neutral"}>
@@ -226,26 +233,30 @@ function DownloadTaskCard({
                     </Badge>
                     <span className="min-w-0 flex-1 truncate text-xs" title={file.name}>{file.name}</span>
                     <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatPercent(file.progress)}</span>
-                    <Button
-                      aria-label={`播放${file.episodeNo !== undefined ? `第 ${file.episodeNo} 集` : file.name}`}
-                      disabled={!completed || activeFileAction !== null}
-                      onClick={() => void runFileAction("play", target)}
-                      size="icon"
-                      title={completed ? "播放文件" : "文件尚未下载完成"}
-                      variant="ghost"
-                    >
-                      <Play />
-                    </Button>
-                    <Button
-                      aria-label={`定位${file.episodeNo !== undefined ? `第 ${file.episodeNo} 集` : file.name}`}
-                      disabled={activeFileAction !== null}
-                      onClick={() => void runFileAction("reveal", target)}
-                      size="icon"
-                      title="打开文件目录"
-                      variant="ghost"
-                    >
-                      <FolderOpen />
-                    </Button>
+                    {playable && (
+                      <Button
+                        aria-label={`播放${file.episodeNo !== undefined ? `第 ${file.episodeNo} 集` : file.name}`}
+                        disabled={!completed || activeFileAction !== null}
+                        onClick={() => void runFileAction("play", target)}
+                        size="icon"
+                        title={completed ? "播放文件" : "文件尚未下载完成"}
+                        variant="ghost"
+                      >
+                        <Play />
+                      </Button>
+                    )}
+                    {(runtime === "desktop" || androidRuntime) && (
+                      <Button
+                        aria-label={`定位${file.episodeNo !== undefined ? `第 ${file.episodeNo} 集` : file.name}`}
+                        disabled={activeFileAction !== null}
+                        onClick={() => void runFileAction("reveal", target)}
+                        size="icon"
+                        title={androidRuntime ? "打开系统目录" : "打开文件目录"}
+                        variant="ghost"
+                      >
+                        <FolderOpen />
+                      </Button>
+                    )}
                   </div>
                 );
               })}
@@ -256,7 +267,10 @@ function DownloadTaskCard({
 
       {!isCollection && isCompletedDownload(task) && (
         <div className="mt-4 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="grid w-full grid-cols-2 gap-2 sm:ml-auto sm:flex sm:w-auto">
+          <div className={cn(
+            "grid w-full gap-2 sm:ml-auto sm:flex sm:w-auto",
+            runtime === "ios" ? "grid-cols-1" : "grid-cols-2"
+          )}>
             <Button
               aria-label="播放已完成视频"
               className="h-11 px-2 text-xs sm:h-8"
@@ -268,17 +282,19 @@ function DownloadTaskCard({
               <Play data-icon="inline-start" />
               播放
             </Button>
-            <Button
-              aria-label="打开文件目录"
-              className="h-11 px-2 text-xs sm:h-8"
-              disabled={!revealFilePath || activeFileAction !== null}
-              onClick={() => void runFileAction("reveal")}
-              title={revealFilePath ? "打开文件所在目录" : "未找到已完成文件"}
-              variant="outline"
-            >
-              <FolderOpen data-icon="inline-start" />
-              打开目录
-            </Button>
+            {runtime !== "ios" && (
+              <Button
+                aria-label={androidRuntime ? "打开系统目录" : "打开文件目录"}
+                className="h-11 px-2 text-xs sm:h-8"
+                disabled={!revealFilePath || activeFileAction !== null}
+                onClick={() => void runFileAction("reveal")}
+                title={revealFilePath ? (androidRuntime ? "打开系统目录" : "打开文件所在目录") : "未找到已完成文件"}
+                variant="outline"
+              >
+                <FolderOpen data-icon="inline-start" />
+                {androidRuntime ? "系统目录" : "打开目录"}
+              </Button>
+            )}
           </div>
         </div>
       )}

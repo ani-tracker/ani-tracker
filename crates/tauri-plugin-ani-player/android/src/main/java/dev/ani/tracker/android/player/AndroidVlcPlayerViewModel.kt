@@ -42,6 +42,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     private var mediaPlayer: MediaPlayer? = null
     private var attachedLayout: VLCVideoLayout? = null
     private var pendingStartPositionMillis = 0L
+    private var pendingPlayUntilVideoAttached = false
     private var autoplay = true
     private var resumeAfterHostStop = false
     private var resumeAfterFocusGain = false
@@ -104,6 +105,10 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             player.attachViews(layout, null, true, false)
             attachedLayout = layout
             Log.i(TAG, "Android libVLC 视频表面已绑定")
+            if (pendingPlayUntilVideoAttached) {
+                pendingPlayUntilVideoAttached = false
+                play()
+            }
         } catch (error: Throwable) {
             fail("视频表面初始化失败", error)
         }
@@ -138,12 +143,18 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
 
     /** 在播放与暂停之间切换。 */
     fun togglePlayback() {
-        if (mediaPlayer?.isPlaying == true) pause() else play()
+        if (mediaPlayer?.isPlaying == true || pendingPlayUntilVideoAttached) pause() else play()
     }
 
     /** 获取音频焦点并开始或继续播放。 */
     fun play() {
         val player = mediaPlayer ?: return
+        if (attachedLayout == null) {
+            pendingPlayUntilVideoAttached = true
+            patch(status = PlayerStatus.READY, errorMessage = null)
+            Log.i(TAG, "Android libVLC 等待视频表面后开始播放")
+            return
+        }
         if (audioManager.requestAudioFocus(audioFocusRequest) != AudioManager.AUDIOFOCUS_REQUEST_GRANTED) {
             stateFlow.value = stateFlow.value.copy(
                 status = PlayerStatus.PAUSED,
@@ -161,6 +172,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
 
     /** 暂停当前媒体并释放音频焦点。 */
     fun pause() {
+        pendingPlayUntilVideoAttached = false
         resumeAfterHostStop = false
         resumeAfterFocusGain = false
         pauseInternal(abandonFocus = true)
@@ -267,6 +279,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
 
     /** 停止当前媒体，供宿主主动关闭前调用。 */
     fun closePlayback() {
+        pendingPlayUntilVideoAttached = false
         resumeAfterHostStop = false
         resumeAfterFocusGain = false
         persistCheckpoint(completed = stateFlow.value.status == PlayerStatus.ENDED, reason = "close")
@@ -295,6 +308,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
         } catch (error: Throwable) {
             Log.w(TAG, "Android libVLC 释放失败", error)
         } finally {
+            pendingPlayUntilVideoAttached = false
             attachedLayout = null
             mediaPlayer = null
             libVlc = null
@@ -307,7 +321,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
         try {
             val runtime = LibVLC(
                 getApplication(),
-                listOf(
+                mutableListOf(
                     "--audio-time-stretch",
                     "--network-caching=1500",
                     "--file-caching=500"
@@ -374,7 +388,13 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             MediaPlayer.Event.Buffering -> {
                 val percent = event.buffering.coerceIn(0f, 100f)
                 patch(
-                    status = if (percent < 100f) PlayerStatus.BUFFERING else stateFlow.value.status,
+                    status = if (mediaPlayer?.isPlaying == true) {
+                        PlayerStatus.PLAYING
+                    } else if (percent < 100f) {
+                        PlayerStatus.BUFFERING
+                    } else {
+                        stateFlow.value.status
+                    },
                     bufferPercent = percent
                 )
             }
@@ -382,10 +402,22 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
                 applyPendingStartPosition()
                 patch(status = PlayerStatus.PLAYING, errorMessage = null)
                 refreshTracks()
+                Log.i(TAG, "Android libVLC 播放状态已确认")
             }
             MediaPlayer.Event.Paused -> patch(status = PlayerStatus.PAUSED)
             MediaPlayer.Event.TimeChanged -> {
-                patch(positionMillis = event.timeChanged.coerceAtLeast(0L))
+                val wasPlaying = stateFlow.value.status == PlayerStatus.PLAYING
+                patch(
+                    status = if (mediaPlayer?.isPlaying == true) {
+                        PlayerStatus.PLAYING
+                    } else {
+                        stateFlow.value.status
+                    },
+                    positionMillis = event.timeChanged.coerceAtLeast(0L)
+                )
+                if (!wasPlaying && stateFlow.value.status == PlayerStatus.PLAYING) {
+                    Log.i(TAG, "Android libVLC 时间推进已同步播放状态")
+                }
                 persistWatchedThresholdIfNeeded()
             }
             MediaPlayer.Event.LengthChanged -> patch(durationMillis = event.lengthChanged.coerceAtLeast(0L))

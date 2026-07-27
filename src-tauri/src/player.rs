@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[cfg(desktop)]
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -14,6 +16,8 @@ use ani_contracts::{
 use ani_contracts::{PlayerMediaSource, PlayerSubtitleSource};
 use ani_domain::{DownloadTask, TorrentFile};
 use ani_media::player::PlayerService;
+#[cfg(mobile)]
+use ani_repository::AnimeTrackingRepository;
 use ani_repository::{DownloadRepository, MediaRepository, PlaybackRepository};
 use ani_storage::Storage;
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
@@ -144,6 +148,8 @@ impl AppPlayerState {
         input: DesktopPlayerWindowInput,
     ) -> Result<(), String> {
         let session = self.create_session(input)?;
+        let (anime_title, description, artwork_uri) =
+            self.resolve_mobile_player_presentation(&session.task_id)?;
         let command_id = format!(
             "load-{}",
             self.id_sequence.fetch_add(1, Ordering::Relaxed) + 1
@@ -156,6 +162,9 @@ impl AppPlayerState {
                     task_id: session.task_id.clone(),
                     file_index: session.file_index,
                     title: session.file_name.clone(),
+                    anime_title: Some(anime_title),
+                    description,
+                    artwork_uri,
                     uri: session.stream_url.clone(),
                     mode: session.mode,
                     duration_seconds: session.duration_seconds,
@@ -192,6 +201,46 @@ impl AppPlayerState {
             session.file_index
         );
         Ok(())
+    }
+
+    /// 读取移动原生播放器需要的番剧标题、简介和封面地址。
+    #[cfg(mobile)]
+    fn resolve_mobile_player_presentation(
+        &self,
+        task_id: &str,
+    ) -> Result<(String, Option<String>, Option<String>), String> {
+        let storage = self
+            .storage
+            .lock()
+            .map_err(|error| format!("读取播放器展示数据失败：{error}"))?;
+        let repository = storage.repository();
+        let task = repository
+            .list_downloads()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|task| task.id == task_id)
+            .ok_or_else(|| "播放任务不存在或已被删除".to_owned())?;
+        let anime = match task.anime_id.as_deref() {
+            Some(anime_id) => repository
+                .list_my_anime()
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .find(|item| item.anime.id == anime_id)
+                .map(|item| item.anime),
+            None => None,
+        };
+        let anime_title = anime
+            .as_ref()
+            .map(|item| item.title.trim())
+            .filter(|title| !title.is_empty())
+            .map(str::to_owned)
+            .or_else(|| task.anime_title.filter(|title| !title.trim().is_empty()))
+            .unwrap_or_else(|| task.name.clone());
+        Ok((
+            anime_title,
+            anime.as_ref().and_then(|item| item.summary.clone()),
+            anime.and_then(|item| item.cover_url),
+        ))
     }
 
     /// 创建视频原生窗口与透明控制层，并装配当前平台 libVLC transport。

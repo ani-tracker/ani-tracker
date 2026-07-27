@@ -20,10 +20,17 @@ pub(crate) async fn open_desktop_player_window(
     input: DesktopPlayerWindowInput,
     state: State<'_, AppPlayerState>,
 ) -> Result<(), AppCommandError> {
-    state
-        .open_desktop_window(input)
-        .await
-        .map_err(|message| command_error("player_window_open_failed", message))
+    let task_id = input.task_id.clone();
+    let file_index = input.file_index;
+    state.open_desktop_window(input).await.map_err(|message| {
+        log::error!(
+            "Tauri 播放器打开失败 task_id={} file_index={:?} error={}",
+            task_id,
+            file_index,
+            message
+        );
+        command_error("player_window_open_failed", message)
+    })
 }
 
 /// 关闭 Tauri 桌面 libVLC 双窗口。

@@ -509,7 +509,8 @@ class TorrentCore {
 
   /** 将任务状态映射为 IPC JSON。 */
   pt::ptree task_tree(const lt::torrent_handle& handle) {
-    const auto state = handle.status(lt::torrent_handle::query_name);
+    const auto state = handle.status(
+        lt::torrent_handle::query_name | lt::torrent_handle::query_save_path);
     const std::string id = task_id(handle);
     auto& metadata = metadata_[id];
     if (metadata.created_at.empty()) metadata.created_at = now_iso();

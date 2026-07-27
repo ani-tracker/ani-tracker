@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { X } from "lucide-react";
+import { ArrowLeft, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -9,6 +9,7 @@ import {
   SheetTitle
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/cn";
+import { getAppRuntime } from "@/lib/runtime";
 
 interface WorkbenchSheetProps {
   bodyClassName?: string;
@@ -32,6 +33,9 @@ export function WorkbenchSheet({
   onClose,
   title
 }: WorkbenchSheetProps) {
+  const runtime = getAppRuntime();
+  const mobileRuntime = runtime === "android" || runtime === "ios";
+
   return (
     <Sheet
       open
@@ -43,17 +47,29 @@ export function WorkbenchSheet({
         className={cn("flex w-full flex-col gap-0 overflow-hidden p-0 sm:max-w-3xl", className)}
         showCloseButton={false}
       >
-        <SheetHeader className="shrink-0 border-b px-4 py-4 pr-16 text-left sm:px-6">
+        <SheetHeader
+          className={cn(
+            "shrink-0 border-b text-left",
+            mobileRuntime
+              ? "pb-4 pl-[calc(4rem+var(--safe-area-left))] pr-[max(1rem,var(--safe-area-right))] pt-[calc(1rem+var(--safe-area-top))]"
+              : "px-4 py-4 pr-16 sm:px-6 sm:pr-16"
+          )}
+        >
           <SheetTitle className="min-w-0 truncate">{title}</SheetTitle>
           {description && <SheetDescription className="min-w-0 truncate">{description}</SheetDescription>}
           <Button
-            aria-label="关闭"
-            className="absolute right-3 top-3 size-11 p-0 md:size-9"
+            aria-label={mobileRuntime ? "返回" : "关闭"}
+            className={cn(
+              "absolute size-11 p-0 md:size-9",
+              mobileRuntime
+                ? "left-[max(0.75rem,var(--safe-area-left))] top-[calc(0.75rem+var(--safe-area-top))]"
+                : "right-3 top-3"
+            )}
             onClick={onClose}
-            title="关闭"
+            title={mobileRuntime ? "返回" : "关闭"}
             variant="ghost"
           >
-            <X />
+            {mobileRuntime ? <ArrowLeft /> : <X />}
           </Button>
         </SheetHeader>
         {headerContent && <div className="shrink-0 border-b px-4 py-3 sm:px-6">{headerContent}</div>}

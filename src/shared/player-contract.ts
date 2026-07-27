@@ -80,6 +80,9 @@ export interface PlayerMediaSource {
   taskId: string;
   fileIndex?: number;
   title: string;
+  animeTitle?: string;
+  description?: string;
+  artworkUri?: string;
   uri: string;
   mode: "direct" | "hls";
   durationSeconds?: number;

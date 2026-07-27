@@ -1,4 +1,4 @@
-import { ArrowLeft, ArrowUp, Bell, Link2, Menu, X, type LucideIcon } from "lucide-react";
+import { ArrowLeft, ArrowUp, Bell, Link2, Menu, type LucideIcon } from "lucide-react";
 import {
   createContext,
   type CSSProperties,
@@ -34,8 +34,10 @@ import {
 } from "@/components/ui/sidebar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
+import { getAppRuntime } from "@/lib/runtime";
 
 const APP_LOGO_SRC = "./icons/ani-tracker-mark.png";
+const MOBILE_NAVIGATION_HISTORY_KEY = "mobile-navigation";
 const dragRegionStyle = { WebkitAppRegion: "drag" } as CSSProperties;
 const noDragRegionStyle = { WebkitAppRegion: "no-drag" } as CSSProperties;
 const AppScrollContainerContext = createContext<MutableRefObject<HTMLElement | null> | null>(null);
@@ -112,6 +114,7 @@ export function AppShell({
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [showDiscoveryScrollTop, setShowDiscoveryScrollTop] = useState(false);
   const expandedDesktopSidebar = useExpandedDesktopSidebar();
+  const androidRuntime = getAppRuntime() === "android";
   const mainRef = useRef<HTMLElement | null>(null);
   const scrollToTopHandlerRef = useRef<(() => void) | null>(null);
   const activeItem = items.find((item) => item.id === activePageId) ?? items[0];
@@ -144,10 +147,41 @@ export function AppShell({
     return () => scrollContainer.removeEventListener("scroll", updateScrollTopVisibility);
   }, [discoveryScrollTopEnabled]);
 
+  useEffect(() => {
+    if (!androidRuntime) return;
+    /** Android 返回键回退临时历史项时，仅关闭主导航抽屉。 */
+    const handlePopState = () => {
+      if (window.history.state?.aniOverlay !== MOBILE_NAVIGATION_HISTORY_KEY) {
+        setMobileNavigationOpen(false);
+      }
+    };
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, [androidRuntime]);
+
+  /** 打开 Android 主导航时增加临时历史项，使系统返回键优先关闭抽屉。 */
+  function openMobileNavigation() {
+    if (androidRuntime && window.history.state?.aniOverlay !== MOBILE_NAVIGATION_HISTORY_KEY) {
+      window.history.pushState({
+        ...(window.history.state ?? {}),
+        aniOverlay: MOBILE_NAVIGATION_HISTORY_KEY
+      }, "");
+    }
+    setMobileNavigationOpen(true);
+  }
+
+  /** 关闭主导航并移除 Android 临时历史项。 */
+  function closeMobileNavigation() {
+    setMobileNavigationOpen(false);
+    if (androidRuntime && window.history.state?.aniOverlay === MOBILE_NAVIGATION_HISTORY_KEY) {
+      window.history.back();
+    }
+  }
+
   /** 切换页面后关闭移动导航，并恢复主内容的滚动与键盘焦点。 */
   function navigate(pageId: string) {
     onNavigate(pageId);
-    setMobileNavigationOpen(false);
+    closeMobileNavigation();
     window.setTimeout(() => {
       mainRef.current?.scrollTo({ top: 0, behavior: "auto" });
       mainRef.current?.focus({ preventScroll: true });
@@ -305,7 +339,7 @@ export function AppShell({
                 <Button
                   aria-label="打开主导航"
                   className="size-11 px-0"
-                  onClick={() => setMobileNavigationOpen(true)}
+                  onClick={openMobileNavigation}
                   style={framelessWindow ? noDragRegionStyle : undefined}
                   variant="ghost"
                 >
@@ -357,13 +391,22 @@ export function AppShell({
           </Tooltip>
         )}
 
-        <Sheet onOpenChange={setMobileNavigationOpen} open={mobileNavigationOpen}>
+        <Sheet
+          onOpenChange={(open) => open ? openMobileNavigation() : closeMobileNavigation()}
+          open={mobileNavigationOpen}
+        >
           <SheetContent
-            className="flex w-[320px] max-w-[calc(100vw-24px)] flex-col gap-0 p-0 sm:max-w-[320px]"
+            className={cn(
+              "bottom-0 top-[var(--safe-area-top)] flex h-auto flex-col gap-0 p-0",
+              androidRuntime
+                ? "w-[280px] max-w-[calc(100vw-72px)] sm:max-w-[280px]"
+                : "w-[320px] max-w-[calc(100vw-24px)] sm:max-w-[320px]"
+            )}
+            overlayClassName="top-[var(--safe-area-top)]"
             showCloseButton={false}
             side="left"
           >
-            <SheetHeader className="flex-row items-center justify-between border-b p-6 text-left">
+            <SheetHeader className="flex-row items-center border-b p-4 text-left">
               <div className="flex min-w-0 items-center gap-3">
                 <img
                   alt=""
@@ -376,14 +419,6 @@ export function AppShell({
                   <SheetDescription className="sr-only">在应用页面之间切换</SheetDescription>
                 </div>
               </div>
-              <Button
-                aria-label="关闭主导航"
-                className="size-11 px-0"
-                onClick={() => setMobileNavigationOpen(false)}
-                variant="ghost"
-              >
-                <X aria-hidden="true" data-icon="inline-start" />
-              </Button>
             </SheetHeader>
 
             <nav aria-label="移动端主导航" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">

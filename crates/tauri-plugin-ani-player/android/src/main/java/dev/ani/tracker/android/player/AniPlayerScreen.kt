@@ -26,9 +26,10 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.statusBars
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.windowInsetsTopHeight
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -141,36 +142,25 @@ fun AniPlayerScreen(
         }
     }
 
-    if (landscape) {
-        LandscapePlayer(
-            state = state,
-            viewModel = viewModel,
-            controlsVisible = controlsVisible,
-            missingMedia = missingMedia,
-            onClose = onClose,
-            onActivity = ::revealControls,
-            onToggleControls = { controlsVisible = !controlsVisible },
-            onToggleFullscreen = onToggleFullscreen
-        )
-    } else {
-        PortraitPlayer(
-            state = state,
-            viewModel = viewModel,
-            controlsVisible = controlsVisible,
-            missingMedia = missingMedia,
-            onClose = onClose,
-            onActivity = ::revealControls,
-            onToggleControls = { controlsVisible = !controlsVisible },
-            onToggleFullscreen = onToggleFullscreen
-        )
-    }
+    AdaptivePlayer(
+        state = state,
+        viewModel = viewModel,
+        landscape = landscape,
+        controlsVisible = controlsVisible,
+        missingMedia = missingMedia,
+        onClose = onClose,
+        onActivity = ::revealControls,
+        onToggleControls = { controlsVisible = !controlsVisible },
+        onToggleFullscreen = onToggleFullscreen
+    )
 }
 
-/** 渲染竖屏视频区、番剧详情和可滚动播放列表。 */
+/** 在同一组合节点内切换竖横屏布局，避免重建 VLC 视频表面。 */
 @Composable
-private fun PortraitPlayer(
+private fun AdaptivePlayer(
     state: PlayerUiState,
     viewModel: AndroidVlcPlayerViewModel,
+    landscape: Boolean,
     controlsVisible: Boolean,
     missingMedia: Boolean,
     onClose: () -> Unit,
@@ -181,82 +171,73 @@ private fun PortraitPlayer(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(PlayerWhite)
+            .background(if (landscape) PlayerBlack else PlayerWhite)
     ) {
+        Spacer(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    if (landscape) Modifier.height(0.dp)
+                    else Modifier.windowInsetsTopHeight(WindowInsets.statusBars)
+                )
+                .background(PlayerBlack)
+        )
         PlayerVideoStage(
             state = state,
             viewModel = viewModel,
             controlsVisible = controlsVisible,
-            compact = true,
+            compact = !landscape,
             missingMedia = missingMedia,
             onClose = onClose,
             onActivity = onActivity,
             onToggleControls = onToggleControls,
             onToggleFullscreen = onToggleFullscreen,
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(16f / 9f)
+            modifier = if (landscape) {
+                Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            } else {
+                Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(16f / 9f)
+            }
         )
-        PlayerDetails(state)
-        HorizontalDivider(color = Color(0xFFE7E1E1))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text("播放列表", color = PlayerInk, fontSize = 18.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                "(${state.activeIndex + 1}/${state.episodes.size})",
-                color = PlayerMuted,
-                fontSize = 12.sp
-            )
-        }
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxWidth()
-                .weight(1f)
-                .navigationBarsPadding(),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
-        ) {
-            itemsIndexed(state.episodes, key = { _, episode -> episode.id }) { index, episode ->
-                EpisodeRow(
-                    episode = episode,
-                    index = index,
-                    active = index == state.activeIndex,
-                    completed = episode.id in state.watchedEpisodeIds,
-                    onClick = { viewModel.selectEpisode(index) }
+        if (!landscape) {
+            PlayerDetails(state)
+            HorizontalDivider(color = Color(0xFFE7E1E1))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("播放列表", color = PlayerInk, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "(${state.activeIndex + 1}/${state.episodes.size})",
+                    color = PlayerMuted,
+                    fontSize = 12.sp
                 )
+            }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .navigationBarsPadding(),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 4.dp)
+            ) {
+                itemsIndexed(state.episodes, key = { _, episode -> episode.id }) { index, episode ->
+                    EpisodeRow(
+                        episode = episode,
+                        index = index,
+                        active = index == state.activeIndex,
+                        completed = episode.id in state.watchedEpisodeIds,
+                        onClick = { viewModel.selectEpisode(index) }
+                    )
+                }
             }
         }
     }
-}
-
-/** 渲染横屏全画幅视频和叠层控制。 */
-@Composable
-private fun LandscapePlayer(
-    state: PlayerUiState,
-    viewModel: AndroidVlcPlayerViewModel,
-    controlsVisible: Boolean,
-    missingMedia: Boolean,
-    onClose: () -> Unit,
-    onActivity: () -> Unit,
-    onToggleControls: () -> Unit,
-    onToggleFullscreen: () -> Unit
-) {
-    PlayerVideoStage(
-        state = state,
-        viewModel = viewModel,
-        controlsVisible = controlsVisible,
-        compact = false,
-        missingMedia = missingMedia,
-        onClose = onClose,
-        onActivity = onActivity,
-        onToggleControls = onToggleControls,
-        onToggleFullscreen = onToggleFullscreen,
-        modifier = Modifier.fillMaxSize()
-    )
 }
 
 /** 组合 VLC Surface、手势、加载状态、错误提示和控制层。 */
@@ -414,7 +395,7 @@ private fun PlayerControls(
                 .fillMaxWidth()
                 .align(Alignment.TopCenter)
                 .background(Color.Black.copy(alpha = 0.36f))
-                .then(if (compact) Modifier.statusBarsPadding() else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
+                .then(if (compact) Modifier else Modifier.windowInsetsPadding(WindowInsets.safeDrawing))
                 .padding(horizontal = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {

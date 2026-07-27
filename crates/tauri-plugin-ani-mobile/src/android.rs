@@ -91,6 +91,12 @@ struct ExternalUrlRequest<'a> {
     url: &'a str,
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct OpenDirectoryRequest<'a> {
+    file_path: &'a str,
+}
+
 /// Android 原生 Context 解析出的应用专属目录。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -136,6 +142,13 @@ impl<R: Runtime> AniMobile<R> {
     pub fn open_external(&self, url: &str) -> crate::Result<()> {
         self.0
             .run_mobile_plugin::<()>("openExternal", ExternalUrlRequest { url })
+            .map_err(Into::into)
+    }
+
+    /// 使用 Android 系统文档界面定位应用下载文件所在目录。
+    pub fn open_directory(&self, file_path: &str) -> crate::Result<()> {
+        self.0
+            .run_mobile_plugin::<()>("openDirectory", OpenDirectoryRequest { file_path })
             .map_err(Into::into)
     }
 

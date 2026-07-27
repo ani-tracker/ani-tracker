@@ -130,9 +130,10 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         }
         val request = PlayerLaunchRequest(
             sessionId = sessionId,
-            animeTitle = source.getString("title"),
-            description = "",
-            artworkUri = null,
+            animeTitle = source.optString("animeTitle").takeIf(String::isNotBlank)
+                ?: source.getString("title"),
+            description = source.optString("description"),
+            artworkUri = source.optString("artworkUri").takeIf(String::isNotBlank),
             episodes = listOf(
                 PlayerEpisode(
                     id = episodeId,
@@ -153,7 +154,7 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         activeSessionId = sessionId
         activeSource = JSONObject(source.toString())
         sequence.set(0L)
-        Log.i(LOG_TAG, "Android native player launched session=$sessionId")
+        Log.i(LOG_TAG, "Android native player launched session=$sessionId, artwork=${request.artworkUri != null}")
         return accepted(commandId)
     }
 

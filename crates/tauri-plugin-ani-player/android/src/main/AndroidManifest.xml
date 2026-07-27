@@ -3,6 +3,7 @@
     <application>
         <activity
             android:name="dev.ani.tracker.android.player.PlayerActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:exported="false"
             android:launchMode="singleTop"
             android:screenOrientation="fullSensor"
