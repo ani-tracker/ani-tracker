@@ -11,7 +11,7 @@ export default defineConfig({
   publicDir: resolve("src/renderer/public"),
   base: "./",
   clearScreen: false,
-  envPrefix: ["VITE_", "TAURI_ENV_*"],
+  envPrefix: ["VITE_", "TAURI_ENV_"],
   resolve: {
     alias: [
       { find: /^@\/renderer-app$/, replacement: resolve("src/renderer/src/App.tsx") },

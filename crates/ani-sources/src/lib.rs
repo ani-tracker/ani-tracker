@@ -263,7 +263,10 @@ impl NativeHttpClient {
         if let Some(body) = request.body {
             builder = builder.body(body);
         }
-        let mut response = builder.send().await?;
+        let mut response = builder.send().await.map_err(|error| {
+            log_transport_failure(&request.source_id, &host, started_at, &error);
+            SourceError::Transport(error)
+        })?;
         let status = response.status().as_u16();
         let final_url = response.url().to_string();
         let response_headers = collect_headers(response.headers());
@@ -276,7 +279,10 @@ impl NativeHttpClient {
             });
         }
         let mut body = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
+        while let Some(chunk) = response.chunk().await.map_err(|error| {
+            log_transport_failure(&request.source_id, &host, started_at, &error);
+            SourceError::Transport(error)
+        })? {
             if body.len() + chunk.len() > self.max_response_bytes {
                 return Err(SourceError::ResponseTooLarge {
                     limit: self.max_response_bytes,
@@ -299,6 +305,32 @@ impl NativeHttpClient {
             body,
         })
     }
+}
+
+/// 脱敏记录来源传输失败，不输出请求路径、查询参数或响应内容。
+fn log_transport_failure(source_id: &str, host: &str, started_at: Instant, error: &reqwest::Error) {
+    let category = if error.is_timeout() {
+        "timeout"
+    } else if error.is_connect() {
+        "connect"
+    } else if error.is_redirect() {
+        "redirect"
+    } else if error.is_body() {
+        "response_body"
+    } else if error.is_decode() {
+        "decode"
+    } else if error.is_request() {
+        "request"
+    } else {
+        "other"
+    };
+    log::warn!(
+        "Rust 来源网络请求失败：source_id={}, host={}, elapsed_ms={}, error_category={}",
+        source_id,
+        host,
+        started_at.elapsed().as_millis(),
+        category
+    );
 }
 
 /// 组合直连/代理传输、持久化限流和熔断的来源网络服务。

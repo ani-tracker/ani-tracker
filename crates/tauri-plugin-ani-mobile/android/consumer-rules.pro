@@ -1,1 +1,2 @@
 -keep class dev.ani.tracker.mobile.AniMobilePlugin { *; }
+-keep, includedescriptorclasses class org.rustls.platformverifier.** { *; }

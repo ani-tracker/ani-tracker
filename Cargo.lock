@@ -5050,6 +5050,9 @@ dependencies = [
 name = "tauri-plugin-ani-mobile"
 version = "0.1.0"
 dependencies = [
+ "jni 0.22.4",
+ "log",
+ "rustls-platform-verifier",
  "serde",
  "tauri",
  "tauri-plugin",

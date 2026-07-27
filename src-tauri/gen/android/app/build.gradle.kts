@@ -1,3 +1,4 @@
+import groovy.json.JsonSlurper
 import java.util.Properties
 
 plugins {
@@ -23,6 +24,41 @@ val releaseSigningEnabled = listOf(
     releaseKeyAlias,
     releaseKeyPassword
 ).all(String::isNotBlank)
+
+/** 通过 Cargo 元数据定位与 Rust verifier 版本配套的本地 Maven 仓库。 */
+fun findRustlsPlatformVerifierRepository(): File {
+    val workspaceRoot = rootProject.projectDir.resolve("../../..").canonicalFile
+    val metadataText = providers.exec {
+        workingDir = workspaceRoot
+        commandLine(
+            "cargo",
+            "metadata",
+            "--format-version",
+            "1",
+            "--filter-platform",
+            "aarch64-linux-android",
+            "--manifest-path",
+            workspaceRoot.resolve("crates/tauri-plugin-ani-mobile/Cargo.toml").path
+        )
+    }.standardOutput.asText.get()
+    val metadata = JsonSlurper().parseText(metadataText) as Map<*, *>
+    val packages = metadata["packages"] as? List<*>
+        ?: throw GradleException("Cargo 元数据缺少 packages")
+    val verifierPackage = packages
+        .filterIsInstance<Map<*, *>>()
+        .firstOrNull { it["name"] == "rustls-platform-verifier-android" }
+        ?: throw GradleException("Cargo 元数据缺少 rustls-platform-verifier-android")
+    val manifestPath = verifierPackage["manifest_path"]?.toString()
+        ?: throw GradleException("Android verifier 缺少 manifest_path")
+    return file(manifestPath).parentFile.resolve("maven")
+}
+
+repositories {
+    maven {
+        url = uri(findRustlsPlatformVerifierRepository())
+        metadataSources { artifact() }
+    }
+}
 
 // 正式 Release 不允许静默退化为未签名 APK。
 if (gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) } && !releaseSigningEnabled) {
@@ -92,6 +128,7 @@ rust {
 }
 
 dependencies {
+    implementation("rustls:rustls-platform-verifier:latest.release")
     implementation("androidx.webkit:webkit:1.14.0")
     implementation("androidx.appcompat:appcompat:1.7.1")
     implementation("androidx.activity:activity-ktx:1.10.1")

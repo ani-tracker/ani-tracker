@@ -23,7 +23,13 @@ const [
   mobileError,
   playerController,
   playerPlugin,
-  windowCommands
+  windowCommands,
+  tauriVite,
+  mobilePluginCargo,
+  mobilePluginAndroid,
+  mobilePluginRust,
+  mobileConsumerRules,
+  sourceNetwork
 ] = await Promise.all([
   readFile(".github/workflows/tauri-mobile.yml", "utf8"),
   readFile(".github/workflows/tauri-release-android.yml", "utf8"),
@@ -45,7 +51,13 @@ const [
   readFile("crates/tauri-plugin-ani-mobile/src/error.rs", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Sources/MobileVLCPlayerController.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Sources/AniPlayerPlugin.swift", "utf8"),
-  readFile("src-tauri/src/commands/window.rs", "utf8")
+  readFile("src-tauri/src/commands/window.rs", "utf8"),
+  readFile("vite.tauri.config.ts", "utf8"),
+  readFile("crates/tauri-plugin-ani-mobile/Cargo.toml", "utf8"),
+  readFile("crates/tauri-plugin-ani-mobile/android/src/main/java/dev/ani/tracker/mobile/AniMobilePlugin.kt", "utf8"),
+  readFile("crates/tauri-plugin-ani-mobile/src/android.rs", "utf8"),
+  readFile("crates/tauri-plugin-ani-mobile/android/consumer-rules.pro", "utf8"),
+  readFile("crates/ani-sources/src/lib.rs", "utf8")
 ]);
 
 const iosConfig = JSON.parse(iosConfigSource);
@@ -132,6 +144,27 @@ test("移动窗口命令不会编译桌面最小化与最大化 API", () => {
   assert.match(windowCommands, /#\[cfg\(desktop\)\][\s\S]*?\.minimize\(\)/);
   assert.match(windowCommands, /#\[cfg\(desktop\)\][\s\S]*?\.unmaximize\(\)/);
   assert.match(windowCommands, /#\[cfg\(mobile\)\][\s\S]*?window_operation_unsupported/);
+});
+
+test("移动 Renderer 注入 Tauri 平台变量且不使用无效通配符", () => {
+  assert.match(tauriVite, /envPrefix:\s*\["VITE_",\s*"TAURI_ENV_"\]/);
+  assert.doesNotMatch(tauriVite, /TAURI_ENV_\*/);
+});
+
+test("Android HTTPS 使用系统证书验证器并在业务请求前初始化", () => {
+  assert.match(mobilePluginCargo, /jni = \{ version = "0\.22\.4", default-features = false \}/);
+  assert.match(mobilePluginCargo, /rustls-platform-verifier = "0\.7"/);
+  assert.match(androidGradle, /cargo[\s\S]*metadata[\s\S]*--filter-platform[\s\S]*aarch64-linux-android/);
+  assert.match(androidGradle, /implementation\("rustls:rustls-platform-verifier:latest\.release"\)/);
+  assert.match(mobilePluginAndroid, /initializeRustlsPlatformVerifier\(activity\.applicationContext\)/);
+  assert.match(mobilePluginAndroid, /private external fun initializeRustlsPlatformVerifier\(context: Context\): Boolean/);
+  assert.match(mobilePluginRust, /rustls_platform_verifier::android::init_with_env\(env, context\)/);
+  assert.match(mobileConsumerRules, /org\.rustls\.platformverifier\.\*\*/);
+});
+
+test("来源网络失败日志仅保留定位所需的脱敏字段", () => {
+  assert.match(sourceNetwork, /Rust 来源网络请求失败：source_id=\{\}, host=\{\}, elapsed_ms=\{\}, error_category=\{\}/);
+  assert.doesNotMatch(sourceNetwork, /Rust 来源网络请求失败[^\n]*error=\{\}/);
 });
 
 test("移动播放器注册错误支持 Tauri PluginInvokeError", () => {

@@ -14,5 +14,10 @@ serde.workspace = true
 tauri = { version = "2", default-features = false }
 thiserror.workspace = true
 
+[target.'cfg(target_os = "android")'.dependencies]
+jni = { version = "0.22.4", default-features = false }
+log = "0.4"
+rustls-platform-verifier = "0.7"
+
 [build-dependencies]
 tauri-plugin = { version = "2", features = ["build"] }

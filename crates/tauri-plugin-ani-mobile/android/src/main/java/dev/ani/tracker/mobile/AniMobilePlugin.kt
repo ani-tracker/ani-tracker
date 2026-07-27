@@ -86,10 +86,25 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
     private val lifecycle = AtomicReference("foreground")
     private val pendingNavigation = AtomicReference<String?>(null)
 
-    /** 插件加载时恢复冷启动导航，并记录原生平台就绪。 */
+    /** 插件加载时先初始化系统证书验证，再恢复冷启动导航。 */
     override fun load(webView: WebView) {
+        val verifierReady = initializeSystemCertificateVerifier()
+        if (!verifierReady) {
+            Log.e(LOG_TAG, "Android system certificate verifier initialization failed")
+        }
         captureNavigation(activity.intent)
-        Log.i(LOG_TAG, "Android mobile platform plugin loaded")
+        Log.i(LOG_TAG, "Android mobile platform plugin loaded verifierReady=$verifierReady")
+    }
+
+    /** 将 JVM 与 Application Context 交给 Rust HTTPS 系统证书验证器。 */
+    private external fun initializeRustlsPlatformVerifier(context: Context): Boolean
+
+    /** 捕获 JNI 装载异常，避免证书验证初始化失败阻断 WebView 启动。 */
+    private fun initializeSystemCertificateVerifier(): Boolean = try {
+        initializeRustlsPlatformVerifier(activity.applicationContext)
+    } catch (error: LinkageError) {
+        Log.e(LOG_TAG, "failed to link Android system certificate verifier", error)
+        false
     }
 
     /** 标记应用进入后台，供 Rust 核心决定恢复策略。 */

@@ -8,6 +8,26 @@ use tauri::{
 
 use crate::{MobileNavigationIntent, MobilePlatformStatus};
 
+/// 使用 Android JVM 与 Application Context 初始化系统证书验证器。
+#[no_mangle]
+pub extern "system" fn Java_dev_ani_tracker_mobile_AniMobilePlugin_initializeRustlsPlatformVerifier<
+    'local,
+>(
+    mut unowned_env: jni::EnvUnowned<'local>,
+    _plugin: jni::objects::JObject<'local>,
+    context: jni::objects::JObject<'local>,
+) -> jni::sys::jboolean {
+    use jni::errors::LogErrorAndDefault;
+
+    unowned_env
+        .with_env(|env| -> jni::errors::Result<bool> {
+            rustls_platform_verifier::android::init_with_env(env, context)?;
+            log::info!("Android 系统证书验证器初始化完成");
+            Ok(true)
+        })
+        .resolve::<LogErrorAndDefault>()
+}
+
 /// 注册 Android 平台插件并保存原生调用句柄。
 pub fn init<R: Runtime, C: DeserializeOwned>(
     _app: &AppHandle<R>,
