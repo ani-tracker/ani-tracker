@@ -35,6 +35,8 @@ test("macOS 发布通过临时钥匙串导入并信任自签 P12", () => {
   assert.match(workflow, /certificate does not match APPLE_SIGNING_IDENTITY/);
   assert.match(workflow, /security create-keychain/);
   assert.match(workflow, /security set-key-partition-list/);
+  assert.match(workflow, /current_keychains=\(\)[\s\S]*?"\$\{current_keychains\[@\]\}"/);
+  assert.doesNotMatch(workflow, /security list-keychains[^\n]*\$\{current_keychains\}(?:\s|$)/);
   assert.match(workflow, /security add-trusted-cert[\s\S]*?trustRoot/);
   assert.match(workflow, /security find-identity -v -p codesigning/);
 });

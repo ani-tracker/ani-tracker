@@ -312,9 +312,13 @@ jobs:
           security set-key-partition-list \
             -S apple-tool:,apple:,codesign: \
             -s -k "${keychain_password}" "${keychain_path}"
-          current_keychains="$(security list-keychains -d user | tr -d '\"')"
-          # GitHub 托管 runner 的钥匙串路径不包含空格。
-          security list-keychains -d user -s "${keychain_path}" ${current_keychains}
+          current_keychains=()
+          while IFS= read -r current_keychain; do
+            if [[ "${current_keychain}" =~ \"([^\"]+)\" ]]; then
+              current_keychains+=("${BASH_REMATCH[1]}")
+            fi
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "${keychain_path}" "${current_keychains[@]}"
           sudo security add-trusted-cert \
             -d -r trustRoot \
             -k /Library/Keychains/System.keychain \
