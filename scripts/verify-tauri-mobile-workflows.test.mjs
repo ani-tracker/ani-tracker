@@ -17,6 +17,7 @@ const [
   playerPackage,
   torrentPackage,
   playerError,
+  mobileError,
   playerController,
   playerPlugin,
   windowCommands
@@ -35,6 +36,7 @@ const [
   readFile("crates/tauri-plugin-ani-player/ios/Package.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-torrent/ios/Package.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-player/src/error.rs", "utf8"),
+  readFile("crates/tauri-plugin-ani-mobile/src/error.rs", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Sources/MobileVLCPlayerController.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Sources/AniPlayerPlugin.swift", "utf8"),
   readFile("src-tauri/src/commands/window.rs", "utf8")
@@ -113,6 +115,11 @@ test("移动窗口命令不会编译桌面最小化与最大化 API", () => {
 
 test("移动播放器注册错误支持 Tauri PluginInvokeError", () => {
   assert.match(playerError, /PluginInvoke\(#\[from\] tauri::plugin::mobile::PluginInvokeError\)/);
+});
+
+test("移动平台插件在 Android 与 iOS 都支持 PluginInvokeError", () => {
+  assert.match(mobileError, /#\[cfg\(mobile\)\][\s\S]*?PluginInvoke\(#\[from\] tauri::plugin::mobile::PluginInvokeError\)/);
+  assert.doesNotMatch(mobileError, /#\[cfg\(target_os = "android"\)\]/);
 });
 
 test("iOS 播放器安全处理 MobileVLCKit 可选音频对象", () => {
