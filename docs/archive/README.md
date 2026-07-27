@@ -6,5 +6,6 @@
 | --- | --- | --- |
 | [2026-07 UI 改造](2026-07-ui-redesign/README.md) | 2026-07 | 跨端 UI、Stitch 改版、番剧详情和主题系统阶段记录 |
 | [2026-07 原生运行时](2026-07-native-runtime/README.md) | 2026-07 | 内置 libtorrent 下载引擎与跨平台 libVLC 播放器实施计划 |
+| [2026-07 Tauri 2 迁移](2026-07-tauri-2-migration/README.md) | 2026-07 | P0-P8 全平台宿主迁移决策与实施记录 |
 
 查阅当前状态时使用 [文档索引](../README.md) 和 [实现状态](../progress.md)。

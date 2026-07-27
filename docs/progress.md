@@ -1,6 +1,6 @@
 # Ani Tracker 实现状态
 
-最近核对：2026-07-26
+最近核对：2026-07-27
 
 ## 总体状态
 
@@ -45,7 +45,7 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 - iOS 生命周期、BGTask 补跑、Keychain、安全作用域文件、通知导航和备份恢复。
 - Android/iOS 系统外链使用原生浏览器能力，并在 Rust 与原生端同时拒绝非 HTTP/HTTPS、无主机或携带凭据的地址。
 - 移动设置保留完整业务与主题；隐藏并强制关闭 FFmpeg/FFprobe、转码、远程网关和桌面进程能力。
-- Windows/Android 自签、macOS 临时签名、iOS 未签名可重签包的发布工作流，以及 SHA-256、JSON 产物清单和独立 actionlint 门禁；Android Gradle Release 缺少长期 JKS 时会直接失败。
+- Windows/Android/macOS 长期自签、iOS 未签名可重签包的发布工作流，以及 SHA-256、JSON 产物清单和独立 actionlint 门禁；Android Gradle Release 缺少长期 JKS 时会直接失败。
 - Android/iOS 持续门禁会在相关推送和 Pull Request 上真实编译移动产物、编译原生策略测试，并执行 Renderer 与安装包内容边界检查。
 - 本地主 Renderer 与远程 PWA 已拆分入口和 API Adapter；移动构建的模块图会拒绝远程页面、ArtPlayer、HLS.js 与远程转码客户端。
 - 全平台 Logo 已替换，Tauri 与生成的 Android/iOS 工程使用统一品牌资源。
@@ -58,27 +58,37 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 
 ## 验证结果
 
-2026-07-26 非原生门禁：
+2026-07-27 全量收口门禁：
 
 | 检查 | 结果 |
 | --- | --- |
 | `pnpm.cmd run typecheck` | 通过 |
-| `pnpm.cmd run test:parsers` | 42/42 通过；退役 Node 主进程测试不再进入活跃入口 |
+| `pnpm.cmd run test:parsers` | 49/49 通过；退役 Node 主进程测试不再进入活跃入口 |
 | `pnpm.cmd run test:theme` | 浅色/深色各 38 个令牌通过 |
-| `pnpm.cmd run test:mobile-package` | 移动原生能力、许可证、持续构建、自签与 iOS 未签名策略 14/14 通过 |
-| `pnpm.cmd run test:retired-hosts` | 旧宿主门禁单元测试 5/5 通过 |
+| `pnpm.cmd run test:desktop-gates` | 桌面资源、libVLC 与发布工作流门禁 14/14 通过 |
+| `pnpm.cmd run test:mobile-package` | 移动原生能力、许可证、持续构建、ARM64、自签与 iOS 未签名策略 33/33 通过 |
+| `pnpm.cmd run test:retired-hosts` | 旧宿主门禁单元测试 7/7 通过 |
 | `pnpm.cmd run verify:tauri:retired-hosts` | Electron/Capacitor 依赖、脚本、路径与活跃源码边界通过 |
 | Tauri 主 Renderer | 生产构建通过 |
 | 桌面远程 Renderer | 生产构建通过 |
-| Renderer 模块边界 | 本地 313 个模块、远程 245 个模块通过 |
-| Rust workspace 测试 | 通过 |
+| Renderer 模块边界 | 本地 316 个模块、远程 256 个模块通过 |
+| Rust workspace 测试 | 162 项与 Doc tests 通过 |
 | Rustfmt / Clippy | 通过 |
 | `actionlint 1.7.12` | 全部 GitHub Actions 工作流通过 |
+| Android 原生策略测试 | `testDebugUnitTest` 构建与测试通过 |
+
+2026-07-27 本地原生产物：
+
+| 目标 | 结果 |
+| --- | --- |
+| macOS x64 | DMG 生成并通过资源闭合检查；164754428 bytes；SHA-256 `24fee9a5d627c41e3f9392154ba30d382cd4ddb1b0177d27dbf01d9a2fb4aacd`；本机验证件未签名 |
+| Android ARM64 Debug | APK 生成，仅含 `arm64-v8a`，包内容门禁通过；852444704 bytes；SHA-256 `2cac9c4d00db79541f7b717b1c80dc3d27d858bfee1c116c386c7f0d0bf12fa3` |
+| iOS ARM64 | 用户重签 IPA 生成且保持未签名，包内容门禁通过；60311347 bytes；SHA-256 `295fb639d7d2f6f2e1fc71700ccb20b51319aee1dff665c73f5f568b3272f2bc` |
 
 ## 后续统一验证
 
-- Windows、macOS、Linux 的安装包、升级、资源内容和实际 libVLC 播放。
-- Android 自签 APK 与 iOS 未签名 IPA 的原生编译、用户重签、负向内容检查和真机生命周期。
+- Windows、Linux 的安装包构建，以及 Windows/macOS 的正式自签、升级安装和实际 libVLC 播放。
+- Android 正式自签 APK 安装升级、iOS 用户重签安装和两端真机生命周期。
 - H.264、HEVC 10bit、HDR、ASS、外挂字幕、多音轨、横竖屏和自动下一集媒体矩阵。
 - 公网 BT、网络切换、磁盘满、损坏恢复数据和移动后台限制。
 - Linux 原生 Wayland 嵌入；首期正式范围为 X11/XWayland。

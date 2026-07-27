@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const [
+  packageSource,
   mobileGate,
   androidRelease,
   iosRelease,
@@ -36,6 +37,7 @@ const [
   mobileConsumerRules,
   sourceNetwork
 ] = await Promise.all([
+  readFile("package.json", "utf8"),
   readFile(".github/workflows/tauri-mobile.yml", "utf8"),
   readFile(".github/workflows/tauri-release-android.yml", "utf8"),
   readFile(".github/workflows/tauri-release-ios.yml", "utf8"),
@@ -70,7 +72,19 @@ const [
   readFile("crates/ani-sources/src/lib.rs", "utf8")
 ]);
 
+const packageJson = JSON.parse(packageSource);
 const iosConfig = JSON.parse(iosConfigSource);
+
+test("本地 Android Debug 与 Release 打包均固定 ARM64", () => {
+  assert.match(
+    packageJson.scripts["package:tauri:android:debug"],
+    /tauri android build --target aarch64 --debug --apk --ci/
+  );
+  assert.match(
+    packageJson.scripts["package:tauri:android"],
+    /tauri android build --target aarch64 --apk --ci/
+  );
+});
 
 test("移动持续门禁真实编译两端产物并检查原生与包边界", () => {
   assert.match(mobileGate, /pull_request:/);

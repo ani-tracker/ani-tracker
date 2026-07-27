@@ -1,5 +1,6 @@
 {
-  "fallbackCommit": "6caf060",
+  "fallbackTag": "legacy-hosts-final",
+  "fallbackCommit": "6caf060f7247576f0f2f49d6ba9892e1149ed236",
   "runtimeDependencies": {
     "@capacitor-community/sqlite": "7.0.3",
     "@capacitor/android": "7.6.8",

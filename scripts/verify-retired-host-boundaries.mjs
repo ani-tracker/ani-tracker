@@ -20,6 +20,13 @@ const RETIRED_DEPENDENCIES = new Set([
   "node-forge"
 ]);
 const RETIRED_SCRIPT_PATTERN = /\b(?:capacitor|electron(?:-builder|-vite)?)\b/i;
+const REQUIRED_TAURI_SCRIPTS = new Map([
+  ["dev", "pnpm run dev:tauri"],
+  ["build", "pnpm run build:tauri"],
+  ["package:desktop", "pnpm run package:tauri:desktop"]
+]);
+const FALLBACK_TAG = "legacy-hosts-final";
+const FALLBACK_COMMIT = "6caf060f7247576f0f2f49d6ba9892e1149ed236";
 const RETIRED_SOURCE_PATTERNS = [
   { name: "Capacitor 包", pattern: /@capacitor(?:-community)?\// },
   { name: "Capacitor 全局桥", pattern: /\bCapacitor\.(?:getPlatform|isNativePlatform|registerPlugin)\b/ },
@@ -67,6 +74,11 @@ async function main() {
   const root = process.cwd();
   const packageJson = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
   const violations = collectPackageViolations(packageJson);
+  const archiveManifest = JSON.parse(await readFile(
+    join(root, "archive/legacy-hosts/legacy-dependencies.json"),
+    "utf8"
+  ));
+  violations.push(...collectArchiveManifestViolations(archiveManifest));
 
   for (const path of REQUIRED_ARCHIVE_PATHS) {
     if (!(await pathExists(join(root, path)))) violations.push(`归档缺少：${path}`);
@@ -100,6 +112,23 @@ export function collectPackageViolations(packageJson) {
   }
   for (const [name, command] of Object.entries(packageJson.scripts ?? {})) {
     if (RETIRED_SCRIPT_PATTERN.test(String(command))) violations.push(`脚本 ${name} 重新调用旧宿主`);
+  }
+  for (const [name, command] of REQUIRED_TAURI_SCRIPTS) {
+    if (packageJson.scripts?.[name] !== command) {
+      violations.push(`默认脚本 ${name} 未固定到 Tauri`);
+    }
+  }
+  return violations;
+}
+
+/** 返回旧宿主归档清单中回退标签或提交不一致的违规项。 */
+export function collectArchiveManifestViolations(manifest) {
+  const violations = [];
+  if (manifest?.fallbackTag !== FALLBACK_TAG) {
+    violations.push(`归档回退标签必须为 ${FALLBACK_TAG}`);
+  }
+  if (manifest?.fallbackCommit !== FALLBACK_COMMIT) {
+    violations.push(`归档回退提交必须为 ${FALLBACK_COMMIT}`);
   }
   return violations;
 }

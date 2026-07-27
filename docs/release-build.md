@@ -117,4 +117,4 @@ Windows 目标机器需先信任随发布提供的 `.cer` 公钥证书；Android
 
 ## 回退
 
-Electron/Capacitor 不再参与发布。宿主迁移前最后回退提交为 `6caf060`，归档清单见 `archive/legacy-hosts/README.md`。回退必须从该提交创建独立分支，不能把归档源码混入当前 Tauri 发布链。
+Electron/Capacitor 不再参与发布。宿主迁移前最后回退标签为 `legacy-hosts-final`，对应提交为 `6caf060f7247576f0f2f49d6ba9892e1149ed236`，归档清单见 `archive/legacy-hosts/README.md`。回退必须从该标签创建独立分支，不能把归档源码混入当前 Tauri 发布链。

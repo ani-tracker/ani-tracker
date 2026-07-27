@@ -1,6 +1,6 @@
 # Ani Tracker 文档索引
 
-最近核对：2026-07-26
+最近核对：2026-07-27
 
 本目录按“现行文档、参考资料、历史归档”分层。现行文档描述当前代码；历史归档只保存决策过程，不作为实现依据。
 
@@ -10,7 +10,6 @@
 | --- | --- |
 | [架构与设计](design-plan.md) | 当前进程边界、服务职责、数据流和扩展边界 |
 | [实现状态](progress.md) | 已实现能力、明确限制和后续工作 |
-| [Tauri 2 迁移记录](tauri-2-migration-plan.md) | P0-P8 决策、实施记录、平台边界与验收状态 |
 | [Android 完整应用适配计划](android-application-plan.md) | React 页面复用、Android 平台适配、阶段、测试与验收 |
 | [iOS 原生完整应用计划](ios-native-app-plan.md) | iOS/iPadOS 原生完整应用的边界、架构、阶段、CI 与验收 |
 | [跨平台打包与发布](release-build.md) | 五平台 Tauri 产物、资源边界、签名和验收 |
@@ -28,6 +27,7 @@
 - [归档说明](archive/README.md)
 - [2026-07 UI 改造归档](archive/2026-07-ui-redesign/README.md)
 - [2026-07 原生运行时归档](archive/2026-07-native-runtime/README.md)
+- [2026-07 Tauri 2 迁移归档](archive/2026-07-tauri-2-migration/README.md)
 
 ## 事实优先级
 
