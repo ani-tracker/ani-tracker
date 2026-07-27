@@ -420,7 +420,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
                 }
                 persistWatchedThresholdIfNeeded()
             }
-            MediaPlayer.Event.LengthChanged -> patch(durationMillis = event.lengthChanged.coerceAtLeast(0L))
+            MediaPlayer.Event.LengthChanged -> updateDuration(event.lengthChanged)
             MediaPlayer.Event.ESAdded,
             MediaPlayer.Event.ESDeleted,
             MediaPlayer.Event.ESSelected -> refreshTracks()
@@ -435,6 +435,20 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             }
             MediaPlayer.Event.EncounteredError -> fail("libVLC 无法解码或读取当前媒体")
         }
+    }
+
+    /** 同步当前媒体时长到播放状态和对应播放列表项。 */
+    private fun updateDuration(value: Long) {
+        val durationMillis = value.coerceAtLeast(0L)
+        val state = stateFlow.value
+        val episodes = state.episodes.mapIndexed { index, episode ->
+            if (index == state.activeIndex) episode.copy(durationMillis = durationMillis) else episode
+        }
+        stateFlow.value = state.copy(
+            durationMillis = durationMillis,
+            episodes = episodes
+        )
+        Log.d(TAG, "Android 媒体时长已同步: index=${state.activeIndex}, duration=$durationMillis")
     }
 
     /** 在媒体真正开始播放后应用续播位置。 */

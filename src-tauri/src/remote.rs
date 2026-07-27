@@ -343,7 +343,14 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
     /// 将白名单方法映射到与 Tauri commands 相同的 Rust 服务和 Repository。
     async fn call(&self, method: &str, args: Vec<Value>) -> Result<Value, String> {
         match method {
-            "getDashboard" => self.query(|repository| repository.get_dashboard()).await,
+            "getDashboard" => {
+                self.query(|repository| {
+                    repository
+                        .get_dashboard()
+                        .map(crate::commands::data::filter_missing_dashboard_media)
+                })
+                .await
+            }
             "listNotifications" => {
                 self.query(|repository| repository.list_notifications())
                     .await

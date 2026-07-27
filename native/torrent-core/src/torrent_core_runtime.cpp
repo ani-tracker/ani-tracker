@@ -78,6 +78,7 @@ struct TaskMetadata {
   std::string correlation_tag;
   std::string created_at;
   std::string completed_at;
+  std::optional<bool> paused;
 };
 
 /** 返回当前 UTC 时间，作为跨端稳定时间字段。 */
@@ -297,6 +298,21 @@ class TorrentCore {
                   << " message=" << error.message() << '\n';
         continue;
       }
+      const std::string id = hash_hex(params.info_hashes.get_best());
+      auto& metadata = metadata_[id];
+      const bool has_metadata_pause = metadata.paused.has_value();
+      const bool fastresume_paused = bool(params.flags & lt::torrent_flags::paused);
+      const bool should_pause = metadata.paused.value_or(fastresume_paused);
+      if (should_pause) {
+        params.flags |= lt::torrent_flags::paused;
+        params.flags &= ~lt::torrent_flags::auto_managed;
+      } else if (metadata.paused.has_value()) {
+        params.flags &= ~lt::torrent_flags::paused;
+        params.flags |= lt::torrent_flags::auto_managed;
+      }
+      if (!metadata.paused.has_value()) metadata.paused = fastresume_paused;
+      std::cerr << "[torrent-core] restored task=" << id << " paused=" << should_pause
+                << " source=" << (has_metadata_pause ? "metadata" : "fastresume") << '\n';
       session_.async_add_torrent(std::move(params));
     }
   }
@@ -313,6 +329,9 @@ class TorrentCore {
         metadata.correlation_tag = item.second.get<std::string>("correlationTag", "");
         metadata.created_at = item.second.get<std::string>("createdAt", "");
         metadata.completed_at = item.second.get<std::string>("completedAt", "");
+        if (const auto paused = item.second.get_optional<bool>("paused")) {
+          metadata.paused = *paused;
+        }
         metadata_[item.first] = std::move(metadata);
       }
     } catch (const std::exception& error) {
@@ -328,6 +347,7 @@ class TorrentCore {
       item.put("correlationTag", value.correlation_tag);
       item.put("createdAt", value.created_at);
       item.put("completedAt", value.completed_at);
+      if (value.paused.has_value()) item.put("paused", *value.paused);
       root.add_child(id, item);
     }
     write_json_atomic(data_directory_ / "tasks.json", root);
@@ -423,7 +443,8 @@ class TorrentCore {
     metadata_[id] = {
         params.get<std::string>("correlationTag", ""),
         now_iso(),
-        ""};
+        "",
+        paused};
     save_metadata();
     handle.save_resume_data(lt::torrent_handle::save_info_dict);
     return task_tree(handle);
@@ -467,8 +488,13 @@ class TorrentCore {
   /** 暂停指定任务并保存恢复数据。 */
   pt::ptree pause(const pt::ptree& params) {
     auto handle = require_handle(params);
+    const std::string id = task_id(handle);
+    handle.unset_flags(lt::torrent_flags::auto_managed);
     handle.pause();
+    metadata_[id].paused = true;
+    save_metadata();
     handle.save_resume_data(lt::torrent_handle::save_info_dict);
+    std::cerr << "[torrent-core] task paused task=" << id << '\n';
     pt::ptree result;
     result.put("paused", true);
     return result;
@@ -477,7 +503,13 @@ class TorrentCore {
   /** 恢复指定任务。 */
   pt::ptree resume(const pt::ptree& params) {
     auto handle = require_handle(params);
+    const std::string id = task_id(handle);
+    handle.set_flags(lt::torrent_flags::auto_managed);
     handle.resume();
+    metadata_[id].paused = false;
+    save_metadata();
+    handle.save_resume_data(lt::torrent_handle::save_info_dict);
+    std::cerr << "[torrent-core] task resumed task=" << id << '\n';
     pt::ptree result;
     result.put("resumed", true);
     return result;
@@ -630,7 +662,10 @@ class TorrentCore {
       const bool ratio_reached = settings_.ratio_limit_enabled && ratio >= settings_.ratio_limit;
       const bool time_reached = settings_.time_limit_enabled && seeded_minutes >= settings_.time_limit_minutes;
       if (ratio_reached || time_reached) {
+        handle.unset_flags(lt::torrent_flags::auto_managed);
         handle.pause();
+        metadata.paused = true;
+        save_metadata();
         handle.save_resume_data(lt::torrent_handle::save_info_dict);
       }
     }

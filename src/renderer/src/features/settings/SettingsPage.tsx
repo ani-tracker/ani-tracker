@@ -728,7 +728,7 @@ export function SettingsPage() {
 
   return (
     <div className={cn("flex min-w-0 flex-col gap-6", hasUnsavedChanges && "pb-20")}>
-      <div className="sticky top-[calc(4rem+var(--safe-area-top))] z-20 -mx-4 border-b bg-background px-4 md:top-0 md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
+      <div className="sticky top-[var(--app-mobile-header-height)] z-20 -mx-4 border-b bg-background px-4 md:top-0 md:-mx-5 md:px-5 xl:-mx-6 xl:px-6">
         <header className="py-3">
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

@@ -298,18 +298,23 @@ pub fn run() {
             {
                 state.prepare_to_quit();
             }
-            log::info!("Tauri 宿主退出，开始关闭播放器和下载引擎");
-            let player_state = app_handle.state::<player::AppPlayerState>();
-            let download_state = app_handle.state::<downloads::AppDownloadState>();
-            tauri::async_runtime::block_on(async {
-                #[cfg(desktop)]
-                if let Some(remote_state) = app_handle.try_state::<remote::AppRemoteGatewayState>()
-                {
-                    remote_state.shutdown().await;
-                }
-                player_state.shutdown().await;
-                download_state.shutdown().await;
-            });
+            #[cfg(desktop)]
+            {
+                log::info!("Tauri 桌面宿主退出，开始关闭播放器和下载引擎");
+                let player_state = app_handle.state::<player::AppPlayerState>();
+                let download_state = app_handle.state::<downloads::AppDownloadState>();
+                tauri::async_runtime::block_on(async {
+                    if let Some(remote_state) =
+                        app_handle.try_state::<remote::AppRemoteGatewayState>()
+                    {
+                        remote_state.shutdown().await;
+                    }
+                    player_state.shutdown().await;
+                    download_state.shutdown().await;
+                });
+            }
+            #[cfg(mobile)]
+            log::info!("Tauri 移动宿主退出，原生播放器和下载资源交由平台生命周期释放");
         }
     });
 }

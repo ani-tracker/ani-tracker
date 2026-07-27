@@ -7,6 +7,7 @@
   --safe-area-right: env(safe-area-inset-right, 0px);
   --safe-area-bottom: env(safe-area-inset-bottom, 0px);
   --safe-area-left: env(safe-area-inset-left, 0px);
+  --app-mobile-header-height: max(4rem, calc(2.75rem + var(--safe-area-top)));
   --app-content-padding: 1rem;
   --window-control-height: 2.25rem;
   --window-controls-width: 8.25rem;

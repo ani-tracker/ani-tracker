@@ -313,7 +313,7 @@ export function AppShell({
         >
           <header
             className={cn(
-              "sticky top-0 z-30 flex min-h-16 items-center border-b bg-background px-[max(1rem,var(--safe-area-left))] pt-[var(--safe-area-top)] md:hidden",
+              "sticky top-0 z-30 flex min-h-[var(--app-mobile-header-height)] items-center border-b bg-background px-[max(1rem,var(--safe-area-left))] pt-[var(--safe-area-top)] md:hidden",
               framelessWindow && "pr-[calc(var(--window-controls-width)+max(1rem,var(--safe-area-right)))]"
             )}
             data-tauri-drag-region={framelessWindow ? "" : undefined}

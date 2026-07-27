@@ -32,6 +32,7 @@ import { Page, PageActions, PageHeader, PageHeading } from "@/components/page-la
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { cn } from "@/lib/cn";
 import { formatBytes, formatDuration, formatPercent, formatSpeed } from "@/lib/format";
+import { getAppCapabilities } from "@/lib/runtime";
 import type { AppClient } from "@shared/app-client";
 import {
   isActiveDownloadTask,
@@ -72,6 +73,7 @@ const downloadStatusText: Record<DownloadStatus, string> = {
 
 /** 渲染本地与远端共用的下载队列页面。 */
 export function DownloadQueuePage({ client, logScope }: DownloadQueuePageProps) {
+  const capabilities = getAppCapabilities();
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [view, setView] = useState<DownloadView>("active");
@@ -432,7 +434,7 @@ export function DownloadQueuePage({ client, logScope }: DownloadQueuePageProps) 
                                   scanningTaskId={scanningTaskId}
                                   onMutate={mutateTask}
                                   onRequestRemove={client.removeDownload ? setRemoveTarget : undefined}
-                                  onScan={client.scanDownloadMedia ? scanTask : undefined}
+                                  onScan={capabilities.mediaScan && client.scanDownloadMedia ? scanTask : undefined}
                                   onToggleFile={client.setDownloadFilePriority ? toggleFileSelection : undefined}
                                 />
                               ))}

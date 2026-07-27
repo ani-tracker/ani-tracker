@@ -1,11 +1,13 @@
-use std::sync::{Arc, Mutex};
 #[cfg(any(mobile, test))]
 use std::{
     fs::{self, OpenOptions},
     io::Write,
-    path::Path,
     sync::atomic::{AtomicU64, Ordering},
     time::{SystemTime, UNIX_EPOCH},
+};
+use std::{
+    path::Path,
+    sync::{Arc, Mutex},
 };
 
 use ani_contracts::AppCommandError;
@@ -74,6 +76,19 @@ fn map_metadata_error(action: &str, error: SourceError) -> AppCommandError {
     }
 }
 
+/// 隐藏磁盘上已经不存在的最近完成媒体，避免首页继续展示失效内容。
+pub(crate) fn filter_missing_dashboard_media(mut dashboard: DashboardData) -> DashboardData {
+    let before = dashboard.recent_completed.len();
+    dashboard
+        .recent_completed
+        .retain(|media| Path::new(&media.file_path).is_file());
+    let removed = before.saturating_sub(dashboard.recent_completed.len());
+    if removed > 0 {
+        log::info!("首页已隐藏不存在的最近完成媒体 count={removed}");
+    }
+    dashboard
+}
+
 /// 在线程池执行 SQLite 查询，避免阻塞 WebView 调用线程。
 async fn run_query<T, F>(
     action: &'static str,
@@ -100,7 +115,10 @@ pub(crate) async fn get_dashboard(
     state: State<'_, AppStorageState>,
 ) -> Result<DashboardData, AppCommandError> {
     run_query("读取首页", Arc::clone(state.storage()), |storage| {
-        storage.repository().get_dashboard()
+        storage
+            .repository()
+            .get_dashboard()
+            .map(filter_missing_dashboard_media)
     })
     .await
 }
@@ -905,7 +923,59 @@ pub(crate) async fn upsert_source(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_writable_directory;
+    use ani_domain::{DashboardData, MediaFile};
+
+    use super::{filter_missing_dashboard_media, validate_writable_directory};
+
+    /** 构造首页最近完成媒体测试数据。 */
+    fn media_file(id: &str, file_path: &std::path::Path) -> MediaFile {
+        MediaFile {
+            id: id.to_owned(),
+            anime_id: "anime-1".to_owned(),
+            episode_id: None,
+            download_task_id: None,
+            file_path: file_path.to_string_lossy().into_owned(),
+            file_name: file_path
+                .file_name()
+                .and_then(|value| value.to_str())
+                .unwrap_or("episode.mkv")
+                .to_owned(),
+            size: 1,
+            container: None,
+            declared_video_codec: None,
+            detected_video_codec: None,
+            normalized_video_codec: "unknown".to_owned(),
+            resolution: None,
+            bit_depth: None,
+            audio_codecs: Vec::new(),
+            subtitle_tracks: Vec::new(),
+            duration_seconds: None,
+            downloaded_at: None,
+            probed_at: None,
+        }
+    }
+
+    /// 首页只保留磁盘上仍存在的普通媒体文件。
+    #[test]
+    fn filters_missing_dashboard_media_files() {
+        let directory =
+            std::env::temp_dir().join(format!("ani-dashboard-media-test-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).expect("create test directory");
+        let existing_path = directory.join("existing.mkv");
+        std::fs::write(&existing_path, b"media").expect("write test media");
+        let missing_path = directory.join("deleted.mkv");
+        let mut dashboard = DashboardData::default();
+        dashboard.recent_completed = vec![
+            media_file("existing", &existing_path),
+            media_file("missing", &missing_path),
+        ];
+
+        let filtered = filter_missing_dashboard_media(dashboard);
+
+        assert_eq!(filtered.recent_completed.len(), 1);
+        assert_eq!(filtered.recent_completed[0].id, "existing");
+        std::fs::remove_dir_all(directory).expect("remove test directory");
+    }
 
     /// 可写绝对目录通过验证且不会残留探测文件。
     #[test]
