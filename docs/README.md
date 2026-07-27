@@ -10,8 +10,8 @@
 | --- | --- |
 | [架构与设计](design-plan.md) | 当前进程边界、服务职责、数据流和扩展边界 |
 | [实现状态](progress.md) | 已实现能力、明确限制和后续工作 |
-| [Android 完整应用适配计划](android-application-plan.md) | React 页面复用、Android 平台适配、阶段、测试与验收 |
-| [iOS 原生完整应用计划](ios-native-app-plan.md) | iOS/iPadOS 原生完整应用的边界、架构、阶段、CI 与验收 |
+| [Android Tauri 2 全面适配](android-application-plan.md) | 已完成能力、移动产物边界、自动化门禁与待发布验收 |
+| [iOS 应用计划归档指引](ios-native-app-plan.md) | 当前 Tauri iOS 实现、历史计划与发布验收入口 |
 | [跨平台打包与发布](release-build.md) | 五平台 Tauri 产物、资源边界、签名和验收 |
 | [启动与故障排查](startup.md) | 安装、开发、测试、构建和排障 |
 | [界面设计规范](DESIGN.md) | 当前应用壳、设计令牌、组件和响应式约束 |
@@ -26,7 +26,7 @@
 
 - [归档说明](archive/README.md)
 - [2026-07 UI 改造归档](archive/2026-07-ui-redesign/README.md)
-- [2026-07 原生运行时归档](archive/2026-07-native-runtime/README.md)
+- [2026-07 原生运行时与移动宿主归档](archive/2026-07-native-runtime/README.md)
 - [2026-07 Tauri 2 迁移归档](archive/2026-07-tauri-2-migration/README.md)
 
 ## 事实优先级
