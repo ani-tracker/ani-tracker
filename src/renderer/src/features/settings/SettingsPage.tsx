@@ -102,6 +102,7 @@ const settingsCategories: Array<{
 export function SettingsPage() {
   const capabilities = getAppCapabilities();
   const runtime = getAppRuntime();
+  const androidRuntime = runtime === "android";
   const mobileRuntime = runtime === "android" || runtime === "ios";
   const visibleSettingsCategories = settingsCategories
     .filter((category) => capabilities.remoteGateway || category.id !== "remote")
@@ -790,6 +791,7 @@ export function SettingsPage() {
               icon={<FolderCog className="h-4 w-4" />}
               label="默认下载目录"
               value={draft.download.defaultDownloadDir}
+              disabled={androidRuntime}
               onChange={(value) =>
                 setDraft({
                   ...draft,
@@ -803,6 +805,7 @@ export function SettingsPage() {
             <TextSetting
               label="临时下载目录"
               value={draft.download.temporaryDownloadDir ?? ""}
+              disabled={androidRuntime}
               onChange={(value) =>
                 setDraft({
                   ...draft,
@@ -835,6 +838,7 @@ export function SettingsPage() {
               icon={<HardDrive className="h-4 w-4" />}
               label="用户数据目录"
               value={draft.storage.userDataDir}
+              disabled={androidRuntime}
               onChange={(value) =>
                 setDraft({
                   ...draft,
@@ -2222,12 +2226,14 @@ function TextSetting({
   label,
   value,
   type = "text",
+  disabled = false,
   onChange
 }: {
   icon?: ReactNode;
   label: string;
   value: string;
   type?: "text" | "password";
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   const inputId = useId();
@@ -2242,6 +2248,7 @@ function TextSetting({
         id={inputId}
         type={type}
         value={value}
+        disabled={disabled}
         onChange={(event) => onChange(event.target.value)}
       />
     </Field>

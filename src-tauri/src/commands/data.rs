@@ -119,8 +119,8 @@ pub(crate) async fn update_settings(
     automation_state: State<'_, AppAutomationState>,
     download_state: State<'_, AppDownloadState>,
 ) -> Result<AppSettings, AppCommandError> {
-    crate::storage::constrain_settings_patch(&mut patch);
     let defaults = state.platform_defaults().clone();
+    crate::storage::constrain_settings_patch(&mut patch, &defaults);
     let settings = run_query("更新设置", Arc::clone(state.storage()), move |storage| {
         storage.repository().update_settings(&patch, &defaults)
     })

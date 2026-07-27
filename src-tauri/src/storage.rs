@@ -1,3 +1,4 @@
+#[cfg(not(target_os = "android"))]
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -7,15 +8,20 @@ use ani_storage::{ReleaseSourceSeed, Storage, StorageError, StorageOptions, Stor
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
+#[cfg(not(target_os = "android"))]
 const DATABASE_FILE_NAME: &str = "ani-tracker.sqlite";
 
 /// Tauri 数据目录及设置默认值需要的平台目录。
 #[derive(Debug, Clone)]
 struct AppDirectories {
     app_data: PathBuf,
+    database: PathBuf,
     cache: PathBuf,
     logs: PathBuf,
     downloads: PathBuf,
+    incomplete: PathBuf,
+    backup: PathBuf,
+    #[cfg(not(target_os = "android"))]
     config: PathBuf,
 }
 
@@ -40,21 +46,30 @@ impl AppStorageState {
 /// 解析平台目录并完成 SQLite 复制、迁移和状态装配。
 pub(crate) fn initialize(app: &AppHandle) -> Result<AppStorageState, StorageError> {
     let directories = resolve_directories(app)?;
-    for directory in [
-        &directories.app_data,
-        &directories.cache,
-        &directories.logs,
-        &directories.downloads,
-    ] {
+    let mut required_directories: Vec<&Path> = vec![
+        directories.app_data.as_path(),
+        directories.cache.as_path(),
+        directories.logs.as_path(),
+        directories.downloads.as_path(),
+        directories.incomplete.as_path(),
+        directories.backup.as_path(),
+    ];
+    if let Some(database_parent) = directories.database.parent() {
+        required_directories.push(database_parent);
+    }
+    for directory in required_directories {
         std::fs::create_dir_all(directory).map_err(|source| StorageError::FileOperation {
             operation: "创建 Tauri 应用目录",
-            path: directory.clone(),
+            path: directory.to_path_buf(),
             source,
         })?;
     }
-    let database_path = directories.app_data.join(DATABASE_FILE_NAME);
-    let backup_directory = directories.app_data.join("backups");
-    let platform_defaults = build_default_settings(&directories, &database_path, &backup_directory);
+    let database_path = directories.database.clone();
+    let backup_directory = directories.backup.clone();
+    let platform_defaults = build_default_settings(&directories);
+    #[cfg(target_os = "android")]
+    let legacy_database_paths = Vec::new();
+    #[cfg(not(target_os = "android"))]
     let legacy_database_paths = legacy_database_candidates(&directories, &database_path);
     let seed = StorageSeed {
         settings: platform_defaults.clone(),
@@ -89,7 +104,31 @@ pub(crate) fn initialize(app: &AppHandle) -> Result<AppStorageState, StorageErro
     })
 }
 
-/// 从 Tauri 路径解析器读取当前平台目录。
+/// 从 Android Context 读取应用专属目录，避免把 dataDir 根目录当作文件目录。
+#[cfg(target_os = "android")]
+fn resolve_directories(app: &AppHandle) -> Result<AppDirectories, StorageError> {
+    use tauri_plugin_ani_mobile::AniMobileExt;
+
+    let directories = app
+        .ani_mobile()
+        .directories()
+        .map_err(|error| StorageError::HostPath {
+            action: "解析 Android 应用目录",
+            detail: error.to_string(),
+        })?;
+    Ok(AppDirectories {
+        app_data: directories.user_data_dir.clone(),
+        database: directories.database_path,
+        cache: directories.cache_dir,
+        logs: directories.log_dir,
+        downloads: directories.download_dir,
+        incomplete: directories.incomplete_dir,
+        backup: directories.backup_dir,
+    })
+}
+
+/// 从 Tauri 路径解析器读取桌面和 iOS 平台目录。
+#[cfg(not(target_os = "android"))]
 fn resolve_directories(app: &AppHandle) -> Result<AppDirectories, StorageError> {
     let app_data = app
         .path()
@@ -107,14 +146,18 @@ fn resolve_directories(app: &AppHandle) -> Result<AppDirectories, StorageError> 
     let downloads = app
         .path()
         .download_dir()
-        .unwrap_or_else(|_| app_data.join("downloads"));
+        .unwrap_or_else(|_| app_data.join("downloads"))
+        .join("Ani Tracker");
     #[cfg(mobile)]
-    let downloads = app_data.join("downloads");
+    let downloads = app_data.join("downloads").join("Ani Tracker");
     let config = app
         .path()
         .app_config_dir()
         .unwrap_or_else(|_| app_data.clone());
     Ok(AppDirectories {
+        database: app_data.join(DATABASE_FILE_NAME),
+        incomplete: app_data.join("incomplete"),
+        backup: app_data.join("backups"),
         app_data,
         cache,
         logs,
@@ -124,6 +167,7 @@ fn resolve_directories(app: &AppHandle) -> Result<AppDirectories, StorageError> 
 }
 
 /// 将 Tauri 路径解析错误转换为带操作上下文的数据层错误。
+#[cfg(not(target_os = "android"))]
 fn path_error(action: &'static str, error: tauri::Error) -> StorageError {
     StorageError::HostPath {
         action,
@@ -132,17 +176,11 @@ fn path_error(action: &'static str, error: tauri::Error) -> StorageError {
 }
 
 /// 生成当前平台的完整默认设置，并保留移动端主题和本地下载能力。
-fn build_default_settings(
-    directories: &AppDirectories,
-    database_path: &Path,
-    backup_directory: &Path,
-) -> AppSettings {
+fn build_default_settings(directories: &AppDirectories) -> AppSettings {
     let mobile = cfg!(any(target_os = "android", target_os = "ios"));
     let managed_qbittorrent = !mobile;
     let max_active_downloads = if mobile { 1 } else { 3 };
     let upnp_enabled = !mobile;
-    let default_download_dir = directories.downloads.join("Ani Tracker");
-
     json!({
         "appearance": {
             "themeMode": "system",
@@ -150,10 +188,10 @@ fn build_default_settings(
             "customThemePacks": []
         },
         "download": {
-            "defaultDownloadDir": path_text(&default_download_dir),
+            "defaultDownloadDir": path_text(&directories.downloads),
             "createAnimeFolder": true,
             "animeFolderPattern": "{year}-{month}/{title}",
-            "temporaryDownloadDir": path_text(&directories.app_data.join("incomplete")),
+            "temporaryDownloadDir": path_text(&directories.incomplete),
             "defaultTorrentEngine": "embedded",
             "embedded": {
                 "enabled": true,
@@ -182,10 +220,10 @@ fn build_default_settings(
         },
         "storage": {
             "userDataDir": path_text(&directories.app_data),
-            "databasePath": path_text(database_path),
+            "databasePath": path_text(&directories.database),
             "cacheDir": path_text(&directories.cache),
             "logDir": path_text(&directories.logs),
-            "backupDir": path_text(backup_directory)
+            "backupDir": path_text(&directories.backup)
         },
         "players": default_player_profiles(),
         "defaultPlayerProfileId": if mobile { "builtin" } else { "auto" },
@@ -223,14 +261,18 @@ fn build_default_settings(
     })
 }
 
-/// 返回宿主必须覆盖的设置片段，避免移动备份恢复桌面专属能力。
-pub(crate) fn platform_settings_constraints() -> Value {
-    platform_settings_constraints_for(cfg!(mobile))
+/// 返回宿主必须覆盖的设置片段，避免移动备份恢复桌面专属能力和无效路径。
+pub(crate) fn platform_settings_constraints(platform_defaults: &AppSettings) -> Value {
+    platform_settings_constraints_for(cfg!(mobile), cfg!(target_os = "android"), platform_defaults)
 }
 
 /// 生成可测试的平台约束，移动宿主不得启用桌面进程和路径能力。
-fn platform_settings_constraints_for(mobile: bool) -> Value {
-    if mobile {
+fn platform_settings_constraints_for(
+    mobile: bool,
+    android: bool,
+    platform_defaults: &AppSettings,
+) -> Value {
+    let mut constraints = if mobile {
         json!({
             "defaultPlayerProfileId": "builtin",
             "players": [],
@@ -257,12 +299,29 @@ fn platform_settings_constraints_for(mobile: bool) -> Value {
         })
     } else {
         json!({})
+    };
+    if android {
+        let mut download_paths = serde_json::Map::new();
+        for key in ["defaultDownloadDir", "temporaryDownloadDir"] {
+            if let Some(value) = platform_defaults
+                .get("download")
+                .and_then(|download| download.get(key))
+                .cloned()
+            {
+                download_paths.insert(key.to_owned(), value);
+            }
+        }
+        merge_settings_value(
+            &mut constraints,
+            json!({ "download": Value::Object(download_paths) }),
+        );
     }
+    constraints
 }
 
 /// 将平台强制设置递归覆盖到 Renderer 提交的补丁。
-pub(crate) fn constrain_settings_patch(patch: &mut Value) {
-    merge_settings_value(patch, platform_settings_constraints());
+pub(crate) fn constrain_settings_patch(patch: &mut Value, platform_defaults: &AppSettings) {
+    merge_settings_value(patch, platform_settings_constraints(platform_defaults));
 }
 
 /// 递归合并 JSON 对象；非对象节点由平台约束直接替换。
@@ -367,6 +426,7 @@ fn mpv_profile() -> Value {
 }
 
 /// 发现 Electron 可能使用的数据目录并按稳定顺序去重。
+#[cfg(not(target_os = "android"))]
 fn legacy_database_candidates(directories: &AppDirectories, database_path: &Path) -> Vec<PathBuf> {
     let mut roots = Vec::new();
     if let Some(parent) = directories.config.parent() {
@@ -528,9 +588,11 @@ fn path_text(path: &Path) -> String {
 mod tests {
     use std::path::PathBuf;
 
+    #[cfg(not(target_os = "android"))]
+    use super::legacy_database_candidates;
     use super::{
-        build_default_settings, default_release_sources, legacy_database_candidates,
-        merge_settings_value, platform_settings_constraints_for, AppDirectories,
+        build_default_settings, default_release_sources, merge_settings_value,
+        platform_settings_constraints_for, AppDirectories,
     };
     use serde_json::json;
 
@@ -538,22 +600,33 @@ mod tests {
     #[test]
     fn builds_complete_platform_defaults() {
         let directories = test_directories();
-        let database_path = directories.app_data.join("ani-tracker.sqlite");
-        let backup_directory = directories.app_data.join("backups");
-        let settings = build_default_settings(&directories, &database_path, &backup_directory);
+        let settings = build_default_settings(&directories);
 
         assert_eq!(settings["appearance"]["themeMode"], "system");
         assert_eq!(settings["appearance"]["themePackId"], "default");
         assert_eq!(settings["download"]["defaultTorrentEngine"], "embedded");
         assert_eq!(settings["download"]["embedded"]["enabled"], true);
         assert_eq!(
+            settings["download"]["defaultDownloadDir"],
+            directories.downloads.to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            settings["download"]["temporaryDownloadDir"],
+            directories.incomplete.to_string_lossy().as_ref()
+        );
+        assert_eq!(
             settings["storage"]["databasePath"],
-            database_path.to_string_lossy().as_ref()
+            directories.database.to_string_lossy().as_ref()
+        );
+        assert_eq!(
+            settings["storage"]["backupDir"],
+            directories.backup.to_string_lossy().as_ref()
         );
         assert_eq!(default_release_sources().len(), 7);
     }
 
     /// 验证旧 Electron 数据库候选稳定去重且不包含活动库。
+    #[cfg(not(target_os = "android"))]
     #[test]
     fn discovers_legacy_database_candidates() {
         let directories = test_directories();
@@ -573,13 +646,16 @@ mod tests {
         assert_eq!(unique.len(), candidates.len());
     }
 
-    /// 验证移动设置约束会关闭桌面进程能力并保留外部 qBittorrent 配置。
+    /// 验证 Android 设置约束会恢复应用路径并关闭桌面进程能力。
     #[test]
-    fn constrains_restored_mobile_settings() {
+    fn constrains_restored_android_settings() {
+        let defaults = build_default_settings(&test_directories());
         let mut settings = json!({
             "defaultPlayerProfileId": "mpv",
             "players": [{ "id": "mpv" }],
             "download": {
+                "defaultDownloadDir": "C:/invalid-downloads",
+                "temporaryDownloadDir": "C:/invalid-incomplete",
                 "qbittorrent": {
                     "baseUrl": "https://qb.example.test",
                     "managed": { "enabled": true }
@@ -590,10 +666,21 @@ mod tests {
             "network": { "remoteAccess": { "lanEnabled": true } }
         });
 
-        merge_settings_value(&mut settings, platform_settings_constraints_for(true));
+        merge_settings_value(
+            &mut settings,
+            platform_settings_constraints_for(true, true, &defaults),
+        );
 
         assert_eq!(settings["defaultPlayerProfileId"], "builtin");
         assert_eq!(settings["players"], json!([]));
+        assert_eq!(
+            settings["download"]["defaultDownloadDir"],
+            defaults["download"]["defaultDownloadDir"]
+        );
+        assert_eq!(
+            settings["download"]["temporaryDownloadDir"],
+            defaults["download"]["temporaryDownloadDir"]
+        );
         assert_eq!(
             settings["download"]["qbittorrent"]["managed"]["enabled"],
             false
@@ -610,10 +697,14 @@ mod tests {
     /// 创建不依赖宿主环境的路径样本。
     fn test_directories() -> AppDirectories {
         AppDirectories {
-            app_data: PathBuf::from("C:/Data/com.ani.tracker"),
+            app_data: PathBuf::from("C:/Data/com.ani.tracker/no_backup"),
+            database: PathBuf::from("C:/Data/com.ani.tracker/databases/ani-tracker.sqlite"),
             cache: PathBuf::from("C:/Cache/com.ani.tracker"),
             logs: PathBuf::from("C:/Logs/com.ani.tracker"),
-            downloads: PathBuf::from("C:/Downloads"),
+            downloads: PathBuf::from("C:/AppDownloads/com.ani.tracker/Download"),
+            incomplete: PathBuf::from("C:/Data/com.ani.tracker/files/incomplete"),
+            backup: PathBuf::from("C:/Data/com.ani.tracker/files/backups"),
+            #[cfg(not(target_os = "android"))]
             config: PathBuf::from("C:/Config/com.ani.tracker"),
         }
     }

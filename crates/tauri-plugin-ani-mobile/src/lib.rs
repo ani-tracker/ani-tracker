@@ -15,7 +15,7 @@ mod ios;
 pub use error::{Error, Result};
 
 #[cfg(target_os = "android")]
-pub use android::AniMobile;
+pub use android::{AndroidAppDirectories, AniMobile};
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 pub use fallback::AniMobile;
 #[cfg(target_os = "ios")]

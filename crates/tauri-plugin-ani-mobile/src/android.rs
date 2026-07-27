@@ -71,7 +71,27 @@ struct ExternalUrlRequest<'a> {
     url: &'a str,
 }
 
+/// Android 原生 Context 解析出的应用专属目录。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct AndroidAppDirectories {
+    pub user_data_dir: PathBuf,
+    pub database_path: PathBuf,
+    pub cache_dir: PathBuf,
+    pub log_dir: PathBuf,
+    pub backup_dir: PathBuf,
+    pub incomplete_dir: PathBuf,
+    pub download_dir: PathBuf,
+}
+
 impl<R: Runtime> AniMobile<R> {
+    /// 读取并准备 Android 应用拥有的全部存储目录。
+    pub fn directories(&self) -> crate::Result<AndroidAppDirectories> {
+        self.0
+            .run_mobile_plugin("directories", ())
+            .map_err(Into::into)
+    }
+
     /// 读取网络、存储、方向、通知权限和生命周期状态。
     pub fn status(&self) -> crate::Result<MobilePlatformStatus> {
         self.0.run_mobile_plugin("status", ()).map_err(Into::into)

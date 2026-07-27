@@ -155,7 +155,7 @@ pub(crate) async fn restore_database_backup(
         let settings = storage
             .repository()
             .update_settings(
-                &crate::storage::platform_settings_constraints(),
+                &crate::storage::platform_settings_constraints(&restore_defaults),
                 &restore_defaults,
             )
             .map_err(|error| error.to_string())?;

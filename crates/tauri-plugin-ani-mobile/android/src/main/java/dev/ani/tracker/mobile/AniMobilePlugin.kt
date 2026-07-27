@@ -9,6 +9,7 @@ import android.content.res.Configuration
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
+import android.os.Environment
 import android.os.StatFs
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
@@ -171,6 +172,48 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
                 Log.e(LOG_TAG, "failed to open external URL", error)
                 invoke.reject("Android 系统无法打开外链", "open_external_failed", error)
             }
+        }
+    }
+
+    /** 创建并返回 Android 应用拥有的持久化、缓存和下载目录。 */
+    @Command
+    fun directories(invoke: Invoke) {
+        try {
+            val filesDir = activity.filesDir
+            val userDataDir = activity.noBackupFilesDir
+            val databasePath = activity.getDatabasePath(DATABASE_FILE_NAME)
+            val cacheDir = activity.cacheDir
+            val logDir = File(filesDir, "logs")
+            val backupDir = File(filesDir, "backups")
+            val incompleteDir = File(filesDir, "incomplete")
+            val externalDownloadDir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            val downloadDir = externalDownloadDir ?: File(filesDir, "downloads")
+            listOf(
+                userDataDir,
+                databasePath.parentFile,
+                cacheDir,
+                logDir,
+                backupDir,
+                incompleteDir,
+                downloadDir
+            ).filterNotNull().forEach(::ensureDirectory)
+
+            invoke.resolve(JSObject().apply {
+                put("userDataDir", userDataDir.absolutePath)
+                put("databasePath", databasePath.absolutePath)
+                put("cacheDir", cacheDir.absolutePath)
+                put("logDir", logDir.absolutePath)
+                put("backupDir", backupDir.absolutePath)
+                put("incompleteDir", incompleteDir.absolutePath)
+                put("downloadDir", downloadDir.absolutePath)
+            })
+            Log.i(
+                LOG_TAG,
+                "Android application directories prepared externalDownload=${externalDownloadDir != null}"
+            )
+        } catch (error: Exception) {
+            Log.e(LOG_TAG, "failed to prepare Android application directories", error)
+            invoke.reject("无法准备 Android 应用目录", "mobile_directories_failed", error)
         }
     }
 
@@ -341,9 +384,11 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
         return state to manager.isActiveNetworkMetered
     }
 
-    /** 按应用私有分区剩余空间返回 ok、low 或 critical。 */
+    /** 按实际应用下载目录所在分区的剩余空间返回 ok、low 或 critical。 */
     private fun storageStatus(): Pair<String, Long> {
-        val availableBytes = StatFs(activity.filesDir.absolutePath).availableBytes
+        val downloadDir = activity.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: File(activity.filesDir, "downloads")
+        val availableBytes = StatFs(downloadDir.absolutePath).availableBytes
         val state = when {
             availableBytes < CRITICAL_STORAGE_BYTES -> "critical"
             availableBytes < LOW_STORAGE_BYTES -> "low"
@@ -414,6 +459,13 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
     /** 限制键名字符和长度，避免构造任意偏好项。 */
     private fun isValidKey(key: String) = STORAGE_KEY_PATTERN.matches(key)
 
+    /** 确保应用目录存在且不是同名普通文件。 */
+    private fun ensureDirectory(directory: File) {
+        check((directory.isDirectory || directory.mkdirs()) && directory.isDirectory) {
+            "无法创建应用目录：${directory.absolutePath}"
+        }
+    }
+
     /** 限制流复制大小，避免恶意文档耗尽应用存储。 */
     private fun copyWithLimit(input: java.io.InputStream, output: java.io.OutputStream, limit: Long) {
         val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -443,6 +495,7 @@ class AniMobilePlugin(private val activity: Activity) : Plugin(activity) {
         const val EXTRA_PAGE_ID = "aniPageId"
         private const val LOG_TAG = "AniMobilePlugin"
         private const val PREFERENCES_NAME = "ani_secure_store"
+        private const val DATABASE_FILE_NAME = "ani-tracker.sqlite"
         private const val ANDROID_KEYSTORE = "AndroidKeyStore"
         private const val KEY_ALIAS = "ani_tracker_secure_store_v1"
         private const val CIPHER_TRANSFORMATION = "AES/GCM/NoPadding"
