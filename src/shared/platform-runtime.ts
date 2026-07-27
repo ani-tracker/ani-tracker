@@ -24,6 +24,21 @@ export interface AppRuntimeProbe {
   nativePlatform?: string;
 }
 
+/** 判断 Tauri 注入的平台名称是否表示 macOS。 */
+export function isMacOSNativePlatform(nativePlatform?: string): boolean {
+  const normalized = nativePlatform?.trim().toLowerCase();
+  return normalized === "macos" || normalized === "darwin";
+}
+
+/** 兼容构建变量缺失时由 WebView 暴露的 macOS 平台名称。 */
+export function isMacOSRuntimePlatform(
+  nativePlatform?: string,
+  navigatorPlatform?: string
+): boolean {
+  if (isMacOSNativePlatform(nativePlatform)) return true;
+  return navigatorPlatform?.trim().toLowerCase().startsWith("mac") ?? false;
+}
+
 const PLATFORM_CAPABILITIES: Record<AppRuntimeKind, PlatformCapabilities> = {
   desktop: {
     runtime: "desktop",

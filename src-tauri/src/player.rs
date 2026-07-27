@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -17,6 +17,10 @@ use ani_media::player::PlayerService;
 use ani_repository::{DownloadRepository, MediaRepository, PlaybackRepository};
 use ani_storage::Storage;
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
+#[cfg(target_os = "macos")]
+use objc2_app_kit::NSWindow;
+#[cfg(target_os = "macos")]
+use objc2_foundation::{NSPoint, NSRect, NSSize};
 #[cfg(desktop)]
 use tauri::window::{Color, WindowBuilder};
 #[cfg(target_os = "macos")]
@@ -57,6 +61,38 @@ struct DesktopWindowDragState {
     window_start_y: f64,
 }
 
+#[cfg(any(target_os = "macos", test))]
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MacOSWindowFrame {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[cfg(target_os = "macos")]
+impl From<NSRect> for MacOSWindowFrame {
+    fn from(frame: NSRect) -> Self {
+        Self {
+            x: frame.origin.x,
+            y: frame.origin.y,
+            width: frame.size.width,
+            height: frame.size.height,
+        }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl MacOSWindowFrame {
+    /// 转换为 AppKit 使用的窗口边界。
+    fn into_ns_rect(self) -> NSRect {
+        NSRect::new(
+            NSPoint::new(self.x, self.y),
+            NSSize::new(self.width, self.height),
+        )
+    }
+}
+
 /// Tauri 生命周期内共享的播放窗口、受控会话和平台 transport。
 #[derive(Clone)]
 pub(crate) struct AppPlayerState {
@@ -66,6 +102,12 @@ pub(crate) struct AppPlayerState {
     sessions: Arc<Mutex<HashMap<String, ResolvedPlaybackSession>>>,
     id_sequence: Arc<AtomicU64>,
     poll_generation: Arc<AtomicU64>,
+    #[cfg(desktop)]
+    fullscreen: Arc<AtomicBool>,
+    #[cfg(target_os = "macos")]
+    window_maximized: Arc<AtomicBool>,
+    #[cfg(target_os = "macos")]
+    window_restore_frame: Arc<Mutex<Option<MacOSWindowFrame>>>,
     #[cfg(target_os = "macos")]
     drag_state: Arc<Mutex<Option<DesktopWindowDragState>>>,
 }
@@ -84,6 +126,12 @@ impl AppPlayerState {
             sessions: Arc::new(Mutex::new(HashMap::new())),
             id_sequence: Arc::new(AtomicU64::new(0)),
             poll_generation: Arc::new(AtomicU64::new(0)),
+            #[cfg(desktop)]
+            fullscreen: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_os = "macos")]
+            window_maximized: Arc::new(AtomicBool::new(false)),
+            #[cfg(target_os = "macos")]
+            window_restore_frame: Arc::new(Mutex::new(None)),
             #[cfg(target_os = "macos")]
             drag_state: Arc::new(Mutex::new(None)),
         }
@@ -188,6 +236,12 @@ impl AppPlayerState {
                 .hwnd()
                 .map_err(|error| format!("读取播放器所有者 HWND 失败：{error}"))?,
         );
+        #[cfg(target_os = "macos")]
+        let controls_builder = controls_builder.parent_raw(
+            video
+                .ns_window()
+                .map_err(|error| format!("读取播放器父窗口 NSWindow 失败：{error}"))?,
+        );
         let controls = match controls_builder.build() {
             Ok(window) => window,
             Err(error) => {
@@ -195,6 +249,8 @@ impl AppPlayerState {
                 return Err(format!("创建 libVLC 控制层失败：{error}"));
             }
         };
+        #[cfg(target_os = "macos")]
+        log::info!("macOS Tauri 播放器窗口层级已建立 video_parent=true controls_child=true");
         let initial_position = video
             .outer_position()
             .map_err(|error| format!("读取视频窗口初始位置失败：{error}"))?;
@@ -217,6 +273,7 @@ impl AppPlayerState {
 
         let controller = Arc::new(TauriPlayerWindowController {
             app: self.app.clone(),
+            fullscreen: self.fullscreen.clone(),
         });
         let transport = self
             .app
@@ -235,9 +292,17 @@ impl AppPlayerState {
     /// 关闭桌面播放器窗口并幂等释放 libVLC。
     pub(crate) async fn close_desktop_window(&self) -> Result<(), String> {
         self.poll_generation.fetch_add(1, Ordering::SeqCst);
+        #[cfg(desktop)]
+        self.fullscreen.store(false, Ordering::Release);
         #[cfg(target_os = "macos")]
-        if let Ok(mut drag_state) = self.drag_state.lock() {
-            *drag_state = None;
+        {
+            self.window_maximized.store(false, Ordering::Release);
+            if let Ok(mut restore_frame) = self.window_restore_frame.lock() {
+                *restore_frame = None;
+            }
+            if let Ok(mut drag_state) = self.drag_state.lock() {
+                *drag_state = None;
+            }
         }
         #[cfg(desktop)]
         if let Some(service) = self.service.write().await.take() {
@@ -294,6 +359,97 @@ impl AppPlayerState {
         }
     }
 
+    /// 切换播放器窗口模式的最大化状态。
+    pub(crate) fn toggle_desktop_window_maximize(&self) -> Result<bool, String> {
+        #[cfg(mobile)]
+        {
+            return Err("移动原生播放器不支持桌面窗口最大化".to_owned());
+        }
+        #[cfg(desktop)]
+        {
+            if self.fullscreen.load(Ordering::Acquire) {
+                return Ok(false);
+            }
+            #[cfg(target_os = "macos")]
+            {
+                self.toggle_macos_window_maximize()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                let window = self
+                    .app
+                    .get_window(PLAYER_CONTROL_WINDOW_LABEL)
+                    .ok_or_else(|| "播放器控制层不存在".to_owned())?;
+                let maximized = window
+                    .is_maximized()
+                    .map_err(|error| format!("读取播放器最大化状态失败：{error}"))?;
+                if maximized {
+                    window
+                        .unmaximize()
+                        .map_err(|error| format!("还原播放器窗口失败：{error}"))?;
+                } else {
+                    window
+                        .maximize()
+                        .map_err(|error| format!("最大化播放器窗口失败：{error}"))?;
+                }
+                log::info!(
+                    "Tauri 播放器窗口最大化状态已切换 maximized={} driver=controls",
+                    !maximized
+                );
+                Ok(!maximized)
+            }
+        }
+    }
+
+    /// 在 AppKit 主线程内无动画同步切换视频父窗与控制子窗边界。
+    #[cfg(target_os = "macos")]
+    fn toggle_macos_window_maximize(&self) -> Result<bool, String> {
+        let video = self
+            .app
+            .get_window(PLAYER_VIDEO_WINDOW_LABEL)
+            .ok_or_else(|| "播放器视频窗口不存在".to_owned())?;
+        let controls = self
+            .app
+            .get_webview_window(PLAYER_CONTROL_WINDOW_LABEL)
+            .ok_or_else(|| "播放器控制层不存在".to_owned())?;
+        let was_maximized = self.window_maximized.fetch_xor(true, Ordering::AcqRel);
+        let maximized = !was_maximized;
+        let maximized_state = self.window_maximized.clone();
+        let restore_frame = self.window_restore_frame.clone();
+        let video_for_update = video.clone();
+        let controls_for_update = controls.as_ref().window().clone();
+        if let Err(error) = video.run_on_main_thread(move || {
+            match apply_macos_window_mode(
+                &video_for_update,
+                &controls_for_update,
+                maximized,
+                &restore_frame,
+            ) {
+                Ok(target) => log::info!(
+                    "macOS 播放器双窗边界已同步 maximized={} x={} y={} width={} height={}",
+                    maximized,
+                    target.x,
+                    target.y,
+                    target.width,
+                    target.height
+                ),
+                Err(error) => {
+                    maximized_state.store(was_maximized, Ordering::Release);
+                    log::error!("同步 macOS 播放器最大化边界失败 error={error}");
+                }
+            }
+        }) {
+            self.window_maximized
+                .store(was_maximized, Ordering::Release);
+            return Err(format!("提交播放器窗口最大化任务失败：{error}"));
+        }
+        log::info!(
+            "Tauri 播放器窗口最大化状态已切换 maximized={} driver=appkit-synchronized",
+            maximized
+        );
+        Ok(maximized)
+    }
+
     /// 将非 macOS 播放器控制层拖动委托给 Tauri 原生窗口。
     #[cfg(all(desktop, not(target_os = "macos")))]
     fn start_native_dragging(&self) -> Result<(), String> {
@@ -324,9 +480,18 @@ impl AppPlayerState {
             .app
             .get_webview_window(PLAYER_CONTROL_WINDOW_LABEL)
             .ok_or_else(|| "播放器控制层不存在".to_owned())?;
-        if controls
-            .is_fullscreen()
-            .map_err(|error| format!("读取播放器全屏状态失败：{error}"))?
+        let video = self
+            .app
+            .get_window(PLAYER_VIDEO_WINDOW_LABEL)
+            .ok_or_else(|| "播放器视频窗口不存在".to_owned())?;
+        if self.fullscreen.load(Ordering::Acquire)
+            || self.window_maximized.load(Ordering::Acquire)
+            || video
+                .is_fullscreen()
+                .map_err(|error| format!("读取播放器全屏状态失败：{error}"))?
+            || video
+                .is_maximized()
+                .map_err(|error| format!("读取播放器视频窗最大化状态失败：{error}"))?
             || controls
                 .is_maximized()
                 .map_err(|error| format!("读取播放器最大化状态失败：{error}"))?
@@ -368,14 +533,9 @@ impl AppPlayerState {
                 };
                 let (x, y) = next_drag_position(drag_state, screen_x, screen_y);
                 let position = LogicalPosition::new(x, y);
-                if let Some(video) = self.app.get_window(PLAYER_VIDEO_WINDOW_LABEL) {
-                    video
-                        .set_position(position)
-                        .map_err(|error| format!("移动播放器视频窗口失败：{error}"))?;
-                }
-                controls
+                video
                     .set_position(position)
-                    .map_err(|error| format!("移动播放器控制层失败：{error}"))?;
+                    .map_err(|error| format!("移动播放器视频父窗口失败：{error}"))?;
             }
             DesktopPlayerWindowDragInput::End => {}
         }
@@ -386,6 +546,7 @@ impl AppPlayerState {
 #[cfg(desktop)]
 struct TauriPlayerWindowController {
     app: AppHandle,
+    fullscreen: Arc<AtomicBool>,
 }
 
 #[cfg(desktop)]
@@ -402,20 +563,40 @@ impl DesktopWindowController for TauriPlayerWindowController {
         let controls_maximized = controls
             .is_maximized()
             .map_err(|error| format!("读取播放器控制层最大化状态失败：{error}"))?;
-        controls
-            .set_fullscreen(fullscreen)
-            .map_err(|error| format!("切换控制层全屏失败：{error}"))?;
         let controls_window = controls.as_ref().window();
-        sync_video_window_bounds(&controls_window, &video)?;
+        #[cfg(target_os = "macos")]
+        {
+            controls
+                .set_resizable(!fullscreen)
+                .map_err(|error| format!("切换控制层缩放能力失败：{error}"))?;
+            video
+                .set_simple_fullscreen(fullscreen)
+                .map_err(|error| format!("切换视频父窗口全屏失败：{error}"))?;
+            sync_controls_window_bounds(&video, &controls_window)?;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            controls
+                .set_fullscreen(fullscreen)
+                .map_err(|error| format!("切换控制层全屏失败：{error}"))?;
+            sync_video_window_bounds(controls_window, &video)?;
+        }
+        self.fullscreen.store(fullscreen, Ordering::Release);
         log::info!(
-            "Tauri 播放器窗口模式已同步 fullscreen={} controls_maximized={}",
+            "Tauri 播放器窗口模式已同步 fullscreen={} controls_maximized={} driver={}",
             fullscreen,
-            controls_maximized
+            controls_maximized,
+            if cfg!(target_os = "macos") {
+                "video-parent"
+            } else {
+                "controls"
+            }
         );
         Ok(fullscreen)
     }
 
     fn close(&self) -> Result<(), String> {
+        self.fullscreen.store(false, Ordering::Release);
         if let Some(window) = self.app.get_webview_window(PLAYER_CONTROL_WINDOW_LABEL) {
             window
                 .close()
@@ -591,6 +772,70 @@ fn next_drag_position(state: DesktopWindowDragState, screen_x: f64, screen_y: f6
     )
 }
 
+/// 计算 macOS 最大化目标，并维护窗口模式的还原边界。
+#[cfg(any(target_os = "macos", test))]
+fn resolve_macos_window_mode_frame(
+    maximized: bool,
+    current_frame: MacOSWindowFrame,
+    visible_frame: Option<MacOSWindowFrame>,
+    restore_frame: &mut Option<MacOSWindowFrame>,
+) -> Result<MacOSWindowFrame, String> {
+    if maximized {
+        let target = visible_frame.ok_or_else(|| "播放器窗口不在可用屏幕内".to_owned())?;
+        *restore_frame = Some(current_frame);
+        return Ok(target);
+    }
+    restore_frame
+        .take()
+        .ok_or_else(|| "播放器窗口缺少还原边界".to_owned())
+}
+
+/// 在同一次 AppKit 主线程回调内设置父窗和子窗，避免异步尺寸事件产生延迟。
+#[cfg(target_os = "macos")]
+fn apply_macos_window_mode<R: Runtime>(
+    video: &Window<R>,
+    controls: &Window<R>,
+    maximized: bool,
+    restore_frame: &Mutex<Option<MacOSWindowFrame>>,
+) -> Result<MacOSWindowFrame, String> {
+    let video_pointer = video
+        .ns_window()
+        .map_err(|error| format!("读取播放器视频父窗失败：{error}"))?
+        .cast::<NSWindow>();
+    let controls_pointer = controls
+        .ns_window()
+        .map_err(|error| format!("读取播放器控制子窗失败：{error}"))?
+        .cast::<NSWindow>();
+    if video_pointer.is_null() || controls_pointer.is_null() {
+        return Err("播放器原生窗口指针无效".to_owned());
+    }
+
+    // SAFETY: 两个指针均由仍存活的 Tauri Window 持有，且本方法只在 AppKit 主线程回调执行。
+    unsafe {
+        let video_window = &*video_pointer;
+        let controls_window = &*controls_pointer;
+        let current_frame = MacOSWindowFrame::from(NSWindow::frame(video_window));
+        let visible_frame = NSWindow::screen(video_window)
+            .map(|screen| MacOSWindowFrame::from(screen.visibleFrame()));
+        let target = {
+            let mut restore_frame = restore_frame
+                .lock()
+                .map_err(|error| format!("读取播放器还原边界失败：{error}"))?;
+            resolve_macos_window_mode_frame(
+                maximized,
+                current_frame,
+                visible_frame,
+                &mut restore_frame,
+            )?
+        };
+        let target_rect = target.into_ns_rect();
+        NSWindow::setFrame_display_animate(video_window, target_rect, true, false);
+        NSWindow::setFrame_display_animate(controls_window, target_rect, true, false);
+        Ok(target)
+    }
+}
+
+/// 按透明控制层的物理边界同步视频窗口。
 #[cfg(desktop)]
 fn sync_video_window_bounds<R: Runtime>(
     controls: &Window<R>,
@@ -605,17 +850,61 @@ fn sync_video_window_bounds<R: Runtime>(
     let video_outer_size: PhysicalSize<u32> = video
         .outer_size()
         .map_err(|error| format!("读取视频窗口外框尺寸失败：{error}"))?;
+    let video_position: PhysicalPosition<i32> = video
+        .outer_position()
+        .map_err(|error| format!("读取视频窗口位置失败：{error}"))?;
     let video_inner_size: PhysicalSize<u32> = video
         .inner_size()
         .map_err(|error| format!("读取视频窗口内容尺寸失败：{error}"))?;
     let target_inner_size =
         inner_size_for_outer_bounds(controls_outer_size, video_outer_size, video_inner_size);
-    video
-        .set_position(position)
-        .map_err(|error| format!("同步视频窗口位置失败：{error}"))?;
-    video
-        .set_size(target_inner_size)
-        .map_err(|error| format!("同步视频窗口尺寸失败：{error}"))
+    if video_position != position {
+        video
+            .set_position(position)
+            .map_err(|error| format!("同步视频窗口位置失败：{error}"))?;
+    }
+    if video_outer_size != controls_outer_size {
+        video
+            .set_size(target_inner_size)
+            .map_err(|error| format!("同步视频窗口尺寸失败：{error}"))?;
+    }
+    Ok(())
+}
+
+/// 按视频父窗口的物理边界同步 macOS 透明控制子窗。
+#[cfg(target_os = "macos")]
+fn sync_controls_window_bounds<R: Runtime>(
+    video: &Window<R>,
+    controls: &Window<R>,
+) -> Result<(), String> {
+    let position: PhysicalPosition<i32> = video
+        .outer_position()
+        .map_err(|error| format!("读取视频父窗口位置失败：{error}"))?;
+    let video_outer_size: PhysicalSize<u32> = video
+        .outer_size()
+        .map_err(|error| format!("读取视频父窗口外框尺寸失败：{error}"))?;
+    let controls_outer_size: PhysicalSize<u32> = controls
+        .outer_size()
+        .map_err(|error| format!("读取控制子窗外框尺寸失败：{error}"))?;
+    let controls_position: PhysicalPosition<i32> = controls
+        .outer_position()
+        .map_err(|error| format!("读取控制子窗位置失败：{error}"))?;
+    let controls_inner_size: PhysicalSize<u32> = controls
+        .inner_size()
+        .map_err(|error| format!("读取控制子窗内容尺寸失败：{error}"))?;
+    let target_inner_size =
+        inner_size_for_outer_bounds(video_outer_size, controls_outer_size, controls_inner_size);
+    if controls_position != position {
+        controls
+            .set_position(position)
+            .map_err(|error| format!("同步控制子窗位置失败：{error}"))?;
+    }
+    if controls_outer_size != video_outer_size {
+        controls
+            .set_size(target_inner_size)
+            .map_err(|error| format!("同步控制子窗尺寸失败：{error}"))?;
+    }
+    Ok(())
 }
 
 /// 扣除视频窗原生边框，使其物理外框与透明控制层完全重合。
@@ -861,6 +1150,27 @@ impl AppPlayerState {
         }
         #[cfg(desktop)]
         {
+            #[cfg(target_os = "macos")]
+            if window.label() == PLAYER_VIDEO_WINDOW_LABEL {
+                if matches!(
+                    event,
+                    WindowEvent::Moved(_)
+                        | WindowEvent::Resized(_)
+                        | WindowEvent::ScaleFactorChanged { .. }
+                ) {
+                    if let Some(controls) = window
+                        .app_handle()
+                        .get_webview_window(PLAYER_CONTROL_WINDOW_LABEL)
+                    {
+                        if let Err(error) =
+                            sync_controls_window_bounds(window, &controls.as_ref().window())
+                        {
+                            log::warn!("同步 macOS 播放器控制子窗边界失败 error={error}");
+                        }
+                    }
+                }
+                return;
+            }
             if window.label() != PLAYER_CONTROL_WINDOW_LABEL {
                 return;
             }
@@ -879,6 +1189,13 @@ impl AppPlayerState {
                     tauri::async_runtime::spawn(async move {
                         if let Some(state) = app.try_state::<AppPlayerState>() {
                             state.poll_generation.fetch_add(1, Ordering::SeqCst);
+                            #[cfg(target_os = "macos")]
+                            {
+                                state.window_maximized.store(false, Ordering::Release);
+                                if let Ok(mut restore_frame) = state.window_restore_frame.lock() {
+                                    *restore_frame = None;
+                                }
+                            }
                             if let Some(service) = state.service.write().await.take() {
                                 if let Err(error) = service.shutdown().await {
                                     log::warn!("播放器窗口销毁后释放 libVLC 失败 error={error}");
@@ -1074,6 +1391,37 @@ mod tests {
         assert_eq!(next_drag_position(state, 410.0, 235.0), (190.0, 135.0));
         assert!(valid_screen_point(410.0, 235.0));
         assert!(!valid_screen_point(f64::NAN, 235.0));
+    }
+
+    /// macOS 双窗最大化需保存原边界，并在还原后清空临时状态。
+    #[test]
+    fn resolves_macos_maximize_and_restore_frames() {
+        let original = MacOSWindowFrame {
+            x: 120.0,
+            y: 80.0,
+            width: 1120.0,
+            height: 630.0,
+        };
+        let visible = MacOSWindowFrame {
+            x: 0.0,
+            y: 25.0,
+            width: 1728.0,
+            height: 1080.0,
+        };
+        let mut restore_frame = None;
+
+        assert_eq!(
+            resolve_macos_window_mode_frame(true, original, Some(visible), &mut restore_frame)
+                .expect("maximize frame"),
+            visible
+        );
+        assert_eq!(restore_frame, Some(original));
+        assert_eq!(
+            resolve_macos_window_mode_frame(false, visible, None, &mut restore_frame)
+                .expect("restore frame"),
+            original
+        );
+        assert_eq!(restore_frame, None);
     }
 
     /// 视频窗内容尺寸需扣除自身边框，保证双窗口物理外框完全重合。

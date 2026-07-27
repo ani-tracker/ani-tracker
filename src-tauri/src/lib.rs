@@ -229,6 +229,7 @@ pub fn run() {
             commands::player::open_desktop_player_window,
             commands::player::close_desktop_player_window,
             commands::player::drag_desktop_player_window,
+            commands::player::toggle_desktop_player_window_maximize,
             commands::player::create_desktop_playback_session,
             commands::player::close_desktop_playback_session,
             commands::player::get_desktop_player_capabilities,

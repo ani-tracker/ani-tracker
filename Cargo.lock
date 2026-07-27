@@ -274,6 +274,8 @@ dependencies = [
  "dunce",
  "keyring",
  "log",
+ "objc2-app-kit",
+ "objc2-foundation",
  "open",
  "rand 0.8.7",
  "raw-window-handle",

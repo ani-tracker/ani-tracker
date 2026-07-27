@@ -48,6 +48,16 @@ pub(crate) fn drag_desktop_player_window(
         .map_err(|message| command_error("player_window_drag_failed", message))
 }
 
+/// 切换桌面播放器窗口模式的最大化状态。
+#[tauri::command]
+pub(crate) fn toggle_desktop_player_window_maximize(
+    state: State<'_, AppPlayerState>,
+) -> Result<bool, AppCommandError> {
+    state
+        .toggle_desktop_window_maximize()
+        .map_err(|message| command_error("player_window_maximize_failed", message))
+}
+
 /// 创建只向 Renderer 暴露临时 URI 的播放会话。
 #[tauri::command]
 pub(crate) fn create_desktop_playback_session(

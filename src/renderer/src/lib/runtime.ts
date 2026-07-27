@@ -1,13 +1,14 @@
 import { isTauri } from "@tauri-apps/api/core";
 import {
   getPlatformCapabilities,
+  isMacOSRuntimePlatform,
   resolveAppRuntime,
   type AppRuntimeKind,
   type PlatformCapabilities
 } from "@shared/platform-runtime";
 
 /** 读取 Tauri 构建时注入的平台名称。 */
-function getNativePlatform(): string | undefined {
+export function getNativePlatform(): string | undefined {
   try {
     return isTauri() ? import.meta.env.TAURI_ENV_PLATFORM : undefined;
   } catch (error) {
@@ -27,6 +28,12 @@ export function getAppRuntime(): AppRuntimeKind {
 /** 判断当前 Renderer 是否由 Tauri 宿主承载。 */
 export function isTauriAppRuntime(): boolean {
   return isTauri();
+}
+
+/** 判断当前 Tauri WebView 是否运行在 macOS。 */
+export function isMacOSTauriRuntime(): boolean {
+  if (!isTauriAppRuntime()) return false;
+  return isMacOSRuntimePlatform(getNativePlatform(), globalThis.navigator?.platform);
 }
 
 /** 返回当前运行时的稳定能力集合。 */

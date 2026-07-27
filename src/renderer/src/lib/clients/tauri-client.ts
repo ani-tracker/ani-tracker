@@ -94,6 +94,8 @@ function normalizeTauriError(method: string, error: unknown): Error {
 
 /** 封装 P1 已开放的 Tauri 平台命令与事件。 */
 class TauriClientCore implements AppClient {
+  private desktopPlayerDragQueue: Promise<void> = Promise.resolve();
+
   /** 保存当前 Tauri 宿主对应的平台标识。 */
   constructor(readonly platform: TauriClientPlatform) {}
 
@@ -639,8 +641,17 @@ class TauriClientCore implements AppClient {
 
   /** 将播放器拖动开始阶段交给 Tauri 原生窗口。 */
   dragDesktopPlayerWindow(input: DesktopPlayerWindowDragInput): void {
-    void invoke<void>("drag_desktop_player_window", { input }).catch((error) => {
-      console.error("[tauri-client] 拖动播放器窗口失败", normalizeTauriError("drag_desktop_player_window", error));
+    this.desktopPlayerDragQueue = this.desktopPlayerDragQueue
+      .then(() => invoke<void>("drag_desktop_player_window", { input }))
+      .catch((error) => {
+        console.error("[tauri-client] 拖动播放器窗口失败", normalizeTauriError("drag_desktop_player_window", error));
+      });
+  }
+
+  /** 切换桌面内置播放器窗口最大化状态。 */
+  async toggleDesktopPlayerWindowMaximize(): Promise<boolean> {
+    return invoke<boolean>("toggle_desktop_player_window_maximize").catch((error) => {
+      throw normalizeTauriError("toggle_desktop_player_window_maximize", error);
     });
   }
 

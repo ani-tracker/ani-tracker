@@ -259,6 +259,8 @@ export interface AppClient {
   closeDesktopPlayerWindow(): void;
   /** 拖动桌面内置播放器窗口。 */
   dragDesktopPlayerWindow(input: DesktopPlayerWindowDragInput): void;
+  /** 切换桌面内置播放器窗口最大化状态。 */
+  toggleDesktopPlayerWindowMaximize(): Promise<boolean>;
   /** 创建桌面受控播放会话。 */
   createDesktopPlaybackSession(input: DesktopPlaybackSessionInput): Promise<RemotePlaybackSession>;
   /** 关闭桌面受控播放会话。 */

@@ -1,5 +1,12 @@
-import { useCallback, useEffect, useRef, type PointerEventHandler } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type MouseEventHandler,
+  type PointerEventHandler
+} from "react";
 import { appApi } from "@/lib/api";
+import { isMacOSTauriRuntime } from "@/lib/runtime";
 
 const PLAYER_NO_DRAG_SELECTOR = [
   "[data-player-no-drag]",
@@ -23,11 +30,12 @@ interface DesktopWindowDragState {
 }
 
 export interface DesktopWindowDragHandlers {
-  onLostPointerCapture: PointerEventHandler<HTMLElement>;
-  onPointerCancel: PointerEventHandler<HTMLElement>;
-  onPointerDown: PointerEventHandler<HTMLElement>;
-  onPointerMove: PointerEventHandler<HTMLElement>;
-  onPointerUp: PointerEventHandler<HTMLElement>;
+  onDoubleClick: MouseEventHandler<HTMLElement>;
+  onLostPointerCapture?: PointerEventHandler<HTMLElement>;
+  onPointerCancel?: PointerEventHandler<HTMLElement>;
+  onPointerDown?: PointerEventHandler<HTMLElement>;
+  onPointerMove?: PointerEventHandler<HTMLElement>;
+  onPointerUp?: PointerEventHandler<HTMLElement>;
 }
 
 /** 在 macOS 上按动画帧合并指针事件，由主进程移动视频父窗口。 */
@@ -35,7 +43,7 @@ export function useDesktopWindowDrag(): {
   handlers?: DesktopWindowDragHandlers;
   nativeWindowDrag: boolean;
 } {
-  const customWindowDrag = appApi.platform === "darwin";
+  const customWindowDrag = isMacOSTauriRuntime();
   const dragStateRef = useRef<DesktopWindowDragState>();
 
   const flushMove = useCallback((): void => {
@@ -71,33 +79,42 @@ export function useDesktopWindowDrag(): {
     }
   }, [flushMove]);
 
-  const handlers: DesktopWindowDragHandlers | undefined = customWindowDrag ? {
-    onPointerDown: (event) => {
+  const handlers: DesktopWindowDragHandlers = {
+    onDoubleClick: (event) => {
       if (event.button !== 0 || (event.target as Element).closest(PLAYER_NO_DRAG_SELECTOR)) return;
       event.preventDefault();
-      event.currentTarget.setPointerCapture(event.pointerId);
-      dragStateRef.current = {
-        pointerId: event.pointerId,
-        latestScreenX: event.screenX,
-        latestScreenY: event.screenY,
-        sentScreenX: event.screenX,
-        sentScreenY: event.screenY
-      };
-      appApi.dragDesktopPlayerWindow({ phase: "start", screenX: event.screenX, screenY: event.screenY });
+      void appApi.toggleDesktopPlayerWindowMaximize().catch((error) => {
+        console.error("[player] 切换播放器窗口最大化失败", error);
+      });
     },
-    onPointerMove: (event) => {
-      const state = dragStateRef.current;
-      if (!state || state.pointerId !== event.pointerId) return;
-      state.latestScreenX = event.screenX;
-      state.latestScreenY = event.screenY;
-      if (state.animationFrame === undefined) {
-        state.animationFrame = window.requestAnimationFrame(flushMove);
-      }
-    },
-    onPointerUp: (event) => finishDrag(event, true),
-    onPointerCancel: (event) => finishDrag(event, false),
-    onLostPointerCapture: (event) => finishDrag(event, false)
-  } : undefined;
+    ...(customWindowDrag ? {
+      onPointerDown: (event) => {
+        if (event.button !== 0 || (event.target as Element).closest(PLAYER_NO_DRAG_SELECTOR)) return;
+        event.preventDefault();
+        event.currentTarget.setPointerCapture(event.pointerId);
+        dragStateRef.current = {
+          pointerId: event.pointerId,
+          latestScreenX: event.screenX,
+          latestScreenY: event.screenY,
+          sentScreenX: event.screenX,
+          sentScreenY: event.screenY
+        };
+        appApi.dragDesktopPlayerWindow({ phase: "start", screenX: event.screenX, screenY: event.screenY });
+      },
+      onPointerMove: (event) => {
+        const state = dragStateRef.current;
+        if (!state || state.pointerId !== event.pointerId) return;
+        state.latestScreenX = event.screenX;
+        state.latestScreenY = event.screenY;
+        if (state.animationFrame === undefined) {
+          state.animationFrame = window.requestAnimationFrame(flushMove);
+        }
+      },
+      onPointerUp: (event) => finishDrag(event, true),
+      onPointerCancel: (event) => finishDrag(event, false),
+      onLostPointerCapture: (event) => finishDrag(event, false)
+    } : {})
+  };
 
   useEffect(() => () => {
     const state = dragStateRef.current;
