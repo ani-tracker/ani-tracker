@@ -3,6 +3,24 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const workflow = await readFile(".github/workflows/tauri-release-desktop.yml", "utf8");
+const torrentCorePrepare = await readFile("scripts/prepare-desktop-torrent-core-dev.mjs", "utf8");
+
+test("桌面原生依赖按平台使用独立步骤和工具链", () => {
+  assert.match(workflow, /name: Prepare Windows libVLC[\s\S]*?if: matrix\.platform == 'win32'[\s\S]*?shell: pwsh/);
+  assert.match(workflow, /name: Prepare macOS libVLC[\s\S]*?if: matrix\.platform == 'darwin'[\s\S]*?shell: bash/);
+  assert.match(workflow, /name: Prepare Linux libVLC[\s\S]*?if: matrix\.platform == 'linux'[\s\S]*?shell: bash/);
+  assert.match(workflow, /name: Build Windows torrent-core[\s\S]*?shell: pwsh/);
+  assert.match(workflow, /name: Build macOS torrent-core[\s\S]*?shell: bash/);
+  assert.match(workflow, /name: Build Linux torrent-core[\s\S]*?shell: bash/);
+  assert.match(workflow, /name: Build Windows managed qBittorrent[\s\S]*?shell: pwsh/);
+  assert.match(workflow, /name: Build macOS managed qBittorrent[\s\S]*?shell: bash/);
+  assert.match(workflow, /name: Build Linux managed qBittorrent[\s\S]*?shell: bash/);
+});
+
+test("macOS Intel 架构转换为 CMake 识别的 x86_64", () => {
+  assert.match(torrentCorePrepare, /arch === "x64" \? "x86_64" : arch/);
+  assert.match(torrentCorePrepare, /CMAKE_OSX_ARCHITECTURES=\$\{cmakeArchitecture\}/);
+});
 
 test("桌面发布强制 Windows 与 macOS 使用固定自签凭据", () => {
   assert.match(workflow, /required=\(WINDOWS_CERTIFICATE_BASE64 WINDOWS_CERTIFICATE_PASSWORD\)/);
@@ -13,6 +31,8 @@ test("桌面发布强制 Windows 与 macOS 使用固定自签凭据", () => {
 
 test("macOS 发布通过临时钥匙串导入并信任自签 P12", () => {
   assert.match(workflow, /openssl pkcs12[\s\S]*?-clcerts -nokeys/);
+  assert.doesNotMatch(workflow, /openssl x509[^\n]*-purpose/);
+  assert.match(workflow, /certificate does not match APPLE_SIGNING_IDENTITY/);
   assert.match(workflow, /security create-keychain/);
   assert.match(workflow, /security set-key-partition-list/);
   assert.match(workflow, /security add-trusted-cert[\s\S]*?trustRoot/);

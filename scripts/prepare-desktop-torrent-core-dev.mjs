@@ -197,7 +197,9 @@ function configureCore(environment, arch) {
     );
   }
   if (process.platform === "darwin") {
-    args.push(`-DCMAKE_OSX_ARCHITECTURES=${arch}`);
+    const cmakeArchitecture = arch === "x64" ? "x86_64" : arch;
+    console.log(`[torrent-core] macOS CMake architecture: ${arch} -> ${cmakeArchitecture}`);
+    args.push(`-DCMAKE_OSX_ARCHITECTURES=${cmakeArchitecture}`);
   }
   runCommand("cmake", args, environment);
 }

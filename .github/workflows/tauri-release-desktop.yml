@@ -155,41 +155,72 @@ jobs:
             fi
           done
 
-      - name: Prepare desktop libVLC
-        shell: bash
-        run: pnpm run prepare:tauri:${{ matrix.platform == 'win32' && 'win' || matrix.platform == 'darwin' && 'mac' || 'linux' }}-libvlc -- --arch "${{ matrix.arch }}"
+      - name: Prepare Windows libVLC
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: pnpm run prepare:tauri:win-libvlc -- --arch "${{ matrix.arch }}"
 
-      - name: Build and stage torrent-core
+      - name: Prepare macOS libVLC
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: pnpm run prepare:tauri:mac-libvlc -- --arch "${{ matrix.arch }}"
+
+      - name: Prepare Linux libVLC
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: pnpm run prepare:tauri:linux-libvlc -- --arch "${{ matrix.arch }}"
+
+      - name: Build Windows torrent-core
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: node scripts/prepare-desktop-torrent-core-dev.mjs --arch "${{ matrix.arch }}"
+
+      - name: Build macOS torrent-core
+        if: matrix.platform == 'darwin'
+        shell: bash
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: node scripts/prepare-desktop-torrent-core-dev.mjs --arch "${{ matrix.arch }}"
+
+      - name: Build Linux torrent-core
+        if: matrix.platform == 'linux'
         shell: bash
         env:
           VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
         run: |
-          if [[ "${{ matrix.platform }}" == "linux" ]]; then
-            cmake --preset portable-release -S native/torrent-core
-            cmake --build native/torrent-core/build/portable-release --config Release
-            node scripts/package-torrent-core-bundle.mjs \
-              --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}"
-          else
-            node scripts/prepare-desktop-torrent-core-dev.mjs --arch "${{ matrix.arch }}"
-          fi
-          node scripts/prepare-torrent-core-resources.mjs \
-            --source artifacts/torrent-core --target out/torrent-core \
-            --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --required
+          cmake --preset portable-release -S native/torrent-core
+          cmake --build native/torrent-core/build/portable-release --config Release
+          node scripts/package-torrent-core-bundle.mjs \
+            --platform linux --arch "${{ matrix.arch }}"
 
-      - name: Build and stage managed qBittorrent
+      - name: Stage torrent-core resources
+        run: node scripts/prepare-torrent-core-resources.mjs --source artifacts/torrent-core --target out/torrent-core --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --required
+
+      - name: Build Windows managed qBittorrent
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: pwsh -NoProfile -File scripts/build-qbittorrent-nox-windows.ps1 -Arch "${{ matrix.arch }}"
+
+      - name: Build macOS managed qBittorrent
+        if: matrix.platform == 'darwin'
         shell: bash
         env:
           VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
-        run: |
-          if [[ "${{ matrix.platform }}" == "win32" ]]; then
-            pwsh -NoProfile -File scripts/build-qbittorrent-nox-windows.ps1 -Arch "${{ matrix.arch }}"
-          else
-            bash scripts/build-qbittorrent-nox-unix.sh \
-              --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}"
-          fi
-          node scripts/prepare-qbittorrent-resources.mjs \
-            --source artifacts/qbittorrent --target out/qbittorrent \
-            --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --required
+        run: bash scripts/build-qbittorrent-nox-unix.sh --platform darwin --arch "${{ matrix.arch }}"
+
+      - name: Build Linux managed qBittorrent
+        if: matrix.platform == 'linux'
+        shell: bash
+        env:
+          VCPKG_ROOT: ${{ github.workspace }}/.vcpkg
+        run: bash scripts/build-qbittorrent-nox-unix.sh --platform linux --arch "${{ matrix.arch }}"
+
+      - name: Stage managed qBittorrent resources
+        run: node scripts/prepare-qbittorrent-resources.mjs --source artifacts/qbittorrent --target out/qbittorrent --platform "${{ matrix.platform }}" --arch "${{ matrix.arch }}" --required
 
       - name: Stage FFmpeg and FFprobe
         if: matrix.platform != 'linux'
@@ -265,9 +296,10 @@ jobs:
           fi
           openssl verify -CAfile "${public_certificate_path}" "${public_certificate_path}"
           openssl x509 -in "${public_certificate_path}" -checkend 0 -noout
-          openssl x509 -in "${public_certificate_path}" -noout -purpose | grep -q '^Code signing : Yes$'
-          openssl x509 -in "${public_certificate_path}" -noout -subject -nameopt RFC2253 \
-            | grep -Fq "CN=${APPLE_SIGNING_IDENTITY}"
+          if [[ "${subject}" != *"CN=${APPLE_SIGNING_IDENTITY}"* ]]; then
+            echo "macOS signing certificate does not match APPLE_SIGNING_IDENTITY" >&2
+            exit 1
+          fi
 
           security create-keychain -p "${keychain_password}" "${keychain_path}"
           security set-keychain-settings -lut 21600 "${keychain_path}"
