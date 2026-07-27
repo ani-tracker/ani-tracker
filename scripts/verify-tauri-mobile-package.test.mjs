@@ -24,6 +24,7 @@ const androidEntries = [
   "lib/arm64-v8a/libvlcjni.so",
   "assets/licenses/torrent-core/libtorrent-BSD-3-Clause.txt",
   "assets/licenses/vlc/SOURCE.md",
+  "assets/licenses/rustls-platform-verifier-MIT.txt",
   "assets/licenses/ani-tracker/LICENSE.txt"
 ];
 
@@ -103,6 +104,17 @@ test("拒绝缺少 torrent-core 许可证的移动安装包", () => {
       androidEntries.filter((entry) => !entry.includes("libtorrent-BSD-3-Clause.txt"))
     ),
     /torrent-core 许可证/
+  );
+});
+
+test("拒绝缺少 Android TLS 验证器许可证的安装包", () => {
+  assert.throws(
+    () => verifyEntries(
+      "android",
+      "missing-tls-license.apk",
+      androidEntries.filter((entry) => !entry.includes("rustls-platform-verifier-MIT.txt"))
+    ),
+    /Android TLS 验证器许可证/
   );
 });
 

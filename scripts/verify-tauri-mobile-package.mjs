@@ -28,6 +28,7 @@ const REQUIRED_ENTRIES = {
     { name: "ARM64 LibVLC JNI", pattern: /^(?:base\/)?lib\/arm64-v8a\/libvlcjni\.so$/i },
     { name: "torrent-core 许可证", pattern: /^(?:base\/)?assets\/licenses\/torrent-core\/libtorrent-BSD-3-Clause\.txt$/i },
     { name: "libVLC 来源说明", pattern: /^(?:base\/)?assets\/licenses\/vlc\/SOURCE\.md$/i },
+    { name: "Android TLS 验证器许可证", pattern: /^(?:base\/)?assets\/licenses\/rustls-platform-verifier-MIT\.txt$/i },
     { name: "Ani Tracker 许可证", pattern: /^(?:base\/)?assets\/licenses\/ani-tracker\/LICENSE\.txt$/i }
   ],
   ios: [

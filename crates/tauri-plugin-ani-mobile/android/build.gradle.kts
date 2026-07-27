@@ -10,6 +10,11 @@ android {
     defaultConfig {
         minSdk = 26
         consumerProguardFiles("consumer-rules.pro")
+        buildConfigField("boolean", "TEST", "false")
+    }
+
+    buildFeatures {
+        buildConfig = true
     }
 
     compileOptions {

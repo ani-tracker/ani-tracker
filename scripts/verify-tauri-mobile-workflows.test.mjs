@@ -27,7 +27,11 @@ const [
   windowCommands,
   tauriVite,
   mobilePluginCargo,
+  mobilePluginGradle,
   mobilePluginAndroid,
+  androidCertificateVerifier,
+  androidRevocationPolicy,
+  androidRevocationPolicyTest,
   mobilePluginRust,
   mobileConsumerRules,
   sourceNetwork
@@ -56,7 +60,11 @@ const [
   readFile("src-tauri/src/commands/window.rs", "utf8"),
   readFile("vite.tauri.config.ts", "utf8"),
   readFile("crates/tauri-plugin-ani-mobile/Cargo.toml", "utf8"),
+  readFile("crates/tauri-plugin-ani-mobile/android/build.gradle.kts", "utf8"),
   readFile("crates/tauri-plugin-ani-mobile/android/src/main/java/dev/ani/tracker/mobile/AniMobilePlugin.kt", "utf8"),
+  readFile("crates/tauri-plugin-ani-mobile/android/src/main/java/org/rustls/platformverifier/CertificateVerifier.kt", "utf8"),
+  readFile("crates/tauri-plugin-ani-mobile/android/src/main/java/org/rustls/platformverifier/AndroidCertificateRevocationPolicy.kt", "utf8"),
+  readFile("crates/tauri-plugin-ani-mobile/android/src/test/java/org/rustls/platformverifier/AndroidCertificateRevocationPolicyTest.kt", "utf8"),
   readFile("crates/tauri-plugin-ani-mobile/src/android.rs", "utf8"),
   readFile("crates/tauri-plugin-ani-mobile/android/consumer-rules.pro", "utf8"),
   readFile("crates/ani-sources/src/lib.rs", "utf8")
@@ -170,11 +178,17 @@ test("移动 Renderer 注入 Tauri 平台变量且不使用无效通配符", () 
 test("Android HTTPS 使用系统证书验证器并在业务请求前初始化", () => {
   assert.match(mobilePluginCargo, /jni = \{ version = "0\.22\.4", default-features = false \}/);
   assert.match(mobilePluginCargo, /rustls-platform-verifier = "0\.7"/);
-  assert.match(androidGradle, /cargo[\s\S]*metadata[\s\S]*--filter-platform[\s\S]*aarch64-linux-android/);
-  assert.match(androidGradle, /verifierPackage\["version"\]/);
-  assert.match(androidGradle, /metadataSources\s*\{[\s\S]*?mavenPom\(\)[\s\S]*?artifact\(\)[\s\S]*?\}/);
-  assert.match(androidGradle, /implementation\("rustls:rustls-platform-verifier:\$\{rustlsPlatformVerifier\.version\}"\)/);
-  assert.doesNotMatch(androidGradle, /latest\.release/);
+  assert.doesNotMatch(androidGradle, /rustls:rustls-platform-verifier|JsonSlurper|cargo[\s\S]*metadata/);
+  assert.match(mobilePluginGradle, /buildConfigField\("boolean", "TEST", "false"\)/);
+  assert.match(androidCertificateVerifier, /Derived from rustls-platform-verifier v0\.7\.0 and upstream PR #179/);
+  assert.match(
+    androidCertificateVerifier,
+    /revocationChecker\.options = AndroidCertificateRevocationPolicy\.options\(\)/
+  );
+  for (const option of ["SOFT_FAIL", "ONLY_END_ENTITY", "PREFER_CRLS", "NO_FALLBACK"]) {
+    assert.match(androidRevocationPolicy, new RegExp(`PKIXRevocationChecker\\.Option\\.${option}`));
+    assert.match(androidRevocationPolicyTest, new RegExp(`PKIXRevocationChecker\\.Option\\.${option}`));
+  }
   assert.match(mobilePluginAndroid, /initializeRustlsPlatformVerifier\(activity\.applicationContext\)/);
   assert.match(mobilePluginAndroid, /private external fun initializeRustlsPlatformVerifier\(context: Context\): Boolean/);
   assert.match(mobilePluginRust, /rustls_platform_verifier::android::init_with_env\(env, context\)/);
