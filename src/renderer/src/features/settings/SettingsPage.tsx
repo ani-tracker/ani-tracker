@@ -102,7 +102,6 @@ const settingsCategories: Array<{
 export function SettingsPage() {
   const capabilities = getAppCapabilities();
   const runtime = getAppRuntime();
-  const androidRuntime = runtime === "android";
   const mobileRuntime = runtime === "android" || runtime === "ios";
   const visibleSettingsCategories = settingsCategories
     .filter((category) => capabilities.remoteGateway || category.id !== "remote")
@@ -854,7 +853,7 @@ export function SettingsPage() {
               icon={<HardDrive className="h-4 w-4" />}
               label="用户数据目录"
               value={draft.storage.userDataDir}
-              disabled={androidRuntime}
+              disabled={mobileRuntime}
               onChange={(value) =>
                 setDraft({
                   ...draft,
@@ -2287,7 +2286,7 @@ function TextSetting({
   const inputId = useId();
 
   return (
-    <Field>
+    <Field data-disabled={disabled || undefined}>
       <FieldLabel htmlFor={inputId}>
         {icon && <span className="text-primary">{icon}</span>}
         {label}

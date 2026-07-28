@@ -32,6 +32,7 @@ pub enum DownloadStatus {
     FetchingMetadata,
     Downloading,
     Stalled,
+    WaitingNetwork,
     Paused,
     Checking,
     Moving,
@@ -50,6 +51,7 @@ impl DownloadStatus {
                 | Self::FetchingMetadata
                 | Self::Downloading
                 | Self::Stalled
+                | Self::WaitingNetwork
                 | Self::Paused
                 | Self::Checking
                 | Self::Moving

@@ -20,39 +20,34 @@ struct PlayerScreen: View {
         GeometryReader { geometry in
             let landscape = geometry.size.width > geometry.size.height
 
-            Group {
-                if landscape {
-                    videoStage(
-                        compact: false,
-                        safeAreaInsets: geometry.safeAreaInsets,
-                        landscape: true,
-                        availableWidth: geometry.size.width
-                    )
-                    .ignoresSafeArea()
-                } else {
-                    VStack(spacing: 0) {
-                        videoStage(
-                            compact: true,
-                            safeAreaInsets: EdgeInsets(
-                                top: geometry.safeAreaInsets.top,
-                                leading: geometry.safeAreaInsets.leading,
-                                bottom: 0,
-                                trailing: geometry.safeAreaInsets.trailing
-                            ),
-                            landscape: false,
-                            availableWidth: geometry.size.width
-                        )
-                        .frame(height: geometry.size.width * 9 / 16 + geometry.safeAreaInsets.top)
+            // 横竖屏保持同一视频结构节点，避免 SwiftUI 重建 MobileVLCKit drawable。
+            VStack(spacing: 0) {
+                videoStage(
+                    compact: !landscape,
+                    safeAreaInsets: landscape
+                        ? geometry.safeAreaInsets
+                        : EdgeInsets(
+                            top: geometry.safeAreaInsets.top,
+                            leading: geometry.safeAreaInsets.leading,
+                            bottom: 0,
+                            trailing: geometry.safeAreaInsets.trailing
+                        ),
+                    landscape: landscape,
+                    availableWidth: geometry.size.width
+                )
+                .frame(maxWidth: .infinity, maxHeight: landscape ? .infinity : nil)
+                .frame(height: landscape ? nil : geometry.size.width * 9 / 16 + geometry.safeAreaInsets.top)
 
-                        PlayerDetailsView(
-                            snapshot: controller.snapshot,
-                            onSelectEpisode: selectEpisode
-                        )
-                    }
-                    .background(Color(uiColor: .systemBackground))
-                    .ignoresSafeArea(edges: .top)
+                if !landscape {
+                    PlayerDetailsView(
+                        snapshot: controller.snapshot,
+                        onSelectEpisode: selectEpisode
+                    )
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .background(landscape ? Color.black : Color(uiColor: .systemBackground))
+            .ignoresSafeArea(edges: landscape ? .all : .top)
             .animation(.easeOut(duration: 0.18), value: controlsVisible)
             .animation(.easeOut(duration: 0.20), value: playlistPresented)
             .task(id: autoHideToken) {

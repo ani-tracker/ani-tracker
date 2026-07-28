@@ -68,6 +68,13 @@ struct PlayerLaunchRequest: Equatable {
     let autoplay: Bool
 }
 
+/** 原生播放器详情区展示的番剧元数据。 */
+struct PlayerPresentation: Equatable {
+    let animeTitle: String
+    let synopsis: String
+    let artworkURL: URL?
+}
+
 /** MobileVLCKit 暴露给 SwiftUI 的音轨或字幕轨。 */
 struct PlayerTrack: Identifiable, Equatable {
     let id: Int32

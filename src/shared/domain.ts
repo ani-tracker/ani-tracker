@@ -15,6 +15,7 @@ export type DownloadStatus =
   | "fetching_metadata"
   | "downloading"
   | "stalled"
+  | "waiting_network"
   | "paused"
   | "checking"
   | "moving"

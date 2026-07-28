@@ -4,7 +4,7 @@ export type ToastFeedbackKind = "normal" | "success" | "info" | "warning" | "err
 
 export interface ToastPresentationPolicy {
   mobile: boolean;
-  position: "top-right" | "bottom-center";
+  position: "top-right" | "middle-center";
   closeButton: boolean;
   visibleToasts?: number;
   swipeDirections?: Array<"bottom">;
@@ -16,7 +16,7 @@ export function resolveToastPresentation(runtime: AppRuntimeKind): ToastPresenta
   return mobile
     ? {
         mobile: true,
-        position: "bottom-center",
+        position: "middle-center",
         closeButton: false,
         visibleToasts: 1,
         swipeDirections: ["bottom"]

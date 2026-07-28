@@ -584,6 +584,10 @@ async fn maps_torrent_core_protocol_and_options() {
             "selected": "true"
         }]
     });
+    let mut waiting_core_task = core_task.clone();
+    waiting_core_task["status"] = json!("waiting_network");
+    waiting_core_task["downloadSpeed"] = json!("0");
+    waiting_core_task["uploadSpeed"] = json!("0");
     let transport = Arc::new(RecordingCoreTransport::new(HashMap::from([
         (
             "status".to_owned(),
@@ -594,7 +598,10 @@ async fn maps_torrent_core_protocol_and_options() {
             json!({ "version": "2.1.0", "taskCount": "1", "listenPort": "51515" }),
         ),
         ("addMagnet".to_owned(), core_task.clone()),
-        ("listTasks".to_owned(), json!({ "tasks": [core_task] })),
+        (
+            "listTasks".to_owned(),
+            json!({ "tasks": [waiting_core_task] }),
+        ),
     ])));
     let engine = TorrentCoreEngine::new(transport.clone());
 
@@ -631,7 +638,11 @@ async fn maps_torrent_core_protocol_and_options() {
     assert_eq!(added.progress, 0.25);
     assert_eq!(added.files[0].priority, 7);
     assert_eq!(added.files[0].id, "core-hash:0");
-    assert_eq!(engine.list_tasks().await.expect("list core tasks").len(), 1);
+    let listed = engine.list_tasks().await.expect("list core tasks");
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].status, DownloadStatus::WaitingNetwork);
+    assert_eq!(listed[0].download_speed, 0);
+    assert_eq!(listed[0].upload_speed, 0);
     engine.shutdown().await.expect("shutdown core");
 
     let calls = transport.calls.lock().expect("lock core calls");

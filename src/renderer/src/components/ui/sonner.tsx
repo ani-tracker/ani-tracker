@@ -1,14 +1,15 @@
 "use client"
 
 import { Toaster as Sonner } from "sonner"
+import { cn } from "@/lib/cn"
 
 type ToasterProps = React.ComponentProps<typeof Sonner>
 
-const Toaster = ({ theme = "system", ...props }: ToasterProps) => {
+const Toaster = ({ theme = "system", className, ...props }: ToasterProps) => {
   return (
     <Sonner
       theme={theme}
-      className="toaster group"
+      className={cn("toaster group", className)}
       toastOptions={{
         classNames: {
           toast:

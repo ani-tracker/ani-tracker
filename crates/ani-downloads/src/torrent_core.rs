@@ -307,6 +307,7 @@ fn read_download_status(value: Option<&Value>) -> DownloadStatus {
         Some("fetching_metadata") => DownloadStatus::FetchingMetadata,
         Some("downloading") => DownloadStatus::Downloading,
         Some("stalled") => DownloadStatus::Stalled,
+        Some("waiting_network") => DownloadStatus::WaitingNetwork,
         Some("paused") => DownloadStatus::Paused,
         Some("checking") => DownloadStatus::Checking,
         Some("moving") => DownloadStatus::Moving,

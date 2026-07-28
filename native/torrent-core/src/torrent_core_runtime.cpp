@@ -186,10 +186,13 @@ pt::ptree map_array(const std::vector<T>& values, Mapper mapper) {
 }
 
 /** 将 libtorrent 状态转换为应用统一状态。 */
-std::string map_status(const lt::torrent_status& status, bool paused) {
+std::string map_status(const lt::torrent_status& status, bool paused, bool network_policy_blocked) {
   if (status.errc) return "error";
   if (status.moving_storage) return "moving";
   if (paused) return "paused";
+  if (network_policy_blocked && status.state != lt::torrent_status::finished) {
+    return "waiting_network";
+  }
   switch (status.state) {
     case lt::torrent_status::checking_files:
     case lt::torrent_status::checking_resume_data:
@@ -404,7 +407,8 @@ class TorrentCore {
     } else {
       session_.resume();
     }
-    std::cerr << "[torrent-core] network policy changed blocked=" << network_policy_blocked_ << '\n';
+    std::cerr << "[torrent-core] network policy changed blocked=" << network_policy_blocked_
+              << " task_count=" << session_.get_torrents().size() << '\n';
     return status();
   }
 
@@ -575,14 +579,20 @@ class TorrentCore {
     result.put("torrentHash", id);
     result.put("correlationTag", metadata.correlation_tag);
     result.put("name", state.name.empty() ? id : state.name);
-    result.put("status", map_status(state, bool(handle.flags() & lt::torrent_flags::paused)));
+    const bool user_paused = metadata.paused.value_or(
+        bool(handle.flags() & lt::torrent_flags::paused));
+    result.put(
+        "status",
+        map_status(state, user_paused, network_policy_blocked_));
     result.put("progress", static_cast<double>(state.progress_ppm) / 1'000'000.0);
-    result.put("downloadSpeed", state.download_payload_rate);
-    result.put("uploadSpeed", state.upload_payload_rate);
+    const int download_speed = network_policy_blocked_ ? 0 : state.download_payload_rate;
+    const int upload_speed = network_policy_blocked_ ? 0 : state.upload_payload_rate;
+    result.put("downloadSpeed", download_speed);
+    result.put("uploadSpeed", upload_speed);
     result.put("totalSize", state.total_wanted);
     result.put("downloadedSize", state.total_wanted_done);
     const auto remaining = std::max<std::int64_t>(0, state.total_wanted - state.total_wanted_done);
-    result.put("etaSeconds", state.download_payload_rate > 0 ? remaining / state.download_payload_rate : 0);
+    result.put("etaSeconds", download_speed > 0 ? remaining / download_speed : 0);
     result.put("savePath", state.save_path);
     result.put("createdAt", metadata.created_at);
     result.put("completedAt", metadata.completed_at);

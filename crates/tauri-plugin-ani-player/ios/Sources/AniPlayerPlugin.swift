@@ -170,6 +170,7 @@ final class AniPlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
         let taskID = try Self.requiredString(source, key: "taskId")
         let title = try Self.requiredString(source, key: "title")
         let mediaURL = try Self.mediaURL(Self.requiredString(source, key: "uri"))
+        let presentation = PlayerLaunchParser.parsePresentation(source, fallbackTitle: title)
         let fileIndex = source["fileIndex"] as? Int
         let episodeID = fileIndex.map { "\(taskID):\($0)" } ?? taskID
         let subtitles = (source["subtitles"] as? [[String: Any]] ?? []).enumerated().compactMap {
@@ -197,9 +198,9 @@ final class AniPlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
         )
         let request = PlayerLaunchRequest(
             sessionID: sessionID,
-            animeTitle: title,
-            synopsis: "",
-            artworkURL: nil,
+            animeTitle: presentation.animeTitle,
+            synopsis: presentation.synopsis,
+            artworkURL: presentation.artworkURL,
             episodes: [episode],
             activeIndex: 0,
             startPositionMilliseconds: Self.milliseconds(command["startPositionSeconds"] as? Double),
@@ -212,7 +213,11 @@ final class AniPlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
         activeSource = source
         sequence = 0
         try presentPlayerIfNeeded(playerController)
-        NSLog("AniPlayerPlugin native player launched session=%@", sessionID)
+        NSLog(
+            "AniPlayerPlugin native player launched session=%@ artwork=%@",
+            sessionID,
+            presentation.artworkURL == nil ? "false" : "true"
+        )
     }
 
     /** 在当前 Tauri iOS 窗口上全屏展示 SwiftUI 播放页。 */

@@ -25,6 +25,7 @@ const [
   mobileError,
   playerController,
   playerPlugin,
+  playerScreen,
   windowCommands,
   tauriVite,
   mobilePluginCargo,
@@ -63,6 +64,7 @@ const [
   readFile("crates/tauri-plugin-ani-mobile/src/error.rs", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Sources/MobileVLCPlayerController.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Sources/AniPlayerPlugin.swift", "utf8"),
+  readFile("crates/tauri-plugin-ani-player/ios/Sources/PlayerScreen.swift", "utf8"),
   readFile("src-tauri/src/commands/window.rs", "utf8"),
   readFile("vite.tauri.config.ts", "utf8"),
   readFile("crates/tauri-plugin-ani-mobile/Cargo.toml", "utf8"),
@@ -226,9 +228,13 @@ test("Android 与 iOS 下载核心统一执行移动网络会话策略", () => {
   assert.match(torrentRuntime, /command\.method == "setNetworkPolicy"/);
   assert.match(torrentRuntime, /session_\.pause\(\)/);
   assert.match(torrentRuntime, /session_\.resume\(\)/);
+  assert.match(torrentRuntime, /return "waiting_network"/);
+  assert.match(torrentRuntime, /network_policy_blocked_ \? 0 : state\.upload_payload_rate/);
   assert.match(torrentRuntime, /result\.put\("networkPolicyBlocked", network_policy_blocked_\)/);
   assert.match(androidTorrentService, /ConnectivityManager\.NetworkCallback/);
+  assert.match(androidTorrentService, /NetworkCapabilities\.TRANSPORT_CELLULAR/);
   assert.match(androidTorrentService, /isActiveNetworkMetered/);
+  assert.match(androidTorrentService, /ACTIVE_STATUSES[\s\S]*?"waiting_network"/);
   assert.match(androidTorrentRecovery, /NetworkType\.UNMETERED/);
   assert.match(iosTorrentPlugin, /NWPathMonitor\(\)/);
   assert.match(iosTorrentPlugin, /path\.isExpensive \|\| path\.isConstrained/);
@@ -255,4 +261,10 @@ test("iOS 播放器画面比例解析显式返回可选枚举", () => {
   assert.match(playerPlugin, /case "16:9":\s*return \.widescreen/);
   assert.match(playerPlugin, /case "4:3":\s*return \.standard/);
   assert.match(playerPlugin, /default:\s*return nil/);
+});
+
+test("iOS 播放器横竖屏复用同一视频 Surface", () => {
+  assert.equal(playerScreen.match(/VLCVideoSurface\(controller: controller\)/g)?.length, 1);
+  assert.match(playerScreen, /VStack\(spacing: 0\) \{\s*videoStage\(/);
+  assert.doesNotMatch(playerScreen, /if landscape \{\s*videoStage\(/);
 });

@@ -8,6 +8,34 @@ import XCTest
 
 /** 验证外部任务只能生成结构完整的原生播放请求。 */
 final class PlayerLaunchParserTests: XCTestCase {
+    /** Rust 播放命令中的番剧标题、简介和封面应完整进入原生展示模型。 */
+    func testParsesTransportPresentation() throws {
+        let presentation = PlayerLaunchParser.parsePresentation(
+            [
+                "animeTitle": "  星海回声  ",
+                "description": "第八集简介",
+                "artworkUri": "https://example.test/cover.jpg"
+            ],
+            fallbackTitle: "episode-08.mkv"
+        )
+
+        XCTAssertEqual(presentation.animeTitle, "星海回声")
+        XCTAssertEqual(presentation.synopsis, "第八集简介")
+        XCTAssertEqual(presentation.artworkURL?.absoluteString, "https://example.test/cover.jpg")
+    }
+
+    /** 展示字段缺失或为空时仅回退标题，不应阻断媒体加载。 */
+    func testFallsBackFromEmptyTransportPresentation() {
+        let presentation = PlayerLaunchParser.parsePresentation(
+            ["animeTitle": "  ", "description": ""],
+            fallbackTitle: "episode-08.mkv"
+        )
+
+        XCTAssertEqual(presentation.animeTitle, "episode-08.mkv")
+        XCTAssertEqual(presentation.synopsis, "")
+        XCTAssertNil(presentation.artworkURL)
+    }
+
     /** 合法深链应保留媒体、续播位置和自动播放参数。 */
     func testParsesValidPlayerDeepLink() throws {
         let url = try XCTUnwrap(

@@ -2,15 +2,15 @@ import { strict as assert } from "node:assert";
 import { test } from "node:test";
 import { resolveToastDuration, resolveToastPresentation } from "../toast-policy";
 
-test("移动提示固定在底部且同时只展示一条", () => {
+test("移动提示固定在中部且同时只展示一条", () => {
   assert.deepEqual(resolveToastPresentation("android"), {
     mobile: true,
-    position: "bottom-center",
+    position: "middle-center",
     closeButton: false,
     visibleToasts: 1,
     swipeDirections: ["bottom"]
   });
-  assert.equal(resolveToastPresentation("ios").position, "bottom-center");
+  assert.equal(resolveToastPresentation("ios").position, "middle-center");
 });
 
 test("桌面提示保持右上角和关闭按钮", () => {

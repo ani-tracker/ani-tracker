@@ -45,3 +45,9 @@ test("已选文件未完成时不会被总体进度误判为完成", () => {
     files: [{ selected: true, progress: 0.8 }]
   }), false);
 });
+
+test("等待网络的下载保持活动生命周期，已下载完成的做种仍归为完成", () => {
+  assert.equal(isActiveDownloadTask({ status: "waiting_network", progress: 0.5 }), true);
+  assert.equal(isCompletedDownloadTask({ status: "waiting_network", progress: 1 }), true);
+  assert.equal(isActiveDownloadTask({ status: "waiting_network", progress: 1 }), false);
+});

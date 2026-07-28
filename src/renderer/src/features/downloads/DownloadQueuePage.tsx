@@ -62,6 +62,7 @@ const downloadStatusText: Record<DownloadStatus, string> = {
   fetching_metadata: "获取元数据",
   downloading: "下载中",
   stalled: "等待连接",
+  waiting_network: "等待 Wi-Fi",
   paused: "已暂停",
   checking: "校验中",
   moving: "移动文件",
@@ -684,6 +685,7 @@ function DownloadTaskRow({
 /** 按任务状态格式化稳定的剩余时间文本。 */
 function formatDownloadEta(task: DownloadTask): string {
   if (isCompletedDownloadTask(task)) return "已完成";
+  if (task.status === "waiting_network") return "等待 Wi-Fi";
   if (task.status === "paused") return "已暂停";
   const etaSeconds = task.etaSeconds;
   if (etaSeconds === undefined || !Number.isFinite(etaSeconds) || etaSeconds <= 0) return "计算中";
@@ -822,6 +824,7 @@ function canResumeTask(task: DownloadTask): boolean {
 }
 
 function getDownloadStatusTone(task: DownloadTask): "neutral" | "green" | "amber" | "red" | "blue" {
+  if (task.status === "waiting_network") return "amber";
   if (isCompletedDownloadTask(task)) return "green";
   const { status } = task;
   if (status === "error" || status === "missing_files") return "red";
@@ -832,6 +835,7 @@ function getDownloadStatusTone(task: DownloadTask): "neutral" | "green" | "amber
 
 /** 保留已完成任务的做种状态，暂停做种时明确区分于未完成暂停。 */
 function getDownloadStatusText(task: DownloadTask): string {
+  if (task.status === "waiting_network") return "等待 Wi-Fi";
   if (task.status === "seeding") return "做种中";
   if (task.status === "paused" && isCompletedDownloadTask(task)) return "已暂停做种";
   return isCompletedDownloadTask(task) ? "已完成" : downloadStatusText[task.status];

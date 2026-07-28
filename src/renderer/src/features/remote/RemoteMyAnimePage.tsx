@@ -45,6 +45,7 @@ const downloadStatusText: Record<DownloadTask["status"], string> = {
   fetching_metadata: "获取元数据",
   downloading: "下载中",
   stalled: "等待连接",
+  waiting_network: "等待 Wi-Fi",
   paused: "已暂停",
   checking: "校验中",
   moving: "移动文件",

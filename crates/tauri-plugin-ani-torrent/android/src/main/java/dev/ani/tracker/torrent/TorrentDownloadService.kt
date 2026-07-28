@@ -197,7 +197,8 @@ class TorrentDownloadService : Service() {
         if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
             !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
         ) return true
-        return !allowMeteredDownloads && connectivityManager.isActiveNetworkMetered
+        val mobileNetwork = capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+        return !allowMeteredDownloads && (mobileNetwork || connectivityManager.isActiveNetworkMetered)
     }
 
     /** 向共享核心下发会话级网络策略，不改变用户手动暂停的任务状态。 */
@@ -213,7 +214,11 @@ class TorrentDownloadService : Service() {
         val response = NativeTorrentCore.nativeExecute(nativeHandle, request)
         check(isSuccessfulResponse(response)) { "更新 Android 下载网络策略失败：$response" }
         appliedNetworkPolicyBlocked = blocked
-        Log.i(LOG_TAG, "network policy applied: blocked=$blocked")
+        Log.i(
+            LOG_TAG,
+            "network policy applied: blocked=$blocked " +
+                "allowed=$allowMeteredDownloads metered=${connectivityManager.isActiveNetworkMetered}"
+        )
     }
 
     /** 兼容 property_tree 的字符串布尔值与标准 JSON 布尔值。 */
@@ -409,7 +414,8 @@ class TorrentDownloadService : Service() {
         private const val SHUTDOWN_TIMEOUT_SECONDS = 12L
         private const val NOTIFICATION_REFRESH_SECONDS = 1L
         private val ACTIVE_STATUSES = setOf(
-            "queued", "checking", "fetching_metadata", "downloading", "stalled", "moving", "seeding"
+            "queued", "checking", "fetching_metadata", "downloading", "stalled", "waiting_network",
+            "moving", "seeding"
         )
 
         /** 兼容 property_tree 字符串数字和标准 JSON 数字。 */

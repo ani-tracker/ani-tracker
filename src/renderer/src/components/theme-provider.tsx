@@ -132,12 +132,11 @@ export function ThemeToaster() {
   const presentation = resolveToastPresentation(getAppRuntime());
   return (
     <Toaster
+      className={presentation.mobile ? "mobile-toast-center" : undefined}
       closeButton={presentation.closeButton}
       containerAriaLabel="应用提示"
-      offset={presentation.mobile
-        ? { bottom: "calc(var(--safe-area-bottom) + 4.75rem)", left: "1rem", right: "1rem" }
-        : undefined}
-      position={presentation.position}
+      mobileOffset={presentation.mobile ? { left: "1rem", right: "1rem" } : undefined}
+      position={presentation.position === "middle-center" ? "bottom-center" : presentation.position}
       richColors
       swipeDirections={presentation.swipeDirections}
       theme={resolvedTheme}

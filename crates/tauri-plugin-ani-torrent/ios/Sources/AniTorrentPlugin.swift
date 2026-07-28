@@ -298,6 +298,12 @@ final class AniTorrentPlugin: Plugin {
     private func handleNetworkPath(_ path: NWPath) {
         networkAvailable = path.status == .satisfied
         networkMetered = path.isExpensive || path.isConstrained
+        NSLog(
+            "AniTorrentPlugin network path changed: available=%@ metered=%@ allowed=%@",
+            String(networkAvailable),
+            String(networkMetered),
+            String(allowMeteredDownloads)
+        )
         do {
             try applyNetworkPolicy()
         } catch {
@@ -329,7 +335,12 @@ final class AniTorrentPlugin: Plugin {
             throw AniTorrentError.invalidResponse
         }
         appliedNetworkPolicyBlocked = blocked
-        NSLog("AniTorrentPlugin network policy applied: blocked=%@", String(blocked))
+        NSLog(
+            "AniTorrentPlugin network policy applied: blocked=%@ allowed=%@ metered=%@",
+            String(blocked),
+            String(allowMeteredDownloads),
+            String(networkMetered)
+        )
     }
 
     /** iOS 进入后台时申请有限时间完成恢复数据刷盘。 */

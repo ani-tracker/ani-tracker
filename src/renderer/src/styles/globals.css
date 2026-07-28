@@ -135,6 +135,19 @@ body {
     BlinkMacSystemFont, sans-serif;
 }
 
+/* 移动短提示避开状态栏和底部导航，固定在视口中部。 */
+.mobile-toast-center[data-sonner-toaster][data-y-position="bottom"] {
+  top: 50%;
+  bottom: auto;
+  transform: translate(-50%, -50%);
+}
+
+@media (max-width: 600px) {
+  .mobile-toast-center[data-sonner-toaster][data-y-position="bottom"] {
+    transform: translateY(-50%);
+  }
+}
+
 button,
 input,
 select {

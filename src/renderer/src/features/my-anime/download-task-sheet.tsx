@@ -45,6 +45,7 @@ const downloadStatusText: Record<DownloadTask["status"], string> = {
   fetching_metadata: "获取元数据",
   downloading: "下载中",
   stalled: "等待连接",
+  waiting_network: "等待 Wi-Fi",
   paused: "已暂停",
   checking: "校验中",
   moving: "移动文件",
@@ -333,7 +334,7 @@ function filterDownloadTasks(downloadTasks: DownloadTask[], filter: AnimeDownloa
 function getDownloadStatusTone(status: DownloadTask["status"]): "neutral" | "green" | "amber" | "red" | "blue" {
   if (status === "completed" || status === "seeding") return "green";
   if (status === "error" || status === "missing_files") return "red";
-  if (status === "paused" || status === "stalled") return "amber";
+  if (status === "paused" || status === "stalled" || status === "waiting_network") return "amber";
   if (status === "downloading") return "blue";
   return "neutral";
 }

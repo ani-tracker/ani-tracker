@@ -10,6 +10,7 @@ const activeStatuses = new Set<DownloadStatus>([
   "fetching_metadata",
   "downloading",
   "stalled",
+  "waiting_network",
   "paused",
   "checking",
   "moving"

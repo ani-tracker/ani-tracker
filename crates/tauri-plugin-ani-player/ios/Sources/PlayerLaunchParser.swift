@@ -2,6 +2,21 @@ import Foundation
 
 /** 将旧宿主深链或调试启动参数转换为播放器业务模型。 */
 enum PlayerLaunchParser {
+    /** 解析 Rust 播放命令携带的番剧展示字段，缺失标题时回退到文件名。 */
+    static func parsePresentation(
+        _ source: [String: Any],
+        fallbackTitle: String
+    ) -> PlayerPresentation {
+        let animeTitle = normalizedString(source["animeTitle"]) ?? fallbackTitle
+        let synopsis = normalizedString(source["description"]) ?? ""
+        let artworkURL = normalizedString(source["artworkUri"]).flatMap(URL.init(string:))
+        return PlayerPresentation(
+            animeTitle: animeTitle,
+            synopsis: synopsis,
+            artworkURL: artworkURL
+        )
+    }
+
     /** 解析 anitracker://player 深链，缺少合法媒体 URL 时返回空。 */
     static func parse(_ deepLink: URL) -> PlayerLaunchRequest? {
         guard deepLink.scheme?.lowercased() == "anitracker" else { return nil }
@@ -77,6 +92,11 @@ enum PlayerLaunchParser {
     /** 返回同名查询参数的首个非空值。 */
     private static func firstValue(named name: String, in items: [URLQueryItem]) -> String? {
         items.first { $0.name == name }?.value?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
+    }
+
+    /** 将传输字段归一为空白安全的可选字符串。 */
+    private static func normalizedString(_ value: Any?) -> String? {
+        (value as? String)?.trimmingCharacters(in: .whitespacesAndNewlines).nilIfEmpty
     }
 }
 

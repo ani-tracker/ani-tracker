@@ -58,11 +58,21 @@ pnpm.cmd run lint:rust
 
 | 脚本 | 用途 |
 | --- | --- |
+| `build-install-android.sh` | 构建 Android APK，并按 adb 序列号覆盖安装到指定设备 |
 | `prepare-tauri-desktop-runtime.mjs` | 构建远程 Renderer并准备当前平台 libVLC |
 | `verify-tauri-mobile-package.mjs` | 检查 APK/AAB/IPA 必需内容与禁止内容 |
 | `set-tauri-release-version.mjs` | 同步发布版本 |
 | `create-tauri-release-manifest.mjs` | 生成发布产物 SHA-256 与 JSON 清单 |
 | `stop-workspace-processes.ps1` | 仅停止当前工作区的 Tauri/sidecar 进程 |
+
+Android 真机 Debug 构建、安装并启动：
+
+```bash
+bash scripts/build-install-android.sh --device 6d7f3256 --launch
+```
+
+设备序列号通过 `adb devices -l` 获取。脚本复用正式移动构建链，并支持以
+`--release` 切换到已配置签名环境变量的 Release 构建。
 
 ## 验证脚本
 
