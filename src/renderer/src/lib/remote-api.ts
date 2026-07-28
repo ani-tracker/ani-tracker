@@ -91,6 +91,11 @@ export function resolveCachedImageUrl(sourceUrl: string): Promise<string> {
   return request;
 }
 
+/** 远程页面清理已解析地址，下一次加载重新请求短期签名 URL。 */
+export async function invalidateCachedImageUrl(sourceUrl: string): Promise<void> {
+  imageResolveRequests.delete(sourceUrl.trim());
+}
+
 /** 请求一次远程签名图片缓存地址。 */
 async function resolveCachedImageUrlOnce(sourceUrl: string): Promise<string> {
   const baseUrl = getRemoteBaseUrl();

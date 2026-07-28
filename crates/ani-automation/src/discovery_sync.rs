@@ -24,6 +24,14 @@ pub trait AnimeDiscoverySyncStore: CircuitStateStore {
     /// 合并采集到的季度目录。
     fn save_season_catalog(&self, items: &[Anime]) -> RepositoryResult<AnimeCatalogWriteResult>;
 
+    /// 替换指定月份中未引用的目录缓存。
+    fn replace_season_catalog_month(
+        &self,
+        year: i64,
+        month: i64,
+        items: &[Anime],
+    ) -> RepositoryResult<AnimeCatalogWriteResult>;
+
     /// 读取指定月份目录。
     fn list_season_catalog_month(&self, year: i64, month: i64) -> RepositoryResult<Vec<Anime>>;
 }
@@ -48,6 +56,15 @@ where
         AnimeCatalogRepository::upsert_anime_catalog(self, items)
     }
 
+    fn replace_season_catalog_month(
+        &self,
+        year: i64,
+        month: i64,
+        items: &[Anime],
+    ) -> RepositoryResult<AnimeCatalogWriteResult> {
+        AnimeCatalogRepository::replace_anime_catalog_month(self, year, month, items)
+    }
+
     fn list_season_catalog_month(&self, year: i64, month: i64) -> RepositoryResult<Vec<Anime>> {
         AnimeCatalogRepository::list_anime_catalog(self, Some(year), Some(month))
     }
@@ -56,6 +73,13 @@ where
 /// 复用同一季度采集与持久化流程，支持交互和后台独立网络通道。
 pub struct AnimeDiscoverySyncService {
     collector: AnimeMetadataService,
+}
+
+/// 一批季度详情补全及持久化结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnimeDiscoveryDetailBatchResult {
+    pub completed_count: usize,
+    pub error_count: usize,
 }
 
 impl AnimeDiscoverySyncService {
@@ -73,8 +97,38 @@ impl AnimeDiscoverySyncService {
         }
     }
 
-    /// 采集、合并并记录一个季度；仅 AniList 成功才写入季度完成标记。
+    /// 完整同步一个季度，供需要等待详情的兼容调用复用。
     pub async fn sync_season<S>(
+        &self,
+        store: &S,
+        query: AnimeDiscoverySeasonQuery,
+        now: Option<DateTime<Utc>>,
+    ) -> Result<AnimeDiscoverySeasonResult, SourceError>
+    where
+        S: AnimeDiscoverySyncStore + Sync,
+    {
+        let mut result = self.sync_season_catalog(store, query, now).await?;
+        if !result.items.is_empty() {
+            let detail = self.enrich_detail_batch(store, &result.items).await?;
+            if detail.error_count > 0 {
+                result.errors.push(format!(
+                    "details: {} 个来源详情补全失败",
+                    detail.error_count
+                ));
+            }
+            let months = months_for_season(&result.query.season)?;
+            result.items.clear();
+            for month in months {
+                result
+                    .items
+                    .extend(store.list_season_catalog_month(result.query.year, month)?);
+            }
+        }
+        Ok(result)
+    }
+
+    /// 采集并替换季度基础目录；仅 AniList 成功才写入季度完成标记。
+    pub async fn sync_season_catalog<S>(
         &self,
         store: &S,
         query: AnimeDiscoverySeasonQuery,
@@ -101,7 +155,7 @@ impl AnimeDiscoverySyncService {
 
         let collected = self
             .collector
-            .collect_season(store, query.year, &query.season)
+            .collect_season_catalog(store, query.year, &query.season)
             .await?;
         for error in &collected.errors {
             log::warn!(
@@ -121,11 +175,25 @@ impl AnimeDiscoverySyncService {
             .iter()
             .find(|error| error.starts_with("anilist:"))
             .cloned();
-        let persisted = if collected.items.is_empty() {
-            None
-        } else {
-            Some(store.save_season_catalog(&collected.items)?)
-        };
+        let mut added_count = 0usize;
+        let mut existing_count = 0usize;
+        if !collected.items.is_empty() {
+            for month in months {
+                let month_items = collected
+                    .items
+                    .iter()
+                    .filter(|item| item.premiere_year == query.year && item.premiere_month == month)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                if month_items.is_empty() {
+                    continue;
+                }
+                let persisted =
+                    store.replace_season_catalog_month(query.year, month, &month_items)?;
+                added_count = added_count.saturating_add(persisted.added_count);
+                existing_count = existing_count.saturating_add(persisted.existing_count);
+            }
+        }
 
         if anilist_succeeded {
             state.last_successful_sync_at = Some(attempt_at.clone());
@@ -138,17 +206,13 @@ impl AnimeDiscoverySyncService {
         }
         store.save_season_sync_state(&state)?;
 
-        let (mut items, added_count, existing_count) = match persisted {
-            Some(result) => (result.items, result.added_count, result.existing_count),
-            None => {
-                let mut existing = Vec::new();
-                for month in months {
-                    existing.extend(store.list_season_catalog_month(query.year, month)?);
-                }
-                let existing_count = existing.len();
-                (existing, 0, existing_count)
-            }
-        };
+        let mut items = Vec::new();
+        for month in months {
+            items.extend(store.list_season_catalog_month(query.year, month)?);
+        }
+        if collected.items.is_empty() {
+            existing_count = items.len();
+        }
         items.retain(|item| {
             item.premiere_year == query.year && months.contains(&item.premiere_month)
         });
@@ -167,6 +231,30 @@ impl AnimeDiscoverySyncService {
             existing_count,
             source: collected.source,
             errors: collected.errors,
+        })
+    }
+
+    /// 补全一批目录详情并增量写回，不替换其他月份缓存。
+    pub async fn enrich_detail_batch<S>(
+        &self,
+        store: &S,
+        items: &[Anime],
+    ) -> Result<AnimeDiscoveryDetailBatchResult, SourceError>
+    where
+        S: AnimeDiscoverySyncStore + Sync,
+    {
+        let collected = self.collector.enrich_details(store, items).await;
+        if !collected.items.is_empty() {
+            store.save_season_catalog(&collected.items)?;
+        }
+        log::info!(
+            "Rust 新番季度详情批次完成：count={}, errors={}",
+            collected.items.len(),
+            collected.error_count
+        );
+        Ok(AnimeDiscoveryDetailBatchResult {
+            completed_count: collected.items.len(),
+            error_count: collected.error_count,
         })
     }
 }

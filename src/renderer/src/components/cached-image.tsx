@@ -1,7 +1,7 @@
 import { ImageOff } from "lucide-react";
-import { useEffect, useState, type ImgHTMLAttributes, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ImgHTMLAttributes, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { resolveCachedImageUrl } from "@/lib/api";
+import { invalidateCachedImageUrl, resolveCachedImageUrl } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
 interface CachedImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "alt" | "src"> {
@@ -21,9 +21,13 @@ export function CachedImage({
 }: CachedImageProps) {
   const [resolvedUrl, setResolvedUrl] = useState<string>();
   const [failed, setFailed] = useState(false);
+  const requestIdRef = useRef(0);
+  const retriedRef = useRef(false);
 
   useEffect(() => {
+    const requestId = ++requestIdRef.current;
     let active = true;
+    retriedRef.current = false;
     setResolvedUrl(undefined);
     setFailed(false);
     void resolveCachedImageUrl(sourceUrl).then((url) => {
@@ -40,8 +44,32 @@ export function CachedImage({
     });
     return () => {
       active = false;
+      if (requestIdRef.current === requestId) requestIdRef.current += 1;
     };
   }, [sourceUrl]);
+
+  /** 解码失败后让宿主失效缓存，并使用新 URL 参数自动重试一次。 */
+  async function retryAfterDecodeFailure(): Promise<void> {
+    if (retriedRef.current) {
+      setFailed(true);
+      return;
+    }
+    retriedRef.current = true;
+    const requestId = requestIdRef.current;
+    setResolvedUrl(undefined);
+    try {
+      await invalidateCachedImageUrl(sourceUrl);
+      const nextUrl = await resolveCachedImageUrl(sourceUrl);
+      if (requestIdRef.current !== requestId) return;
+      const separator = nextUrl.includes("?") ? "&" : "?";
+      setResolvedUrl(`${nextUrl}${separator}retry=${Date.now()}`);
+    } catch (error) {
+      console.warn("[image-cache] 图片缓存自愈失败", {
+        error: error instanceof Error ? error.message : String(error)
+      });
+      if (requestIdRef.current === requestId) setFailed(true);
+    }
+  }
 
   if (failed) {
     return (
@@ -65,8 +93,8 @@ export function CachedImage({
       alt={alt}
       className={className}
       onError={(event) => {
-        setFailed(true);
         onError?.(event);
+        void retryAfterDecodeFailure();
       }}
       src={resolvedUrl}
     />

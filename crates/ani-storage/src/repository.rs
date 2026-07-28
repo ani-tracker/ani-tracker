@@ -1791,6 +1791,13 @@ impl<'connection> SqliteRepository<'connection> {
         replace_month: Option<(i64, i64)>,
     ) -> Result<AnimeCatalogWriteResult, StorageError> {
         let current = self.list_anime_catalog(None, None)?;
+        let replacement_counts = replace_month.map(|_| {
+            let existing_count = items
+                .iter()
+                .filter(|item| current.iter().any(|existing| is_same_anime(existing, item)))
+                .count();
+            (items.len().saturating_sub(existing_count), existing_count)
+        });
         let referenced_ids = self.read_referenced_anime_ids()?;
         let followed_ids = query_all(self.connection, "SELECT anime_id FROM my_anime", |row| {
             row.get::<_, String>(0)
@@ -1826,6 +1833,10 @@ impl<'connection> SqliteRepository<'connection> {
                 catalog.push(item.clone());
                 added_count += 1;
             }
+        }
+        if let Some((replacement_added, replacement_existing)) = replacement_counts {
+            added_count = replacement_added;
+            existing_count = replacement_existing;
         }
 
         let keep_ids = catalog

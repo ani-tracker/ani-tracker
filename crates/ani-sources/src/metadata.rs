@@ -53,6 +53,13 @@ pub struct AnimeMetadataRefresh {
     pub errors: Vec<AnimeDetailPartialError>,
 }
 
+/// 一批季度目录详情补全结果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimeMetadataDetailCollection {
+    pub items: Vec<Anime>,
+    pub error_count: usize,
+}
+
 #[derive(Clone)]
 struct MetadataEndpoints {
     bangumi: String,
@@ -154,6 +161,27 @@ impl AnimeMetadataService {
         year: i64,
         season: &str,
     ) -> Result<AnimeMetadataCollection, SourceError> {
+        self.collect_season_inner(store, year, season, true).await
+    }
+
+    /// 只采集可浏览的季度基础目录，不在首阶段逐部请求详情。
+    pub async fn collect_season_catalog<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        year: i64,
+        season: &str,
+    ) -> Result<AnimeMetadataCollection, SourceError> {
+        self.collect_season_inner(store, year, season, false).await
+    }
+
+    /// 按阶段选择是否补全单部详情，并复用多来源合并逻辑。
+    async fn collect_season_inner<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        year: i64,
+        season: &str,
+        include_details: bool,
+    ) -> Result<AnimeMetadataCollection, SourceError> {
         let total_started = Instant::now();
         let months = months_for_season(season)?;
         let bangumi = async {
@@ -162,7 +190,12 @@ impl AnimeMetadataService {
             let mut errors = Vec::new();
             let month_results = stream::iter(months)
                 .map(|month| async move {
-                    (month, self.collect_bangumi_month(store, year, month).await)
+                    let result = if include_details {
+                        self.collect_bangumi_month(store, year, month).await
+                    } else {
+                        self.collect_bangumi_month_catalog(store, year, month).await
+                    };
+                    (month, result)
                 })
                 .buffered(months.len())
                 .collect::<Vec<_>>()
@@ -195,7 +228,11 @@ impl AnimeMetadataService {
         };
         let mikan = async {
             let provider_started = Instant::now();
-            let result = self.collect_mikan_season(store, year, season).await;
+            let result = if include_details {
+                self.collect_mikan_season(store, year, season).await
+            } else {
+                self.collect_mikan_season_catalog(store, year, season).await
+            };
             log::info!(
                 "Rust 新番季度来源完成 provider=mikan year={year} season={season} items={} success={} duration_ms={}",
                 result.as_ref().map_or(0, Vec::len),
@@ -229,6 +266,87 @@ impl AnimeMetadataService {
             total_started.elapsed().as_millis()
         );
         Ok(collection)
+    }
+
+    /// 仅补全 Bangumi 与 Mikan 详情，AniList 在目录阶段已返回完整字段。
+    pub async fn enrich_details<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        items: &[Anime],
+    ) -> AnimeMetadataDetailCollection {
+        let results = stream::iter(
+            items
+                .iter()
+                .cloned()
+                .map(|item| async move { self.enrich_catalog_item(store, item).await }),
+        )
+        .buffered(PROVIDER_DETAIL_CONCURRENCY)
+        .collect::<Vec<_>>()
+        .await;
+        let error_count = results.iter().map(|(_, errors)| errors).sum();
+        AnimeMetadataDetailCollection {
+            items: results.into_iter().map(|(item, _)| item).collect(),
+            error_count,
+        }
+    }
+
+    /// 并行补全单条目录已有的来源详情，并保持本地主记录标识。
+    async fn enrich_catalog_item<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        local: Anime,
+    ) -> (Anime, usize) {
+        let bangumi = async {
+            match external_id(&local, "bangumi") {
+                Some(id) => self
+                    .fetch_bangumi_detail(store, &id, &local)
+                    .await
+                    .map(Some),
+                None => Ok(None),
+            }
+        };
+        let mikan = async {
+            match external_id(&local, "mikan") {
+                Some(id) => self
+                    .fetch_mikan_detail_by_id(store, &id, &local)
+                    .await
+                    .map(Some),
+                None => Ok(None),
+            }
+        };
+        let (bangumi, mikan) = tokio::join!(bangumi, mikan);
+        let mut batches = vec![AnimeMetadataBatch {
+            source: "local".to_owned(),
+            items: vec![local.clone()],
+        }];
+        let mut error_count = 0usize;
+        for (source, result) in [("bangumi", bangumi), ("mikan", mikan)] {
+            match result {
+                Ok(Some(item)) => batches.push(AnimeMetadataBatch {
+                    source: source.to_owned(),
+                    items: vec![item],
+                }),
+                Ok(None) => {}
+                Err(error) => {
+                    error_count += 1;
+                    log::warn!(
+                        "季度新番详情补全失败 anime_id={} provider={} error={error}",
+                        local.id,
+                        source
+                    );
+                }
+            }
+        }
+        let mut item = merge_anime_metadata_batches(&batches)
+            .into_iter()
+            .next()
+            .unwrap_or_else(|| local.clone());
+        item.id.clone_from(&local.id);
+        for (index, alias) in item.aliases.iter_mut().enumerate() {
+            alias.id = format!("{}-alias-{}", item.id, index + 1);
+            alias.anime_id.clone_from(&item.id);
+        }
+        (item, error_count)
     }
 
     /// 按已有 external id 增量刷新单部详情，单来源失败不覆盖本地字段。
@@ -307,6 +425,29 @@ impl AnimeMetadataService {
         year: i64,
         month: i64,
     ) -> Result<Vec<Anime>, SourceError> {
+        self.collect_bangumi_month_inner(store, year, month, true)
+            .await
+    }
+
+    /// 只读取 Bangumi 月度分页目录。
+    async fn collect_bangumi_month_catalog<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        year: i64,
+        month: i64,
+    ) -> Result<Vec<Anime>, SourceError> {
+        self.collect_bangumi_month_inner(store, year, month, false)
+            .await
+    }
+
+    /// 按阶段决定是否逐部请求 Bangumi 详情。
+    async fn collect_bangumi_month_inner<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        year: i64,
+        month: i64,
+        include_details: bool,
+    ) -> Result<Vec<Anime>, SourceError> {
         let mut subjects = Vec::new();
         let mut offset = 0usize;
         while offset < BANGUMI_MAX_MONTHLY_ITEMS {
@@ -339,6 +480,12 @@ impl AnimeMetadataService {
                 break;
             }
             offset = next;
+        }
+        if !include_details {
+            return Ok(subjects
+                .into_iter()
+                .map(|item| map_bangumi(item, year, month))
+                .collect());
         }
         let detailed = stream::iter(subjects.into_iter().map(|subject| async move {
             match self
@@ -584,6 +731,29 @@ impl AnimeMetadataService {
         year: i64,
         season: &str,
     ) -> Result<Vec<Anime>, SourceError> {
+        self.collect_mikan_season_inner(store, year, season, true)
+            .await
+    }
+
+    /// 只读取 Mikan 季度索引及索引页可用封面。
+    async fn collect_mikan_season_catalog<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        year: i64,
+        season: &str,
+    ) -> Result<Vec<Anime>, SourceError> {
+        self.collect_mikan_season_inner(store, year, season, false)
+            .await
+    }
+
+    /// 按阶段决定是否逐部请求 Mikan 详情页。
+    async fn collect_mikan_season_inner<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        year: i64,
+        season: &str,
+        include_details: bool,
+    ) -> Result<Vec<Anime>, SourceError> {
         let season_text = match season {
             "winter" => "冬",
             "spring" => "春",
@@ -615,8 +785,21 @@ impl AnimeMetadataService {
                 errors.join("; ")
             }));
         }
-        self.fetch_mikan_candidates(store, candidates, year, season_start_month(season)?)
-            .await
+        let fallback_month = season_start_month(season)?;
+        if include_details {
+            self.fetch_mikan_candidates(store, candidates, year, fallback_month)
+                .await
+        } else {
+            Ok(candidates
+                .into_iter()
+                .map(|candidate| {
+                    let mut item =
+                        map_mikan(candidate, MikanDetail::default(), year, fallback_month);
+                    item.detail = None;
+                    item
+                })
+                .collect())
+        }
     }
 
     async fn search_mikan<S: CircuitStateStore + Sync>(
@@ -693,6 +876,7 @@ impl AnimeMetadataService {
                 id: external_id.to_owned(),
                 title: fallback.title.clone(),
                 detail_url: detail_url.clone(),
+                cover_url: fallback.cover_url.clone(),
             },
             parse_mikan_detail(&html, &detail_url),
             fallback.premiere_year,
@@ -1894,6 +2078,7 @@ struct MikanCandidate {
     id: String,
     title: String,
     detail_url: String,
+    cover_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -1956,14 +2141,26 @@ fn parse_mikan_candidates(html: &str, base_url: &str) -> Result<Vec<MikanCandida
             .join(href)
             .map_err(|error| SourceError::InvalidUrl(error.to_string()))?
             .to_string();
+        let cover_url = link.select(&image_selector).find_map(|image| {
+            ["src", "data-src", "data-original"]
+                .into_iter()
+                .find_map(|attribute| image.value().attr(attribute))
+                .and_then(|value| base.join(value).ok())
+                .map(|url| url.to_string())
+        });
         let candidate = MikanCandidate {
             id: id.clone(),
             title,
             detail_url,
+            cover_url,
         };
         if let Some(existing) = candidates.iter_mut().find(|item| item.id == id) {
             if existing.title.len() < candidate.title.len() {
-                *existing = candidate;
+                existing.title.clone_from(&candidate.title);
+                existing.detail_url.clone_from(&candidate.detail_url);
+            }
+            if existing.cover_url.is_none() {
+                existing.cover_url = candidate.cover_url;
             }
         } else {
             candidates.push(candidate);
@@ -2037,6 +2234,7 @@ fn map_mikan(
     fallback_month: i64,
 ) -> Anime {
     let id = format!("mikan-{}", candidate.id);
+    let cover_url = detail.cover_url.or(candidate.cover_url.clone());
     let title = detail.title.unwrap_or_else(|| candidate.title.clone());
     let date = detail
         .premiere_date
@@ -2090,7 +2288,7 @@ fn map_mikan(
         premiere_month: month,
         season: Some(season_value(month)),
         summary: detail.summary,
-        cover_url: detail.cover_url,
+        cover_url,
         rating: None,
         external_ids: Value::Object(external),
         detail: Some(metadata),
@@ -2475,12 +2673,16 @@ mod tests {
     #[test]
     fn parses_mikan_candidates() {
         let items = parse_mikan_candidates(
-            r#"<a href="/Home/Bangumi/123" title="短标题"></a><a href="/Home/Bangumi/123" title="更完整的标题"></a>"#,
+            r#"<a href="/Home/Bangumi/123" title="短标题"><img data-src="/images/123.jpg"></a><a href="/Home/Bangumi/123" title="更完整的标题"></a>"#,
             "https://mikanani.me/",
         )
         .expect("parse mikan");
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "更完整的标题");
+        assert_eq!(
+            items[0].cover_url.as_deref(),
+            Some("https://mikanani.me/images/123.jpg")
+        );
     }
 
     /// 验证 Bangumi 详情字段与桌面旧实现保持一致。

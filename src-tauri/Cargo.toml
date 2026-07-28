@@ -18,6 +18,7 @@ ani-automation = { path = "../crates/ani-automation" }
 ani-contracts = { path = "../crates/ani-contracts" }
 ani-domain = { path = "../crates/ani-domain" }
 ani-downloads = { path = "../crates/ani-downloads" }
+ani-image-cache = { path = "../crates/ani-image-cache" }
 ani-media = { path = "../crates/ani-media" }
 ani-repository = { path = "../crates/ani-repository" }
 ani-sources = { path = "../crates/ani-sources" }

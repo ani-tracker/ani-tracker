@@ -150,6 +150,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     let initialized = false;
     let wasInFlight = false;
     let refreshing = false;
+    let lastCatalogFinishedAt: string | undefined;
 
     /** 轮询宿主任务状态，使切页返回后恢复采集进度。 */
     async function refreshTaskStatus() {
@@ -159,6 +160,16 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
         const status = await appApi.getAnimeSeasonSyncTaskStatus();
         if (!active) return;
         setSyncTaskStatus(status);
+        const catalogJustFinished = Boolean(
+          status.catalogFinishedAt && status.catalogFinishedAt !== lastCatalogFinishedAt
+        );
+        if (catalogJustFinished) {
+          const query = status.activeQuery ?? status.lastResult?.query;
+          if (query?.year === target.year && query.season === target.season) {
+            await loadSeasonCatalog(target.year, target.season);
+          }
+        }
+        lastCatalogFinishedAt = status.catalogFinishedAt;
         const trackedTaskFinished = manualCollectRef.current
           && !status.inFlight
           && Boolean(status.finishedAt)
@@ -368,7 +379,9 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     setSortKey("premiereAsc");
   }
 
-  const collectingLabel = collecting ? "采集中" : "采集当前季度";
+  const collectingLabel = collecting
+    ? syncTaskStatus?.phase === "details" ? "详情补全中" : "采集中"
+    : "采集当前季度";
   const resultLabel = visibleLoading
     ? appliedKeyword ? "正在搜索" : "正在加载"
     : appliedKeyword

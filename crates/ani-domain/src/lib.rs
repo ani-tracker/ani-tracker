@@ -891,17 +891,35 @@ pub struct AnimeDiscoverySyncTaskResult {
     pub error_count: usize,
 }
 
+/// 新番季度后台同步当前所处阶段。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum AnimeDiscoverySyncPhase {
+    Catalog,
+    Details,
+}
+
 /// 新番季度同步调度器的当前任务状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AnimeDiscoverySyncTaskStatus {
     pub in_flight: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<AnimeDiscoverySyncPhase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_query: Option<AnimeDiscoverySeasonQuery>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub started_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub finished_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub catalog_finished_at: Option<String>,
+    #[serde(default)]
+    pub detail_completed_count: usize,
+    #[serde(default)]
+    pub detail_total_count: usize,
+    #[serde(default)]
+    pub detail_error_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_result: Option<AnimeDiscoverySyncTaskResult>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

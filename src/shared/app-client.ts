@@ -96,6 +96,8 @@ export interface AppClient {
 
   /** 解析当前平台可读取的缓存图片地址。 */
   resolveCachedImageUrl(sourceUrl: string): Promise<ImageCacheResolveResult>;
+  /** 删除本地宿主管理的指定图片缓存。 */
+  invalidateCachedImageUrl?(sourceUrl: string): Promise<void>;
   /** 读取首页聚合数据。 */
   getDashboard(): Promise<DashboardData>;
 

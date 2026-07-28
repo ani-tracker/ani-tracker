@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "Ani Tracker 主窗口与播放器控制层所需的最小 Tauri 核心权限",
   "windows": ["main", "ani-player-controls"],
-  "permissions": ["core:default", "core:window:allow-start-dragging"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-start-dragging",
+    "notification:allow-is-permission-granted",
+    "notification:allow-register-listener"
+  ]
 }

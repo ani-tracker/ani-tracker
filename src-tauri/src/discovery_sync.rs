@@ -4,17 +4,20 @@ use std::time::{Duration as StdDuration, Instant};
 
 use ani_automation::{is_same_local_day, months_for_season, AnimeDiscoverySyncService};
 use ani_domain::{
-    AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult, AnimeDiscoverySyncTaskResult,
-    AnimeDiscoverySyncTaskStatus, AppSettings,
+    AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult, AnimeDiscoverySyncPhase,
+    AnimeDiscoverySyncTaskResult, AnimeDiscoverySyncTaskStatus, AppSettings, NotificationKind,
+    NotificationRecord, NotificationSeverity,
 };
 use ani_repository::prelude::*;
 use ani_storage::Storage;
 use chrono::{DateTime, Datelike, Days, Local, NaiveTime, SecondsFormat, TimeZone, Utc};
+use tauri::AppHandle;
 use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 use crate::sources::{AppSourceState, SharedReleaseSearchStore};
 
 const DISCOVERY_DAILY_TIME: &str = "06:00";
+const DETAIL_BATCH_SIZE: usize = 12;
 const SEASONS: [(&str, u32); 4] = [("winter", 1), ("spring", 4), ("summer", 7), ("fall", 10)];
 
 /// Tauri 生命周期内的新番季度同步调度器。
@@ -24,6 +27,7 @@ pub(crate) struct AppDiscoverySyncState {
 }
 
 struct DiscoverySyncRuntime {
+    app: AppHandle,
     storage: Arc<Mutex<Storage>>,
     platform_defaults: AppSettings,
     source_state: AppSourceState,
@@ -36,12 +40,14 @@ struct DiscoverySyncRuntime {
 impl AppDiscoverySyncState {
     /// 创建尚未启动的新番季度同步调度器。
     pub(crate) fn new(
+        app: AppHandle,
         storage: Arc<Mutex<Storage>>,
         platform_defaults: AppSettings,
         source_state: AppSourceState,
     ) -> Self {
         Self {
             inner: Arc::new(DiscoverySyncRuntime {
+                app,
                 storage,
                 platform_defaults,
                 source_state,
@@ -50,9 +56,14 @@ impl AppDiscoverySyncState {
                 in_flight: AtomicBool::new(false),
                 status: AsyncMutex::new(AnimeDiscoverySyncTaskStatus {
                     in_flight: false,
+                    phase: None,
                     active_query: None,
                     started_at: None,
                     finished_at: None,
+                    catalog_finished_at: None,
+                    detail_completed_count: 0,
+                    detail_total_count: 0,
+                    detail_error_count: 0,
                     last_result: None,
                     last_error: None,
                 }),
@@ -201,7 +212,10 @@ impl AppDiscoverySyncState {
             self.set_active_query(query.clone()).await;
             let started = Instant::now();
             log::info!("Tauri 新番季度后台同步开始 trigger={trigger} year={year} season={season}");
-            match service.sync_season(&store, query, Some(now)).await {
+            match self
+                .execute_with_service(&service, &store, query, Some(now), trigger)
+                .await
+            {
                 Ok(result) => {
                     self.record_result(&result).await;
                     log::info!(
@@ -237,9 +251,14 @@ impl AppDiscoverySyncState {
             .map_err(|_| "新番季度同步正在运行".to_owned())?;
         let mut status = self.inner.status.lock().await;
         status.in_flight = true;
+        status.phase = Some(AnimeDiscoverySyncPhase::Catalog);
         status.active_query = query;
         status.started_at = Some(to_iso(Utc::now()));
         status.finished_at = None;
+        status.catalog_finished_at = None;
+        status.detail_completed_count = 0;
+        status.detail_total_count = 0;
+        status.detail_error_count = 0;
         status.last_result = None;
         status.last_error = None;
         Ok(())
@@ -279,10 +298,9 @@ impl AppDiscoverySyncState {
             query.year,
             query.season
         );
-        let result = service
-            .sync_season(&store, query, now)
-            .await
-            .map_err(|error| format!("采集季度新番失败：{error}"));
+        let result = self
+            .execute_with_service(&service, &store, query, now, trigger)
+            .await;
         match &result {
             Ok(result) => log::info!(
                 "Tauri 新番季度同步结束 trigger={trigger} year={} season={} count={} errors={} duration_ms={}",
@@ -300,20 +318,201 @@ impl AppDiscoverySyncState {
         result
     }
 
+    /// 先发布基础目录，再分批补全详情并持续更新可查询进度。
+    async fn execute_with_service(
+        &self,
+        service: &AnimeDiscoverySyncService,
+        store: &SharedReleaseSearchStore,
+        query: AnimeDiscoverySeasonQuery,
+        now: Option<DateTime<Utc>>,
+        trigger: &'static str,
+    ) -> Result<AnimeDiscoverySeasonResult, String> {
+        self.set_active_query(query.clone()).await;
+        let result = service
+            .sync_season_catalog(store, query, now)
+            .await
+            .map_err(|error| format!("采集季度新番失败：{error}"))?;
+        self.record_result(&result).await;
+        self.begin_detail_phase(result.items.len()).await;
+
+        let manual = trigger.starts_with("manual");
+        let notification = manual.then(|| {
+            (
+                format!(
+                    "discovery-sync-{}-{}-{}",
+                    result.query.year,
+                    result.query.season,
+                    Utc::now().timestamp_millis()
+                ),
+                to_iso(Utc::now()),
+            )
+        });
+        if let Some((id, created_at)) = notification.as_ref() {
+            self.save_discovery_notification(&result, id, created_at, false)
+                .await;
+        }
+
+        for chunk in result.items.chunks(DETAIL_BATCH_SIZE) {
+            let (completed, errors) = match service.enrich_detail_batch(store, chunk).await {
+                Ok(batch) => (batch.completed_count, batch.error_count),
+                Err(error) => {
+                    log::error!(
+                        "Tauri 新番季度详情批次保存失败 year={} season={} count={} error={error}",
+                        result.query.year,
+                        result.query.season,
+                        chunk.len()
+                    );
+                    (chunk.len(), chunk.len())
+                }
+            };
+            self.advance_detail_progress(completed, errors).await;
+        }
+        self.record_result(&result).await;
+        if let Some((id, created_at)) = notification.as_ref() {
+            self.save_discovery_notification(&result, id, created_at, true)
+                .await;
+        }
+        Ok(result)
+    }
+
+    /// 标记基础目录已经可用，并进入详情补全阶段。
+    async fn begin_detail_phase(&self, total_count: usize) {
+        let mut status = self.inner.status.lock().await;
+        status.phase = Some(AnimeDiscoverySyncPhase::Details);
+        status.catalog_finished_at = Some(to_iso(Utc::now()));
+        status.detail_completed_count = 0;
+        status.detail_total_count = total_count;
+        status.detail_error_count = 0;
+    }
+
+    /// 累加详情批次进度，并同步紧凑结果中的错误数。
+    async fn advance_detail_progress(&self, completed_count: usize, error_count: usize) {
+        let mut status = self.inner.status.lock().await;
+        status.detail_completed_count = status
+            .detail_completed_count
+            .saturating_add(completed_count)
+            .min(status.detail_total_count);
+        status.detail_error_count = status.detail_error_count.saturating_add(error_count);
+        let detail_error_count = status.detail_error_count;
+        if let Some(result) = status.last_result.as_mut() {
+            result.error_count = result.error_count.saturating_add(error_count);
+        }
+        log::info!(
+            "Tauri 新番季度详情进度 completed={}/{} errors={}",
+            status.detail_completed_count,
+            status.detail_total_count,
+            detail_error_count
+        );
+    }
+
+    /// 写入或更新同一次手动采集通知，首阶段按设置发送一次系统通知。
+    async fn save_discovery_notification(
+        &self,
+        result: &AnimeDiscoverySeasonResult,
+        notification_id: &str,
+        created_at: &str,
+        details_complete: bool,
+    ) {
+        let status = self.status().await;
+        let total_errors = result
+            .errors
+            .len()
+            .saturating_add(status.detail_error_count);
+        let title = format!(
+            "{} {}新番同步完成",
+            result.query.year,
+            season_label(&result.query.season)
+        );
+        let body = if details_complete {
+            if total_errors == 0 {
+                format!("已同步 {} 部，详情补全完成", result.items.len())
+            } else {
+                format!(
+                    "已同步 {} 部，详情补全完成，{} 项来源请求失败",
+                    result.items.len(),
+                    total_errors
+                )
+            }
+        } else {
+            format!("已同步 {} 部，详情正在后台补全", result.items.len())
+        };
+        let record = NotificationRecord {
+            id: notification_id.to_owned(),
+            kind: NotificationKind::System,
+            title,
+            body,
+            severity: if total_errors == 0 {
+                NotificationSeverity::Success
+            } else {
+                NotificationSeverity::Warning
+            },
+            anime_id: None,
+            episode_id: None,
+            download_task_id: None,
+            created_at: created_at.to_owned(),
+            read_at: None,
+        };
+        let storage = Arc::clone(&self.inner.storage);
+        let defaults = self.inner.platform_defaults.clone();
+        let outcome = tauri::async_runtime::spawn_blocking(move || {
+            let storage = storage
+                .lock()
+                .map_err(|error| format!("写入季度同步通知失败：{error}"))?;
+            let repository = storage.repository();
+            let settings = repository
+                .get_settings(&defaults)
+                .map_err(|error| format!("读取通知设置失败：{error}"))?;
+            repository
+                .add_notifications(std::slice::from_ref(&record))
+                .map_err(|error| format!("写入季度同步通知失败：{error}"))?;
+            Ok::<_, String>((record, settings))
+        })
+        .await;
+        match outcome {
+            Ok(Ok((record, settings))) => {
+                log::info!(
+                    "Tauri 新番季度同步通知已保存 id={} details_complete={details_complete}",
+                    record.id
+                );
+                if !details_complete {
+                    crate::system_integration::notify_discovery_result(
+                        &self.inner.app,
+                        &settings,
+                        &record,
+                    );
+                }
+            }
+            Ok(Err(error)) => log::error!("{error}"),
+            Err(error) => log::error!("写入季度同步通知任务失败 error={error}"),
+        }
+    }
+
     /// 更新多季度补跑时当前正在处理的季度。
     async fn set_active_query(&self, query: AnimeDiscoverySeasonQuery) {
-        self.inner.status.lock().await.active_query = Some(query);
+        let mut status = self.inner.status.lock().await;
+        status.phase = Some(AnimeDiscoverySyncPhase::Catalog);
+        status.active_query = Some(query);
+        status.catalog_finished_at = None;
+        status.detail_completed_count = 0;
+        status.detail_total_count = 0;
+        status.detail_error_count = 0;
+        status.last_result = None;
+        status.last_error = None;
     }
 
     /// 将完整季度结果压缩成轮询状态需要的计数。
     async fn record_result(&self, result: &AnimeDiscoverySeasonResult) {
         let mut status = self.inner.status.lock().await;
+        let error_count = result
+            .errors
+            .len()
+            .saturating_add(status.detail_error_count);
         status.last_result = Some(AnimeDiscoverySyncTaskResult {
             query: result.query.clone(),
             item_count: result.items.len(),
             added_count: result.added_count,
             existing_count: result.existing_count,
-            error_count: result.errors.len(),
+            error_count,
         });
     }
 
@@ -335,6 +534,7 @@ impl AppDiscoverySyncState {
         {
             let mut status = self.inner.status.lock().await;
             status.in_flight = false;
+            status.phase = None;
             status.active_query = None;
             status.finished_at = Some(to_iso(Utc::now()));
         }
@@ -366,6 +566,17 @@ fn season_index(month: u32) -> usize {
         4..=6 => 1,
         7..=9 => 2,
         _ => 3,
+    }
+}
+
+/// 将季度标识转换为通知标题使用的中文名称。
+fn season_label(season: &str) -> &'static str {
+    match season {
+        "winter" => "冬季",
+        "spring" => "春季",
+        "summer" => "夏季",
+        "fall" => "秋季",
+        _ => "季度",
     }
 }
 

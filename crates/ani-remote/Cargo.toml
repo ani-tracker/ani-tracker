@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 ani-contracts = { path = "../ani-contracts" }
 ani-domain = { path = "../ani-domain" }
+ani-image-cache = { path = "../ani-image-cache" }
 async-trait = "0.1"
 axum = { version = "0.8", features = ["http1", "json", "tokio"] }
 axum-server = { version = "0.7", default-features = false, features = ["tls-rustls-no-provider"] }

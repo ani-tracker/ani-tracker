@@ -197,6 +197,13 @@ class TauriClientCore implements AppClient {
     });
   }
 
+  /** 删除解码失败对应的宿主图片缓存。 */
+  async invalidateCachedImageUrl(sourceUrl: string): Promise<void> {
+    return invoke<void>("invalidate_cached_image_url", { sourceUrl }).catch((error) => {
+      throw normalizeTauriError("invalidate_cached_image_url", error);
+    });
+  }
+
   /** 读取桌面远程网关、证书和设备状态。 */
   async getRemoteGatewayStatus(): Promise<RemoteGatewayStatus> {
     return invoke<RemoteGatewayStatus>("get_remote_gateway_status").catch((error) => {

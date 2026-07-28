@@ -81,6 +81,18 @@ impl AnimeDiscoverySyncStore for SharedReleaseSearchStore {
         self.with_repository(|repository| repository.upsert_anime_catalog(items))
     }
 
+    /// 替换指定月份中未引用的目录缓存。
+    fn replace_season_catalog_month(
+        &self,
+        year: i64,
+        month: i64,
+        items: &[Anime],
+    ) -> RepositoryResult<AnimeCatalogWriteResult> {
+        self.with_repository(|repository| {
+            repository.replace_anime_catalog_month(year, month, items)
+        })
+    }
+
     /// 读取季度中的指定月份。
     fn list_season_catalog_month(&self, year: i64, month: i64) -> RepositoryResult<Vec<Anime>> {
         self.with_repository(|repository| repository.list_anime_catalog(Some(year), Some(month)))

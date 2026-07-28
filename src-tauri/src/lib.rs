@@ -47,7 +47,6 @@ pub fn run() {
         tauri_plugin_autostart::MacosLauncher::LaunchAgent,
         None,
     ));
-    #[cfg(desktop)]
     let builder = builder.register_asynchronous_uri_scheme_protocol(
         "ani-image",
         image_cache::handle_protocol_request,
@@ -82,6 +81,9 @@ pub fn run() {
                 .repository()
                 .get_settings(storage_state.platform_defaults())
                 .map_err(|error| std::io::Error::other(format!("读取启动设置失败：{error}")))?;
+            #[cfg(mobile)]
+            let image_cache_state = image_cache::AppImageCacheState::initialize(&startup_settings)
+                .map_err(std::io::Error::other)?;
             let system_integration_state =
                 system_integration::AppSystemIntegrationState::initialize(
                     app.handle(),
@@ -95,6 +97,7 @@ pub fn run() {
             );
             source_sync_state.start();
             let discovery_sync_state = discovery_sync::AppDiscoverySyncState::new(
+                app.handle().clone(),
                 Arc::clone(storage_state.storage()),
                 storage_state.platform_defaults().clone(),
                 source_state.clone(),
@@ -175,6 +178,8 @@ pub fn run() {
             app.manage(player_state);
             app.manage(automation_state);
             app.manage(system_integration_state);
+            #[cfg(mobile)]
+            app.manage(image_cache_state);
             #[cfg(desktop)]
             app.manage(remote_state);
             log::info!(
@@ -276,6 +281,7 @@ pub fn run() {
             commands::remote::create_remote_pairing_code,
             commands::remote::revoke_remote_device,
             commands::remote::resolve_cached_image_url,
+            commands::remote::invalidate_cached_image_url,
             commands::window::get_window_state,
             commands::window::minimize_window,
             commands::window::toggle_maximize_window,

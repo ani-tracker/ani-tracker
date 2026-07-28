@@ -222,6 +222,15 @@ pub(crate) fn notify_reminder(
     notify(app, settings, &record.title, &record.body);
 }
 
+/// 显示手动季度同步基础目录完成通知。
+pub(crate) fn notify_discovery_result(
+    app: &AppHandle,
+    settings: &AppSettings,
+    record: &NotificationRecord,
+) {
+    notify(app, settings, &record.title, &record.body);
+}
+
 /// 根据通知设置发送平台原生通知，失败时保留应用内提醒记录。
 fn notify(app: &AppHandle, settings: &AppSettings, title: &str, body: &str) {
     let enabled = settings

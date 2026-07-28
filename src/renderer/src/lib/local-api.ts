@@ -39,6 +39,17 @@ export function resolveCachedImageUrl(sourceUrl: string): Promise<string> {
   return request;
 }
 
+/** 删除解码失败对应的宿主缓存，并清理当前解析请求。 */
+export async function invalidateCachedImageUrl(sourceUrl: string): Promise<void> {
+  const normalizedSourceUrl = sourceUrl.trim();
+  imageResolveRequests.delete(normalizedSourceUrl);
+  const invalidate = appApi.invalidateCachedImageUrl;
+  if (!invalidate) {
+    throw new Error("当前宿主不支持失效图片缓存");
+  }
+  await invalidate.call(appApi, normalizedSourceUrl);
+}
+
 /** 创建仅允许 Tauri invoke 的本地客户端。 */
 function createAppClient(): AppClient {
   const runtime = getAppRuntime();

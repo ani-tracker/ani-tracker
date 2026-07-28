@@ -1,7 +1,82 @@
+#[cfg(mobile)]
+use std::path::PathBuf;
+
+#[cfg(mobile)]
+use ani_domain::AppSettings;
+#[cfg(mobile)]
+use ani_image_cache::{ImageCache, ImageCacheAsset};
+#[cfg(mobile)]
+use tauri::{AppHandle, Manager};
 use url::Url;
 
-#[cfg(desktop)]
 const IMAGE_PROTOCOL_NAME: &str = "ani-image";
+
+/// 移动宿主持有的应用图片缓存，不引入桌面远程网关。
+#[cfg(mobile)]
+pub(crate) struct AppImageCacheState {
+    cache: ImageCache,
+}
+
+#[cfg(mobile)]
+impl AppImageCacheState {
+    /// 按当前应用缓存目录初始化移动图片缓存。
+    pub(crate) fn initialize(settings: &AppSettings) -> Result<Self, String> {
+        let cache = ImageCache::new_local(image_cache_directory(settings)?)?;
+        Ok(Self { cache })
+    }
+
+    /// 设置保存后切换后续图片使用的缓存目录。
+    pub(crate) async fn apply_settings(&self, settings: &AppSettings) -> Result<(), String> {
+        self.cache
+            .set_cache_directory(image_cache_directory(settings)?)
+            .await;
+        Ok(())
+    }
+
+    /// 命中缓存或安全下载指定公网图片。
+    pub(crate) async fn load_image_asset(
+        &self,
+        source_url: &str,
+    ) -> Result<ImageCacheAsset, String> {
+        self.cache
+            .get(source_url)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
+    /// 删除 WebView 解码失败对应的缓存记录。
+    pub(crate) async fn invalidate(&self, source_url: &str) -> Result<(), String> {
+        self.cache
+            .invalidate(source_url)
+            .await
+            .map_err(|error| error.to_string())
+    }
+}
+
+/// 设置更新后同步移动图片缓存目录。
+#[cfg(mobile)]
+pub(crate) async fn apply_settings(app: &AppHandle, settings: &AppSettings) {
+    let Some(state) = app.try_state::<AppImageCacheState>() else {
+        log::error!("Tauri 移动图片缓存状态未装配");
+        return;
+    };
+    if let Err(error) = state.apply_settings(settings).await {
+        log::error!("Tauri 移动图片缓存目录更新失败 error={error}");
+    }
+}
+
+/// 读取设置中的应用图片缓存目录。
+#[cfg(mobile)]
+fn image_cache_directory(settings: &AppSettings) -> Result<PathBuf, String> {
+    settings
+        .pointer("/storage/cacheDir")
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .map(|path| path.join("images"))
+        .ok_or_else(|| "图片缓存目录未配置".to_owned())
+}
 
 /// 校验公网图片地址，并移除不会影响资源内容的片段。
 fn normalize_public_image_url(source_url: &str) -> Result<String, String> {
@@ -21,19 +96,12 @@ fn normalize_public_image_url(source_url: &str) -> Result<String, String> {
     Ok(url.to_string())
 }
 
-/// 移动端直接返回经过校验的公网图片地址。
-#[cfg(any(not(desktop), test))]
-pub(crate) fn resolve_public_image_url(source_url: &str) -> Result<String, String> {
-    normalize_public_image_url(source_url)
-}
-
-/// 为桌面 Renderer 生成不依赖远程网关状态的本地图片协议地址。
-#[cfg(desktop)]
+/// 为 Renderer 生成不依赖公网直连的本地图片协议地址。
 pub(crate) fn resolve_local_image_url(source_url: &str) -> Result<String, String> {
     let source_url = normalize_public_image_url(source_url)?;
-    #[cfg(target_os = "windows")]
+    #[cfg(any(target_os = "windows", target_os = "android"))]
     let base_url = format!("http://{IMAGE_PROTOCOL_NAME}.localhost/image");
-    #[cfg(not(target_os = "windows"))]
+    #[cfg(not(any(target_os = "windows", target_os = "android")))]
     let base_url = format!("{IMAGE_PROTOCOL_NAME}://localhost/image");
 
     let mut url = Url::parse(&base_url).map_err(|_| "本地图片协议地址无效".to_owned())?;
@@ -42,7 +110,6 @@ pub(crate) fn resolve_local_image_url(source_url: &str) -> Result<String, String
 }
 
 /// 从本地图片协议请求中提取并校验原始公网地址。
-#[cfg(desktop)]
 fn parse_protocol_source_url(request_url: &str) -> Result<String, String> {
     let url = Url::parse(request_url).map_err(|_| "本地图片请求地址无效".to_owned())?;
     let source_url = url
@@ -52,8 +119,7 @@ fn parse_protocol_source_url(request_url: &str) -> Result<String, String> {
     normalize_public_image_url(&source_url)
 }
 
-/// 处理桌面 WebView 发起的本地图片协议请求。
-#[cfg(desktop)]
+/// 处理桌面和移动 WebView 发起的本地图片协议请求。
 pub(crate) fn handle_protocol_request(
     context: tauri::UriSchemeContext<'_, tauri::Wry>,
     request: tauri::http::Request<Vec<u8>>,
@@ -75,15 +141,27 @@ pub(crate) fn handle_protocol_request(
             }
             let source_url = parse_protocol_source_url(&request_url)
                 .map_err(|error| (StatusCode::BAD_REQUEST, error))?;
-            let state = app
+            #[cfg(desktop)]
+            let asset = app
                 .try_state::<crate::remote::AppRemoteGatewayState>()
                 .ok_or_else(|| {
                     (
                         StatusCode::SERVICE_UNAVAILABLE,
                         "图片缓存状态未完成装配".to_owned(),
                     )
-                })?;
-            let asset = state
+                })?
+                .load_image_asset(&source_url)
+                .await
+                .map_err(|error| (StatusCode::BAD_GATEWAY, error))?;
+            #[cfg(mobile)]
+            let asset = app
+                .try_state::<AppImageCacheState>()
+                .ok_or_else(|| {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "移动图片缓存状态未完成装配".to_owned(),
+                    )
+                })?
                 .load_image_asset(&source_url)
                 .await
                 .map_err(|error| (StatusCode::BAD_GATEWAY, error))?;
@@ -137,12 +215,11 @@ mod tests {
 
     #[test]
     fn public_image_url_rejects_unsupported_sources() {
-        assert!(resolve_public_image_url("file:///tmp/cover.jpg").is_err());
-        assert!(resolve_public_image_url("https://user@example.com/cover.jpg").is_err());
-        assert!(resolve_public_image_url("https://example.com:8443/cover.jpg").is_err());
+        assert!(normalize_public_image_url("file:///tmp/cover.jpg").is_err());
+        assert!(normalize_public_image_url("https://user@example.com/cover.jpg").is_err());
+        assert!(normalize_public_image_url("https://example.com:8443/cover.jpg").is_err());
     }
 
-    #[cfg(desktop)]
     #[test]
     fn local_protocol_url_round_trips_unicode_and_query_values() {
         let source_url = "https://example.com/海报 image.jpg?size=large&crop=1#ignored";

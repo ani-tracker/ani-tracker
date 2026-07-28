@@ -156,6 +156,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "ani-image-cache"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "hmac",
+ "log",
+ "reqwest 0.12.28",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "ani-media"
 version = "0.1.0"
 dependencies = [
@@ -179,6 +198,7 @@ version = "0.1.0"
 dependencies = [
  "ani-contracts",
  "ani-domain",
+ "ani-image-cache",
  "async-trait",
  "axum",
  "axum-server",
@@ -264,6 +284,7 @@ dependencies = [
  "ani-contracts",
  "ani-domain",
  "ani-downloads",
+ "ani-image-cache",
  "ani-media",
  "ani-remote",
  "ani-repository",
@@ -2247,6 +2268,7 @@ dependencies = [
  "tokio",
  "tokio-rustls",
  "tower-service",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -3975,6 +3997,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "webpki-roots",
 ]
 
 [[package]]
@@ -6077,6 +6100,15 @@ name = "webpki-root-certs"
 version = "1.0.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b96554aa2acc8ccdb7e1c9a58a7a68dd5d13bccc69cd124cb09406db612a1c9b"
+dependencies = [
+ "rustls-pki-types",
+]
+
+[[package]]
+name = "webpki-roots"
+version = "1.0.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7dcd9d09a39985f5344844e66b0c530a33843579125f23e21e9f0f220850f22a"
 dependencies = [
  "rustls-pki-types",
 ]

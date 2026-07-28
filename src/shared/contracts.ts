@@ -92,9 +92,14 @@ export interface AnimeDiscoverySyncTaskResult {
 /** 新番季度同步调度器的当前任务状态。 */
 export interface AnimeDiscoverySyncTaskStatus {
   inFlight: boolean;
+  phase?: "catalog" | "details";
   activeQuery?: AnimeDiscoverySeasonQuery;
   startedAt?: string;
   finishedAt?: string;
+  catalogFinishedAt?: string;
+  detailCompletedCount: number;
+  detailTotalCount: number;
+  detailErrorCount: number;
   lastResult?: AnimeDiscoverySyncTaskResult;
   lastError?: string;
 }

@@ -323,6 +323,16 @@ impl AppRemoteGatewayState {
             .map_err(|error| error.to_string())
     }
 
+    /// 删除本地 Renderer 解码失败对应的图片缓存。
+    pub(crate) async fn invalidate_image_asset(&self, source_url: &str) -> Result<(), String> {
+        self.image_cache
+            .as_ref()
+            .ok_or_else(|| "远程图片缓存未完成初始化".to_owned())?
+            .invalidate(source_url)
+            .await
+            .map_err(|error| error.to_string())
+    }
+
     /// 应用退出时停止监听和媒体进程。
     pub(crate) async fn shutdown(&self) {
         if let Some(gateway) = self.gateway.as_ref() {

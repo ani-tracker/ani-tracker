@@ -95,20 +95,32 @@ pub(crate) async fn revoke_remote_device(
 #[tauri::command]
 pub(crate) async fn resolve_cached_image_url(
     source_url: String,
-    app: AppHandle,
+    _app: AppHandle,
 ) -> Result<ImageCacheResolveResult, AppCommandError> {
+    let url = crate::image_cache::resolve_local_image_url(&source_url)
+        .map_err(|error| map_remote_error("解析缓存图片地址", error))?;
+    Ok(ImageCacheResolveResult { url })
+}
+
+/// 删除指定公网地址的应用图片缓存，供解码失败后单次重试。
+#[tauri::command]
+pub(crate) async fn invalidate_cached_image_url(
+    source_url: String,
+    app: AppHandle,
+) -> Result<(), AppCommandError> {
+    use tauri::Manager;
+
     #[cfg(desktop)]
-    {
-        let _ = app;
-        let url = crate::image_cache::resolve_local_image_url(&source_url)
-            .map_err(|error| map_remote_error("解析缓存图片地址", error))?;
-        Ok(ImageCacheResolveResult { url })
-    }
-    #[cfg(not(desktop))]
-    {
-        let _ = app;
-        let url = crate::image_cache::resolve_public_image_url(&source_url)
-            .map_err(|error| map_remote_error("解析图片地址", error))?;
-        Ok(ImageCacheResolveResult { url })
-    }
+    let result = app
+        .try_state::<crate::remote::AppRemoteGatewayState>()
+        .ok_or_else(|| map_remote_error("失效图片缓存", "图片缓存状态未装配"))?
+        .invalidate_image_asset(&source_url)
+        .await;
+    #[cfg(mobile)]
+    let result = app
+        .try_state::<crate::image_cache::AppImageCacheState>()
+        .ok_or_else(|| map_remote_error("失效图片缓存", "移动图片缓存状态未装配"))?
+        .invalidate(&source_url)
+        .await;
+    result.map_err(|error| map_remote_error("失效图片缓存", error))
 }

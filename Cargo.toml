@@ -2,6 +2,7 @@
 members = [
   "crates/ani-contracts",
   "crates/ani-domain",
+  "crates/ani-image-cache",
   "crates/ani-repository",
   "crates/ani-storage",
   "crates/ani-sources",

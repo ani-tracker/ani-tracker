@@ -1162,6 +1162,46 @@ fn reads_and_replaces_p3_anime_catalog() {
     assert!(detail.partial_errors.is_empty());
 }
 
+/// 验证月度替换会清理历史遗留的未引用同名重复目录。
+#[test]
+fn removes_unreferenced_duplicate_catalog_entries_on_month_replace() {
+    let directory = TestDirectory::new("duplicate-season-catalog");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create duplicate catalog database");
+    storage
+        .connection
+        .execute_batch(
+            "INSERT INTO anime_catalog (
+               id, title, premiere_year, premiere_month, external_ids_json, detail_json,
+               created_at, updated_at
+             ) VALUES
+               ('anilist-199111', '重复季度番剧', 2026, 7, '{\"anilist\":\"199111\"}', '{}',
+                '2026-07-28T00:00:00.000Z', '2026-07-28T00:00:00.000Z'),
+               ('mikan-4014', '重复季度番剧', 2026, 7, '{\"mikan\":\"4014\"}', '{}',
+                '2026-07-28T00:00:00.000Z', '2026-07-28T00:00:00.000Z');",
+        )
+        .expect("insert duplicate catalog rows");
+    let repository = storage.repository();
+    let mut refreshed = repository
+        .get_anime_catalog_by_id("anilist-199111")
+        .expect("read incoming catalog")
+        .expect("incoming catalog exists");
+    refreshed.external_ids = json!({ "anilist": "199111", "mikan": "4014" });
+    refreshed.cover_url = Some("https://example.com/cover.jpg".to_owned());
+
+    let replaced = repository
+        .replace_anime_catalog_month(2026, 7, &[refreshed])
+        .expect("replace duplicate month");
+    assert_eq!(replaced.added_count, 0);
+    assert_eq!(replaced.existing_count, 1);
+    let items = repository
+        .list_anime_catalog(Some(2026), Some(7))
+        .expect("list deduplicated month");
+    assert_eq!(items.len(), 1);
+    assert_eq!(items[0].id, "anilist-199111");
+    assert_eq!(items[0].external_ids["mikan"], "4014");
+}
+
 /// 验证季度完成标记和 AniList 错误可跨重启持久化。
 #[test]
 fn persists_anime_season_sync_state() {
