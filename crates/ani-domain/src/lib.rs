@@ -880,6 +880,34 @@ pub struct AnimeDiscoverySeasonResult {
     pub errors: Vec<String>,
 }
 
+/// 一次季度后台同步的紧凑结果，避免状态轮询传输完整番剧列表。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDiscoverySyncTaskResult {
+    pub query: AnimeDiscoverySeasonQuery,
+    pub item_count: usize,
+    pub added_count: usize,
+    pub existing_count: usize,
+    pub error_count: usize,
+}
+
+/// 新番季度同步调度器的当前任务状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDiscoverySyncTaskStatus {
+    pub in_flight: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_query: Option<AnimeDiscoverySeasonQuery>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub finished_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_result: Option<AnimeDiscoverySyncTaskResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+}
+
 /// 单个自然季度的新番目录后台同步状态。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

@@ -33,6 +33,27 @@ pub(crate) async fn run_automation_once(
         })
 }
 
+/// 将一次人工扫描加入宿主后台任务并立即返回。
+#[tauri::command]
+pub(crate) async fn start_automation_scan(
+    state: State<'_, AppAutomationState>,
+) -> Result<AutomationSchedulerStatus, AppCommandError> {
+    state
+        .start_now(true, "manual-background")
+        .await
+        .map_err(|message| AppCommandError {
+            code: if message.contains("正在运行") {
+                "automation_in_flight"
+            } else if message.contains("过于频繁") {
+                "automation_cooldown"
+            } else {
+                "automation_failed"
+            }
+            .to_owned(),
+            message,
+        })
+}
+
 /// 按最新设置重新安排自动扫描调度器。
 #[tauri::command]
 pub(crate) async fn restart_automation_scheduler(

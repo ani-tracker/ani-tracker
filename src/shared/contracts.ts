@@ -80,6 +80,25 @@ export interface AnimeDiscoverySeasonResult {
   errors: string[];
 }
 
+/** 一次季度后台同步的紧凑结果。 */
+export interface AnimeDiscoverySyncTaskResult {
+  query: AnimeDiscoverySeasonQuery;
+  itemCount: number;
+  addedCount: number;
+  existingCount: number;
+  errorCount: number;
+}
+
+/** 新番季度同步调度器的当前任务状态。 */
+export interface AnimeDiscoverySyncTaskStatus {
+  inFlight: boolean;
+  activeQuery?: AnimeDiscoverySeasonQuery;
+  startedAt?: string;
+  finishedAt?: string;
+  lastResult?: AnimeDiscoverySyncTaskResult;
+  lastError?: string;
+}
+
 /** 单个自然季度的新番目录后台同步状态。 */
 export interface AnimeSeasonSyncState {
   year: number;

@@ -1,7 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-#[cfg(target_os = "linux")]
-use std::{io::Write, os::unix::fs::OpenOptionsExt};
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use std::{
+    io::Write,
+    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+};
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
@@ -18,6 +21,7 @@ use ani_remote::{
 use ani_repository::prelude::*;
 use ani_storage::Storage;
 use async_trait::async_trait;
+#[cfg(not(target_os = "macos"))]
 use keyring::{Entry, Error as KeyringError};
 use rand::rngs::OsRng;
 use rand::RngCore;
@@ -29,14 +33,18 @@ use tokio::sync::{OnceCell, RwLock};
 use crate::downloads::AppDownloadState;
 use crate::media::AppMediaState;
 
+#[cfg(not(target_os = "macos"))]
 const KEYRING_SERVICE: &str = "com.ani.tracker.remote";
+#[cfg(not(target_os = "macos"))]
 const KEYRING_ACCOUNT: &str = "remote-master-key-v1";
-#[cfg(target_os = "linux")]
-const WSL_MASTER_KEY_FILE: &str = "remote-master-key-v1.key";
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const FILE_MASTER_KEY: &str = "remote-master-key-v1.key";
+#[cfg(target_os = "macos")]
+const MACOS_REMOTE_SECRET_DIRECTORY: &str = "remote-secrets-file-v1";
 const ENCRYPTED_FILE_HEADER: &[u8; 8] = b"ANIRSEC1";
 const IMAGE_SIGNING_SECRET: &str = "image-signing-key-v1";
 
-/// 使用系统凭据库主密钥加密任意长度远程秘密的文件安全存储。
+/// 使用平台主密钥加密任意长度远程秘密的文件安全存储。
 struct PlatformRemoteSecretStore {
     directory: PathBuf,
     master_key: OnceCell<[u8; 32]>,
@@ -153,7 +161,7 @@ impl AppRemoteGatewayState {
         let user_data = setting_path(&settings, "/storage/userDataDir")?;
         let cache_directory = setting_path(&settings, "/storage/cacheDir")?.join("images");
         let secret_store: Arc<dyn RemoteSecretStore> = Arc::new(PlatformRemoteSecretStore::new(
-            user_data.join("remote-secrets"),
+            remote_secret_directory(&user_data),
         ));
         let image_signing_secret =
             load_or_create_secret(Arc::clone(&secret_store), IMAGE_SIGNING_SECRET, 32).await?;
@@ -564,14 +572,26 @@ impl TauriRemoteMediaRepository {
     }
 }
 
-/// 从平台安全存储读取或创建远程访问主密钥。
+/// macOS 使用应用数据文件保存主密钥，避免应用启动触发 Keychain 授权。
+#[cfg(target_os = "macos")]
+async fn load_or_create_master_key(directory: &Path) -> Result<[u8; 32], String> {
+    let directory = directory.to_owned();
+    tauri::async_runtime::spawn_blocking(move || {
+        load_or_create_file_master_key(&directory, "macOS")
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+/// 从平台凭据库读取或创建远程访问主密钥。
+#[cfg(not(target_os = "macos"))]
 async fn load_or_create_master_key(_directory: &Path) -> Result<[u8; 32], String> {
     #[cfg(target_os = "linux")]
     let directory = _directory.to_owned();
     tauri::async_runtime::spawn_blocking(move || {
         #[cfg(target_os = "linux")]
         if is_windows_subsystem_for_linux() {
-            return load_or_create_wsl_master_key(&directory);
+            return load_or_create_file_master_key(&directory, "WSL");
         }
         let entry = Entry::new(KEYRING_SERVICE, KEYRING_ACCOUNT)
             .map_err(|error| format!("打开系统凭据库失败：{error}"))?;
@@ -593,18 +613,23 @@ async fn load_or_create_master_key(_directory: &Path) -> Result<[u8; 32], String
     .map_err(|error| error.to_string())?
 }
 
-/// 在 WSL 用户数据目录中读取或创建仅当前用户可读的随机主密钥。
-#[cfg(target_os = "linux")]
-fn load_or_create_wsl_master_key(directory: &Path) -> Result<[u8; 32], String> {
+/// 在应用数据目录中读取或创建仅当前用户可读的随机主密钥。
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn load_or_create_file_master_key(directory: &Path, platform: &str) -> Result<[u8; 32], String> {
     std::fs::create_dir_all(directory)
-        .map_err(|error| format!("创建 WSL 远程安全目录失败：{error}"))?;
-    let path = directory.join(WSL_MASTER_KEY_FILE);
+        .map_err(|error| format!("创建 {platform} 远程安全目录失败：{error}"))?;
+    std::fs::set_permissions(directory, std::fs::Permissions::from_mode(0o700))
+        .map_err(|error| format!("限制 {platform} 远程安全目录权限失败：{error}"))?;
+    let path = directory.join(FILE_MASTER_KEY);
     match std::fs::read(&path) {
         Ok(bytes) => {
-            return <[u8; 32]>::try_from(bytes).map_err(|_| "WSL 远程主密钥长度无效".to_owned());
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|error| format!("限制 {platform} 远程主密钥权限失败：{error}"))?;
+            return <[u8; 32]>::try_from(bytes)
+                .map_err(|_| format!("{platform} 远程主密钥长度无效"));
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(format!("读取 WSL 远程主密钥失败：{error}")),
+        Err(error) => return Err(format!("读取 {platform} 远程主密钥失败：{error}")),
     }
 
     let mut key = [0_u8; 32];
@@ -614,12 +639,12 @@ fn load_or_create_wsl_master_key(directory: &Path) -> Result<[u8; 32], String> {
         .create_new(true)
         .mode(0o600)
         .open(&path)
-        .map_err(|error| format!("创建 WSL 远程主密钥失败：{error}"))?;
+        .map_err(|error| format!("创建 {platform} 远程主密钥失败：{error}"))?;
     file.write_all(&key)
         .and_then(|_| file.sync_all())
-        .map_err(|error| format!("写入 WSL 远程主密钥失败：{error}"))?;
-    log::warn!(
-        "WSL 使用用户数据文件保存远程主密钥：path={}",
+        .map_err(|error| format!("写入 {platform} 远程主密钥失败：{error}"))?;
+    log::info!(
+        "{platform} 使用应用数据文件保存远程主密钥 path={}",
         path.display()
     );
     Ok(key)
@@ -673,6 +698,15 @@ fn setting_path(settings: &AppSettings, pointer: &str) -> Result<PathBuf, String
         .ok_or_else(|| format!("设置路径缺失：{pointer}"))
 }
 
+/// 返回当前桌面平台的远程安全数据目录。
+fn remote_secret_directory(user_data: &Path) -> PathBuf {
+    #[cfg(target_os = "macos")]
+    return user_data.join(MACOS_REMOTE_SECRET_DIRECTORY);
+
+    #[cfg(not(target_os = "macos"))]
+    user_data.join("remote-secrets")
+}
+
 fn resolve_remote_renderer_directory(app: &AppHandle) -> PathBuf {
     let source_directory = std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
@@ -691,6 +725,10 @@ async fn write_atomic(path: &Path, value: &[u8]) -> Result<(), String> {
     tokio::fs::write(&temporary, value)
         .await
         .map_err(|error| format!("写入远程安全临时文件失败：{error}"))?;
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    tokio::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))
+        .await
+        .map_err(|error| format!("限制远程安全文件权限失败：{error}"))?;
     if let Err(error) = tokio::fs::rename(&temporary, path).await {
         if tokio::fs::try_exists(path).await.unwrap_or(false) {
             tokio::fs::remove_file(path)
@@ -720,4 +758,43 @@ fn value_arg<T: serde::de::DeserializeOwned>(args: &[Value], index: usize) -> Re
             .ok_or_else(|| "远程对象参数缺失".to_owned())?,
     )
     .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证 macOS 使用独立版本目录，不再读取旧 Keychain 密文。
+    #[test]
+    fn resolves_platform_remote_secret_directory() {
+        let root = PathBuf::from("/tmp/ani-user-data");
+        let directory = remote_secret_directory(&root);
+        #[cfg(target_os = "macos")]
+        assert_eq!(directory, root.join(MACOS_REMOTE_SECRET_DIRECTORY));
+        #[cfg(not(target_os = "macos"))]
+        assert_eq!(directory, root.join("remote-secrets"));
+    }
+
+    /// 验证 macOS 文件主密钥可复用且权限仅允许当前用户访问。
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn persists_macos_file_master_key_with_private_permissions() {
+        let directory = std::env::temp_dir().join(format!(
+            "ani-remote-key-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let first = load_or_create_file_master_key(&directory, "macOS")
+            .expect("create macOS remote master key");
+        let second = load_or_create_file_master_key(&directory, "macOS")
+            .expect("reload macOS remote master key");
+        assert_eq!(first, second);
+        let mode = std::fs::metadata(directory.join(FILE_MASTER_KEY))
+            .expect("read macOS remote master key metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        std::fs::remove_dir_all(directory).expect("remove macOS remote key test directory");
+    }
 }

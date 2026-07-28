@@ -11,6 +11,7 @@ import type {
   AnimeDiscoverySearchResult,
   AnimeDiscoverySeasonQuery,
   AnimeDiscoverySeasonResult,
+  AnimeDiscoverySyncTaskStatus,
   AnimeSeasonSyncState,
   AnimeSourceBindingState,
   AnimeWatchProgress,
@@ -420,6 +421,20 @@ class TauriClientCore implements AppClient {
     });
   }
 
+  /** 将季度采集交给 Rust 宿主后台执行。 */
+  async startAnimeSeasonSync(query: AnimeDiscoverySeasonQuery): Promise<AnimeDiscoverySyncTaskStatus> {
+    return invoke<AnimeDiscoverySyncTaskStatus>("start_anime_season_sync", { query }).catch((error) => {
+      throw normalizeTauriError("start_anime_season_sync", error);
+    });
+  }
+
+  /** 读取 Rust 季度采集后台任务状态。 */
+  async getAnimeSeasonSyncTaskStatus(): Promise<AnimeDiscoverySyncTaskStatus> {
+    return invoke<AnimeDiscoverySyncTaskStatus>("get_anime_season_sync_task_status").catch((error) => {
+      throw normalizeTauriError("get_anime_season_sync_task_status", error);
+    });
+  }
+
   /** 读取指定季度的持久化后台同步状态。 */
   async getAnimeSeasonSyncState(
     year: number,
@@ -772,6 +787,13 @@ class TauriClientCore implements AppClient {
   async runAutomationOnce(): Promise<AutomationRunResult> {
     return invoke<AutomationRunResult>("run_automation_once").catch((error) => {
       throw normalizeTauriError("run_automation_once", error);
+    });
+  }
+
+  /** 将手动扫描交给 Rust 宿主后台执行。 */
+  async startAutomationScan(): Promise<AutomationSchedulerStatus> {
+    return invoke<AutomationSchedulerStatus>("start_automation_scan").catch((error) => {
+      throw normalizeTauriError("start_automation_scan", error);
     });
   }
 

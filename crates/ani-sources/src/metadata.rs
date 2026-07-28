@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
+use std::time::Instant;
 
 use ani_domain::{
     Anime, AnimeAlias, AnimeAliasLanguage, AnimeDetailPartialError, AnimeRating,
@@ -153,24 +154,57 @@ impl AnimeMetadataService {
         year: i64,
         season: &str,
     ) -> Result<AnimeMetadataCollection, SourceError> {
+        let total_started = Instant::now();
         let months = months_for_season(season)?;
         let bangumi = async {
+            let provider_started = Instant::now();
             let mut items = Vec::new();
             let mut errors = Vec::new();
-            for month in months {
-                match self.collect_bangumi_month(store, year, month).await {
+            let month_results = stream::iter(months)
+                .map(|month| async move {
+                    (month, self.collect_bangumi_month(store, year, month).await)
+                })
+                .buffered(months.len())
+                .collect::<Vec<_>>()
+                .await;
+            for (month, result) in month_results {
+                match result {
                     Ok(month_items) if !month_items.is_empty() => items.extend(month_items),
                     Ok(_) => errors.push(format!("bangumi({month}月): 未返回新番数据")),
                     Err(error) => errors.push(format!("bangumi({month}月): {error}")),
                 }
             }
+            log::info!(
+                "Rust 新番季度来源完成 provider=bangumi year={year} season={season} items={} errors={} duration_ms={}",
+                items.len(),
+                errors.len(),
+                provider_started.elapsed().as_millis()
+            );
             (items, errors)
         };
-        let results = tokio::join!(
-            bangumi,
-            self.collect_anilist_season(store, year, season),
-            self.collect_mikan_season(store, year, season),
-        );
+        let anilist = async {
+            let provider_started = Instant::now();
+            let result = self.collect_anilist_season(store, year, season).await;
+            log::info!(
+                "Rust 新番季度来源完成 provider=anilist year={year} season={season} items={} success={} duration_ms={}",
+                result.as_ref().map_or(0, Vec::len),
+                result.is_ok(),
+                provider_started.elapsed().as_millis()
+            );
+            result
+        };
+        let mikan = async {
+            let provider_started = Instant::now();
+            let result = self.collect_mikan_season(store, year, season).await;
+            log::info!(
+                "Rust 新番季度来源完成 provider=mikan year={year} season={season} items={} success={} duration_ms={}",
+                result.as_ref().map_or(0, Vec::len),
+                result.is_ok(),
+                provider_started.elapsed().as_millis()
+            );
+            result
+        };
+        let results = tokio::join!(bangumi, anilist, mikan,);
         let (bangumi_items, bangumi_errors) = results.0;
         let has_bangumi_items = !bangumi_items.is_empty();
         let mut collection = collect_provider_results([
@@ -188,6 +222,12 @@ impl AnimeMetadataService {
             errors.extend(collection.errors);
             collection.errors = errors;
         }
+        log::info!(
+            "Rust 新番季度多来源采集完成 year={year} season={season} items={} errors={} duration_ms={}",
+            collection.items.len(),
+            collection.errors.len(),
+            total_started.elapsed().as_millis()
+        );
         Ok(collection)
     }
 

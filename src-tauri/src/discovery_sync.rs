@@ -1,13 +1,16 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, Instant};
 
-use ani_automation::{is_same_local_day, AnimeDiscoverySyncService};
-use ani_domain::{AnimeDiscoverySeasonQuery, AppSettings};
+use ani_automation::{is_same_local_day, months_for_season, AnimeDiscoverySyncService};
+use ani_domain::{
+    AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult, AnimeDiscoverySyncTaskResult,
+    AnimeDiscoverySyncTaskStatus, AppSettings,
+};
 use ani_repository::prelude::*;
 use ani_storage::Storage;
-use chrono::{DateTime, Datelike, Days, Local, NaiveTime, TimeZone, Utc};
-use tokio::sync::Notify;
+use chrono::{DateTime, Datelike, Days, Local, NaiveTime, SecondsFormat, TimeZone, Utc};
+use tokio::sync::{Mutex as AsyncMutex, Notify};
 
 use crate::sources::{AppSourceState, SharedReleaseSearchStore};
 
@@ -27,6 +30,7 @@ struct DiscoverySyncRuntime {
     wake: Notify,
     started: AtomicBool,
     in_flight: AtomicBool,
+    status: AsyncMutex<AnimeDiscoverySyncTaskStatus>,
 }
 
 impl AppDiscoverySyncState {
@@ -44,6 +48,14 @@ impl AppDiscoverySyncState {
                 wake: Notify::new(),
                 started: AtomicBool::new(false),
                 in_flight: AtomicBool::new(false),
+                status: AsyncMutex::new(AnimeDiscoverySyncTaskStatus {
+                    in_flight: false,
+                    active_query: None,
+                    started_at: None,
+                    finished_at: None,
+                    last_result: None,
+                    last_error: None,
+                }),
             }),
         }
     }
@@ -64,21 +76,52 @@ impl AppDiscoverySyncState {
         self.inner.wake.notify_one();
     }
 
+    /// 返回季度同步后台任务的当前状态快照。
+    pub(crate) async fn status(&self) -> AnimeDiscoverySyncTaskStatus {
+        self.inner.status.lock().await.clone()
+    }
+
+    /// 将人工季度采集加入宿主后台任务并立即返回。
+    pub(crate) async fn start_sync(
+        &self,
+        query: AnimeDiscoverySeasonQuery,
+    ) -> Result<AnimeDiscoverySyncTaskStatus, String> {
+        self.reserve_sync(Some(query.clone())).await?;
+        let state = self.clone();
+        tauri::async_runtime::spawn(async move {
+            let outcome = state.execute_query(query, None, "manual-background").await;
+            state.record_outcome(&outcome).await;
+            state.finish_sync().await;
+            state.inner.wake.notify_one();
+        });
+        Ok(self.status().await)
+    }
+
+    /// 执行并等待一次季度采集，供兼容命令复用同一防重状态。
+    pub(crate) async fn run_now(
+        &self,
+        query: AnimeDiscoverySeasonQuery,
+        trigger: &'static str,
+    ) -> Result<AnimeDiscoverySeasonResult, String> {
+        self.reserve_sync(Some(query.clone())).await?;
+        let outcome = self.execute_query(query, None, trigger).await;
+        self.record_outcome(&outcome).await;
+        self.finish_sync().await;
+        self.inner.wake.notify_one();
+        outcome
+    }
+
     /// 串行补齐当年过去季度，再按天同步当前季度。
     async fn run_due(&self, trigger: &'static str) {
-        if self
-            .inner
-            .in_flight
-            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
-            .is_err()
-        {
+        if self.reserve_sync(None).await.is_err() {
             return;
         }
         let outcome = self.execute_due(trigger).await;
         if let Err(error) = outcome {
             log::error!("Tauri 新番季度后台同步失败 trigger={trigger} error={error}");
+            self.record_error(error).await;
         }
-        self.inner.in_flight.store(false, Ordering::Release);
+        self.finish_sync().await;
     }
 
     /// 读取季度标记并执行本次到期同步。
@@ -150,32 +193,152 @@ impl AppDiscoverySyncState {
         let service = AnimeDiscoverySyncService::new_background(network);
         let store = SharedReleaseSearchStore::new(Arc::clone(&self.inner.storage));
         for season in due {
+            let query = AnimeDiscoverySeasonQuery {
+                year,
+                season: season.clone(),
+                force_refresh: false,
+            };
+            self.set_active_query(query.clone()).await;
+            let started = Instant::now();
             log::info!("Tauri 新番季度后台同步开始 trigger={trigger} year={year} season={season}");
-            match service
-                .sync_season(
-                    &store,
-                    AnimeDiscoverySeasonQuery {
+            match service.sync_season(&store, query, Some(now)).await {
+                Ok(result) => {
+                    self.record_result(&result).await;
+                    log::info!(
+                        "Tauri 新番季度后台同步结束 year={} season={} count={} errors={} duration_ms={}",
                         year,
-                        season: season.clone(),
-                        force_refresh: false,
-                    },
-                    Some(now),
-                )
-                .await
-            {
-                Ok(result) => log::info!(
-                    "Tauri 新番季度后台同步结束 year={} season={} count={} errors={}",
-                    year,
-                    season,
-                    result.items.len(),
-                    result.errors.len()
-                ),
-                Err(error) => log::error!(
-                    "Tauri 新番季度后台同步异常 year={year} season={season} error={error}"
-                ),
+                        season,
+                        result.items.len(),
+                        result.errors.len(),
+                        started.elapsed().as_millis()
+                    );
+                }
+                Err(error) => {
+                    let message = error.to_string();
+                    self.record_error(message.clone()).await;
+                    log::error!(
+                        "Tauri 新番季度后台同步异常 year={year} season={season} duration_ms={} error={message}",
+                        started.elapsed().as_millis()
+                    );
+                }
             }
         }
         Ok(())
+    }
+
+    /// 为一次同步抢占全局执行权并初始化可查询状态。
+    async fn reserve_sync(&self, query: Option<AnimeDiscoverySeasonQuery>) -> Result<(), String> {
+        if let Some(query) = query.as_ref() {
+            months_for_season(&query.season).map_err(|error| error.to_string())?;
+        }
+        self.inner
+            .in_flight
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| "新番季度同步正在运行".to_owned())?;
+        let mut status = self.inner.status.lock().await;
+        status.in_flight = true;
+        status.active_query = query;
+        status.started_at = Some(to_iso(Utc::now()));
+        status.finished_at = None;
+        status.last_result = None;
+        status.last_error = None;
+        Ok(())
+    }
+
+    /// 使用当前设置执行一个季度，并记录端到端耗时。
+    async fn execute_query(
+        &self,
+        query: AnimeDiscoverySeasonQuery,
+        now: Option<DateTime<Utc>>,
+        trigger: &'static str,
+    ) -> Result<AnimeDiscoverySeasonResult, String> {
+        let storage = Arc::clone(&self.inner.storage);
+        let defaults = self.inner.platform_defaults.clone();
+        let settings = tauri::async_runtime::spawn_blocking(move || {
+            let storage = storage
+                .lock()
+                .map_err(|error| format!("读取季度采集上下文失败：{error}"))?;
+            storage
+                .repository()
+                .get_settings(&defaults)
+                .map_err(|error| format!("读取季度采集设置失败：{error}"))
+        })
+        .await
+        .map_err(|error| format!("读取季度采集上下文失败：{error}"))??;
+        let network = self
+            .inner
+            .source_state
+            .network_service(&settings)
+            .await
+            .map_err(|error| format!("初始化季度元数据网络失败：{error}"))?;
+        let service = AnimeDiscoverySyncService::new_background(network);
+        let store = SharedReleaseSearchStore::new(Arc::clone(&self.inner.storage));
+        let started = Instant::now();
+        log::info!(
+            "Tauri 新番季度同步开始 trigger={trigger} year={} season={}",
+            query.year,
+            query.season
+        );
+        let result = service
+            .sync_season(&store, query, now)
+            .await
+            .map_err(|error| format!("采集季度新番失败：{error}"));
+        match &result {
+            Ok(result) => log::info!(
+                "Tauri 新番季度同步结束 trigger={trigger} year={} season={} count={} errors={} duration_ms={}",
+                result.query.year,
+                result.query.season,
+                result.items.len(),
+                result.errors.len(),
+                started.elapsed().as_millis()
+            ),
+            Err(error) => log::error!(
+                "Tauri 新番季度同步异常 trigger={trigger} duration_ms={} error={error}",
+                started.elapsed().as_millis()
+            ),
+        }
+        result
+    }
+
+    /// 更新多季度补跑时当前正在处理的季度。
+    async fn set_active_query(&self, query: AnimeDiscoverySeasonQuery) {
+        self.inner.status.lock().await.active_query = Some(query);
+    }
+
+    /// 将完整季度结果压缩成轮询状态需要的计数。
+    async fn record_result(&self, result: &AnimeDiscoverySeasonResult) {
+        let mut status = self.inner.status.lock().await;
+        status.last_result = Some(AnimeDiscoverySyncTaskResult {
+            query: result.query.clone(),
+            item_count: result.items.len(),
+            added_count: result.added_count,
+            existing_count: result.existing_count,
+            error_count: result.errors.len(),
+        });
+    }
+
+    /// 记录最近一次不可恢复的季度同步错误。
+    async fn record_error(&self, error: String) {
+        self.inner.status.lock().await.last_error = Some(error);
+    }
+
+    /// 将一次季度执行结果写入状态。
+    async fn record_outcome(&self, outcome: &Result<AnimeDiscoverySeasonResult, String>) {
+        match outcome {
+            Ok(result) => self.record_result(result).await,
+            Err(error) => self.record_error(error.clone()).await,
+        }
+    }
+
+    /// 释放执行权并保留最近结果供页面完成刷新。
+    async fn finish_sync(&self) {
+        {
+            let mut status = self.inner.status.lock().await;
+            status.in_flight = false;
+            status.active_query = None;
+            status.finished_at = Some(to_iso(Utc::now()));
+        }
+        self.inner.in_flight.store(false, Ordering::Release);
     }
 
     /// 按下一次 06:00 或生命周期唤醒持续调度。
@@ -223,6 +386,11 @@ fn resolve_next_run_at(now: DateTime<Local>) -> DateTime<Local> {
             .checked_add_days(Days::new(1))
             .unwrap_or_else(|| now.date_naive());
     }
+}
+
+/// 将 UTC 时间序列化为毫秒精度 ISO 字符串。
+fn to_iso(value: DateTime<Utc>) -> String {
+    value.to_rfc3339_opts(SecondsFormat::Millis, true)
 }
 
 #[cfg(test)]

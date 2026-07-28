@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::Duration as StdDuration;
+use std::time::{Duration as StdDuration, Instant};
 
 use ani_automation::{
     build_automation_notifications, AutomaticDownloadExecutor, AutomaticDownloadReceipt,
@@ -131,12 +131,34 @@ impl AppAutomationState {
         Ok(self.status().await)
     }
 
-    /// 立即执行一次扫描，并对人工触发应用一分钟冷却。
+    /// 立即执行并等待一次扫描，并对人工触发应用一分钟冷却。
     pub(crate) async fn run_now(
         &self,
         manual: bool,
         trigger: &'static str,
     ) -> Result<AutomationRunResult, String> {
+        self.reserve_run(manual).await?;
+        self.execute_reserved_run(trigger).await
+    }
+
+    /// 将一次扫描加入宿主后台任务并立即返回状态。
+    pub(crate) async fn start_now(
+        &self,
+        manual: bool,
+        trigger: &'static str,
+    ) -> Result<AutomationSchedulerStatus, String> {
+        self.reserve_run(manual).await?;
+        let state = self.clone();
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = state.execute_reserved_run(trigger).await {
+                log::error!("Tauri 后台自动扫描失败 trigger={trigger} error={error}");
+            }
+        });
+        Ok(self.status().await)
+    }
+
+    /// 抢占扫描执行权并初始化调度状态。
+    async fn reserve_run(&self, manual: bool) -> Result<(), String> {
         if self
             .inner
             .in_flight
@@ -166,8 +188,18 @@ impl AppAutomationState {
             status.in_flight = true;
             status.running = false;
             status.next_run_at = None;
+            status.last_result = None;
             status.last_error = None;
         }
+        Ok(())
+    }
+
+    /// 执行已经预留的扫描任务，并统一释放状态与发送通知。
+    async fn execute_reserved_run(
+        &self,
+        trigger: &'static str,
+    ) -> Result<AutomationRunResult, String> {
+        let started = Instant::now();
         log::info!("Tauri 自动扫描开始 trigger={trigger}");
         let outcome = self.execute_scan().await;
         {
@@ -185,6 +217,13 @@ impl AppAutomationState {
         self.inner.wake.notify_one();
         match &outcome {
             Ok(result) => {
+                log::info!(
+                    "Tauri 自动扫描结束 trigger={trigger} checked={} downloaded={} errors={} duration_ms={}",
+                    result.checked_episodes,
+                    result.downloaded.len(),
+                    result.errors.len(),
+                    started.elapsed().as_millis()
+                );
                 if let Ok(settings) = self.load_settings().await {
                     crate::system_integration::notify_automation_result(
                         &self.inner.app,
@@ -194,6 +233,10 @@ impl AppAutomationState {
                 }
             }
             Err(error) => {
+                log::error!(
+                    "Tauri 自动扫描异常 trigger={trigger} duration_ms={} error={error}",
+                    started.elapsed().as_millis()
+                );
                 if let Ok(settings) = self.load_settings().await {
                     crate::system_integration::notify_scheduler_error(
                         &self.inner.app,

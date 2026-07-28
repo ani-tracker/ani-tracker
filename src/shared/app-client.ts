@@ -21,6 +21,7 @@ import type {
   AnimeDiscoverySearchResult,
   AnimeDiscoverySeasonQuery,
   AnimeDiscoverySeasonResult,
+  AnimeDiscoverySyncTaskStatus,
   AnimeSeasonSyncState,
   AnimeReleaseQuery,
   AnimeSourceBindingState,
@@ -132,6 +133,10 @@ export interface AppClient {
   collectAnimeMonth(query: AnimeDiscoveryQuery): Promise<AnimeDiscoveryResult>;
   /** 采集指定季度番剧。 */
   collectAnimeSeason(query: AnimeDiscoverySeasonQuery): Promise<AnimeDiscoverySeasonResult>;
+  /** 将指定季度采集加入宿主后台任务。 */
+  startAnimeSeasonSync(query: AnimeDiscoverySeasonQuery): Promise<AnimeDiscoverySyncTaskStatus>;
+  /** 读取季度采集后台任务状态。 */
+  getAnimeSeasonSyncTaskStatus(): Promise<AnimeDiscoverySyncTaskStatus>;
   /** 读取指定季度的后台同步状态。 */
   getAnimeSeasonSyncState(year: number, season: AnimeDiscoverySeasonQuery["season"]): Promise<AnimeSeasonSyncState | undefined>;
   /** 读取番剧详情。 */
@@ -154,6 +159,8 @@ export interface AppClient {
 
   /** 立即执行一次自动扫描。 */
   runAutomationOnce(): Promise<AutomationRunResult>;
+  /** 将一次手动扫描加入宿主后台任务。 */
+  startAutomationScan(): Promise<AutomationSchedulerStatus>;
   /** 读取自动扫描调度状态。 */
   getAutomationSchedulerStatus(): Promise<AutomationSchedulerStatus>;
   /** 按当前设置重启自动扫描调度。 */

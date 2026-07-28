@@ -1,4 +1,4 @@
-import { Fragment, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import { AlertTriangle, CheckCircle2, Clock, DownloadCloud, FolderOpen, Play, RefreshCw } from "lucide-react";
 import { toast } from "@/lib/toast";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -15,6 +15,7 @@ import { appApi } from "@/lib/api";
 import { formatDuration, formatPercent, formatSpeed } from "@/lib/format";
 import { getAppCapabilities } from "@/lib/runtime";
 import { useAsyncData } from "@/lib/use-async-data";
+import type { AutomationSchedulerStatus } from "@shared/contracts";
 import type { AnimeStatus, MediaFile, MyAnime } from "@shared/domain";
 import type { MediaPlaybackTarget } from "@shared/player-selection";
 
@@ -44,30 +45,77 @@ export function HomePage({
   onPlayMedia?: (target: MediaPlaybackTarget) => Promise<void>;
 } = {}) {
   const [revision, setRevision] = useState(0);
-  const [scanning, setScanning] = useState(false);
+  const [schedulerStatus, setSchedulerStatus] = useState<AutomationSchedulerStatus | null>(null);
+  const [startingScan, setStartingScan] = useState(false);
+  const manualScanRef = useRef(false);
+  const previousScanningRef = useRef(false);
   const { data: homeData, loading, error } = useAsyncData(loadHomeData, [revision]);
   const capabilities = getAppCapabilities();
+  const scanning = startingScan || Boolean(schedulerStatus?.inFlight);
 
-  /** 手动执行一次自动扫描，并用最新结果刷新首页摘要。 */
+  useEffect(() => {
+    if (!capabilities.backgroundAutomation) return;
+    let active = true;
+    let refreshing = false;
+
+    /** 轮询宿主扫描状态，使页面重新挂载后恢复执行进度。 */
+    async function refreshSchedulerStatus() {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const status = await appApi.getAutomationSchedulerStatus();
+        if (active) setSchedulerStatus(status);
+      } catch (caught) {
+        console.warn("[home] failed to refresh automation status", caught);
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    void refreshSchedulerStatus();
+    const timer = window.setInterval(() => void refreshSchedulerStatus(), 1_500);
+    window.addEventListener("focus", refreshSchedulerStatus);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshSchedulerStatus);
+    };
+  }, [capabilities.backgroundAutomation]);
+
+  useEffect(() => {
+    const wasScanning = previousScanningRef.current;
+    previousScanningRef.current = scanning;
+    if (!wasScanning || scanning) return;
+
+    setRevision((current) => current + 1);
+    if (!manualScanRef.current) return;
+    if (schedulerStatus?.lastError) {
+      toast.error(schedulerStatus.lastError);
+    } else if (schedulerStatus?.lastResult) {
+      const result = schedulerStatus.lastResult;
+      toast.success(`扫描完成：检查 ${result.checkedEpisodes} 集，新增 ${result.downloaded.length} 个下载`);
+    }
+    manualScanRef.current = false;
+  }, [scanning, schedulerStatus?.lastError, schedulerStatus?.lastResult]);
+
+  /** 将一次手动扫描交给宿主后台执行。 */
   async function scanUpdates() {
     if (!capabilities.backgroundAutomation || scanning) return;
-    setScanning(true);
-    console.info("[home] manual scan started");
+    setStartingScan(true);
+    console.info("[home] background scan requested");
     try {
-      const result = await appApi.runAutomationOnce();
-      toast.success(`扫描完成：检查 ${result.checkedEpisodes} 集，新增 ${result.downloaded.length} 个下载`);
-      console.info("[home] manual scan completed", {
-        checkedEpisodes: result.checkedEpisodes,
-        downloaded: result.downloaded.length,
-        errors: result.errors.length
-      });
-      setRevision((current) => current + 1);
+      manualScanRef.current = true;
+      const status = await appApi.startAutomationScan();
+      setSchedulerStatus(status);
+      toast.info("正在后台扫描进行中。");
+      console.info("[home] background scan accepted");
     } catch (caught) {
+      manualScanRef.current = false;
       const message = caught instanceof Error ? caught.message : "扫描更新失败";
       toast.error(message);
-      console.error("[home] manual scan failed", { message });
+      console.error("[home] background scan request failed", { message });
     } finally {
-      setScanning(false);
+      setStartingScan(false);
     }
   }
 

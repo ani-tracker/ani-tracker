@@ -10,15 +10,14 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use ani_automation::AnimeDiscoverySyncService;
 use ani_contracts::AppCommandError;
 use ani_domain::{
     Anime, AnimeDetailResult, AnimeDiscoveryQuery, AnimeDiscoveryResult,
     AnimeDiscoverySearchResult, AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult,
-    AnimeSeasonSyncState, AnimeWatchProgress, AppSettings, DashboardData, Episode,
-    EpisodePreference, FansubGroup, MyAnime, NotificationRecord, PlaybackCheckpoint,
-    ReleaseSourceConfig, ReportPlaybackProgressInput, SavePlaybackCheckpointInput,
-    SetAnimeWatchProgressInput,
+    AnimeDiscoverySyncTaskStatus, AnimeSeasonSyncState, AnimeWatchProgress, AppSettings,
+    DashboardData, Episode, EpisodePreference, FansubGroup, MyAnime, NotificationRecord,
+    PlaybackCheckpoint, ReleaseSourceConfig, ReportPlaybackProgressInput,
+    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use ani_repository::{prelude::*, RepositoryError};
 use ani_sources::{
@@ -29,6 +28,7 @@ use serde_json::Value;
 use tauri::{AppHandle, State};
 
 use crate::automation::AppAutomationState;
+use crate::discovery_sync::AppDiscoverySyncState;
 use crate::downloads::AppDownloadState;
 use crate::source_sync::AppSourceSyncState;
 use crate::sources::{AppSourceState, SharedReleaseSearchStore};
@@ -55,6 +55,19 @@ fn map_runtime_error(action: &str, error: impl std::fmt::Display) -> AppCommandE
     AppCommandError {
         code: "storage_runtime_failed".to_owned(),
         message: format!("{action}失败：{error}"),
+    }
+}
+
+/// 将季度同步调度错误转换为稳定命令错误。
+fn map_discovery_sync_error(message: String) -> AppCommandError {
+    AppCommandError {
+        code: if message.contains("正在运行") {
+            "discovery_sync_in_flight"
+        } else {
+            "discovery_sync_failed"
+        }
+        .to_owned(),
+        message,
     }
 }
 
@@ -688,29 +701,36 @@ pub(crate) async fn get_anime_season_sync_state(
     .await
 }
 
+/// 读取季度采集后台任务状态。
+#[tauri::command]
+pub(crate) async fn get_anime_season_sync_task_status(
+    state: State<'_, AppDiscoverySyncState>,
+) -> Result<AnimeDiscoverySyncTaskStatus, AppCommandError> {
+    Ok(state.status().await)
+}
+
+/// 将人工季度采集加入宿主后台任务并立即返回。
+#[tauri::command]
+pub(crate) async fn start_anime_season_sync(
+    query: AnimeDiscoverySeasonQuery,
+    state: State<'_, AppDiscoverySyncState>,
+) -> Result<AnimeDiscoverySyncTaskStatus, AppCommandError> {
+    state
+        .start_sync(query)
+        .await
+        .map_err(map_discovery_sync_error)
+}
+
 /// 通过共享季度用例采集并合并目录，仅向界面返回 AniList 错误。
 #[tauri::command]
 pub(crate) async fn collect_anime_season(
     query: AnimeDiscoverySeasonQuery,
-    state: State<'_, AppStorageState>,
-    source_state: State<'_, AppSourceState>,
+    state: State<'_, AppDiscoverySyncState>,
 ) -> Result<AnimeDiscoverySeasonResult, AppCommandError> {
-    let storage = Arc::clone(state.storage());
-    let defaults = state.platform_defaults().clone();
-    let settings = run_query(
-        "读取季度采集上下文",
-        Arc::clone(&storage),
-        move |storage| storage.repository().get_settings(&defaults),
-    )
-    .await?;
-    let network = source_state
-        .network_service(&settings)
+    let mut result = state
+        .run_now(query, "manual-wait")
         .await
-        .map_err(|error| map_metadata_error("初始化季度元数据网络", error))?;
-    let mut result = AnimeDiscoverySyncService::new(network)
-        .sync_season(&SharedReleaseSearchStore::new(storage), query, None)
-        .await
-        .map_err(|error| map_metadata_error("采集季度新番", error))?;
+        .map_err(map_discovery_sync_error)?;
     result.errors = visible_discovery_errors("季度采集", result.errors);
     Ok(result)
 }

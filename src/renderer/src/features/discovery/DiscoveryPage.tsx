@@ -11,6 +11,7 @@ import {
   Info,
   LayoutGrid,
   List,
+  LoaderCircle,
   Plus,
   RotateCcw,
   Search,
@@ -41,10 +42,12 @@ import { FilterToolbar, Page, PageActions, PageHeader, PageHeading } from "@/com
 import { YearPicker } from "@/components/year-picker";
 import { appApi } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { toast } from "@/lib/toast";
 import { useVirtualizerScrollMargin } from "@/hooks/use-virtualizer-scroll-margin";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import { createDefaultMyAnimePreferences } from "@shared/my-anime-policy";
 import type { Anime, MyAnime, Season } from "@shared/domain";
+import type { AnimeDiscoverySyncTaskStatus } from "@shared/contracts";
 
 export interface SeasonTarget {
   year: number;
@@ -96,12 +99,15 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
   const [loading, setLoading] = useState(true);
   const [searching, setSearching] = useState(false);
-  const [collecting, setCollecting] = useState(false);
+  const [syncTaskStatus, setSyncTaskStatus] = useState<AnimeDiscoverySyncTaskStatus | null>(null);
+  const [startingSync, setStartingSync] = useState(false);
   const [addingAnimeId, setAddingAnimeId] = useState<string | null>(null);
   const [message, setMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
   const [anilistSyncError, setAnilistSyncError] = useState<string | null>(null);
   const loadRequestId = useRef(0);
   const searchRequestId = useRef(0);
+  const manualCollectRef = useRef(false);
+  const manualTaskStartedAtRef = useRef<string | null>(null);
 
   const activeSeason = getSeasonOption(target.season);
   const followedIds = useMemo(() => new Set(myAnime.map((item) => item.anime.id)), [myAnime]);
@@ -113,6 +119,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     [appliedKeyword, items, searchItems, selectedMonth, sortKey]
   );
   const visibleLoading = appliedKeyword ? searching : loading;
+  const collecting = startingSync || Boolean(syncTaskStatus?.inFlight);
 
   useEffect(() => {
     void loadSeasonCatalog(target.year, target.season);
@@ -135,6 +142,63 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     return () => {
       active = false;
       window.clearInterval(timer);
+    };
+  }, [target.year, target.season]);
+
+  useEffect(() => {
+    let active = true;
+    let initialized = false;
+    let wasInFlight = false;
+    let refreshing = false;
+
+    /** 轮询宿主任务状态，使切页返回后恢复采集进度。 */
+    async function refreshTaskStatus() {
+      if (refreshing) return;
+      refreshing = true;
+      try {
+        const status = await appApi.getAnimeSeasonSyncTaskStatus();
+        if (!active) return;
+        setSyncTaskStatus(status);
+        const trackedTaskFinished = manualCollectRef.current
+          && !status.inFlight
+          && Boolean(status.finishedAt)
+          && status.startedAt === manualTaskStartedAtRef.current;
+        if ((initialized && wasInFlight && !status.inFlight) || trackedTaskFinished) {
+          const result = status.lastResult;
+          if (result?.query.year === target.year && result.query.season === target.season) {
+            await loadSeasonCatalog(target.year, target.season);
+          }
+          if (manualCollectRef.current) {
+            if (status.lastError) {
+              toast.error(status.lastError);
+            } else if (result) {
+              const summary = `新增 ${result.addedCount}，更新 ${result.existingCount}，共 ${result.itemCount} 部`;
+              if (result.errorCount > 0) {
+                toast.warning(`季度采集已完成，${result.errorCount} 个来源异常；${summary}`);
+              } else {
+                toast.success(`季度采集完成：${summary}`);
+              }
+            }
+            manualCollectRef.current = false;
+            manualTaskStartedAtRef.current = null;
+          }
+        }
+        initialized = true;
+        wasInFlight = status.inFlight;
+      } catch (error) {
+        console.warn("[discovery] failed to refresh background task status", error);
+      } finally {
+        refreshing = false;
+      }
+    }
+
+    void refreshTaskStatus();
+    const timer = window.setInterval(() => void refreshTaskStatus(), 1_500);
+    window.addEventListener("focus", refreshTaskStatus);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refreshTaskStatus);
     };
   }, [target.year, target.season]);
 
@@ -178,32 +242,28 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     }
   }
 
-  /** Collects metadata for every month in the selected season. */
+  /** 将当前季度采集交给宿主后台执行。 */
   async function collectSeason(forceRefresh = false) {
-    setCollecting(true);
-    console.info("[discovery] collecting season catalog", { ...target, forceRefresh });
+    if (collecting) return;
+    setStartingSync(true);
+    setMessage(null);
+    console.info("[discovery] starting background season sync", { ...target, forceRefresh });
 
     try {
-      const result = await appApi.collectAnimeSeason({ ...target, forceRefresh });
-      await loadSeasonCatalog(target.year, target.season);
-      setMessage({
-        tone: "success",
-        text: `季度采集完成：新增 ${result.addedCount}，更新 ${result.existingCount}，共 ${result.items.length} 部`
-      });
-      if (result.errors.length) setMessage(null);
-      console.info("[discovery] season catalog collected", {
-        ...target,
-        itemCount: result.items.length,
-        errorCount: result.errors.length
-      });
+      manualCollectRef.current = true;
+      const status = await appApi.startAnimeSeasonSync({ ...target, forceRefresh });
+      manualTaskStartedAtRef.current = status.startedAt ?? null;
+      setSyncTaskStatus(status);
+      toast.info("已发起后台同步任务。");
+      console.info("[discovery] background season sync accepted", { ...target });
     } catch (error) {
-      console.error("[discovery] failed to collect season catalog", { ...target, error });
-      setMessage({
-        tone: "error",
-        text: error instanceof Error ? error.message : "采集新番失败"
-      });
+      manualCollectRef.current = false;
+      manualTaskStartedAtRef.current = null;
+      const errorMessage = error instanceof Error ? error.message : "采集新番失败";
+      toast.error(errorMessage);
+      console.error("[discovery] failed to start background season sync", { ...target, error });
     } finally {
-      setCollecting(false);
+      setStartingSync(false);
     }
   }
 
@@ -326,7 +386,9 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
             新番时间表
           </Button>
           <Button className="w-full" onClick={() => void collectSeason(false)} disabled={collecting}>
-            <CalendarPlus data-icon="inline-start" />
+            {collecting
+              ? <LoaderCircle className="animate-spin" data-icon="inline-start" />
+              : <CalendarPlus data-icon="inline-start" />}
             {collectingLabel}
           </Button>
         </PageActions>
