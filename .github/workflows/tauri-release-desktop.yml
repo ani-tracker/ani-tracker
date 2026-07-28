@@ -401,8 +401,12 @@ jobs:
               exit 1
             fi
             certificate_prefix="${RUNNER_TEMP}/ani-tracker-codesign-${verified}-"
-            codesign -d --extract-certificates "${certificate_prefix}" "$app"
+            codesign -d --extract-certificates="${certificate_prefix}" "$app"
             embedded_certificate="${certificate_prefix}0"
+            if [[ ! -f "${embedded_certificate}" ]]; then
+              echo "Failed to extract the embedded macOS signing certificate: ${app}" >&2
+              exit 1
+            fi
             actual_fingerprint="$(openssl x509 -inform DER -in "${embedded_certificate}" \
               -noout -fingerprint -sha256 \
               | cut -d= -f2 | tr -d ':' | tr '[:upper:]' '[:lower:]')"
