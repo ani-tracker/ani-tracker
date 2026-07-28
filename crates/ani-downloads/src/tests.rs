@@ -114,6 +114,7 @@ impl DownloadEngine for FakeEngine {
             version: "test".to_owned(),
             task_count: self.tasks.lock().expect("lock tasks").len(),
             listen_port: Some(51413),
+            network_policy_blocked: false,
         })
     }
 
@@ -608,6 +609,7 @@ async fn maps_torrent_core_protocol_and_options() {
             max_active_downloads: 2,
             max_download_speed: 1024,
             max_upload_speed: 256,
+            allow_metered_downloads: false,
             seeding_limits: Default::default(),
         })
         .await
@@ -638,6 +640,7 @@ async fn maps_torrent_core_protocol_and_options() {
         .find(|(method, _)| method == "configure")
         .expect("configure call");
     assert_eq!(configure.1["maxActiveDownloads"], 2);
+    assert_eq!(configure.1["allowMeteredDownloads"], false);
     let add = calls
         .iter()
         .find(|(method, _)| method == "addMagnet")

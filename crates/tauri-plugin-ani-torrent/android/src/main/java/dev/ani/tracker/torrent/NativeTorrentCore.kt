@@ -7,7 +7,7 @@ internal object NativeTorrentCore {
     }
 
     /** 创建原生运行时并恢复应用私有目录中的任务。 */
-    external fun nativeStart(dataDirectory: String): Long
+    external fun nativeStart(dataDirectory: String, initialNetworkPolicyBlocked: Boolean): Long
 
     /** 执行一条与桌面端一致的 NDJSON 请求。 */
     external fun nativeExecute(handle: Long, requestJson: String): String

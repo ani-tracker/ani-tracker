@@ -200,6 +200,7 @@ fn build_default_settings(directories: &AppDirectories) -> AppSettings {
             "animeFolderPattern": "{year}-{month}/{title}",
             "temporaryDownloadDir": path_text(&directories.incomplete),
             "defaultTorrentEngine": "embedded",
+            "allowMeteredDownloads": !mobile,
             "embedded": {
                 "enabled": true,
                 "listenPort": 51413,
@@ -654,6 +655,7 @@ mod tests {
             "players": [{ "id": "mpv" }],
             "download": {
                 "defaultTorrentEngine": "qbittorrent",
+                "allowMeteredDownloads": true,
                 "defaultDownloadDir": "C:/invalid-downloads",
                 "temporaryDownloadDir": "C:/invalid-incomplete",
                 "embedded": { "enabled": false },
@@ -672,6 +674,7 @@ mod tests {
         assert_eq!(settings["defaultPlayerProfileId"], "builtin");
         assert_eq!(settings["players"], json!([]));
         assert_eq!(settings["download"]["defaultTorrentEngine"], "embedded");
+        assert_eq!(settings["download"]["allowMeteredDownloads"], true);
         assert_eq!(settings["download"]["embedded"]["enabled"], true);
         assert_eq!(
             settings["download"]["defaultDownloadDir"],

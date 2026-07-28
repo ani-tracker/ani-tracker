@@ -61,6 +61,7 @@ impl DownloadEngine for TorrentCoreEngine {
                     "maxActiveDownloads": config.max_active_downloads,
                     "maxDownloadSpeed": config.max_download_speed,
                     "maxUploadSpeed": config.max_upload_speed,
+                    "allowMeteredDownloads": config.allow_metered_downloads,
                     "seedingLimits": {
                         "enabled": config.seeding_limits.enabled,
                         "ratioEnabled": config.seeding_limits.ratio_enabled,
@@ -179,6 +180,7 @@ fn map_core_status(value: Value) -> Result<DownloadEngineStatus, DownloadEngineE
             .ok_or_else(|| protocol_error("status.taskCount 无效"))?,
         listen_port: read_u64(value.get("listenPort"))
             .and_then(|number| u16::try_from(number).ok()),
+        network_policy_blocked: read_bool(value.get("networkPolicyBlocked")).unwrap_or(false),
     })
 }
 

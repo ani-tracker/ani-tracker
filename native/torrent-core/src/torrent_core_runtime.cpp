@@ -220,21 +220,25 @@ std::vector<int> read_indexes(const pt::ptree& params, const std::string& key) {
 class TorrentCore {
  public:
   /** 从数据目录恢复 Session 和任务。 */
-  explicit TorrentCore(fs::path data_directory)
+  explicit TorrentCore(fs::path data_directory, bool initial_network_policy_blocked)
       : data_directory_(std::move(data_directory)),
         resume_directory_(data_directory_ / "resume"),
-        session_(create_session_params()) {
+        session_(create_session_params()),
+        network_policy_blocked_(initial_network_policy_blocked) {
     fs::create_directories(resume_directory_);
     load_metadata();
+    if (network_policy_blocked_) session_.pause();
     restore_torrents();
     apply_settings();
-    std::cerr << "[torrent-core] started version=" << ANI_TORRENT_CORE_VERSION << '\n';
+    std::cerr << "[torrent-core] started version=" << ANI_TORRENT_CORE_VERSION
+              << " network_policy_blocked=" << network_policy_blocked_ << '\n';
   }
 
   /** 执行一条 IPC 命令并返回结果。 */
   pt::ptree execute(const Command& command, bool& should_stop) {
     if (command.method == "status") return status();
     if (command.method == "configure") return configure(command.params);
+    if (command.method == "setNetworkPolicy") return set_network_policy(command.params);
     if (command.method == "addMagnet") return add_magnet(command.params);
     if (command.method == "addTorrentFile") return add_torrent_file(command.params);
     if (command.method == "listTasks") return list_tasks();
@@ -390,12 +394,27 @@ class TorrentCore {
     return status();
   }
 
+  /** 按宿主网络策略暂停或恢复整个 Session，不改变任务手动暂停状态。 */
+  pt::ptree set_network_policy(const pt::ptree& params) {
+    const bool blocked = params.get<bool>("blocked");
+    if (blocked == network_policy_blocked_) return status();
+    network_policy_blocked_ = blocked;
+    if (network_policy_blocked_) {
+      session_.pause();
+    } else {
+      session_.resume();
+    }
+    std::cerr << "[torrent-core] network policy changed blocked=" << network_policy_blocked_ << '\n';
+    return status();
+  }
+
   /** 返回内核运行状态。 */
   pt::ptree status() const {
     pt::ptree result;
     result.put("version", ANI_TORRENT_CORE_VERSION);
     result.put("taskCount", session_.get_torrents().size());
     result.put("listenPort", settings_.listen_port);
+    result.put("networkPolicyBlocked", network_policy_blocked_);
     return result;
   }
 
@@ -690,6 +709,7 @@ class TorrentCore {
   fs::path resume_directory_;
   lt::session session_;
   CoreSettings settings_;
+  bool network_policy_blocked_ = false;
   std::map<std::string, TaskMetadata> metadata_;
   int pending_resume_saves_ = 0;
   Clock::time_point last_resume_save_ = Clock::now();
@@ -700,7 +720,8 @@ class TorrentCore {
 namespace ani::torrent_core {
 
 struct Runtime::Impl {
-  explicit Impl(std::string data_directory) : core(fs::absolute(std::move(data_directory))) {}
+  Impl(std::string data_directory, bool initial_network_policy_blocked)
+      : core(fs::absolute(std::move(data_directory)), initial_network_policy_blocked) {}
 
   mutable std::mutex mutex;
   TorrentCore core;
@@ -708,7 +729,8 @@ struct Runtime::Impl {
   bool stopped = false;
 };
 
-Runtime::Runtime(std::string data_directory) : impl_(std::make_unique<Impl>(std::move(data_directory))) {}
+Runtime::Runtime(std::string data_directory, bool initial_network_policy_blocked)
+    : impl_(std::make_unique<Impl>(std::move(data_directory), initial_network_policy_blocked)) {}
 
 Runtime::~Runtime() { shutdown(); }
 

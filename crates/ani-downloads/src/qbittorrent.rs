@@ -432,6 +432,7 @@ impl DownloadEngine for QbittorrentEngine {
             version: version.trim().to_owned(),
             task_count: self.list_torrent_info().await?.len(),
             listen_port: None,
+            network_policy_blocked: false,
         })
     }
 

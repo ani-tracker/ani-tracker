@@ -489,6 +489,14 @@ impl AppDownloadState {
                     DownloadServiceMode::Embedded,
                     status.last_error.unwrap_or_default(),
                 ),
+                Ok(status) if status.network_policy_blocked == Some(true) => {
+                    DownloadServiceStatus {
+                        mode: DownloadServiceMode::Embedded,
+                        state: DownloadServiceState::Idle,
+                        message: "移动网络下载已关闭，等待 Wi-Fi".to_owned(),
+                        task_count: status.task_count,
+                    }
+                }
                 Ok(status) if status.running => DownloadServiceStatus {
                     mode: DownloadServiceMode::Embedded,
                     state: DownloadServiceState::Online,
@@ -656,7 +664,8 @@ impl AppDownloadState {
                 foreground_service: None,
                 version: protocol.as_ref().map(|value| value.version.clone()),
                 task_count: protocol.as_ref().map(|value| value.task_count),
-                listen_port: protocol.and_then(|value| value.listen_port),
+                listen_port: protocol.as_ref().and_then(|value| value.listen_port),
+                network_policy_blocked: protocol.as_ref().map(|value| value.network_policy_blocked),
                 last_started_at: lifecycle.last_started_at.clone(),
                 last_stopped_at: lifecycle.last_stopped_at.clone(),
                 last_error: lifecycle.last_error.clone(),
@@ -699,7 +708,8 @@ impl AppDownloadState {
                 foreground_service: Some(native.foreground_service),
                 version: protocol.as_ref().map(|value| value.version.clone()),
                 task_count: protocol.as_ref().map(|value| value.task_count),
-                listen_port: protocol.and_then(|value| value.listen_port),
+                listen_port: protocol.as_ref().and_then(|value| value.listen_port),
+                network_policy_blocked: protocol.as_ref().map(|value| value.network_policy_blocked),
                 last_started_at: lifecycle.last_started_at.clone(),
                 last_stopped_at: lifecycle.last_stopped_at.clone(),
                 last_error: lifecycle.last_error.clone(),
@@ -946,6 +956,7 @@ fn subtitle_preference_value(value: &SubtitlePreference) -> &'static str {
 
 /// 将版本化设置解析为 torrent-core 运行配置。
 fn embedded_engine_config(settings: &AppSettings) -> DownloadEngineConfig {
+    let download = settings.pointer("/download");
     let embedded = settings.pointer("/download/embedded");
     let seeding = embedded.and_then(|value| value.get("seedingLimits"));
     DownloadEngineConfig {
@@ -955,6 +966,7 @@ fn embedded_engine_config(settings: &AppSettings) -> DownloadEngineConfig {
         max_active_downloads: setting_u64(embedded, "maxActiveDownloads", 3, 1, 100) as u32,
         max_download_speed: setting_u64(embedded, "maxDownloadSpeed", 0, 0, u32::MAX as u64) as u32,
         max_upload_speed: setting_u64(embedded, "maxUploadSpeed", 0, 0, u32::MAX as u64) as u32,
+        allow_metered_downloads: setting_bool(download, "allowMeteredDownloads", !cfg!(mobile)),
         seeding_limits: SeedingLimits {
             enabled: setting_bool(seeding, "enabled", false),
             ratio_enabled: setting_bool(seeding, "ratioEnabled", false),
@@ -1034,6 +1046,7 @@ fn qbittorrent_engine_config(settings: &AppSettings) -> DownloadEngineConfig {
             as u32,
         max_upload_speed: setting_u64(qbittorrent, "uploadLimitKiBps", 0, 0, u32::MAX as u64)
             as u32,
+        allow_metered_downloads: true,
         seeding_limits: SeedingLimits {
             enabled: setting_bool(seeding, "enabled", false),
             ratio_enabled: setting_bool(seeding, "ratioEnabled", false),

@@ -1,9 +1,11 @@
 import AniTorrentCore
 import Foundation
+import Network
 import Tauri
 import UIKit
 
 private let configureRequestKey = "ani_torrent_configure_request_v1"
+private let allowMeteredDownloadsKey = "ani_torrent_allow_metered_downloads_v1"
 
 private enum AniTorrentError: LocalizedError {
     case native(String)
@@ -61,10 +63,10 @@ private final class NativeTorrentSession {
     private var handle: OpaquePointer?
 
     /** 创建原生核心并恢复最近一次下载设置。 */
-    init(dataDirectory: URL) throws {
+    init(dataDirectory: URL, initialNetworkPolicyBlocked: Bool) throws {
         var errorPointer: UnsafeMutablePointer<CChar>?
         let created = dataDirectory.path.withCString {
-            ani_torrent_core_start($0, &errorPointer)
+            ani_torrent_core_start($0, initialNetworkPolicyBlocked ? 1 : 0, &errorPointer)
         }
         guard let created else {
             throw AniTorrentError.native(Self.consumeError(&errorPointer))
@@ -137,12 +139,24 @@ private struct ExecuteArgs: Decodable {
 /** 将 Tauri Rust transport 连接到 iOS 进程内 torrent-core。 */
 final class AniTorrentPlugin: Plugin {
     private let queue = DispatchQueue(label: "com.ani.tracker.torrent")
+    private let networkMonitor = NWPathMonitor()
+    private let networkMonitorQueue = DispatchQueue(label: "com.ani.tracker.torrent.network")
     private var session: NativeTorrentSession?
+    private var networkAvailable = false
+    private var networkMetered = true
+    private var allowMeteredDownloads = UserDefaults.standard.bool(forKey: allowMeteredDownloadsKey)
+    private var appliedNetworkPolicyBlocked: Bool?
     private var backgroundObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
 
     override init() {
         super.init()
+        networkMonitor.pathUpdateHandler = { [weak self] path in
+            self?.queue.async { [weak self] in
+                self?.handleNetworkPath(path)
+            }
+        }
+        networkMonitor.start(queue: networkMonitorQueue)
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification,
             object: nil,
@@ -160,6 +174,7 @@ final class AniTorrentPlugin: Plugin {
     }
 
     deinit {
+        networkMonitor.cancel()
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
         if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
         queue.sync { stopSession() }
@@ -174,6 +189,12 @@ final class AniTorrentPlugin: Plugin {
                 let response = try self.ensureSession().execute(args.requestJson)
                 if self.requestMethod(args.requestJson) == "configure",
                    NativeTorrentSession.isSuccessful(response) {
+                    if let allowed = self.requestAllowMeteredDownloads(args.requestJson) {
+                        self.allowMeteredDownloads = allowed
+                        try self.applyNetworkPolicy()
+                        UserDefaults.standard.set(allowed, forKey: allowMeteredDownloadsKey)
+                        NSLog("AniTorrentPlugin metered download setting updated: allowed=%@", String(allowed))
+                    }
                     UserDefaults.standard.set(args.requestJson, forKey: configureRequestKey)
                 }
                 invoke.resolve(["responseJson": response])
@@ -236,9 +257,14 @@ final class AniTorrentPlugin: Plugin {
 
     private func ensureSession() throws -> NativeTorrentSession {
         if let session { return session }
-        let created = try NativeTorrentSession(dataDirectory: dataDirectory())
+        let blocked = currentNetworkPolicyBlocked()
+        let created = try NativeTorrentSession(
+            dataDirectory: dataDirectory(),
+            initialNetworkPolicyBlocked: blocked
+        )
         session = created
-        NSLog("AniTorrentPlugin native core started")
+        appliedNetworkPolicyBlocked = blocked
+        NSLog("AniTorrentPlugin native core started: networkPolicyBlocked=%@", String(blocked))
         return created
     }
 
@@ -246,6 +272,7 @@ final class AniTorrentPlugin: Plugin {
         guard let session else { return }
         session.stop()
         self.session = nil
+        appliedNetworkPolicyBlocked = nil
         NSLog("AniTorrentPlugin native core stopped")
     }
 
@@ -255,6 +282,54 @@ final class AniTorrentPlugin: Plugin {
             let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else { return nil }
         return object["method"] as? String
+    }
+
+    /** 从成功配置中读取移动网络开关，缺少字段时保留旧值。 */
+    private func requestAllowMeteredDownloads(_ requestJson: String) -> Bool? {
+        guard
+            let data = requestJson.data(using: .utf8),
+            let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let params = object["params"] as? [String: Any]
+        else { return nil }
+        return params["allowMeteredDownloads"] as? Bool
+    }
+
+    /** 接收系统网络变化，并串行更新共享下载 Session。 */
+    private func handleNetworkPath(_ path: NWPath) {
+        networkAvailable = path.status == .satisfied
+        networkMetered = path.isExpensive || path.isConstrained
+        do {
+            try applyNetworkPolicy()
+        } catch {
+            NSLog("AniTorrentPlugin network policy refresh failed: %@", error.localizedDescription)
+        }
+    }
+
+    /** 判断当前网络是否应阻止下载、上传和做种。 */
+    private func currentNetworkPolicyBlocked() -> Bool {
+        !networkAvailable || (!allowMeteredDownloads && networkMetered)
+    }
+
+    /** 向共享核心下发会话级网络策略，不改变用户手动暂停状态。 */
+    private func applyNetworkPolicy() throws {
+        guard let session else { return }
+        let blocked = currentNetworkPolicyBlocked()
+        if appliedNetworkPolicyBlocked == blocked { return }
+        let payload: [String: Any] = [
+            "id": "ios-network-policy",
+            "method": "setNetworkPolicy",
+            "params": ["blocked": blocked]
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        guard let request = String(data: data, encoding: .utf8) else {
+            throw AniTorrentError.invalidResponse
+        }
+        let response = try session.execute(request)
+        guard NativeTorrentSession.isSuccessful(response) else {
+            throw AniTorrentError.invalidResponse
+        }
+        appliedNetworkPolicyBlocked = blocked
+        NSLog("AniTorrentPlugin network policy applied: blocked=%@", String(blocked))
     }
 
     /** iOS 进入后台时申请有限时间完成恢复数据刷盘。 */

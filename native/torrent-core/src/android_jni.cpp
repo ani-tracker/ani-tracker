@@ -22,8 +22,8 @@ constexpr char log_tag[] = "AniTorrentCore";
 /** 在后台持续处理 alert，避免 Android 调用间隔影响恢复状态。 */
 class ManagedCore {
  public:
-  explicit ManagedCore(std::string data_directory)
-      : runtime_(std::move(data_directory)), worker_([this]() { run(); }) {
+  ManagedCore(std::string data_directory, bool initial_network_policy_blocked)
+      : runtime_(std::move(data_directory), initial_network_policy_blocked), worker_([this]() { run(); }) {
     __android_log_print(ANDROID_LOG_INFO, log_tag, "native core started");
   }
 
@@ -95,10 +95,12 @@ std::shared_ptr<ManagedCore> require_core(std::int64_t handle) {
 }  // namespace
 
 extern "C" JNIEXPORT jlong JNICALL
-Java_dev_ani_tracker_torrent_NativeTorrentCore_nativeStart(JNIEnv* env, jobject, jstring data_directory) {
+Java_dev_ani_tracker_torrent_NativeTorrentCore_nativeStart(
+    JNIEnv* env, jobject, jstring data_directory, jboolean initial_network_policy_blocked) {
   try {
     const auto handle = next_handle.fetch_add(1);
-    auto core = std::make_shared<ManagedCore>(to_string(env, data_directory));
+    auto core = std::make_shared<ManagedCore>(
+        to_string(env, data_directory), initial_network_policy_blocked == JNI_TRUE);
     {
       std::lock_guard<std::mutex> lock(registry_mutex);
       registry.emplace(handle, std::move(core));

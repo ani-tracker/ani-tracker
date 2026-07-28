@@ -1491,6 +1491,27 @@ export function SettingsPage() {
                 <h3 className="font-medium">流量与做种控制</h3>
                 <p className="mt-1 text-sm text-muted-foreground">限速为 0 时不限制传输速度。</p>
               </div>
+              {mobileRuntime && (
+                <Field className="items-center justify-between gap-4" orientation="horizontal">
+                  <FieldLabel
+                    className="min-w-0 flex-1 cursor-pointer flex-col items-start"
+                    htmlFor="allow-metered-downloads"
+                  >
+                    <span>允许移动网络下载</span>
+                    <span className="text-sm font-normal leading-6 text-muted-foreground">
+                      关闭后任务等待 Wi-Fi，下载、上传和做种会一起暂停。
+                    </span>
+                  </FieldLabel>
+                  <Switch
+                    checked={draft.download.allowMeteredDownloads ?? false}
+                    id="allow-metered-downloads"
+                    onCheckedChange={(value) => setDraft({
+                      ...draft,
+                      download: { ...draft.download, allowMeteredDownloads: value }
+                    })}
+                  />
+                </Field>
+              )}
               <SpeedLimitSetting
                 label="全局下载限制"
                 value={torrentEngineMode === "embedded"

@@ -10,6 +10,16 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { AppShell, type AppShellStatus } from "@/components/app-shell";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle
+} from "@/components/ui/alert-dialog";
 import { WindowControls } from "@/components/window-controls";
 import { AnimeDetailPage, type AnimeDetailLibraryAction } from "@/features/anime-detail/AnimeDetailPage";
 import {
@@ -28,7 +38,12 @@ import { DesktopPlayerPage } from "@/features/player/DesktopPlayerPage";
 import { DesktopVlcHostPage } from "@/features/player/DesktopVlcHostPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import { appApi, isTauriClient } from "@/lib/api";
+import {
+  claimMobileDownloadNotificationPrompt,
+  onManualDownloadAdded
+} from "@/lib/mobile-download-notification";
 import { getAppCapabilities, getAppRuntime } from "@/lib/runtime";
+import { toast } from "@/lib/toast";
 import type { DownloadServiceStatus, MobilePlatformStatus } from "@shared/contracts";
 import type { Anime } from "@shared/domain";
 import type { MyAnimePageIntent } from "@/features/my-anime/MyAnimePage";
@@ -229,6 +244,8 @@ function MainApplication() {
     detail: "正在连接服务"
   });
   const [mobileStatus, setMobileStatus] = useState<MobilePlatformStatus | null>(null);
+  const [notificationPromptOpen, setNotificationPromptOpen] = useState(false);
+  const [requestingNotificationPermission, setRequestingNotificationPermission] = useState(false);
   const contentRef = useRef<HTMLElement | null>(null);
   const detailViewRef = useRef<AnimeDetailState | null>(null);
   const discoveryScheduleRef = useRef<DiscoveryScheduleState | null>(null);
@@ -524,61 +541,129 @@ function MainApplication() {
     };
   }, [runtime]);
 
+  useEffect(() => {
+    if (runtime !== "android" && runtime !== "ios") return;
+
+    /** 首次手动下载成功后，按当前系统权限决定是否显示一次性引导。 */
+    return onManualDownloadAdded(() => {
+      if (!claimMobileDownloadNotificationPrompt()) return;
+      void appApi.getMobilePlatformStatus?.()
+        .then((status) => {
+          const permission = status?.notificationPermission;
+          if (permission === "granted" || permission === "denied" || permission === "not-required") {
+            console.info("[mobile-notification] 无需显示首次下载授权引导", { permission });
+            return;
+          }
+          setNotificationPromptOpen(true);
+        })
+        .catch((error) => {
+          console.warn("[mobile-notification] 权限状态读取失败，继续显示授权引导", error);
+          setNotificationPromptOpen(true);
+        });
+    });
+  }, [runtime]);
+
+  /** 由首次下载引导触发系统通知权限申请。 */
+  async function requestDownloadNotificationPermission() {
+    setRequestingNotificationPermission(true);
+    try {
+      const result = await appApi.requestMobileNotificationPermission?.();
+      if (result === "granted" || result === "not-required") {
+        toast.success("下载通知已开启");
+      } else {
+        toast.warning("下载通知未开启，可稍后在设置中授权");
+      }
+      setNotificationPromptOpen(false);
+    } catch (error) {
+      console.warn("[mobile-notification] 系统通知权限申请失败", error);
+      toast.error(error instanceof Error ? error.message : "系统通知权限申请失败");
+    } finally {
+      setRequestingNotificationPermission(false);
+    }
+  }
+
   return (
-    <AppShell
-      activePageId={activePage}
-      items={navItems}
-      onNavigate={(pageId) => navigatePage(pageId as PageId)}
-      contentRef={contentRef}
-      secondaryView={detailView
-        ? { title: "番剧详情", onBack: () => window.history.back() }
-        : discoverySchedule
-          ? { title: "新番时间表", onBack: () => window.history.back() }
-          : undefined}
-      status={applyMobileShellStatus(shellStatus, mobileStatus)}
-      unreadCount={unreadCount}
-      framelessWindow={framelessWindow}
-      windowControls={framelessWindow ? <WindowControls /> : undefined}
-    >
-      <div className={detailView || discoverySchedule ? "hidden" : undefined}>
-        {renderPage(activePage, {
-          onOpenAnimeDetail: openAnimeDetail,
-          onOpenDownloads: () => navigatePage("downloads"),
-          onOpenLibraryAction: openLibraryAction,
-          onOpenReleaseSearch: openReleaseSearch,
-          onOpenDiscoverySchedule: openDiscoverySchedule,
-          onPlayMedia: playMedia,
-          myAnimeIntent: detailView ? null : myAnimeIntent,
-          onMyAnimeIntentHandled: () => setMyAnimeIntent(null),
-          releaseSearchIntent
-        })}
-      </div>
-      {discoverySchedule && !detailView && (
-        <DiscoverySchedulePage
-          initialTarget={discoverySchedule.target}
-          onBack={() => window.history.back()}
-          onOpenAnimeDetail={openAnimeDetail}
-        />
-      )}
-      {detailView && detailActionHostActive && (
-        <MyAnimePage
-          actionOnly
-          intent={myAnimeIntent}
-          onDataChanged={() => setDetailRevision((revision) => revision + 1)}
-          onIntentHandled={() => setMyAnimeIntent(null)}
-          onPlayMedia={playMedia}
-        />
-      )}
-      {detailView && (
-        <AnimeDetailPage
-          animeId={detailView.animeId}
-          onBack={() => window.history.back()}
-          onOpenLibraryAction={openLibraryAction}
-          onOpenReleaseSearch={openReleaseSearch}
-          refreshKey={detailRevision}
-          sourceLabel={detailView.origin.label}
-        />
-      )}
-    </AppShell>
+    <>
+      <AppShell
+        activePageId={activePage}
+        items={navItems}
+        onNavigate={(pageId) => navigatePage(pageId as PageId)}
+        contentRef={contentRef}
+        secondaryView={detailView
+          ? { title: "番剧详情", onBack: () => window.history.back() }
+          : discoverySchedule
+            ? { title: "新番时间表", onBack: () => window.history.back() }
+            : undefined}
+        status={applyMobileShellStatus(shellStatus, mobileStatus)}
+        unreadCount={unreadCount}
+        framelessWindow={framelessWindow}
+        windowControls={framelessWindow ? <WindowControls /> : undefined}
+      >
+        <div className={detailView || discoverySchedule ? "hidden" : undefined}>
+          {renderPage(activePage, {
+            onOpenAnimeDetail: openAnimeDetail,
+            onOpenDownloads: () => navigatePage("downloads"),
+            onOpenLibraryAction: openLibraryAction,
+            onOpenReleaseSearch: openReleaseSearch,
+            onOpenDiscoverySchedule: openDiscoverySchedule,
+            onPlayMedia: playMedia,
+            myAnimeIntent: detailView ? null : myAnimeIntent,
+            onMyAnimeIntentHandled: () => setMyAnimeIntent(null),
+            releaseSearchIntent
+          })}
+        </div>
+        {discoverySchedule && !detailView && (
+          <DiscoverySchedulePage
+            initialTarget={discoverySchedule.target}
+            onBack={() => window.history.back()}
+            onOpenAnimeDetail={openAnimeDetail}
+          />
+        )}
+        {detailView && detailActionHostActive && (
+          <MyAnimePage
+            actionOnly
+            intent={myAnimeIntent}
+            onDataChanged={() => setDetailRevision((revision) => revision + 1)}
+            onIntentHandled={() => setMyAnimeIntent(null)}
+            onPlayMedia={playMedia}
+          />
+        )}
+        {detailView && (
+          <AnimeDetailPage
+            animeId={detailView.animeId}
+            onBack={() => window.history.back()}
+            onOpenLibraryAction={openLibraryAction}
+            onOpenReleaseSearch={openReleaseSearch}
+            refreshKey={detailRevision}
+            sourceLabel={detailView.origin.label}
+          />
+        )}
+      </AppShell>
+      <AlertDialog
+        onOpenChange={(open) => !requestingNotificationPermission && setNotificationPromptOpen(open)}
+        open={notificationPromptOpen}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>开启下载通知</AlertDialogTitle>
+            <AlertDialogDescription>
+              开启系统通知后，可在后台查看全局下载速度、上传速度和下载进度。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={requestingNotificationPermission}>暂不开启</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={requestingNotificationPermission}
+              onClick={(event) => {
+                event.preventDefault();
+                void requestDownloadNotificationPermission();
+              }}
+            >
+              {requestingNotificationPermission ? "请求中" : "开启通知"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   );
 }

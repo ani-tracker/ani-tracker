@@ -36,7 +36,13 @@ class TorrentRecoveryWorker(
         /** 注册唯一周期恢复任务，避免 Activity 重建产生重复调度。 */
         fun schedule(context: Context) {
             val constraints = Constraints.Builder()
-                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .setRequiredNetworkType(
+                    if (TorrentDownloadService.allowsMeteredDownloads(context)) {
+                        NetworkType.CONNECTED
+                    } else {
+                        NetworkType.UNMETERED
+                    }
+                )
                 .setRequiresStorageNotLow(true)
                 .build()
             val request = PeriodicWorkRequestBuilder<TorrentRecoveryWorker>(

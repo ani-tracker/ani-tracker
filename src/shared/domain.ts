@@ -354,6 +354,7 @@ export interface DownloadSettings {
   animeFolderPattern: string;
   temporaryDownloadDir?: string;
   defaultTorrentEngine: TorrentEngineKind;
+  allowMeteredDownloads?: boolean;
   embedded: EmbeddedTorrentSettings;
   qbittorrent: QbittorrentSettings;
 }

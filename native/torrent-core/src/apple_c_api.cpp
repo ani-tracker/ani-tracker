@@ -18,8 +18,9 @@ namespace {
 /** 在 Apple 应用进程内持续驱动 alert，并在停止时同步刷盘。 */
 class ManagedCore {
  public:
-  explicit ManagedCore(std::string data_directory)
-      : runtime_(std::move(data_directory)), worker_([this]() { run(); }) {}
+  ManagedCore(std::string data_directory, bool initial_network_policy_blocked)
+      : runtime_(std::move(data_directory), initial_network_policy_blocked),
+        worker_([this]() { run(); }) {}
 
   ~ManagedCore() { stop(); }
 
@@ -78,21 +79,22 @@ void set_error(char** error_message, const std::string& message) noexcept {
 }  // namespace
 
 struct ani_torrent_core_handle {
-  explicit ani_torrent_core_handle(std::string data_directory)
-      : core(std::move(data_directory)) {}
+  ani_torrent_core_handle(std::string data_directory, bool initial_network_policy_blocked)
+      : core(std::move(data_directory), initial_network_policy_blocked) {}
 
   ManagedCore core;
 };
 
 extern "C" ani_torrent_core_handle* ani_torrent_core_start(
     const char* data_directory,
+    int initial_network_policy_blocked,
     char** error_message) {
   if (error_message != nullptr) *error_message = nullptr;
   try {
     if (data_directory == nullptr || data_directory[0] == '\0') {
       throw std::invalid_argument("下载核心数据目录不能为空");
     }
-    return new ani_torrent_core_handle(data_directory);
+    return new ani_torrent_core_handle(data_directory, initial_network_policy_blocked != 0);
   } catch (const std::exception& error) {
     set_error(error_message, error.what());
     return nullptr;
