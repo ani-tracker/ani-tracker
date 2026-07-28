@@ -224,10 +224,14 @@ test("来源网络失败日志仅保留定位所需的脱敏字段", () => {
   assert.doesNotMatch(sourceNetwork, /Rust 来源网络请求失败[^\n]*error=\{\}/);
 });
 
-test("Android 与 iOS 下载核心统一执行移动网络会话策略", () => {
+test("Android 与 iOS 下载核心统一执行移动网络会话和任务策略", () => {
   assert.match(torrentRuntime, /command\.method == "setNetworkPolicy"/);
   assert.match(torrentRuntime, /session_\.pause\(\)/);
   assert.match(torrentRuntime, /session_\.resume\(\)/);
+  assert.match(torrentRuntime, /pause_tasks_for_network_policy\(\)/);
+  assert.match(torrentRuntime, /resume_tasks_from_network_policy\(\)/);
+  assert.match(torrentRuntime, /network_policy_paused_tasks_\.insert\(id\)/);
+  assert.match(torrentRuntime, /network_policy_paused_tasks_\.erase\(id\)/);
   assert.match(torrentRuntime, /return "waiting_network"/);
   assert.match(torrentRuntime, /network_policy_blocked_ \? 0 : state\.upload_payload_rate/);
   assert.match(torrentRuntime, /result\.put\("networkPolicyBlocked", network_policy_blocked_\)/);

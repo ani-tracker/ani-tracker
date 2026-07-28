@@ -30,6 +30,7 @@
 #include <mutex>
 #include <optional>
 #include <queue>
+#include <set>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -310,7 +311,8 @@ class TorrentCore {
       const bool has_metadata_pause = metadata.paused.has_value();
       const bool fastresume_paused = bool(params.flags & lt::torrent_flags::paused);
       const bool should_pause = metadata.paused.value_or(fastresume_paused);
-      if (should_pause) {
+      const bool policy_pause = network_policy_blocked_ && !should_pause;
+      if (should_pause || policy_pause) {
         params.flags |= lt::torrent_flags::paused;
         params.flags &= ~lt::torrent_flags::auto_managed;
       } else if (metadata.paused.has_value()) {
@@ -318,7 +320,9 @@ class TorrentCore {
         params.flags |= lt::torrent_flags::auto_managed;
       }
       if (!metadata.paused.has_value()) metadata.paused = fastresume_paused;
+      if (policy_pause) network_policy_paused_tasks_.insert(id);
       std::cerr << "[torrent-core] restored task=" << id << " paused=" << should_pause
+                << " policy_paused=" << policy_pause
                 << " source=" << (has_metadata_pause ? "metadata" : "fastresume") << '\n';
       session_.async_add_torrent(std::move(params));
     }
@@ -397,18 +401,57 @@ class TorrentCore {
     return status();
   }
 
-  /** 按宿主网络策略暂停或恢复整个 Session，不改变任务手动暂停状态。 */
+  /** 判断任务是否由用户或做种限制主动暂停，排除临时网络策略暂停。 */
+  bool is_user_paused(const std::string& id, const lt::torrent_handle& handle) const {
+    const auto metadata = metadata_.find(id);
+    if (metadata != metadata_.end() && metadata->second.paused.has_value()) {
+      return *metadata->second.paused;
+    }
+    return network_policy_paused_tasks_.find(id) == network_policy_paused_tasks_.end() &&
+           bool(handle.flags() & lt::torrent_flags::paused);
+  }
+
+  /** 暂停全部非手动暂停任务，并记录允许随网络恢复的任务。 */
+  void pause_tasks_for_network_policy() {
+    for (const auto& handle : session_.get_torrents()) {
+      const std::string id = task_id(handle);
+      if (is_user_paused(id, handle)) continue;
+      handle.unset_flags(lt::torrent_flags::auto_managed);
+      handle.pause();
+      network_policy_paused_tasks_.insert(id);
+    }
+  }
+
+  /** 仅恢复由网络策略暂停且未被用户再次暂停的任务。 */
+  void resume_tasks_from_network_policy() {
+    for (const auto& handle : session_.get_torrents()) {
+      const std::string id = task_id(handle);
+      if (network_policy_paused_tasks_.find(id) == network_policy_paused_tasks_.end()) continue;
+      const auto metadata = metadata_.find(id);
+      const bool user_paused = metadata != metadata_.end() &&
+                               metadata->second.paused.value_or(false);
+      if (user_paused) continue;
+      handle.set_flags(lt::torrent_flags::auto_managed);
+      handle.resume();
+    }
+    network_policy_paused_tasks_.clear();
+  }
+
+  /** 按宿主网络策略暂停或恢复 Session 与任务，不改变任务手动暂停状态。 */
   pt::ptree set_network_policy(const pt::ptree& params) {
     const bool blocked = params.get<bool>("blocked");
     if (blocked == network_policy_blocked_) return status();
     network_policy_blocked_ = blocked;
     if (network_policy_blocked_) {
       session_.pause();
+      pause_tasks_for_network_policy();
     } else {
+      resume_tasks_from_network_policy();
       session_.resume();
     }
     std::cerr << "[torrent-core] network policy changed blocked=" << network_policy_blocked_
-              << " task_count=" << session_.get_torrents().size() << '\n';
+              << " task_count=" << session_.get_torrents().size()
+              << " policy_paused_count=" << network_policy_paused_tasks_.size() << '\n';
     return status();
   }
 
@@ -419,6 +462,7 @@ class TorrentCore {
     result.put("taskCount", session_.get_torrents().size());
     result.put("listenPort", settings_.listen_port);
     result.put("networkPolicyBlocked", network_policy_blocked_);
+    result.put("networkPolicyPausedTaskCount", network_policy_paused_tasks_.size());
     return result;
   }
 
@@ -444,7 +488,8 @@ class TorrentCore {
   pt::ptree add_torrent(lt::add_torrent_params add, const pt::ptree& params) {
     add.save_path = params.get<std::string>("savePath");
     const bool paused = params.get<bool>("paused", false);
-    if (paused) {
+    const bool policy_pause = network_policy_blocked_ && !paused;
+    if (paused || policy_pause) {
       add.flags |= lt::torrent_flags::paused;
       add.flags &= ~lt::torrent_flags::auto_managed;
     }
@@ -468,6 +513,7 @@ class TorrentCore {
         now_iso(),
         "",
         paused};
+    if (policy_pause) network_policy_paused_tasks_.insert(id);
     save_metadata();
     handle.save_resume_data(lt::torrent_handle::save_info_dict);
     return task_tree(handle);
@@ -514,6 +560,7 @@ class TorrentCore {
     const std::string id = task_id(handle);
     handle.unset_flags(lt::torrent_flags::auto_managed);
     handle.pause();
+    network_policy_paused_tasks_.erase(id);
     metadata_[id].paused = true;
     save_metadata();
     handle.save_resume_data(lt::torrent_handle::save_info_dict);
@@ -527,9 +574,15 @@ class TorrentCore {
   pt::ptree resume(const pt::ptree& params) {
     auto handle = require_handle(params);
     const std::string id = task_id(handle);
-    handle.set_flags(lt::torrent_flags::auto_managed);
-    handle.resume();
     metadata_[id].paused = false;
+    if (network_policy_blocked_) {
+      handle.unset_flags(lt::torrent_flags::auto_managed);
+      handle.pause();
+      network_policy_paused_tasks_.insert(id);
+    } else {
+      handle.set_flags(lt::torrent_flags::auto_managed);
+      handle.resume();
+    }
     save_metadata();
     handle.save_resume_data(lt::torrent_handle::save_info_dict);
     std::cerr << "[torrent-core] task resumed task=" << id << '\n';
@@ -546,6 +599,7 @@ class TorrentCore {
     session_.remove_torrent(handle, delete_files ? lt::session::delete_files : lt::remove_flags_t{});
     std::error_code ignored;
     fs::remove(resume_directory_ / (id + ".fastresume"), ignored);
+    network_policy_paused_tasks_.erase(id);
     metadata_.erase(id);
     save_metadata();
     pt::ptree result;
@@ -579,8 +633,7 @@ class TorrentCore {
     result.put("torrentHash", id);
     result.put("correlationTag", metadata.correlation_tag);
     result.put("name", state.name.empty() ? id : state.name);
-    const bool user_paused = metadata.paused.value_or(
-        bool(handle.flags() & lt::torrent_flags::paused));
+    const bool user_paused = is_user_paused(id, handle);
     result.put(
         "status",
         map_status(state, user_paused, network_policy_blocked_));
@@ -695,6 +748,7 @@ class TorrentCore {
       if (ratio_reached || time_reached) {
         handle.unset_flags(lt::torrent_flags::auto_managed);
         handle.pause();
+        network_policy_paused_tasks_.erase(id);
         metadata.paused = true;
         save_metadata();
         handle.save_resume_data(lt::torrent_handle::save_info_dict);
@@ -720,6 +774,7 @@ class TorrentCore {
   lt::session session_;
   CoreSettings settings_;
   bool network_policy_blocked_ = false;
+  std::set<std::string> network_policy_paused_tasks_;
   std::map<std::string, TaskMetadata> metadata_;
   int pending_resume_saves_ = 0;
   Clock::time_point last_resume_save_ = Clock::now();
