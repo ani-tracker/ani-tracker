@@ -25,9 +25,11 @@ const ANILIST_ENDPOINT: &str = "https://graphql.anilist.co";
 const MIKAN_BASE_URL: &str = "https://mikanani.me/";
 const BANGUMI_PAGE_LIMIT: usize = 50;
 const BANGUMI_MAX_MONTHLY_ITEMS: usize = 300;
-const PROVIDER_DETAIL_CONCURRENCY: usize = 6;
+const PROVIDER_DETAIL_CONCURRENCY: usize = 3;
 const MIKAN_DETAIL_LIMIT: usize = 60;
 const SEARCH_LIMIT: usize = 30;
+const DETAIL_TRANSIENT_RETRY_DELAY_MS: u64 = 30_500;
+const DETAIL_RATE_LIMIT_RETRY_DELAY_MS: u64 = 60_500;
 
 /// 单个元数据来源返回的一批番剧。
 #[derive(Debug, Clone, PartialEq)]
@@ -57,7 +59,18 @@ pub struct AnimeMetadataRefresh {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnimeMetadataDetailCollection {
     pub items: Vec<Anime>,
-    pub error_count: usize,
+    pub settled_error_count: usize,
+    pub deferred_error_count: usize,
+    pub retryable_item_ids: Vec<String>,
+    pub retry_after_ms: u64,
+}
+
+#[derive(Debug)]
+struct DetailEnrichmentOutcome {
+    item: Anime,
+    error_count: usize,
+    retryable: bool,
+    retry_after_ms: u64,
 }
 
 #[derive(Clone)]
@@ -283,10 +296,32 @@ impl AnimeMetadataService {
         .buffered(PROVIDER_DETAIL_CONCURRENCY)
         .collect::<Vec<_>>()
         .await;
-        let error_count = results.iter().map(|(_, errors)| errors).sum();
+        let settled_error_count = results
+            .iter()
+            .filter(|result| !result.retryable)
+            .map(|result| result.error_count)
+            .sum();
+        let deferred_error_count = results
+            .iter()
+            .filter(|result| result.retryable)
+            .map(|result| result.error_count)
+            .sum();
+        let retryable_item_ids = results
+            .iter()
+            .filter(|result| result.retryable)
+            .map(|result| result.item.id.clone())
+            .collect();
+        let retry_after_ms = results
+            .iter()
+            .map(|result| result.retry_after_ms)
+            .max()
+            .unwrap_or_default();
         AnimeMetadataDetailCollection {
-            items: results.into_iter().map(|(item, _)| item).collect(),
-            error_count,
+            items: results.into_iter().map(|result| result.item).collect(),
+            settled_error_count,
+            deferred_error_count,
+            retryable_item_ids,
+            retry_after_ms,
         }
     }
 
@@ -295,7 +330,7 @@ impl AnimeMetadataService {
         &self,
         store: &S,
         local: Anime,
-    ) -> (Anime, usize) {
+    ) -> DetailEnrichmentOutcome {
         let bangumi = async {
             match external_id(&local, "bangumi") {
                 Some(id) => self
@@ -320,6 +355,8 @@ impl AnimeMetadataService {
             items: vec![local.clone()],
         }];
         let mut error_count = 0usize;
+        let mut retryable = false;
+        let mut retry_after_ms = 0u64;
         for (source, result) in [("bangumi", bangumi), ("mikan", mikan)] {
             match result {
                 Ok(Some(item)) => batches.push(AnimeMetadataBatch {
@@ -329,6 +366,10 @@ impl AnimeMetadataService {
                 Ok(None) => {}
                 Err(error) => {
                     error_count += 1;
+                    if let Some(delay) = detail_retry_after_ms(&error) {
+                        retryable = true;
+                        retry_after_ms = retry_after_ms.max(delay);
+                    }
                     log::warn!(
                         "季度新番详情补全失败 anime_id={} provider={} error={error}",
                         local.id,
@@ -342,11 +383,17 @@ impl AnimeMetadataService {
             .next()
             .unwrap_or_else(|| local.clone());
         item.id.clone_from(&local.id);
+        preserve_catalog_cover(&local, &mut item);
         for (index, alias) in item.aliases.iter_mut().enumerate() {
             alias.id = format!("{}-alias-{}", item.id, index + 1);
             alias.anime_id.clone_from(&item.id);
         }
-        (item, error_count)
+        DetailEnrichmentOutcome {
+            item,
+            error_count,
+            retryable,
+            retry_after_ms,
+        }
     }
 
     /// 按已有 external id 增量刷新单部详情，单来源失败不覆盖本地字段。
@@ -399,6 +446,7 @@ impl AnimeMetadataService {
             .next()
             .unwrap_or_else(|| local.clone());
         item.id.clone_from(&local.id);
+        preserve_catalog_cover(local, &mut item);
         for (index, alias) in item.aliases.iter_mut().enumerate() {
             alias.id = format!("{}-alias-{}", item.id, index + 1);
             alias.anime_id.clone_from(&item.id);
@@ -966,6 +1014,35 @@ impl AnimeMetadataService {
         };
         serde_json::from_slice(&response.body)
             .map_err(|error| SourceError::Parse(format!("{provider} JSON 解析失败：{error}")))
+    }
+}
+
+/// 已有季度目录封面优先，只有目录缺图时才采用详情来源封面。
+fn preserve_catalog_cover(local: &Anime, enriched: &mut Anime) {
+    if local.cover_url.is_some() {
+        enriched.cover_url.clone_from(&local.cover_url);
+    }
+}
+
+/// 返回可补偿来源错误的等待时间，永久数据错误不进入重试队列。
+fn detail_retry_after_ms(error: &SourceError) -> Option<u64> {
+    match error {
+        SourceError::Transport(_) => Some(DETAIL_TRANSIENT_RETRY_DELAY_MS),
+        SourceError::HttpStatus { status: 429 } => Some(DETAIL_RATE_LIMIT_RETRY_DELAY_MS),
+        SourceError::HttpStatus { status } if *status >= 500 => {
+            Some(DETAIL_TRANSIENT_RETRY_DELAY_MS)
+        }
+        SourceError::CircuitOpen { backoff_until } => {
+            let backoff_until = chrono::DateTime::parse_from_rfc3339(backoff_until)
+                .ok()?
+                .with_timezone(&Utc);
+            let remaining = backoff_until
+                .signed_duration_since(Utc::now())
+                .num_milliseconds()
+                .max(0) as u64;
+            Some(remaining.saturating_add(500))
+        }
+        _ => None,
     }
 }
 
@@ -2580,18 +2657,20 @@ mod tests {
     use ani_domain::RequestCircuitState;
     use ani_domain::{Anime, AnimeAlias, AnimeAliasLanguage};
     use ani_repository::{RepositoryError, RepositoryResult};
+    use chrono::Utc;
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
     use crate::{
-        CircuitStateStore, NativeHttpConfig, NetworkRequestChannel, ProxyMode, SourceNetworkService,
+        CircuitStateStore, NativeHttpConfig, NetworkRequestChannel, ProxyMode, SourceError,
+        SourceNetworkService,
     };
 
     use super::{
-        map_bangumi, merge_anime_metadata_batches, parse_mikan_candidates, parse_mikan_detail,
-        AnimeMetadataBatch, AnimeMetadataService, BangumiInfoboxItem, BangumiSubject,
-        MetadataEndpoints,
+        detail_retry_after_ms, map_bangumi, merge_anime_metadata_batches, parse_mikan_candidates,
+        parse_mikan_detail, preserve_catalog_cover, AnimeMetadataBatch, AnimeMetadataService,
+        BangumiInfoboxItem, BangumiSubject, MetadataEndpoints,
     };
 
     #[derive(Default)]
@@ -2667,6 +2746,42 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "local-1");
         assert_eq!(result[0].external_ids["anilist"], "1");
+    }
+
+    /// 验证详情来源不能覆盖季度目录封面，目录无图时允许详情补齐。
+    #[test]
+    fn preserves_catalog_cover_during_detail_enrichment() {
+        let mut catalog = anime("local-1", "本地标题", json!({"bangumi": "1"}));
+        catalog.cover_url = Some("https://catalog.example/cover.jpg".to_owned());
+        let mut enriched = anime("bangumi-1", "详情标题", json!({"bangumi": "1"}));
+        enriched.cover_url = Some("https://detail.example/cover.jpg".to_owned());
+
+        preserve_catalog_cover(&catalog, &mut enriched);
+        assert_eq!(
+            enriched.cover_url.as_deref(),
+            Some("https://catalog.example/cover.jpg")
+        );
+
+        catalog.cover_url = None;
+        enriched.cover_url = Some("https://detail.example/cover.jpg".to_owned());
+        preserve_catalog_cover(&catalog, &mut enriched);
+        assert_eq!(
+            enriched.cover_url.as_deref(),
+            Some("https://detail.example/cover.jpg")
+        );
+    }
+
+    /// 验证仅瞬时网络与熔断错误进入详情补偿队列。
+    #[test]
+    fn classifies_retryable_detail_failures() {
+        assert!(detail_retry_after_ms(&SourceError::HttpStatus { status: 503 }).is_some());
+        assert!(detail_retry_after_ms(&SourceError::HttpStatus { status: 429 }).is_some());
+        assert!(detail_retry_after_ms(&SourceError::CircuitOpen {
+            backoff_until: (Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
+        })
+        .is_some());
+        assert!(detail_retry_after_ms(&SourceError::HttpStatus { status: 404 }).is_none());
+        assert!(detail_retry_after_ms(&SourceError::Parse("invalid payload".to_owned())).is_none());
     }
 
     /// 验证 Mikan 季度页解析去重并优先保留更完整标题。

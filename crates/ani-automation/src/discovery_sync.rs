@@ -1,4 +1,6 @@
+use std::collections::HashSet;
 use std::sync::Arc;
+use std::time::Duration;
 
 use ani_domain::{
     Anime, AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult, AnimeSeasonSyncState,
@@ -8,6 +10,10 @@ use ani_repository::{
 };
 use ani_sources::{AnimeMetadataService, CircuitStateStore, SourceError, SourceNetworkService};
 use chrono::{DateTime, SecondsFormat, Utc};
+
+const DETAIL_COMPENSATION_MAX_ATTEMPTS: usize = 3;
+const DETAIL_COMPENSATION_MIN_DELAY_MS: u64 = 500;
+const DETAIL_COMPENSATION_MAX_DELAY_MS: u64 = 120_500;
 
 /// 新番季度同步所需的目录与网络状态窄端口。
 pub trait AnimeDiscoverySyncStore: CircuitStateStore {
@@ -243,18 +249,61 @@ impl AnimeDiscoverySyncService {
     where
         S: AnimeDiscoverySyncStore + Sync,
     {
-        let collected = self.collector.enrich_details(store, items).await;
-        if !collected.items.is_empty() {
-            store.save_season_catalog(&collected.items)?;
+        let mut pending = items.to_vec();
+        let mut error_count = 0usize;
+        for attempt in 1..=DETAIL_COMPENSATION_MAX_ATTEMPTS {
+            let collected = self.collector.enrich_details(store, &pending).await;
+            if !collected.items.is_empty() {
+                store.save_season_catalog(&collected.items)?;
+            }
+            error_count = error_count.saturating_add(collected.settled_error_count);
+            if collected.retryable_item_ids.is_empty() {
+                log::info!(
+                    "Rust 新番季度详情批次完成：count={}, errors={}, attempts={attempt}",
+                    items.len(),
+                    error_count
+                );
+                return Ok(AnimeDiscoveryDetailBatchResult {
+                    completed_count: items.len(),
+                    error_count,
+                });
+            }
+            if attempt == DETAIL_COMPENSATION_MAX_ATTEMPTS {
+                error_count = error_count.saturating_add(collected.deferred_error_count);
+                log::warn!(
+                    "Rust 新番季度详情补偿耗尽：count={}, deferred={}, errors={}",
+                    pending.len(),
+                    collected.retryable_item_ids.len(),
+                    error_count
+                );
+                break;
+            }
+
+            let retryable_ids = collected
+                .retryable_item_ids
+                .into_iter()
+                .collect::<HashSet<_>>();
+            pending.retain(|item| retryable_ids.contains(&item.id));
+            let delay_ms = collected.retry_after_ms.clamp(
+                DETAIL_COMPENSATION_MIN_DELAY_MS,
+                DETAIL_COMPENSATION_MAX_DELAY_MS,
+            );
+            log::warn!(
+                "Rust 新番季度详情批次暂停补偿：attempt={attempt}, deferred={}, delay_ms={delay_ms}",
+                pending.len()
+            );
+            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
         }
+
         log::info!(
-            "Rust 新番季度详情批次完成：count={}, errors={}",
-            collected.items.len(),
-            collected.error_count
+            "Rust 新番季度详情批次完成：count={}, errors={}, attempts={}",
+            items.len(),
+            error_count,
+            DETAIL_COMPENSATION_MAX_ATTEMPTS
         );
         Ok(AnimeDiscoveryDetailBatchResult {
-            completed_count: collected.items.len(),
-            error_count: collected.error_count,
+            completed_count: items.len(),
+            error_count,
         })
     }
 }

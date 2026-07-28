@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use std::error::Error as StdError;
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -50,6 +51,8 @@ const RELEASE_SOURCE_CIRCUIT_GROUP: &str = "release-source";
 const FORBIDDEN_BACKOFF_SECONDS: &[u64] = &[10 * 60, 20 * 60, 30 * 60];
 const RATE_LIMIT_BACKOFF_SECONDS: &[u64] = &[60, 5 * 60, 15 * 60, 30 * 60];
 const TRANSIENT_BACKOFF_SECONDS: &[u64] = &[30, 2 * 60, 30 * 60];
+const BACKGROUND_TRANSPORT_RETRY_DELAYS_MS: &[u64] = &[300, 900];
+const BACKGROUND_TRANSPORT_RETRY_JITTER_MS: u64 = 250;
 
 /// 元数据请求使用的代理模式。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -512,7 +515,8 @@ impl SourceNetworkService {
         } else {
             &self.direct_client
         };
-        match client.execute_in_channel(channel, request).await {
+        let response = execute_with_transport_retry(client, channel, request).await;
+        match response {
             Ok(response) if (200..400).contains(&response.status) => {
                 let state = self.circuit_breaker.record_success(
                     &circuit_key,
@@ -597,6 +601,49 @@ impl SourceNetworkService {
             );
         }
     }
+}
+
+/// 后台传输失败时先做有限重试，耗尽后才进入持久化熔断。
+async fn execute_with_transport_retry(
+    client: &NativeHttpClient,
+    channel: NetworkRequestChannel,
+    request: NativeHttpRequest,
+) -> Result<NativeHttpResponse, SourceError> {
+    let retry_delays = match channel {
+        NetworkRequestChannel::Interactive => &[][..],
+        NetworkRequestChannel::Background => BACKGROUND_TRANSPORT_RETRY_DELAYS_MS,
+    };
+    let mut retry_index = 0usize;
+    loop {
+        match client.execute_in_channel(channel, request.clone()).await {
+            Err(SourceError::Transport(_)) if retry_index < retry_delays.len() => {
+                let delay = transport_retry_delay(&request, retry_index, retry_delays[retry_index]);
+                log::warn!(
+                    "Rust 来源后台传输失败准备重试：source_id={}, attempt={}, delay_ms={}",
+                    request.source_id,
+                    retry_index + 2,
+                    delay.as_millis()
+                );
+                tokio::time::sleep(delay).await;
+                retry_index += 1;
+            }
+            result => return result,
+        }
+    }
+}
+
+/// 为不同请求计算稳定抖动，避免同一批任务同时重试。
+fn transport_retry_delay(
+    request: &NativeHttpRequest,
+    retry_index: usize,
+    base_delay_ms: u64,
+) -> Duration {
+    let mut hasher = DefaultHasher::new();
+    request.source_id.hash(&mut hasher);
+    request.url.hash(&mut hasher);
+    retry_index.hash(&mut hasher);
+    let jitter = hasher.finish() % (BACKGROUND_TRANSPORT_RETRY_JITTER_MS + 1);
+    Duration::from_millis(base_delay_ms.saturating_add(jitter))
 }
 
 /// 计算可持久化的指数退避熔断状态。
@@ -842,6 +889,8 @@ fn to_iso(value: DateTime<Utc>) -> String {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
     use std::sync::Mutex;
     use std::time::Duration;
 
@@ -1075,6 +1124,33 @@ mod tests {
         assert!(state.backoff_until.is_none());
     }
 
+    /// 验证后台传输瞬断会在熔断前重试，并在恢复后保存成功状态。
+    #[tokio::test]
+    async fn retries_background_transport_before_opening_circuit() {
+        let (url, request_count) = serve_after_disconnects(1, "recovered").await;
+        let service = SourceNetworkService::new(NativeHttpConfig {
+            proxy_mode: ProxyMode::Off,
+            ..NativeHttpConfig::default()
+        })
+        .expect("create source network service");
+        let store = MemoryCircuitStateStore::default();
+        let response = service
+            .execute_background(&store, &test_source("local", false, 250), get_request(url))
+            .await
+            .expect("retry background request");
+
+        assert_eq!(response.text(), "recovered");
+        assert_eq!(request_count.load(Ordering::SeqCst), 2);
+        let state = store
+            .state
+            .lock()
+            .expect("lock recovered state")
+            .clone()
+            .expect("persisted recovered state");
+        assert_eq!(state.failure_count, 0);
+        assert!(state.backoff_until.is_none());
+    }
+
     /// 验证非成功状态会持久化失败次数和 Retry-After 退避。
     #[tokio::test]
     async fn persists_http_failure_circuit_state() {
@@ -1166,5 +1242,43 @@ mod tests {
                 .expect("write local HTTP body");
         });
         format!("http://{address}/source")
+    }
+
+    /// 启动先断开指定次数、随后返回成功响应的本地服务。
+    async fn serve_after_disconnects(
+        disconnect_count: usize,
+        body: &str,
+    ) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind retry HTTP listener");
+        let address = listener.local_addr().expect("read retry HTTP address");
+        let request_count = Arc::new(AtomicUsize::new(0));
+        let server_request_count = Arc::clone(&request_count);
+        let body = body.as_bytes().to_vec();
+        tokio::spawn(async move {
+            for attempt in 0..=disconnect_count {
+                let (mut stream, _) = listener.accept().await.expect("accept retry request");
+                server_request_count.fetch_add(1, Ordering::SeqCst);
+                let mut request = [0_u8; 2_048];
+                let _ = stream.read(&mut request).await.expect("read retry request");
+                if attempt < disconnect_count {
+                    continue;
+                }
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                stream
+                    .write_all(response.as_bytes())
+                    .await
+                    .expect("write retry HTTP headers");
+                stream
+                    .write_all(&body)
+                    .await
+                    .expect("write retry HTTP body");
+            }
+        });
+        (format!("http://{address}/source"), request_count)
     }
 }
