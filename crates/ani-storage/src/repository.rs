@@ -2,9 +2,9 @@ use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
 use ani_domain::{
-    Anime, AnimeAlias, AnimeAliasLanguage, AnimeDetailPartialError, AnimeDetailResult,
-    AnimeDiscoverySearchResult, AnimeRating, AnimeRssSubscription, AnimeSeasonSyncState,
-    AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
+    Anime, AnimeAlias, AnimeAliasLanguage, AnimeDetailPartialError, AnimeDetailRefreshState,
+    AnimeDetailResult, AnimeDiscoverySearchResult, AnimeRating, AnimeRssSubscription,
+    AnimeSeasonSyncState, AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
     AnimeSourceExclusionScope, AnimeStatus, AnimeWatchProgress, AppSettings, DailyReminderItem,
     DailyReminderSummary, DashboardData, DownloadStatus, DownloadTask, Episode, EpisodePreference,
     EpisodeStatus, EpisodeSummary, FansubGroup, MediaFile, MyAnime, NormalizedVideoCodec,
@@ -334,7 +334,15 @@ impl<'connection> SqliteRepository<'connection> {
         &self,
         items: &[Anime],
     ) -> Result<AnimeCatalogWriteResult, StorageError> {
-        self.persist_anime_catalog(items, None)
+        self.persist_anime_catalog(items, None, true)
+    }
+
+    /// 增量写入详情补全结果，详情刷新时间变化也需要落库。
+    pub(crate) fn upsert_anime_catalog_details(
+        &self,
+        items: &[Anime],
+    ) -> Result<AnimeCatalogWriteResult, StorageError> {
+        self.persist_anime_catalog(items, None, false)
     }
 
     /// 原子替换指定月份的未引用缓存，并保留业务引用记录。
@@ -347,7 +355,7 @@ impl<'connection> SqliteRepository<'connection> {
         if !(1..=12).contains(&month) {
             return invalid_input("month", "月份必须在 1 到 12 之间");
         }
-        self.persist_anime_catalog(items, Some((year, month)))
+        self.persist_anime_catalog(items, Some((year, month)), false)
     }
 
     /// 读取指定季度的新番目录同步状态。
@@ -395,6 +403,80 @@ impl<'connection> SqliteRepository<'connection> {
             ],
         )?;
         Ok(())
+    }
+
+    /// 读取全部来源级番剧详情刷新状态。
+    pub(crate) fn list_anime_detail_refresh_states(
+        &self,
+    ) -> Result<Vec<AnimeDetailRefreshState>, StorageError> {
+        query_all(
+            self.connection,
+            "SELECT * FROM anime_detail_refresh_state",
+            map_anime_detail_refresh_state_row,
+        )
+    }
+
+    /// 原子保存一批来源级番剧详情刷新状态。
+    pub(crate) fn upsert_anime_detail_refresh_states(
+        &self,
+        states: &[AnimeDetailRefreshState],
+    ) -> Result<(), StorageError> {
+        for state in states {
+            validate_identifier("anime_detail_refresh_state.anime_id", &state.anime_id)?;
+            if !matches!(state.provider.as_str(), "bangumi" | "mikan") {
+                return invalid_input(
+                    "anime_detail_refresh_state.provider",
+                    "详情来源仅支持 bangumi 或 mikan",
+                );
+            }
+            if state.external_id.trim().is_empty() {
+                return invalid_input("anime_detail_refresh_state.external_id", "外部标识不能为空");
+            }
+            if !(0..=6).contains(&state.slot_day) {
+                return invalid_input(
+                    "anime_detail_refresh_state.slot_day",
+                    "周期分片必须在 0 到 6 之间",
+                );
+            }
+            if state.failure_count < 0 {
+                return invalid_input(
+                    "anime_detail_refresh_state.failure_count",
+                    "失败次数不能为负数",
+                );
+            }
+        }
+        let timestamp = now_iso();
+        self.with_transaction(|connection| {
+            for state in states {
+                connection.execute(
+                    "INSERT INTO anime_detail_refresh_state (
+                       anime_id, provider, external_id, slot_day, last_completed_cycle,
+                       last_attempt_at, last_success_at, failure_count, next_retry_at, updated_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                     ON CONFLICT(anime_id, provider) DO UPDATE SET
+                       external_id = excluded.external_id, slot_day = excluded.slot_day,
+                       last_completed_cycle = excluded.last_completed_cycle,
+                       last_attempt_at = excluded.last_attempt_at,
+                       last_success_at = excluded.last_success_at,
+                       failure_count = excluded.failure_count,
+                       next_retry_at = excluded.next_retry_at,
+                       updated_at = excluded.updated_at",
+                    params![
+                        &state.anime_id,
+                        &state.provider,
+                        &state.external_id,
+                        state.slot_day,
+                        state.last_completed_cycle,
+                        &state.last_attempt_at,
+                        &state.last_success_at,
+                        state.failure_count,
+                        &state.next_retry_at,
+                        &timestamp,
+                    ],
+                )?;
+            }
+            Ok(())
+        })
     }
 
     /// 聚合本地番剧、追番、单集和字幕组供详情页首屏使用。
@@ -1789,6 +1871,7 @@ impl<'connection> SqliteRepository<'connection> {
         &self,
         items: &[Anime],
         replace_month: Option<(i64, i64)>,
+        ignore_refresh_timestamp: bool,
     ) -> Result<AnimeCatalogWriteResult, StorageError> {
         let current = self.list_anime_catalog(None, None)?;
         let replacement_counts = replace_month.map(|_| {
@@ -1817,6 +1900,7 @@ impl<'connection> SqliteRepository<'connection> {
         };
         let mut added_count = 0;
         let mut existing_count = 0;
+        let mut changed_ids = HashSet::new();
         for item in items {
             validate_identifier("anime.id", &item.id)?;
             if item.title.trim().is_empty() {
@@ -1827,10 +1911,20 @@ impl<'connection> SqliteRepository<'connection> {
                 .position(|existing| is_same_anime(existing, item))
             {
                 let preserve_rating = followed_ids.contains(&catalog[index].id);
-                catalog[index] = merge_anime(&catalog[index], item, preserve_rating);
+                let merged = merge_anime(&catalog[index], item, preserve_rating);
+                let unchanged = if ignore_refresh_timestamp {
+                    anime_catalog_content_equal(&merged, &catalog[index])
+                } else {
+                    merged == catalog[index]
+                };
+                if !unchanged {
+                    changed_ids.insert(catalog[index].id.clone());
+                    catalog[index] = merged;
+                }
                 existing_count += 1;
             } else {
                 catalog.push(item.clone());
+                changed_ids.insert(item.id.clone());
                 added_count += 1;
             }
         }
@@ -1839,27 +1933,47 @@ impl<'connection> SqliteRepository<'connection> {
             existing_count = replacement_existing;
         }
 
-        let keep_ids = catalog
-            .iter()
-            .map(|anime| anime.id.clone())
-            .chain(referenced_ids.iter().cloned())
-            .collect::<HashSet<_>>();
-        let delete_ids = query_all(self.connection, "SELECT id FROM anime_catalog", |row| {
-            row.get::<_, String>(0)
-        })?
-        .into_iter()
-        .filter(|id| !keep_ids.contains(id))
-        .collect::<Vec<_>>();
+        let delete_ids = if replace_month.is_some() {
+            let keep_ids = catalog
+                .iter()
+                .map(|anime| anime.id.clone())
+                .chain(referenced_ids.iter().cloned())
+                .collect::<HashSet<_>>();
+            query_all(self.connection, "SELECT id FROM anime_catalog", |row| {
+                row.get::<_, String>(0)
+            })?
+            .into_iter()
+            .filter(|id| !keep_ids.contains(id))
+            .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
+        let rows_to_upsert = if replace_month.is_some() {
+            catalog.iter().collect::<Vec<_>>()
+        } else {
+            catalog
+                .iter()
+                .filter(|anime| changed_ids.contains(&anime.id))
+                .collect::<Vec<_>>()
+        };
         let timestamp = now_iso();
         self.with_transaction(|connection| {
             for id in &delete_ids {
                 connection.execute("DELETE FROM anime_catalog WHERE id = ?1", [id])?;
             }
-            for anime in &catalog {
+            for anime in &rows_to_upsert {
                 upsert_anime_row(connection, anime, &timestamp)?;
             }
             Ok(())
         })?;
+        if replace_month.is_none() {
+            info!(
+                "Rust 番剧目录增量写入完成：received={}, changed={}, unchanged={}",
+                items.len(),
+                rows_to_upsert.len(),
+                items.len().saturating_sub(rows_to_upsert.len())
+            );
+        }
         if let Some((year, month)) = replace_month {
             info!(
                 "Rust 番剧月度目录替换完成：year={}, month={}, removed={}, collected={}, retained_referenced={}",
@@ -2110,6 +2224,14 @@ impl AnimeCatalogRepository for SqliteRepository<'_> {
         SqliteRepository::upsert_anime_catalog(self, items).map_err(RepositoryError::from)
     }
 
+    /// 通过 SQLite 适配器写入详情补全结果。
+    fn upsert_anime_catalog_details(
+        &self,
+        items: &[Anime],
+    ) -> RepositoryResult<AnimeCatalogWriteResult> {
+        SqliteRepository::upsert_anime_catalog_details(self, items).map_err(RepositoryError::from)
+    }
+
     /// 通过 SQLite 适配器替换月度番剧目录。
     fn replace_anime_catalog_month(
         &self,
@@ -2134,6 +2256,20 @@ impl AnimeCatalogRepository for SqliteRepository<'_> {
     /// 通过 SQLite 适配器保存季度同步状态。
     fn upsert_anime_season_sync_state(&self, state: &AnimeSeasonSyncState) -> RepositoryResult<()> {
         SqliteRepository::upsert_anime_season_sync_state(self, state).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器读取来源级详情刷新状态。
+    fn list_anime_detail_refresh_states(&self) -> RepositoryResult<Vec<AnimeDetailRefreshState>> {
+        SqliteRepository::list_anime_detail_refresh_states(self).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器保存来源级详情刷新状态。
+    fn upsert_anime_detail_refresh_states(
+        &self,
+        states: &[AnimeDetailRefreshState],
+    ) -> RepositoryResult<()> {
+        SqliteRepository::upsert_anime_detail_refresh_states(self, states)
+            .map_err(RepositoryError::from)
     }
 
     /// 通过 SQLite 适配器读取番剧详情。
@@ -3999,9 +4135,12 @@ fn is_same_anime(left: &Anime, right: &Anime) -> bool {
     }
     let shared_external_id = right.external_ids.as_object().is_some_and(|right_ids| {
         left.external_ids.as_object().is_some_and(|left_ids| {
-            right_ids
-                .iter()
-                .any(|(key, value)| left_ids.get(key) == Some(value))
+            right_ids.iter().any(|(key, value)| {
+                is_meaningful_json(value)
+                    && left_ids.get(key).is_some_and(|left_value| {
+                        is_meaningful_json(left_value) && left_value == value
+                    })
+            })
         })
     });
     if shared_external_id {
@@ -4009,39 +4148,50 @@ fn is_same_anime(left: &Anime, right: &Anime) -> bool {
     }
     let left_titles = [Some(left.title.as_str()), left.original_title.as_deref()];
     let right_titles = [Some(right.title.as_str()), right.original_title.as_deref()];
-    left_titles.into_iter().flatten().any(|left_title| {
-        right_titles
-            .into_iter()
-            .flatten()
-            .any(|right_title| left_title == right_title)
-    })
+    left_titles
+        .into_iter()
+        .flatten()
+        .filter(|title| !title.trim().is_empty())
+        .any(|left_title| {
+            right_titles
+                .into_iter()
+                .flatten()
+                .filter(|title| !title.trim().is_empty())
+                .any(|right_title| left_title == right_title)
+        })
 }
 
 /// 以新采集字段为主合并目录记录，同时保持已有稳定标识和业务保护字段。
 fn merge_anime(existing: &Anime, incoming: &Anime, preserve_rating: bool) -> Anime {
+    let incoming_premiere_date = non_empty_text(incoming.premiere_date.as_deref());
+    let preserve_existing_window = incoming_premiere_date.is_none()
+        && non_empty_text(existing.premiere_date.as_deref()).is_some();
     Anime {
         id: existing.id.clone(),
         title: incoming.title.clone(),
-        original_title: incoming
-            .original_title
-            .clone()
-            .or_else(|| existing.original_title.clone()),
+        original_title: prefer_non_empty_text(
+            incoming.original_title.as_deref(),
+            existing.original_title.as_deref(),
+        ),
         aliases: merge_anime_aliases(&existing.aliases, &incoming.aliases, &existing.id),
-        premiere_date: incoming
-            .premiere_date
-            .clone()
-            .or_else(|| existing.premiere_date.clone()),
-        premiere_year: incoming.premiere_year,
-        premiere_month: incoming.premiere_month,
-        season: incoming.season.clone().or_else(|| existing.season.clone()),
-        summary: incoming
-            .summary
-            .clone()
-            .or_else(|| existing.summary.clone()),
-        cover_url: incoming
-            .cover_url
-            .clone()
-            .or_else(|| existing.cover_url.clone()),
+        premiere_date: incoming_premiere_date
+            .or_else(|| non_empty_text(existing.premiere_date.as_deref())),
+        premiere_year: if preserve_existing_window {
+            existing.premiere_year
+        } else {
+            incoming.premiere_year
+        },
+        premiere_month: if preserve_existing_window {
+            existing.premiere_month
+        } else {
+            incoming.premiere_month
+        },
+        season: prefer_non_empty_text(incoming.season.as_deref(), existing.season.as_deref()),
+        summary: prefer_non_empty_text(incoming.summary.as_deref(), existing.summary.as_deref()),
+        cover_url: prefer_non_empty_text(
+            incoming.cover_url.as_deref(),
+            existing.cover_url.as_deref(),
+        ),
         rating: if preserve_rating {
             existing.rating.clone().or_else(|| incoming.rating.clone())
         } else {
@@ -4049,6 +4199,22 @@ fn merge_anime(existing: &Anime, incoming: &Anime, preserve_rating: bool) -> Ani
         },
         external_ids: merge_json_objects(&existing.external_ids, &incoming.external_ids),
         detail: merge_optional_json_objects(existing.detail.as_ref(), incoming.detail.as_ref()),
+    }
+}
+
+/// 比较目录业务内容，忽略每次网络映射都会变化的详情刷新时间。
+fn anime_catalog_content_equal(left: &Anime, right: &Anime) -> bool {
+    let mut left = left.clone();
+    let mut right = right.clone();
+    remove_detail_refresh_timestamp(&mut left.detail);
+    remove_detail_refresh_timestamp(&mut right.detail);
+    left == right
+}
+
+/// 去除不参与目录差异判断的详情刷新时间。
+fn remove_detail_refresh_timestamp(detail: &mut Option<Value>) {
+    if let Some(object) = detail.as_mut().and_then(Value::as_object_mut) {
+        object.remove("refreshedAt");
     }
 }
 
@@ -4060,9 +4226,10 @@ fn merge_anime_aliases(
 ) -> Vec<AnimeAlias> {
     let mut aliases = existing.to_vec();
     for alias in incoming {
-        if !aliases
-            .iter()
-            .any(|item| item.alias.eq_ignore_ascii_case(&alias.alias))
+        if !alias.alias.trim().is_empty()
+            && !aliases
+                .iter()
+                .any(|item| item.alias.eq_ignore_ascii_case(&alias.alias))
         {
             aliases.push(AnimeAlias {
                 anime_id: anime_id.to_owned(),
@@ -4073,16 +4240,52 @@ fn merge_anime_aliases(
     aliases
 }
 
-/// 浅合并两个 JSON 对象，非对象值由新值覆盖。
+/// 递归合并两个 JSON 对象，空值不覆盖已有字段。
 fn merge_json_objects(existing: &Value, incoming: &Value) -> Value {
+    if !is_meaningful_json(incoming) {
+        return existing.clone();
+    }
     match (existing.as_object(), incoming.as_object()) {
         (Some(existing), Some(incoming)) => {
             let mut merged = existing.clone();
-            merged.extend(incoming.clone());
+            for (key, incoming_value) in incoming {
+                if !is_meaningful_json(incoming_value) {
+                    continue;
+                }
+                let value = merged.get(key).map_or_else(
+                    || incoming_value.clone(),
+                    |existing_value| merge_json_objects(existing_value, incoming_value),
+                );
+                merged.insert(key.clone(), value);
+            }
             Value::Object(merged)
         }
         _ => incoming.clone(),
     }
+}
+
+/// 判断采集值是否包含可用于覆盖旧数据的有效内容。
+fn is_meaningful_json(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(value) => !value.trim().is_empty(),
+        Value::Array(values) => values.iter().any(is_meaningful_json),
+        Value::Object(values) => values.values().any(is_meaningful_json),
+        Value::Bool(_) | Value::Number(_) => true,
+    }
+}
+
+/// 优先返回非空的新文本，否则保留已有文本。
+fn prefer_non_empty_text(incoming: Option<&str>, existing: Option<&str>) -> Option<String> {
+    non_empty_text(incoming).or_else(|| non_empty_text(existing))
+}
+
+/// 将非空白文本复制为可持久化字符串。
+fn non_empty_text(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 /// 合并可选详情对象并保留任一侧已有字段。
@@ -4093,7 +4296,8 @@ fn merge_optional_json_objects(
     match (existing, incoming) {
         (Some(existing), Some(incoming)) => Some(merge_json_objects(existing, incoming)),
         (Some(existing), None) => Some(existing.clone()),
-        (None, Some(incoming)) => Some(incoming.clone()),
+        (None, Some(incoming)) if is_meaningful_json(incoming) => Some(incoming.clone()),
+        (None, Some(_)) => None,
         (None, None) => None,
     }
 }
@@ -4801,6 +5005,21 @@ fn map_anime_season_sync_state_row(row: &Row<'_>) -> rusqlite::Result<AnimeSeaso
         last_successful_sync_at: row.get("last_successful_sync_at")?,
         completed_at: row.get("completed_at")?,
         last_anilist_error: row.get("last_anilist_error")?,
+    })
+}
+
+/// 映射 SQLite 来源级番剧详情刷新状态。
+fn map_anime_detail_refresh_state_row(row: &Row<'_>) -> rusqlite::Result<AnimeDetailRefreshState> {
+    Ok(AnimeDetailRefreshState {
+        anime_id: row.get("anime_id")?,
+        provider: row.get("provider")?,
+        external_id: row.get("external_id")?,
+        slot_day: row.get("slot_day")?,
+        last_completed_cycle: row.get("last_completed_cycle")?,
+        last_attempt_at: row.get("last_attempt_at")?,
+        last_success_at: row.get("last_success_at")?,
+        failure_count: row.get("failure_count")?,
+        next_retry_at: row.get("next_retry_at")?,
     })
 }
 

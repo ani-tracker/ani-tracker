@@ -942,6 +942,26 @@ pub struct AnimeSeasonSyncState {
     pub last_anilist_error: Option<String>,
 }
 
+/// 单部番剧在单个元数据来源上的周期详情刷新状态。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AnimeDetailRefreshState {
+    pub anime_id: String,
+    pub provider: String,
+    pub external_id: String,
+    pub slot_day: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_completed_cycle: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_attempt_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_success_at: Option<String>,
+    #[serde(default)]
+    pub failure_count: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_retry_at: Option<String>,
+}
+
 /// 新番关键词搜索的本地与在线聚合结果。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

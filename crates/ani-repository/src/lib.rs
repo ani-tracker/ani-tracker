@@ -1,9 +1,10 @@
 use ani_domain::{
-    Anime, AnimeDetailResult, AnimeDiscoverySearchResult, AnimeSeasonSyncState, AnimeSourceBinding,
-    AnimeSourceExclusion, AnimeWatchProgress, AppSettings, DashboardData, DownloadTask, Episode,
-    EpisodePreference, FansubGroup, MediaFile, MyAnime, NotificationRecord, PlaybackCheckpoint,
-    Release, ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
-    RequestCircuitState, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    Anime, AnimeDetailRefreshState, AnimeDetailResult, AnimeDiscoverySearchResult,
+    AnimeSeasonSyncState, AnimeSourceBinding, AnimeSourceExclusion, AnimeWatchProgress,
+    AppSettings, DashboardData, DownloadTask, Episode, EpisodePreference, FansubGroup, MediaFile,
+    MyAnime, NotificationRecord, PlaybackCheckpoint, Release, ReleaseSourceConfig,
+    ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
+    SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use serde_json::Value;
 
@@ -107,6 +108,12 @@ pub trait AnimeCatalogRepository {
     /// 合并并原子保存一批番剧目录记录。
     fn upsert_anime_catalog(&self, items: &[Anime]) -> RepositoryResult<AnimeCatalogWriteResult>;
 
+    /// 合并详情补全结果，并保留详情刷新时间更新。
+    fn upsert_anime_catalog_details(
+        &self,
+        items: &[Anime],
+    ) -> RepositoryResult<AnimeCatalogWriteResult>;
+
     /// 原子替换指定月份的未引用目录缓存。
     fn replace_anime_catalog_month(
         &self,
@@ -124,6 +131,15 @@ pub trait AnimeCatalogRepository {
 
     /// 保存指定季度的新番目录同步状态。
     fn upsert_anime_season_sync_state(&self, state: &AnimeSeasonSyncState) -> RepositoryResult<()>;
+
+    /// 读取全部来源级详情刷新状态。
+    fn list_anime_detail_refresh_states(&self) -> RepositoryResult<Vec<AnimeDetailRefreshState>>;
+
+    /// 批量保存来源级详情刷新状态。
+    fn upsert_anime_detail_refresh_states(
+        &self,
+        states: &[AnimeDetailRefreshState],
+    ) -> RepositoryResult<()>;
 
     /// 聚合番剧详情页需要的本地数据。
     fn get_anime_detail(&self, anime_id: &str) -> RepositoryResult<AnimeDetailResult>;

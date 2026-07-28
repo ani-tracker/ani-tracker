@@ -1,5 +1,5 @@
 /** 桌面与 Android 共用的 SQLite 结构版本。 */
-export const SQLITE_SCHEMA_VERSION = 19;
+export const SQLITE_SCHEMA_VERSION = 20;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -54,6 +54,23 @@ CREATE TABLE IF NOT EXISTS anime_season_sync_state (
   updated_at TEXT NOT NULL,
   PRIMARY KEY (year, season)
 );
+
+CREATE TABLE IF NOT EXISTS anime_detail_refresh_state (
+  anime_id TEXT NOT NULL REFERENCES anime_catalog(id) ON DELETE CASCADE,
+  provider TEXT NOT NULL CHECK(provider IN ('bangumi', 'mikan')),
+  external_id TEXT NOT NULL,
+  slot_day INTEGER NOT NULL CHECK(slot_day BETWEEN 0 AND 6),
+  last_completed_cycle INTEGER,
+  last_attempt_at TEXT,
+  last_success_at TEXT,
+  failure_count INTEGER NOT NULL DEFAULT 0,
+  next_retry_at TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (anime_id, provider)
+);
+
+CREATE INDEX IF NOT EXISTS idx_anime_detail_refresh_due
+  ON anime_detail_refresh_state (slot_day, last_completed_cycle, next_retry_at);
 
 CREATE TABLE IF NOT EXISTS anime_alias (
   id TEXT PRIMARY KEY,

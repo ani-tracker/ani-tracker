@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
@@ -97,15 +97,52 @@ pub struct AnimeMetadataDetailCollection {
     pub items: Vec<Anime>,
     pub settled_error_count: usize,
     pub deferred_error_count: usize,
-    pub retryable_item_ids: Vec<String>,
+    pub retryable_requests: Vec<AnimeMetadataDetailRequest>,
+    pub successful_providers: Vec<AnimeMetadataDetailProviderOutcome>,
+    pub settled_failed_providers: Vec<AnimeMetadataDetailProviderOutcome>,
+}
+
+/// 季度详情补全支持的来源。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AnimeMetadataDetailProvider {
+    Bangumi,
+    Mikan,
+}
+
+impl AnimeMetadataDetailProvider {
+    /// 返回用于持久化状态和日志的稳定来源名称。
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Bangumi => "bangumi",
+            Self::Mikan => "mikan",
+        }
+    }
+}
+
+/// 单部番剧在单个详情来源上的请求结果标识。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AnimeMetadataDetailProviderOutcome {
+    pub anime_id: String,
+    pub provider: AnimeMetadataDetailProvider,
+}
+
+/// 单部番剧待补全的来源及下一次重试等待时间。
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnimeMetadataDetailRequest {
+    pub item: Anime,
+    pub providers: Vec<AnimeMetadataDetailProvider>,
     pub retry_after_ms: u64,
 }
 
 #[derive(Debug)]
 struct DetailEnrichmentOutcome {
     item: Anime,
-    error_count: usize,
-    retryable: bool,
+    persist_item: bool,
+    settled_error_count: usize,
+    deferred_error_count: usize,
+    retryable_providers: Vec<AnimeMetadataDetailProvider>,
+    successful_providers: Vec<AnimeMetadataDetailProvider>,
+    settled_failed_providers: Vec<AnimeMetadataDetailProvider>,
     retry_after_ms: u64,
 }
 
@@ -370,49 +407,118 @@ impl AnimeMetadataService {
         store: &S,
         items: &[Anime],
     ) -> AnimeMetadataDetailCollection {
+        let requests = detail_requests_for_items(items);
+        let mikan_candidates = items
+            .iter()
+            .filter(|item| external_id(item, "mikan").is_some())
+            .count();
+        let mikan_requests = requests
+            .iter()
+            .filter(|request| {
+                request
+                    .providers
+                    .contains(&AnimeMetadataDetailProvider::Mikan)
+            })
+            .count();
+        log::info!(
+            "Rust 新番详情请求计划 items={} mikan_candidates={} mikan_requests={} mikan_skipped={}",
+            items.len(),
+            mikan_candidates,
+            mikan_requests,
+            mikan_candidates.saturating_sub(mikan_requests)
+        );
+        self.enrich_detail_requests(store, &requests).await
+    }
+
+    /// 仅重试上轮失败的详情来源，保留其他来源已补全的字段。
+    pub async fn retry_details<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        requests: &[AnimeMetadataDetailRequest],
+    ) -> AnimeMetadataDetailCollection {
+        self.enrich_detail_requests(store, requests).await
+    }
+
+    /// 按请求中声明的来源并发补全详情并汇总来源级重试状态。
+    async fn enrich_detail_requests<S: CircuitStateStore + Sync>(
+        &self,
+        store: &S,
+        requests: &[AnimeMetadataDetailRequest],
+    ) -> AnimeMetadataDetailCollection {
         let detail_started = Instant::now();
+        let attempted_provider_count = requests
+            .iter()
+            .map(|request| request.providers.len())
+            .sum::<usize>();
         let results = stream::iter(
-            items
+            requests
                 .iter()
                 .cloned()
-                .map(|item| async move { self.enrich_catalog_item(store, item).await }),
+                .map(|request| async move { self.enrich_catalog_item(store, request).await }),
         )
         .buffered(PROVIDER_DETAIL_CONCURRENCY)
         .collect::<Vec<_>>()
         .await;
         let settled_error_count = results
             .iter()
-            .filter(|result| !result.retryable)
-            .map(|result| result.error_count)
+            .map(|result| result.settled_error_count)
             .sum();
         let deferred_error_count = results
             .iter()
-            .filter(|result| result.retryable)
-            .map(|result| result.error_count)
+            .map(|result| result.deferred_error_count)
             .sum();
-        let retryable_item_ids = results
+        let retryable_requests = results
             .iter()
-            .filter(|result| result.retryable)
-            .map(|result| result.item.id.clone())
+            .filter(|result| !result.retryable_providers.is_empty())
+            .map(|result| AnimeMetadataDetailRequest {
+                item: result.item.clone(),
+                providers: result.retryable_providers.clone(),
+                retry_after_ms: result.retry_after_ms,
+            })
             .collect();
-        let retry_after_ms = results
+        let successful_providers = results
             .iter()
-            .map(|result| result.retry_after_ms)
-            .max()
-            .unwrap_or_default();
+            .flat_map(|result| {
+                result.successful_providers.iter().copied().map(|provider| {
+                    AnimeMetadataDetailProviderOutcome {
+                        anime_id: result.item.id.clone(),
+                        provider,
+                    }
+                })
+            })
+            .collect();
+        let settled_failed_providers = results
+            .iter()
+            .flat_map(|result| {
+                result
+                    .settled_failed_providers
+                    .iter()
+                    .copied()
+                    .map(|provider| AnimeMetadataDetailProviderOutcome {
+                        anime_id: result.item.id.clone(),
+                        provider,
+                    })
+            })
+            .collect();
         log::info!(
-            "Rust 新番阶段耗时 phase=detail-enrichment items={} settled_errors={} deferred_errors={} duration_ms={}",
-            items.len(),
+            "Rust 新番阶段耗时 phase=detail-enrichment items={} providers={} settled_errors={} deferred_errors={} duration_ms={}",
+            requests.len(),
+            attempted_provider_count,
             settled_error_count,
             deferred_error_count,
             detail_started.elapsed().as_millis()
         );
         AnimeMetadataDetailCollection {
-            items: results.into_iter().map(|result| result.item).collect(),
+            items: results
+                .iter()
+                .filter(|result| result.persist_item)
+                .map(|result| result.item.clone())
+                .collect(),
             settled_error_count,
             deferred_error_count,
-            retryable_item_ids,
-            retry_after_ms,
+            retryable_requests,
+            successful_providers,
+            settled_failed_providers,
         }
     }
 
@@ -420,43 +526,56 @@ impl AnimeMetadataService {
     async fn enrich_catalog_item<S: CircuitStateStore + Sync>(
         &self,
         store: &S,
-        local: Anime,
+        request: AnimeMetadataDetailRequest,
     ) -> DetailEnrichmentOutcome {
+        let AnimeMetadataDetailRequest {
+            item: local,
+            providers,
+            ..
+        } = request;
+        let fetch_bangumi = providers.contains(&AnimeMetadataDetailProvider::Bangumi);
+        let fetch_mikan = providers.contains(&AnimeMetadataDetailProvider::Mikan);
         let bangumi_id = external_id(&local, "bangumi");
         let cached_bangumi = bangumi_id
             .as_deref()
             .and_then(|id| self.cached_bangumi_catalog_subject(id));
         let bangumi = async {
-            match bangumi_id.as_deref() {
-                Some(id) => self.fetch_bangumi_detail(store, id, &local).await.map(Some),
-                None => Ok(None),
+            match (fetch_bangumi, bangumi_id.as_deref()) {
+                (true, Some(id)) => self.fetch_bangumi_detail(store, id, &local).await.map(Some),
+                _ => Ok(None),
             }
         };
         let mikan = async {
-            match external_id(&local, "mikan") {
-                Some(id) => self
+            match (fetch_mikan, external_id(&local, "mikan")) {
+                (true, Some(id)) => self
                     .fetch_mikan_detail_by_id(store, &id, &local)
                     .await
                     .map(Some),
-                None => Ok(None),
+                _ => Ok(None),
             }
         };
         let (bangumi, mikan) = tokio::join!(bangumi, mikan);
-        let mut error_count = 0usize;
-        let mut retryable = false;
+        let mut settled_error_count = 0usize;
+        let mut deferred_error_count = 0usize;
+        let mut retryable_providers = Vec::new();
+        let mut settled_failed_providers = Vec::new();
         let mut retry_after_ms = 0u64;
-        let mut record_error = |source: &str, error: &SourceError| {
-            error_count += 1;
-            if let Some(delay) = detail_retry_after_ms(error) {
-                retryable = true;
-                retry_after_ms = retry_after_ms.max(delay);
-            }
-            log::warn!(
-                "季度新番详情补全失败 anime_id={} provider={} error={error}",
-                local.id,
-                source
-            );
-        };
+        let mut record_error =
+            |provider: AnimeMetadataDetailProvider, source: &str, error: &SourceError| {
+                if let Some(delay) = detail_retry_after_ms(error) {
+                    deferred_error_count += 1;
+                    retryable_providers.push(provider);
+                    retry_after_ms = retry_after_ms.max(delay);
+                } else {
+                    settled_error_count += 1;
+                    settled_failed_providers.push(provider);
+                }
+                log::warn!(
+                    "季度新番详情补全失败 anime_id={} provider={} error={error}",
+                    local.id,
+                    source
+                );
+            };
 
         let mut leading_bangumi = None;
         let mut trailing_bangumi = None;
@@ -473,7 +592,7 @@ impl AnimeMetadataService {
             }
             Ok(None) => {}
             Err(error) => {
-                record_error("bangumi", &error);
+                record_error(AnimeMetadataDetailProvider::Bangumi, "bangumi", &error);
                 if let Some(subject) = cached_bangumi {
                     log::info!(
                         "季度新番详情使用目录回退 anime_id={} provider=bangumi",
@@ -490,10 +609,11 @@ impl AnimeMetadataService {
         let mikan = match mikan {
             Ok(item) => item,
             Err(error) => {
-                record_error("mikan", &error);
+                record_error(AnimeMetadataDetailProvider::Mikan, "mikan", &error);
                 None
             }
         };
+        let authoritative_detail = trailing_bangumi.clone().or_else(|| mikan.clone());
         let mut batches = Vec::new();
         if let Some(item) = leading_bangumi {
             batches.push(AnimeMetadataBatch {
@@ -521,16 +641,33 @@ impl AnimeMetadataService {
             .into_iter()
             .next()
             .unwrap_or_else(|| local.clone());
+        if let Some(authoritative) = authoritative_detail {
+            item.summary = authoritative.summary.or(item.summary);
+            item.original_title = authoritative.original_title.or(item.original_title);
+            item.detail = merge_detail(authoritative.detail, item.detail);
+        }
         item.id.clone_from(&local.id);
         preserve_catalog_cover(&local, &mut item);
         for (index, alias) in item.aliases.iter_mut().enumerate() {
             alias.id = format!("{}-alias-{}", item.id, index + 1);
             alias.anime_id.clone_from(&item.id);
         }
+        let successful_providers = providers
+            .into_iter()
+            .filter(|provider| {
+                !retryable_providers.contains(provider)
+                    && !settled_failed_providers.contains(provider)
+            })
+            .collect::<Vec<_>>();
+        let persist_item = item != local;
         DetailEnrichmentOutcome {
             item,
-            error_count,
-            retryable,
+            persist_item,
+            settled_error_count,
+            deferred_error_count,
+            retryable_providers,
+            successful_providers,
+            settled_failed_providers,
             retry_after_ms,
         }
     }
@@ -1324,19 +1461,19 @@ pub fn merge_anime_metadata_batches(batches: &[AnimeMetadataBatch]) -> Vec<Anime
         .flat_map(|batch| batch.items.iter().cloned())
         .collect::<Vec<_>>();
     let mut parents = (0..candidates.len()).collect::<Vec<_>>();
-    for left in 0..candidates.len() {
-        for right in left + 1..candidates.len() {
-            if should_merge(&candidates[left], &candidates[right]) {
-                union(&mut parents, left, right);
-            }
+    for (left, right) in merge_candidate_pairs(&candidates) {
+        if should_merge(&candidates[left], &candidates[right]) {
+            union(&mut parents, left, right);
         }
     }
     let mut groups = Vec::<(usize, Vec<Anime>)>::new();
+    let mut group_indexes = HashMap::<usize, usize>::new();
     for (index, item) in candidates.into_iter().enumerate() {
         let root = find(&mut parents, index);
-        if let Some((_, items)) = groups.iter_mut().find(|(candidate, _)| *candidate == root) {
-            items.push(item);
+        if let Some(group_index) = group_indexes.get(&root).copied() {
+            groups[group_index].1.push(item);
         } else {
+            group_indexes.insert(root, groups.len());
             groups.push((root, vec![item]));
         }
     }
@@ -1349,17 +1486,72 @@ pub fn merge_anime_metadata_batches(batches: &[AnimeMetadataBatch]) -> Vec<Anime
         .collect()
 }
 
+/// 通过外部标识和播出窗口标题建立候选桶，避免全量两两比较。
+fn merge_candidate_pairs(candidates: &[Anime]) -> BTreeSet<(usize, usize)> {
+    let mut external_buckets = HashMap::<(String, String), Vec<usize>>::new();
+    let mut title_buckets = HashMap::<(i64, Option<String>, String), Vec<usize>>::new();
+    for (index, anime) in candidates.iter().enumerate() {
+        for (provider, external_id) in external_ids(anime) {
+            external_buckets
+                .entry((provider.to_owned(), external_id.to_owned()))
+                .or_default()
+                .push(index);
+        }
+        let mut normalized_names = normalized_anime_names(anime);
+        for name in normalized_names.drain() {
+            title_buckets
+                .entry((anime.premiere_year, anime.season.clone(), name))
+                .or_default()
+                .push(index);
+        }
+    }
+
+    let mut pairs = BTreeSet::new();
+    for bucket in external_buckets.values().chain(title_buckets.values()) {
+        for (position, left) in bucket.iter().copied().enumerate() {
+            for right in bucket.iter().copied().skip(position + 1) {
+                pairs.insert((left.min(right), left.max(right)));
+            }
+        }
+    }
+    pairs
+}
+
 fn unique_by_normalized_title(items: Vec<Anime>) -> Vec<Anime> {
     let mut unique = Vec::<Anime>::new();
+    let mut group_names = Vec::<HashSet<String>>::new();
+    let mut title_indexes = HashMap::<String, BTreeSet<usize>>::new();
     for item in items {
-        if let Some(index) = unique
+        let item_names = normalized_anime_names(&item);
+        let existing_index = item_names
             .iter()
-            .position(|existing| shared_title(existing, &item))
-        {
-            let existing = unique.remove(index);
-            unique.insert(index, merge_anime(existing, item));
+            .filter_map(|name| title_indexes.get(name))
+            .flat_map(|indexes| indexes.iter().copied())
+            .min();
+        if let Some(index) = existing_index {
+            for name in &group_names[index] {
+                let remove_entry = title_indexes.get_mut(name).is_some_and(|indexes| {
+                    indexes.remove(&index);
+                    indexes.is_empty()
+                });
+                if remove_entry {
+                    title_indexes.remove(name);
+                }
+            }
+            let merged = merge_anime(unique[index].clone(), item);
+            let merged_names = normalized_anime_names(&merged);
+            for name in &merged_names {
+                title_indexes.entry(name.clone()).or_default().insert(index);
+            }
+            unique[index] = merged;
+            group_names[index] = merged_names;
         } else {
+            let index = unique.len();
+            for name in &item_names {
+                title_indexes.entry(name.clone()).or_default().insert(index);
+            }
             unique.push(item);
+            group_names.push(item_names);
         }
     }
     unique
@@ -1620,6 +1812,35 @@ fn external_id(anime: &Anime, provider: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// 为一批目录记录生成实际存在外部标识的详情请求。
+pub fn detail_requests_for_items(items: &[Anime]) -> Vec<AnimeMetadataDetailRequest> {
+    items
+        .iter()
+        .filter_map(|item| {
+            let providers = detail_providers_for_item(item);
+            (!providers.is_empty()).then(|| AnimeMetadataDetailRequest {
+                item: item.clone(),
+                providers,
+                retry_after_ms: 0,
+            })
+        })
+        .collect()
+}
+
+/// 选择单部番剧需要补全的详情来源，避免 Bangumi 已覆盖时重复请求 Mikan。
+fn detail_providers_for_item(anime: &Anime) -> Vec<AnimeMetadataDetailProvider> {
+    let ids = external_ids(anime);
+    let has_bangumi = ids.contains_key("bangumi");
+    let mut providers = Vec::new();
+    if has_bangumi {
+        providers.push(AnimeMetadataDetailProvider::Bangumi);
+    }
+    if ids.contains_key("mikan") && !has_bangumi {
+        providers.push(AnimeMetadataDetailProvider::Mikan);
+    }
+    providers
+}
+
 fn external_ids(anime: &Anime) -> HashMap<&str, &str> {
     anime
         .external_ids
@@ -1645,15 +1866,19 @@ fn conflicting_external_id(left: &Anime, right: &Anime) -> bool {
 }
 
 fn shared_title(left: &Anime, right: &Anime) -> bool {
-    let left = anime_names(left)
+    let left = normalized_anime_names(left);
+    normalized_anime_names(right)
+        .into_iter()
+        .any(|name| left.contains(&name))
+}
+
+/// 预计算单部番剧可参与匹配的规范化标题集合。
+fn normalized_anime_names(anime: &Anime) -> HashSet<String> {
+    anime_names(anime)
         .into_iter()
         .map(normalize_title)
         .filter(|name| !name.is_empty())
-        .collect::<HashSet<_>>();
-    anime_names(right)
-        .into_iter()
-        .map(normalize_title)
-        .any(|name| !name.is_empty() && left.contains(&name))
+        .collect()
 }
 
 fn anime_names(anime: &Anime) -> Vec<&str> {
@@ -2938,8 +3163,10 @@ mod tests {
     };
 
     use super::{
-        detail_retry_after_ms, map_bangumi, map_bangumi_catalog, merge_anime_metadata_batches,
-        parse_mikan_candidates, parse_mikan_detail, preserve_catalog_cover, AnimeMetadataBatch,
+        detail_providers_for_item, detail_retry_after_ms, find, map_bangumi, map_bangumi_catalog,
+        merge_anime, merge_anime_metadata_batches, parse_mikan_candidates, parse_mikan_detail,
+        preserve_catalog_cover, shared_title, should_merge, union, unique_by_normalized_title,
+        AnimeMetadataBatch, AnimeMetadataDetailProvider, AnimeMetadataDetailRequest,
         AnimeMetadataService, BangumiImages, BangumiInfoboxItem, BangumiRating, BangumiSubject,
         BangumiTag, MetadataEndpoints,
     };
@@ -2997,6 +3224,55 @@ mod tests {
         }
     }
 
+    /// 使用改造前的全量两两比较生成基准合并结果。
+    fn quadratic_merge_reference(batches: &[AnimeMetadataBatch]) -> Vec<Anime> {
+        let candidates = batches
+            .iter()
+            .flat_map(|batch| batch.items.iter().cloned())
+            .collect::<Vec<_>>();
+        let mut parents = (0..candidates.len()).collect::<Vec<_>>();
+        for left in 0..candidates.len() {
+            for right in left + 1..candidates.len() {
+                if should_merge(&candidates[left], &candidates[right]) {
+                    union(&mut parents, left, right);
+                }
+            }
+        }
+        let mut groups = Vec::<(usize, Vec<Anime>)>::new();
+        for (index, item) in candidates.into_iter().enumerate() {
+            let root = find(&mut parents, index);
+            if let Some((_, items)) = groups.iter_mut().find(|(candidate, _)| *candidate == root) {
+                items.push(item);
+            } else {
+                groups.push((root, vec![item]));
+            }
+        }
+        groups
+            .into_iter()
+            .map(|(_, mut items)| {
+                let first = items.remove(0);
+                items.into_iter().fold(first, merge_anime)
+            })
+            .collect()
+    }
+
+    /// 使用改造前的线性标题扫描生成单来源去重基准。
+    fn quadratic_unique_reference(items: Vec<Anime>) -> Vec<Anime> {
+        let mut unique = Vec::<Anime>::new();
+        for item in items {
+            if let Some(index) = unique
+                .iter()
+                .position(|existing| shared_title(existing, &item))
+            {
+                let existing = unique.remove(index);
+                unique.insert(index, merge_anime(existing, item));
+            } else {
+                unique.push(item);
+            }
+        }
+        unique
+    }
+
     /// 验证跨来源 external id 会合并，并保留本地主记录标识。
     #[test]
     fn merges_metadata_by_external_id() {
@@ -3017,6 +3293,86 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].id, "local-1");
         assert_eq!(result[0].external_ids["anilist"], "1");
+    }
+
+    /// 验证索引分桶与原全量比较在冲突、标题和外部标识场景下结果一致。
+    #[test]
+    fn indexed_merge_matches_quadratic_reference() {
+        let mut bangumi = anime("bangumi-1", "作品甲", json!({"bangumi": "1"}));
+        bangumi.aliases[0].alias = "Work Alpha".to_owned();
+        let mut anilist = anime(
+            "anilist-1",
+            "Work Alpha",
+            json!({"bangumi": "1", "anilist": "10"}),
+        );
+        anilist.aliases[0].alias = "Alpha Alias".to_owned();
+        let mut title_only = anime("mikan-1", "作品甲", json!({"mikan": "100"}));
+        title_only.aliases[0].alias = "Alpha Mikan".to_owned();
+        let mut conflicting = anime("bangumi-2", "作品甲", json!({"bangumi": "2"}));
+        conflicting.aliases[0].alias = "Conflicting Alpha".to_owned();
+        let mut isolated = anime("anilist-2", "作品乙", json!({"anilist": "20"}));
+        isolated.aliases[0].alias = "Work Beta".to_owned();
+        let batches = vec![
+            AnimeMetadataBatch {
+                source: "bangumi".to_owned(),
+                items: vec![bangumi, conflicting],
+            },
+            AnimeMetadataBatch {
+                source: "anilist".to_owned(),
+                items: vec![anilist, isolated],
+            },
+            AnimeMetadataBatch {
+                source: "mikan".to_owned(),
+                items: vec![title_only],
+            },
+        ];
+
+        assert_eq!(
+            merge_anime_metadata_batches(&batches),
+            quadratic_merge_reference(&batches)
+        );
+    }
+
+    /// 验证单来源标题索引在连续别名合并时与旧扫描算法一致。
+    #[test]
+    fn indexed_title_deduplication_matches_quadratic_reference() {
+        let mut first = anime("source-1", "Work Alpha", json!({"source": "1"}));
+        first.aliases[0].alias = "Alpha Alias".to_owned();
+        let mut second = anime("source-2", "作品甲", json!({"source": "2"}));
+        second.aliases[0].alias = "Work Alpha".to_owned();
+        let mut third = anime("source-3", "Alpha Alias", json!({"source": "3"}));
+        third.aliases[0].alias = "第三别名".to_owned();
+        let mut isolated = anime("source-4", "作品乙", json!({"source": "4"}));
+        isolated.aliases[0].alias = "Work Beta".to_owned();
+        let items = vec![first, second, isolated, third];
+
+        assert_eq!(
+            unique_by_normalized_title(items.clone()),
+            quadratic_unique_reference(items)
+        );
+    }
+
+    /// 验证 Bangumi 已覆盖时跳过 Mikan，Mikan 独有条目仍会补全详情。
+    #[test]
+    fn selects_only_required_detail_providers() {
+        let merged = anime(
+            "bangumi-1",
+            "作品甲",
+            json!({"bangumi": "1", "anilist": "10", "mikan": "100"}),
+        );
+        assert_eq!(
+            detail_providers_for_item(&merged),
+            vec![AnimeMetadataDetailProvider::Bangumi]
+        );
+
+        let mikan_only = anime("mikan-100", "作品乙", json!({"mikan": "100"}));
+        assert_eq!(
+            detail_providers_for_item(&mikan_only),
+            vec![AnimeMetadataDetailProvider::Mikan]
+        );
+
+        let anilist_only = anime("anilist-10", "作品丙", json!({"anilist": "10"}));
+        assert!(detail_providers_for_item(&anilist_only).is_empty());
     }
 
     /// 验证详情来源不能覆盖季度目录封面，目录无图时允许详情补齐。
@@ -3289,6 +3645,74 @@ mod tests {
         );
         assert_eq!(detail.staff.as_ref().expect("staff").len(), 2);
         assert_eq!(detail.duration_minutes, Some(84));
+    }
+
+    /// 验证来源级补偿只请求声明的 Mikan，不会重复访问已有 Bangumi 来源。
+    #[tokio::test]
+    async fn retries_only_requested_detail_provider() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind mock");
+        let address = listener.local_addr().expect("mock address");
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.expect("accept mock");
+            let mut buffer = vec![0u8; 8 * 1024];
+            let read = stream.read(&mut buffer).await.expect("read request");
+            let request = String::from_utf8_lossy(&buffer[..read]);
+            assert!(request
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .contains("/Home/Bangumi/100"));
+            let body = r#"<html><head><meta property="og:title" content="测试番"></head><body>话数：12</body></html>"#;
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write response");
+        });
+        let base = format!("http://{address}/");
+        let service = AnimeMetadataService {
+            network: Arc::new(
+                SourceNetworkService::new(NativeHttpConfig {
+                    proxy_mode: ProxyMode::Off,
+                    proxy_url: None,
+                    timeout_ms: 5_000,
+                    max_response_bytes: 1024 * 1024,
+                    user_agent: "AniTracker-Test".to_owned(),
+                })
+                .expect("network service"),
+            ),
+            endpoints: MetadataEndpoints {
+                bangumi: base.clone(),
+                anilist: format!("{base}graphql"),
+                mikan: base,
+            },
+            channel: NetworkRequestChannel::Interactive,
+            bangumi_catalog_cache: Mutex::new(HashMap::new()),
+        };
+        let local = anime(
+            "bangumi-1",
+            "测试番",
+            json!({"bangumi": "1", "mikan": "100"}),
+        );
+        let result = service
+            .retry_details(
+                &MemoryCircuitStore::default(),
+                &[AnimeMetadataDetailRequest {
+                    item: local,
+                    providers: vec![AnimeMetadataDetailProvider::Mikan],
+                    retry_after_ms: 0,
+                }],
+            )
+            .await;
+        server.await.expect("mock server");
+
+        assert_eq!(result.items.len(), 1);
+        assert_eq!(result.settled_error_count, 0);
+        assert!(result.retryable_requests.is_empty());
+        assert_eq!(result.items[0].detail.as_ref().unwrap()["episodeCount"], 12);
     }
 
     /// 验证在线搜索聚合 Bangumi/AniList，并隔离 Mikan 单来源失败。

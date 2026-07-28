@@ -5,9 +5,9 @@ use ani_automation::{
     SourceSyncStore,
 };
 use ani_domain::{
-    Anime, AnimeSeasonSyncState, AnimeSourceBinding, AnimeSourceExclusion, Episode, FansubGroup,
-    MyAnime, NotificationRecord, Release, ReleaseSourceConfig, ReleaseSourceSyncState,
-    RequestCircuitState,
+    Anime, AnimeDetailRefreshState, AnimeSeasonSyncState, AnimeSourceBinding, AnimeSourceExclusion,
+    Episode, FansubGroup, MyAnime, NotificationRecord, Release, ReleaseSourceConfig,
+    ReleaseSourceSyncState, RequestCircuitState,
 };
 use ani_repository::{
     AnimeCatalogWriteResult, ApplicationRepository, CachedReleaseQuery, ReleaseSearchCacheEntry,
@@ -81,21 +81,32 @@ impl AnimeDiscoverySyncStore for SharedReleaseSearchStore {
         self.with_repository(|repository| repository.upsert_anime_catalog(items))
     }
 
-    /// 替换指定月份中未引用的目录缓存。
-    fn replace_season_catalog_month(
-        &self,
-        year: i64,
-        month: i64,
-        items: &[Anime],
-    ) -> RepositoryResult<AnimeCatalogWriteResult> {
-        self.with_repository(|repository| {
-            repository.replace_anime_catalog_month(year, month, items)
-        })
+    /// 合并详情补全结果并更新时间戳。
+    fn save_detail_catalog(&self, items: &[Anime]) -> RepositoryResult<AnimeCatalogWriteResult> {
+        self.with_repository(|repository| repository.upsert_anime_catalog_details(items))
     }
 
     /// 读取季度中的指定月份。
     fn list_season_catalog_month(&self, year: i64, month: i64) -> RepositoryResult<Vec<Anime>> {
         self.with_repository(|repository| repository.list_anime_catalog(Some(year), Some(month)))
+    }
+
+    /// 读取全部目录供周期详情矫正。
+    fn list_all_season_catalog(&self) -> RepositoryResult<Vec<Anime>> {
+        self.with_repository(|repository| repository.list_anime_catalog(None, None))
+    }
+
+    /// 读取来源级详情刷新状态。
+    fn list_detail_refresh_states(&self) -> RepositoryResult<Vec<AnimeDetailRefreshState>> {
+        self.with_repository(|repository| repository.list_anime_detail_refresh_states())
+    }
+
+    /// 保存来源级详情刷新状态。
+    fn save_detail_refresh_states(
+        &self,
+        states: &[AnimeDetailRefreshState],
+    ) -> RepositoryResult<()> {
+        self.with_repository(|repository| repository.upsert_anime_detail_refresh_states(states))
     }
 }
 

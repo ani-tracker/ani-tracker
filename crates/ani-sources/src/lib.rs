@@ -18,8 +18,10 @@ mod search;
 
 pub use bindings::{AnimeSourceBindingService, AnimeSourceBindingStore};
 pub use metadata::{
-    merge_anime_metadata_batches, AnimeMetadataBatch, AnimeMetadataCollection,
-    AnimeMetadataRefresh, AnimeMetadataService,
+    detail_requests_for_items, merge_anime_metadata_batches, AnimeMetadataBatch,
+    AnimeMetadataCollection, AnimeMetadataDetailCollection, AnimeMetadataDetailProvider,
+    AnimeMetadataDetailProviderOutcome, AnimeMetadataDetailRequest, AnimeMetadataRefresh,
+    AnimeMetadataService,
 };
 
 pub use parsers::{

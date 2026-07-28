@@ -2,7 +2,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration as StdDuration, Instant};
 
-use ani_automation::{is_same_local_day, months_for_season, AnimeDiscoverySyncService};
+use ani_automation::{
+    is_same_local_day, months_for_season, AnimeDiscoverySyncService, AnimeDiscoverySyncStore,
+};
 use ani_domain::{
     AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult, AnimeDiscoverySyncPhase,
     AnimeDiscoverySyncTaskResult, AnimeDiscoverySyncTaskStatus, AppSettings, NotificationKind,
@@ -192,7 +194,6 @@ impl AppDiscoverySyncState {
         }
         if due.is_empty() {
             log::info!("Tauri 新番季度同步无需补跑 trigger={trigger}");
-            return Ok(());
         }
 
         let network = self
@@ -237,6 +238,18 @@ impl AppDiscoverySyncState {
                 }
             }
         }
+        let correction_started = Instant::now();
+        let correction = service
+            .correct_due_details(&store, now)
+            .await
+            .map_err(|error| format!("执行周期详情矫正失败：{error}"))?;
+        log::info!(
+            "Tauri 新番周期详情矫正结束 trigger={trigger} planned={} completed={} errors={} duration_ms={}",
+            correction.planned_count,
+            correction.completed_count,
+            correction.error_count,
+            correction_started.elapsed().as_millis()
+        );
         Ok(())
     }
 
@@ -328,12 +341,21 @@ impl AppDiscoverySyncState {
         trigger: &'static str,
     ) -> Result<AnimeDiscoverySeasonResult, String> {
         self.set_active_query(query.clone()).await;
+        let full_refresh = query.force_refresh
+            || store
+                .get_season_sync_state(query.year, &query.season)
+                .map_err(|error| format!("读取季度同步状态失败：{error}"))?
+                .and_then(|state| state.completed_at)
+                .is_none();
         let result = service
             .sync_season_catalog(store, query, now)
             .await
             .map_err(|error| format!("采集季度新番失败：{error}"))?;
         self.record_result(&result).await;
-        self.begin_detail_phase(result.items.len()).await;
+        let detail_plan = service
+            .plan_season_details(store, &result.items, full_refresh)
+            .map_err(|error| format!("生成季度详情计划失败：{error}"))?;
+        self.begin_detail_phase(detail_plan.requests.len()).await;
 
         let manual = trigger.starts_with("manual");
         let notification = manual.then(|| {
@@ -352,17 +374,42 @@ impl AppDiscoverySyncState {
                 .await;
         }
 
-        for chunk in result.items.chunks(DETAIL_BATCH_SIZE) {
-            let (completed, errors) = match service.enrich_detail_batch(store, chunk).await {
-                Ok(batch) => (batch.completed_count, batch.error_count),
-                Err(error) => {
-                    log::error!(
-                        "Tauri 新番季度详情批次保存失败 year={} season={} count={} error={error}",
+        let mut retryable_requests = Vec::new();
+        for chunk in detail_plan.requests.chunks(DETAIL_BATCH_SIZE) {
+            let (completed, errors) =
+                match service.enrich_detail_requests_initial(store, chunk).await {
+                    Ok(batch) => {
+                        retryable_requests.extend(batch.retryable_requests);
+                        (batch.completed_count, batch.error_count)
+                    }
+                    Err(error) => {
+                        log::error!(
+                        "Tauri 新番季度详情首轮批次失败 year={} season={} count={} error={error}",
                         result.query.year,
                         result.query.season,
                         chunk.len()
                     );
-                    (chunk.len(), chunk.len())
+                        (chunk.len(), chunk.len())
+                    }
+                };
+            self.advance_detail_progress(completed, errors).await;
+        }
+        if !retryable_requests.is_empty() {
+            let retry_count = retryable_requests.len();
+            log::info!("Tauri 新番季度详情首轮结束，开始统一补偿：count={retry_count}");
+            let (completed, errors) = match service
+                .compensate_detail_requests(store, &retryable_requests)
+                .await
+            {
+                Ok(batch) => (batch.completed_count, batch.error_count),
+                Err(error) => {
+                    log::error!(
+                        "Tauri 新番季度详情统一补偿失败 year={} season={} count={} error={error}",
+                        result.query.year,
+                        result.query.season,
+                        retry_count
+                    );
+                    (retry_count, retry_count)
                 }
             };
             self.advance_detail_progress(completed, errors).await;

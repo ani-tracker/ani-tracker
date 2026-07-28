@@ -7,7 +7,7 @@ use crate::{
     now_iso, ReleaseSourceSeed, StorageError, StorageSeed, APP_DATA_VERSION, SQLITE_SCHEMA_VERSION,
 };
 
-const CURRENT_SCHEMA: &str = include_str!("schema_v19.sql");
+const CURRENT_SCHEMA: &str = include_str!("schema_v20.sql");
 const MAX_RELEASE_ID_BYTES: usize = 200;
 
 /// 数据库中记录的结构和应用数据版本。

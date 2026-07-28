@@ -6,12 +6,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_domain::{
-    AnimeSeasonSyncState, AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
-    AnimeSourceExclusionScope, AnimeStatus, DownloadStatus, DownloadTask, Episode,
-    EpisodePreference, EpisodeStatus, MediaFile, MyAnime, NotificationKind, NotificationRecord,
-    NotificationSeverity, PlaybackCheckpoint, ReleaseSearchResult, ReleaseSourceConfig,
-    ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
-    SavePlaybackCheckpointInput, SecretReference, SecretValue, SecureStore,
+    AnimeDetailRefreshState, AnimeSeasonSyncState, AnimeSourceBinding,
+    AnimeSourceBindingMatchMethod, AnimeSourceExclusion, AnimeSourceExclusionScope, AnimeStatus,
+    DownloadStatus, DownloadTask, Episode, EpisodePreference, EpisodeStatus, MediaFile, MyAnime,
+    NotificationKind, NotificationRecord, NotificationSeverity, PlaybackCheckpoint,
+    ReleaseSearchResult, ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput,
+    RequestCircuitState, SavePlaybackCheckpointInput, SecretReference, SecretValue, SecureStore,
     SetAnimeWatchProgressInput, TorrentEngineKind, TorrentFile,
 };
 use ani_repository::{
@@ -81,7 +81,7 @@ fn initializes_new_database_with_seed() {
     assert!(storage.report().created);
     assert_eq!(storage.report().schema_version, SQLITE_SCHEMA_VERSION);
     assert_eq!(storage.report().app_data_version, APP_DATA_VERSION);
-    assert_eq!(read_meta(&storage.connection, "schema_version"), "19");
+    assert_eq!(read_meta(&storage.connection, "schema_version"), "20");
     assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
     assert_eq!(
         storage
@@ -232,7 +232,7 @@ fn backs_up_and_migrates_legacy_versions() {
         "anime_catalog",
         "detail_json"
     ));
-    assert_eq!(read_meta(&storage.connection, "schema_version"), "19");
+    assert_eq!(read_meta(&storage.connection, "schema_version"), "20");
     assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
     assert_eq!(source_count(&storage.connection, "prowlarr"), 0);
     assert_eq!(source_proxy(&storage.connection, "anibt"), 0);
@@ -609,7 +609,7 @@ fn rejects_corrupt_manual_restore_without_mutating_active_database() {
 
     assert!(storage.restore_from(&corrupt).is_err());
     storage.verify().expect("active database remains valid");
-    assert_eq!(read_meta(&storage.connection, "schema_version"), "19");
+    assert_eq!(read_meta(&storage.connection, "schema_version"), "20");
 }
 
 /// 验证迁移事务失败后恢复原始版本和表结构。
@@ -1162,6 +1162,171 @@ fn reads_and_replaces_p3_anime_catalog() {
     assert!(detail.partial_errors.is_empty());
 }
 
+/// 验证增量采集的空字段不会覆盖已有目录数据。
+#[test]
+fn preserves_existing_catalog_fields_for_empty_incremental_values() {
+    let directory = TestDirectory::new("incremental-catalog-fields");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create incremental catalog database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode p3 following fixture");
+    let repository = storage.repository();
+    let mut existing = fixture.payload.my_anime.anime;
+    existing.id = "incremental-anime-1".to_owned();
+    existing.title = "旧标题".to_owned();
+    existing.original_title = Some("Existing Original".to_owned());
+    existing.premiere_date = Some("2026-07-03".to_owned());
+    existing.premiere_year = 2026;
+    existing.premiere_month = 7;
+    existing.season = Some("summer".to_owned());
+    existing.summary = Some("已有简介".to_owned());
+    existing.cover_url = Some("https://example.com/existing.jpg".to_owned());
+    existing.external_ids = json!({"bangumi": "101", "anilist": "202"});
+    existing.detail = Some(json!({
+        "episodeCount": 12,
+        "genres": ["动画"],
+        "broadcast": {"weekday": 5, "time": "22:15"},
+        "staff": [{"name": "已有职员", "role": "导演"}]
+    }));
+    repository
+        .upsert_anime_catalog(&[existing.clone()])
+        .expect("save existing catalog");
+
+    let mut incoming = existing.clone();
+    incoming.title = "有效新标题".to_owned();
+    incoming.original_title = Some(" ".to_owned());
+    incoming.aliases.clear();
+    incoming.premiere_date = None;
+    incoming.premiere_year = 2000;
+    incoming.premiere_month = 1;
+    incoming.season = Some(String::new());
+    incoming.summary = Some(String::new());
+    incoming.cover_url = Some(" ".to_owned());
+    incoming.rating = None;
+    incoming.external_ids = json!({"bangumi": "", "anilist": null, "mikan": "303"});
+    incoming.detail = Some(json!({
+        "episodeCount": null,
+        "genres": [],
+        "broadcast": {"time": ""},
+        "staff": [{}],
+        "durationMinutes": 24
+    }));
+    let persisted = repository
+        .upsert_anime_catalog(&[incoming])
+        .expect("merge incremental catalog");
+    assert_eq!(persisted.added_count, 0);
+    assert_eq!(persisted.existing_count, 1);
+
+    let merged = repository
+        .get_anime_catalog_by_id("incremental-anime-1")
+        .expect("read merged catalog")
+        .expect("merged catalog exists");
+    assert_eq!(merged.title, "有效新标题");
+    assert_eq!(merged.original_title.as_deref(), Some("Existing Original"));
+    assert_eq!(merged.premiere_date.as_deref(), Some("2026-07-03"));
+    assert_eq!(merged.premiere_year, 2026);
+    assert_eq!(merged.premiere_month, 7);
+    assert_eq!(merged.season.as_deref(), Some("summer"));
+    assert_eq!(merged.summary.as_deref(), Some("已有简介"));
+    assert_eq!(
+        merged.cover_url.as_deref(),
+        Some("https://example.com/existing.jpg")
+    );
+    assert_eq!(merged.external_ids["bangumi"], "101");
+    assert_eq!(merged.external_ids["anilist"], "202");
+    assert_eq!(merged.external_ids["mikan"], "303");
+    let detail = merged.detail.expect("merged detail");
+    assert_eq!(detail["episodeCount"], 12);
+    assert_eq!(detail["genres"], json!(["动画"]));
+    assert_eq!(detail["broadcast"]["weekday"], 5);
+    assert_eq!(detail["broadcast"]["time"], "22:15");
+    assert_eq!(detail["staff"][0]["name"], "已有职员");
+    assert_eq!(detail["durationMinutes"], 24);
+}
+
+/// 验证仅刷新易变时间戳时不会重写未变化目录行。
+#[test]
+fn skips_unchanged_catalog_rows_during_incremental_upsert() {
+    let directory = TestDirectory::new("incremental-catalog-unchanged");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create unchanged catalog database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode following fixture");
+    let repository = storage.repository();
+    let mut anime = fixture.payload.my_anime.anime;
+    anime.id = "incremental-unchanged-1".to_owned();
+    anime.detail = Some(json!({"episodeCount": 12, "refreshedAt": "2026-07-20T00:00:00.000Z"}));
+    repository
+        .upsert_anime_catalog(&[anime.clone()])
+        .expect("save initial anime");
+    storage
+        .connection
+        .execute(
+            "UPDATE anime_catalog SET updated_at = '2026-07-01T00:00:00.000Z' WHERE id = ?1",
+            [&anime.id],
+        )
+        .expect("pin update timestamp");
+
+    anime.detail.as_mut().expect("detail")["refreshedAt"] = json!("2026-07-28T00:00:00.000Z");
+    repository
+        .upsert_anime_catalog(&[anime])
+        .expect("upsert unchanged anime");
+    let updated_at: String = storage
+        .connection
+        .query_row(
+            "SELECT updated_at FROM anime_catalog WHERE id = 'incremental-unchanged-1'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("read update timestamp");
+    assert_eq!(updated_at, "2026-07-01T00:00:00.000Z");
+}
+
+/// 验证纯增量写入不会删除同月未返回的旧目录。
+#[test]
+fn retains_unreturned_catalog_entries_during_incremental_upsert() {
+    let directory = TestDirectory::new("incremental-catalog-retention");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create incremental retention database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode p3 following fixture");
+    let repository = storage.repository();
+    let mut old = fixture.payload.my_anime.anime.clone();
+    old.id = "incremental-old".to_owned();
+    old.title = "本轮未返回番剧".to_owned();
+    old.original_title = Some("Unreturned Anime".to_owned());
+    old.external_ids = json!({"bangumi": ""});
+    let mut incoming = fixture.payload.my_anime.anime;
+    incoming.id = "incremental-new".to_owned();
+    incoming.title = "本轮新增番剧".to_owned();
+    incoming.original_title = Some("New Anime".to_owned());
+    incoming.external_ids = json!({"bangumi": ""});
+    repository
+        .upsert_anime_catalog(&[old])
+        .expect("save old catalog");
+    repository
+        .upsert_anime_catalog(&[incoming])
+        .expect("save incremental catalog");
+
+    let july = repository
+        .list_anime_catalog(Some(2026), Some(7))
+        .expect("list incremental catalog");
+    assert!(july.iter().any(|anime| anime.id == "incremental-old"));
+    assert!(july.iter().any(|anime| anime.id == "incremental-new"));
+}
+
 /// 验证月度替换会清理历史遗留的未引用同名重复目录。
 #[test]
 fn removes_unreferenced_duplicate_catalog_entries_on_month_replace() {
@@ -1232,6 +1397,48 @@ fn persists_anime_season_sync_state() {
         state.last_anilist_error.as_deref(),
         Some("anilist: timeout")
     );
+}
+
+/// 验证详情来源分片和周期完成状态可跨重启持久化。
+#[test]
+fn persists_anime_detail_refresh_state() {
+    let directory = TestDirectory::new("anime-detail-refresh-state");
+    let options = test_options(&directory, "active.sqlite");
+    let storage = Storage::open(options.clone()).expect("create detail state database");
+    let repository = storage.repository();
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode following fixture");
+    repository
+        .upsert_anime_catalog(&[fixture.payload.my_anime.anime])
+        .expect("save state anime");
+    repository
+        .upsert_anime_detail_refresh_states(&[AnimeDetailRefreshState {
+            anime_id: "anime-p3-1".to_owned(),
+            provider: "bangumi".to_owned(),
+            external_id: "424242".to_owned(),
+            slot_day: 3,
+            last_completed_cycle: Some(2951),
+            last_attempt_at: Some("2026-07-28T06:00:00.000Z".to_owned()),
+            last_success_at: Some("2026-07-28T06:00:00.000Z".to_owned()),
+            failure_count: 0,
+            next_retry_at: None,
+        }])
+        .expect("save detail refresh state");
+    drop(storage);
+
+    let reopened = Storage::open(options).expect("reopen detail state database");
+    let states = reopened
+        .repository()
+        .list_anime_detail_refresh_states()
+        .expect("read detail refresh states");
+    assert_eq!(states.len(), 1);
+    assert_eq!(states[0].provider, "bangumi");
+    assert_eq!(states[0].slot_day, 3);
+    assert_eq!(states[0].last_completed_cycle, Some(2951));
 }
 
 /// 验证公共工作单元能回滚或提交复用事务的 Repository 写入。

@@ -23,8 +23,8 @@ mod reminder;
 mod scan;
 
 pub use discovery_sync::{
-    months_for_season, AnimeDiscoveryDetailBatchResult, AnimeDiscoverySyncService,
-    AnimeDiscoverySyncStore,
+    months_for_season, AnimeDiscoveryDetailBatchResult, AnimeDiscoveryDetailCorrectionResult,
+    AnimeDiscoveryDetailPlan, AnimeDiscoverySyncService, AnimeDiscoverySyncStore,
 };
 pub use episode_sync::{EpisodeSyncResult, EpisodeSyncService, EpisodeSyncStore};
 pub use reminder::{DailyReminderService, DailyReminderStore};
