@@ -904,11 +904,13 @@ mod tests {
         let existing_path = directory.join("existing.mkv");
         std::fs::write(&existing_path, b"media").expect("write test media");
         let missing_path = directory.join("deleted.mkv");
-        let mut dashboard = DashboardData::default();
-        dashboard.recent_completed = vec![
-            media_file("existing", &existing_path),
-            media_file("missing", &missing_path),
-        ];
+        let dashboard = DashboardData {
+            recent_completed: vec![
+                media_file("existing", &existing_path),
+                media_file("missing", &missing_path),
+            ],
+            ..DashboardData::default()
+        };
 
         let filtered = filter_missing_dashboard_media(dashboard);
 

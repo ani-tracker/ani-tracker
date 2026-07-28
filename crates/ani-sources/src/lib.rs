@@ -190,10 +190,16 @@ where
     }
 }
 
+/// 单个请求通道与主机共用的最近请求时间槽。
+type HostRateLimitSlot = Arc<tokio::sync::Mutex<Option<Instant>>>;
+
+/// 所有请求通道与主机的限流时间槽表。
+type HostRateLimitSlots = Arc<tokio::sync::Mutex<HashMap<String, HostRateLimitSlot>>>;
+
 /// 多个传输实例共用的主机请求间隔控制器。
 #[derive(Clone, Default)]
 struct HostRateLimiter {
-    slots: Arc<tokio::sync::Mutex<HashMap<String, Arc<tokio::sync::Mutex<Option<Instant>>>>>>,
+    slots: HostRateLimitSlots,
 }
 
 impl HostRateLimiter {
