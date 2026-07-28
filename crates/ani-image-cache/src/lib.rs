@@ -1,7 +1,7 @@
 //! 跨桌面与移动宿主复用的持久图片缓存。
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::net::{IpAddr, Ipv6Addr};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -81,6 +81,7 @@ struct ImageCacheMetadata {
 pub struct ImageCache {
     cache_directory: RwLock<PathBuf>,
     signing_secret: Vec<u8>,
+    http_client: reqwest::Client,
     max_bytes: u64,
     max_image_bytes: u64,
     key_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
@@ -92,9 +93,14 @@ impl ImageCache {
         if signing_secret.len() < 32 {
             return Err("图片缓存签名密钥至少需要 32 字节".to_owned());
         }
+        let http_client = reqwest::Client::builder()
+            .redirect(Policy::none())
+            .build()
+            .map_err(|error| format!("图片缓存网络客户端创建失败：{error}"))?;
         Ok(Self {
             cache_directory: RwLock::new(cache_directory),
             signing_secret,
+            http_client,
             max_bytes: DEFAULT_MAX_BYTES,
             max_image_bytes: DEFAULT_MAX_IMAGE_BYTES,
             key_locks: Mutex::new(HashMap::new()),
@@ -276,21 +282,21 @@ impl ImageCache {
         let response = loop {
             let url = Url::parse(&current_url)
                 .map_err(|_| ImageCacheError::new("IMAGE_URL_INVALID", "图片地址无效"))?;
-            let (hostname, address) = resolve_public_address(&url).await?;
-            let client = reqwest::Client::builder()
-                .redirect(Policy::none())
-                .resolve(&hostname, address)
-                .build()
-                .map_err(|_| ImageCacheError::new("IMAGE_FETCH_FAILED", "图片下载连接创建失败"))?;
-            let response = client.get(url.clone()).send().await.map_err(|error| {
-                log::warn!(
-                    "图片缓存下载连接失败 connect={} timeout={} request={}",
-                    error.is_connect(),
-                    error.is_timeout(),
-                    error.is_request()
-                );
-                ImageCacheError::new("IMAGE_FETCH_FAILED", "图片下载失败")
-            })?;
+            validate_request_target(&url).await?;
+            let response = self
+                .http_client
+                .get(url.clone())
+                .send()
+                .await
+                .map_err(|error| {
+                    log::warn!(
+                        "图片缓存下载连接失败 connect={} timeout={} request={}",
+                        error.is_connect(),
+                        error.is_timeout(),
+                        error.is_request()
+                    );
+                    ImageCacheError::new("IMAGE_FETCH_FAILED", "图片下载失败")
+                })?;
             if response.status().is_redirection() {
                 let location = response
                     .headers()
@@ -441,7 +447,8 @@ impl ImageCache {
     }
 }
 
-async fn resolve_public_address(url: &Url) -> Result<(String, SocketAddr), ImageCacheError> {
+/// 校验图片请求目标；Mikan/BGM 官方域名交由系统网络栈解析，兼容任意 VPN 路由。
+async fn validate_request_target(url: &Url) -> Result<(), ImageCacheError> {
     let hostname = url
         .host_str()
         .map(str::to_ascii_lowercase)
@@ -452,6 +459,25 @@ async fn resolve_public_address(url: &Url) -> Result<(String, SocketAddr), Image
             "图片地址不允许访问本机或私有网络",
         ));
     }
+    match url.host() {
+        Some(Host::Ipv4(address)) if is_private_or_reserved(IpAddr::V4(address)) => {
+            return Err(ImageCacheError::new(
+                "IMAGE_HOST_FORBIDDEN",
+                "图片地址不允许访问本机或私有网络",
+            ));
+        }
+        Some(Host::Ipv6(address)) if is_private_or_reserved(IpAddr::V6(address)) => {
+            return Err(ImageCacheError::new(
+                "IMAGE_HOST_FORBIDDEN",
+                "图片地址不允许访问本机或私有网络",
+            ));
+        }
+        _ => {}
+    }
+    if uses_system_routed_image_host(&hostname) {
+        log::debug!("Mikan/BGM 图片缓存请求遵循系统网络路由 host={hostname}");
+        return Ok(());
+    }
     let port = url
         .port_or_known_default()
         .ok_or_else(|| ImageCacheError::new("IMAGE_URL_INVALID", "图片地址端口无效"))?;
@@ -459,24 +485,24 @@ async fn resolve_public_address(url: &Url) -> Result<(String, SocketAddr), Image
         .await
         .map_err(|_| ImageCacheError::new("IMAGE_FETCH_FAILED", "图片主机解析失败"))?
         .collect::<Vec<_>>();
-    let host_is_domain = matches!(url.host(), Some(Host::Domain(_)));
     if addresses.is_empty()
         || addresses
             .iter()
-            .any(|address| !is_allowed_resolved_address(host_is_domain, address.ip()))
+            .any(|address| is_private_or_reserved(address.ip()))
     {
         return Err(ImageCacheError::new(
             "IMAGE_HOST_FORBIDDEN",
             "图片地址不允许访问本机或私有网络",
         ));
     }
-    if addresses
+    Ok(())
+}
+
+/// 判断图片域名是否属于需要完整遵循系统代理/VPN 策略的官方来源。
+fn uses_system_routed_image_host(hostname: &str) -> bool {
+    ["mikanani.me", "bgm.tv", "bangumi.tv", "chii.in"]
         .iter()
-        .any(|address| is_vpn_fake_ipv4(address.ip()))
-    {
-        log::debug!("图片缓存通过系统 VPN Fake-IP 请求远程资源");
-    }
-    Ok((hostname, addresses[0]))
+        .any(|root| hostname == *root || hostname.ends_with(&format!(".{root}")))
 }
 
 fn normalize_source_url(value: &str) -> Result<String, ImageCacheError> {
@@ -532,20 +558,6 @@ fn is_private_or_reserved(address: IpAddr) -> bool {
                     .is_some_and(|address| is_private_or_reserved(IpAddr::V4(address)))
         }
     }
-}
-
-/// 域名经系统 VPN 解析到 Fake-IP 时允许继续请求，直写保留地址仍保持拒绝。
-fn is_allowed_resolved_address(host_is_domain: bool, address: IpAddr) -> bool {
-    !is_private_or_reserved(address) || (host_is_domain && is_vpn_fake_ipv4(address))
-}
-
-/// Clash 等系统 VPN 使用 RFC 2544 基准测试网段承载 Fake-IP 映射。
-fn is_vpn_fake_ipv4(address: IpAddr) -> bool {
-    matches!(
-        address,
-        IpAddr::V4(address)
-            if matches!(address.octets(), [198, 18 | 19, _, _])
-    )
 }
 
 fn is_ipv6_unique_local(address: Ipv6Addr) -> bool {
@@ -689,20 +701,33 @@ mod tests {
         ))));
     }
 
-    /// 验证 VPN Fake-IP 仅能作为域名解析结果使用，不能通过直写 IP 绕过私网防护。
+    /// 验证 Mikan/BGM 官方域名遵循系统路由，近似域名不能绕过公网校验。
     #[test]
-    fn allows_vpn_fake_ip_only_for_domain_resolution() {
-        let fake_ip = IpAddr::V4(Ipv4Addr::new(198, 18, 0, 42));
-        assert!(is_allowed_resolved_address(true, fake_ip));
-        assert!(!is_allowed_resolved_address(false, fake_ip));
-        assert!(!is_allowed_resolved_address(
-            true,
-            IpAddr::V4(Ipv4Addr::new(192, 168, 1, 2))
-        ));
-        assert!(is_allowed_resolved_address(
-            true,
-            IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))
-        ));
+    fn identifies_system_routed_image_hosts() {
+        assert!(uses_system_routed_image_host("mikanani.me"));
+        assert!(uses_system_routed_image_host("img.mikanani.me"));
+        assert!(uses_system_routed_image_host("lain.bgm.tv"));
+        assert!(uses_system_routed_image_host("api.bangumi.tv"));
+        assert!(!uses_system_routed_image_host("fakebgm.tv"));
+        assert!(!uses_system_routed_image_host("bgm.tv.example.com"));
+    }
+
+    /// 验证系统路由来源无需预解析，直写私网地址仍会在发起请求前被拒绝。
+    #[tokio::test]
+    async fn validates_system_routed_and_private_targets() {
+        let mikan = Url::parse("https://mikanani.me/images/cover.jpg").expect("mikan url");
+        validate_request_target(&mikan)
+            .await
+            .expect("trusted source follows system route");
+
+        let private = Url::parse("http://192.168.1.2/cover.jpg").expect("private url");
+        assert_eq!(
+            validate_request_target(&private)
+                .await
+                .expect_err("private target must fail")
+                .code,
+            "IMAGE_HOST_FORBIDDEN"
+        );
     }
 
     /// 验证各受支持 MIME 必须匹配对应文件签名。
