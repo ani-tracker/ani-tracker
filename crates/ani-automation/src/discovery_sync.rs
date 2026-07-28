@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use ani_domain::{
     Anime, AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult, AnimeSeasonSyncState,
@@ -183,6 +183,7 @@ impl AnimeDiscoverySyncService {
             .cloned();
         let mut added_count = 0usize;
         let mut existing_count = 0usize;
+        let catalog_write_started = Instant::now();
         if !collected.items.is_empty() {
             for month in months {
                 let month_items = collected
@@ -194,12 +195,29 @@ impl AnimeDiscoverySyncService {
                 if month_items.is_empty() {
                     continue;
                 }
+                let month_write_started = Instant::now();
                 let persisted =
                     store.replace_season_catalog_month(query.year, month, &month_items)?;
+                log::info!(
+                    "Rust 新番阶段耗时 phase=sqlite-catalog-write year={} month={} items={} added={} existing={} duration_ms={}",
+                    query.year,
+                    month,
+                    month_items.len(),
+                    persisted.added_count,
+                    persisted.existing_count,
+                    month_write_started.elapsed().as_millis()
+                );
                 added_count = added_count.saturating_add(persisted.added_count);
                 existing_count = existing_count.saturating_add(persisted.existing_count);
             }
         }
+        log::info!(
+            "Rust 新番阶段耗时 phase=sqlite-catalog-write-total year={} season={} items={} duration_ms={}",
+            query.year,
+            query.season,
+            collected.items.len(),
+            catalog_write_started.elapsed().as_millis()
+        );
 
         if anilist_succeeded {
             state.last_successful_sync_at = Some(attempt_at.clone());
@@ -212,10 +230,18 @@ impl AnimeDiscoverySyncService {
         }
         store.save_season_sync_state(&state)?;
 
+        let catalog_read_started = Instant::now();
         let mut items = Vec::new();
         for month in months {
             items.extend(store.list_season_catalog_month(query.year, month)?);
         }
+        log::info!(
+            "Rust 新番阶段耗时 phase=sqlite-catalog-read year={} season={} items={} duration_ms={}",
+            query.year,
+            query.season,
+            items.len(),
+            catalog_read_started.elapsed().as_millis()
+        );
         if collected.items.is_empty() {
             existing_count = items.len();
         }
@@ -254,7 +280,15 @@ impl AnimeDiscoverySyncService {
         for attempt in 1..=DETAIL_COMPENSATION_MAX_ATTEMPTS {
             let collected = self.collector.enrich_details(store, &pending).await;
             if !collected.items.is_empty() {
-                store.save_season_catalog(&collected.items)?;
+                let detail_write_started = Instant::now();
+                let persisted = store.save_season_catalog(&collected.items)?;
+                log::info!(
+                    "Rust 新番阶段耗时 phase=sqlite-detail-write attempt={attempt} items={} added={} existing={} duration_ms={}",
+                    collected.items.len(),
+                    persisted.added_count,
+                    persisted.existing_count,
+                    detail_write_started.elapsed().as_millis()
+                );
             }
             error_count = error_count.saturating_add(collected.settled_error_count);
             if collected.retryable_item_ids.is_empty() {

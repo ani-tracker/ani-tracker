@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::Instant;
 
 use ani_domain::{
@@ -30,6 +30,42 @@ const MIKAN_DETAIL_LIMIT: usize = 60;
 const SEARCH_LIMIT: usize = 30;
 const DETAIL_TRANSIENT_RETRY_DELAY_MS: u64 = 30_500;
 const DETAIL_RATE_LIMIT_RETRY_DELAY_MS: u64 = 60_500;
+
+static BANGUMI_ANILIST_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)anilist\.co/anime/(\d+)").expect("Bangumi AniList 标识正则必须有效")
+});
+static BANGUMI_MAL_ID_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)myanimelist\.net/anime/(\d+)").expect("Bangumi MAL 标识正则必须有效")
+});
+static BANGUMI_SUBJECT_URL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?:bgm\.tv|bangumi\.tv|chii\.in)/subject/(\d+)")
+        .expect("Bangumi 详情地址正则必须有效")
+});
+static MIKAN_CANDIDATE_ID_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"/Home/Bangumi/(\d+)").expect("Mikan 番剧标识正则必须有效"));
+static MIKAN_TITLE_SUFFIX_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\s*[-|].*$").expect("Mikan 标题后缀正则必须有效"));
+static YEAR_FIRST_DATE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(20\d{2})[年./-]\s*(\d{1,2})(?:[月./-]\s*(\d{1,2}))?").expect("年月日正则必须有效")
+});
+static MONTH_FIRST_DATE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b").expect("月日年正则必须有效")
+});
+static FULL_DATE_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(20\d{2})[年./-]\s*(\d{1,2})[月./-]\s*(\d{1,2})").expect("完整日期正则必须有效")
+});
+static WEEKDAY_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"[周週星期]([日一二三四五六天])").expect("星期正则必须有效"));
+static CLOCK_TIME_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:[01]\d|2[0-3]):[0-5]\d").expect("时间正则必须有效"));
+static DURATION_HOURS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(?:小时|h)").expect("小时正则必须有效"));
+static DURATION_MINUTES_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)(\d+)\s*(?:分钟|min)").expect("分钟正则必须有效"));
+static POSITIVE_INTEGER_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+").expect("正整数正则必须有效"));
+static LABELED_VALUE_REGEX_CACHE: LazyLock<Mutex<HashMap<String, Regex>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 单个元数据来源返回的一批番剧。
 #[derive(Debug, Clone, PartialEq)]
@@ -95,6 +131,7 @@ pub struct AnimeMetadataService {
     network: Arc<SourceNetworkService>,
     endpoints: MetadataEndpoints,
     channel: NetworkRequestChannel,
+    bangumi_catalog_cache: Mutex<HashMap<i64, BangumiSubject>>,
 }
 
 impl AnimeMetadataService {
@@ -104,6 +141,7 @@ impl AnimeMetadataService {
             network,
             endpoints: MetadataEndpoints::default(),
             channel: NetworkRequestChannel::Interactive,
+            bangumi_catalog_cache: Mutex::new(HashMap::new()),
         }
     }
 
@@ -113,7 +151,40 @@ impl AnimeMetadataService {
             network,
             endpoints: MetadataEndpoints::default(),
             channel: NetworkRequestChannel::Background,
+            bangumi_catalog_cache: Mutex::new(HashMap::new()),
         }
+    }
+
+    /// 清空上一次季度任务的 Bangumi 原始目录缓存。
+    fn reset_bangumi_catalog_cache(&self) {
+        self.bangumi_catalog_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clear();
+    }
+
+    /// 保存本次季度目录原始条目，供详情失败时回退完整映射。
+    fn cache_bangumi_catalog_subjects(&self, subjects: &[BangumiSubject]) {
+        let mut cache = self
+            .bangumi_catalog_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cache.extend(
+            subjects
+                .iter()
+                .cloned()
+                .map(|subject| (subject.id, subject)),
+        );
+    }
+
+    /// 按 Bangumi 标识读取本次季度任务的原始目录条目。
+    fn cached_bangumi_catalog_subject(&self, external_id: &str) -> Option<BangumiSubject> {
+        let id = external_id.parse::<i64>().ok()?;
+        self.bangumi_catalog_cache
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(&id)
+            .cloned()
     }
 
     /// 并发语义聚合本地结果之外的在线关键词搜索结果。
@@ -197,6 +268,9 @@ impl AnimeMetadataService {
     ) -> Result<AnimeMetadataCollection, SourceError> {
         let total_started = Instant::now();
         let months = months_for_season(season)?;
+        if !include_details {
+            self.reset_bangumi_catalog_cache();
+        }
         let bangumi = async {
             let provider_started = Instant::now();
             let mut items = Vec::new();
@@ -257,11 +331,20 @@ impl AnimeMetadataService {
         let results = tokio::join!(bangumi, anilist, mikan,);
         let (bangumi_items, bangumi_errors) = results.0;
         let has_bangumi_items = !bangumi_items.is_empty();
+        let candidate_count = bangumi_items.len()
+            + results.1.as_ref().map_or(0, Vec::len)
+            + results.2.as_ref().map_or(0, Vec::len);
+        let merge_started = Instant::now();
         let mut collection = collect_provider_results([
             ("bangumi", Ok(bangumi_items)),
             ("anilist", results.1),
             ("mikan", results.2),
         ]);
+        log::info!(
+            "Rust 新番阶段耗时 phase=deduplicate-merge candidates={candidate_count} items={} duration_ms={}",
+            collection.items.len(),
+            merge_started.elapsed().as_millis()
+        );
         if !bangumi_errors.is_empty() {
             if !has_bangumi_items {
                 collection
@@ -287,6 +370,7 @@ impl AnimeMetadataService {
         store: &S,
         items: &[Anime],
     ) -> AnimeMetadataDetailCollection {
+        let detail_started = Instant::now();
         let results = stream::iter(
             items
                 .iter()
@@ -316,6 +400,13 @@ impl AnimeMetadataService {
             .map(|result| result.retry_after_ms)
             .max()
             .unwrap_or_default();
+        log::info!(
+            "Rust 新番阶段耗时 phase=detail-enrichment items={} settled_errors={} deferred_errors={} duration_ms={}",
+            items.len(),
+            settled_error_count,
+            deferred_error_count,
+            detail_started.elapsed().as_millis()
+        );
         AnimeMetadataDetailCollection {
             items: results.into_iter().map(|result| result.item).collect(),
             settled_error_count,
@@ -331,12 +422,13 @@ impl AnimeMetadataService {
         store: &S,
         local: Anime,
     ) -> DetailEnrichmentOutcome {
+        let bangumi_id = external_id(&local, "bangumi");
+        let cached_bangumi = bangumi_id
+            .as_deref()
+            .and_then(|id| self.cached_bangumi_catalog_subject(id));
         let bangumi = async {
-            match external_id(&local, "bangumi") {
-                Some(id) => self
-                    .fetch_bangumi_detail(store, &id, &local)
-                    .await
-                    .map(Some),
+            match bangumi_id.as_deref() {
+                Some(id) => self.fetch_bangumi_detail(store, id, &local).await.map(Some),
                 None => Ok(None),
             }
         };
@@ -350,33 +442,80 @@ impl AnimeMetadataService {
             }
         };
         let (bangumi, mikan) = tokio::join!(bangumi, mikan);
-        let mut batches = vec![AnimeMetadataBatch {
-            source: "local".to_owned(),
-            items: vec![local.clone()],
-        }];
         let mut error_count = 0usize;
         let mut retryable = false;
         let mut retry_after_ms = 0u64;
-        for (source, result) in [("bangumi", bangumi), ("mikan", mikan)] {
-            match result {
-                Ok(Some(item)) => batches.push(AnimeMetadataBatch {
-                    source: source.to_owned(),
-                    items: vec![item],
-                }),
-                Ok(None) => {}
-                Err(error) => {
-                    error_count += 1;
-                    if let Some(delay) = detail_retry_after_ms(&error) {
-                        retryable = true;
-                        retry_after_ms = retry_after_ms.max(delay);
-                    }
-                    log::warn!(
-                        "季度新番详情补全失败 anime_id={} provider={} error={error}",
-                        local.id,
-                        source
+        let mut record_error = |source: &str, error: &SourceError| {
+            error_count += 1;
+            if let Some(delay) = detail_retry_after_ms(error) {
+                retryable = true;
+                retry_after_ms = retry_after_ms.max(delay);
+            }
+            log::warn!(
+                "季度新番详情补全失败 anime_id={} provider={} error={error}",
+                local.id,
+                source
+            );
+        };
+
+        let mut leading_bangumi = None;
+        let mut trailing_bangumi = None;
+        match bangumi {
+            Ok(Some(item)) => {
+                if let Some(subject) = cached_bangumi.as_ref() {
+                    leading_bangumi = Some(map_bangumi(
+                        subject.clone(),
+                        local.premiere_year,
+                        local.premiere_month,
+                    ));
+                }
+                trailing_bangumi = Some(item);
+            }
+            Ok(None) => {}
+            Err(error) => {
+                record_error("bangumi", &error);
+                if let Some(subject) = cached_bangumi {
+                    log::info!(
+                        "季度新番详情使用目录回退 anime_id={} provider=bangumi",
+                        local.id
                     );
+                    leading_bangumi = Some(map_bangumi(
+                        subject,
+                        local.premiere_year,
+                        local.premiere_month,
+                    ));
                 }
             }
+        }
+        let mikan = match mikan {
+            Ok(item) => item,
+            Err(error) => {
+                record_error("mikan", &error);
+                None
+            }
+        };
+        let mut batches = Vec::new();
+        if let Some(item) = leading_bangumi {
+            batches.push(AnimeMetadataBatch {
+                source: "bangumi".to_owned(),
+                items: vec![item],
+            });
+        }
+        batches.push(AnimeMetadataBatch {
+            source: "local".to_owned(),
+            items: vec![local.clone()],
+        });
+        if let Some(item) = trailing_bangumi {
+            batches.push(AnimeMetadataBatch {
+                source: "bangumi".to_owned(),
+                items: vec![item],
+            });
+        }
+        if let Some(item) = mikan {
+            batches.push(AnimeMetadataBatch {
+                source: "mikan".to_owned(),
+                items: vec![item],
+            });
         }
         let mut item = merge_anime_metadata_batches(&batches)
             .into_iter()
@@ -530,10 +669,18 @@ impl AnimeMetadataService {
             offset = next;
         }
         if !include_details {
-            return Ok(subjects
+            self.cache_bangumi_catalog_subjects(&subjects);
+            let mapping_started = Instant::now();
+            let item_count = subjects.len();
+            let items = subjects
                 .into_iter()
-                .map(|item| map_bangumi(item, year, month))
-                .collect());
+                .map(|item| map_bangumi_catalog(item, year, month))
+                .collect();
+            log::info!(
+                "Rust 新番阶段耗时 phase=catalog-map provider=bangumi year={year} month={month} items={item_count} duration_ms={}",
+                mapping_started.elapsed().as_millis()
+            );
+            return Ok(items);
         }
         let detailed = stream::iter(subjects.into_iter().map(|subject| async move {
             match self
@@ -558,10 +705,17 @@ impl AnimeMetadataService {
         .buffered(PROVIDER_DETAIL_CONCURRENCY)
         .collect::<Vec<Result<BangumiSubject, SourceError>>>()
         .await;
-        detailed
+        let mapping_started = Instant::now();
+        let item_count = detailed.len();
+        let items = detailed
             .into_iter()
             .map(|item| item.map(|item| map_bangumi(item, year, month)))
-            .collect()
+            .collect();
+        log::info!(
+            "Rust 新番阶段耗时 phase=detail-map provider=bangumi year={year} month={month} items={item_count} duration_ms={}",
+            mapping_started.elapsed().as_millis()
+        );
+        items
     }
 
     async fn search_bangumi<S: CircuitStateStore + Sync>(
@@ -637,11 +791,14 @@ impl AnimeMetadataService {
                 )?,
             )
             .await?;
-        Ok(map_bangumi(
-            item,
-            fallback.premiere_year,
-            fallback.premiere_month,
-        ))
+        let mapping_started = Instant::now();
+        let mapped = map_bangumi(item, fallback.premiere_year, fallback.premiere_month);
+        log::info!(
+            "Rust 新番阶段耗时 phase=detail-map provider=bangumi anime_id={} duration_ms={}",
+            fallback.id,
+            mapping_started.elapsed().as_millis()
+        );
+        Ok(mapped)
     }
 
     async fn collect_anilist_season<S: CircuitStateStore + Sync>(
@@ -940,6 +1097,7 @@ impl AnimeMetadataService {
         url: Url,
     ) -> Result<String, SourceError> {
         let source = metadata_source(provider, use_proxy);
+        let request_target = url.path().to_owned();
         let request = NativeHttpRequest {
             source_id: provider.to_owned(),
             method: HttpMethod::Get,
@@ -948,16 +1106,30 @@ impl AnimeMetadataService {
             body: None,
             request_interval_ms: 500,
         };
+        let request_started = Instant::now();
         let response = match self.channel {
             NetworkRequestChannel::Interactive => {
-                self.network.execute(store, &source, request).await?
+                self.network.execute(store, &source, request).await
             }
             NetworkRequestChannel::Background => {
                 self.network
                     .execute_background(store, &source, request)
-                    .await?
+                    .await
             }
         };
+        match &response {
+            Ok(response) => log::info!(
+                "Rust 新番阶段耗时 phase=network provider={provider} target={request_target} status={} bytes={} duration_ms={}",
+                response.status,
+                response.body.len(),
+                request_started.elapsed().as_millis()
+            ),
+            Err(error) => log::warn!(
+                "Rust 新番阶段失败 phase=network provider={provider} target={request_target} duration_ms={} error={error}",
+                request_started.elapsed().as_millis()
+            ),
+        }
+        let response = response?;
         Ok(response.text())
     }
 
@@ -973,8 +1145,16 @@ impl AnimeMetadataService {
         T: for<'de> Deserialize<'de>,
     {
         let text = self.get_text(store, provider, use_proxy, url).await?;
-        serde_json::from_str(&text)
-            .map_err(|error| SourceError::Parse(format!("{provider} JSON 解析失败：{error}")))
+        let parse_started = Instant::now();
+        let result = serde_json::from_str(&text)
+            .map_err(|error| SourceError::Parse(format!("{provider} JSON 解析失败：{error}")));
+        log::info!(
+            "Rust 新番阶段耗时 phase=json-decode provider={provider} bytes={} success={} duration_ms={}",
+            text.len(),
+            result.is_ok(),
+            parse_started.elapsed().as_millis()
+        );
+        result
     }
 
     async fn post_json<S, T>(
@@ -1002,18 +1182,41 @@ impl AnimeMetadataService {
             ),
             request_interval_ms: 500,
         };
+        let request_target = url.path().to_owned();
+        let request_started = Instant::now();
         let response = match self.channel {
             NetworkRequestChannel::Interactive => {
-                self.network.execute(store, &source, request).await?
+                self.network.execute(store, &source, request).await
             }
             NetworkRequestChannel::Background => {
                 self.network
                     .execute_background(store, &source, request)
-                    .await?
+                    .await
             }
         };
-        serde_json::from_slice(&response.body)
-            .map_err(|error| SourceError::Parse(format!("{provider} JSON 解析失败：{error}")))
+        match &response {
+            Ok(response) => log::info!(
+                "Rust 新番阶段耗时 phase=network provider={provider} target={request_target} status={} bytes={} duration_ms={}",
+                response.status,
+                response.body.len(),
+                request_started.elapsed().as_millis()
+            ),
+            Err(error) => log::warn!(
+                "Rust 新番阶段失败 phase=network provider={provider} target={request_target} duration_ms={} error={error}",
+                request_started.elapsed().as_millis()
+            ),
+        }
+        let response = response?;
+        let parse_started = Instant::now();
+        let result = serde_json::from_slice(&response.body)
+            .map_err(|error| SourceError::Parse(format!("{provider} JSON 解析失败：{error}")));
+        log::info!(
+            "Rust 新番阶段耗时 phase=json-decode provider={provider} bytes={} success={} duration_ms={}",
+            response.body.len(),
+            result.is_ok(),
+            parse_started.elapsed().as_millis()
+        );
+        result
     }
 }
 
@@ -1646,7 +1849,89 @@ struct BangumiTag {
     count: Option<i64>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BangumiMapStage {
+    Catalog,
+    Detail,
+}
+
+#[derive(Debug)]
+struct IndexedInfoboxValue {
+    order: usize,
+    value: String,
+}
+
+#[derive(Debug, Default)]
+struct BangumiInfoboxIndex {
+    by_key: HashMap<String, Vec<IndexedInfoboxValue>>,
+    all_values: Vec<String>,
+}
+
+impl BangumiInfoboxIndex {
+    /// 单次展开 infobox，并保留原字段顺序供后续索引查询。
+    fn new(items: Option<&[BangumiInfoboxItem]>) -> Self {
+        let mut index = Self::default();
+        let mut order = 0usize;
+        for item in items.unwrap_or_default() {
+            for value in collect_json_strings(item.value.as_ref()) {
+                index.all_values.push(value.clone());
+                if let Some(key) = item.key.as_ref() {
+                    index
+                        .by_key
+                        .entry(key.clone())
+                        .or_default()
+                        .push(IndexedInfoboxValue { order, value });
+                }
+                order = order.saturating_add(1);
+            }
+        }
+        index
+    }
+
+    /// 按多个字段名返回值，并保持原 infobox 顺序。
+    fn values(&self, keys: &[&str]) -> Vec<String> {
+        let mut values = keys
+            .iter()
+            .flat_map(|key| self.by_key.get(*key).into_iter().flatten())
+            .collect::<Vec<_>>();
+        values.sort_by_key(|value| value.order);
+        values
+            .into_iter()
+            .map(|value| value.value.clone())
+            .collect()
+    }
+
+    /// 返回多个字段名中原始顺序最靠前的值。
+    fn first_value(&self, keys: &[&str]) -> Option<String> {
+        keys.iter()
+            .flat_map(|key| self.by_key.get(*key).into_iter().flatten())
+            .min_by_key(|value| value.order)
+            .map(|value| value.value.clone())
+    }
+}
+
+/// 映射 Bangumi 目录顶层字段，详情派生留到后台第二阶段。
+fn map_bangumi_catalog(item: BangumiSubject, fallback_year: i64, fallback_month: i64) -> Anime {
+    map_bangumi_for_stage(
+        item,
+        fallback_year,
+        fallback_month,
+        BangumiMapStage::Catalog,
+    )
+}
+
+/// 映射 Bangumi 顶层字段和完整详情字段。
 fn map_bangumi(item: BangumiSubject, fallback_year: i64, fallback_month: i64) -> Anime {
+    map_bangumi_for_stage(item, fallback_year, fallback_month, BangumiMapStage::Detail)
+}
+
+/// 根据同步阶段映射 Bangumi 数据，确保顶层字段计算完全一致。
+fn map_bangumi_for_stage(
+    mut item: BangumiSubject,
+    fallback_year: i64,
+    fallback_month: i64,
+    stage: BangumiMapStage,
+) -> Anime {
     let id = format!("bangumi-{}", item.id);
     let title = non_empty(&item.name_cn)
         .or_else(|| non_empty(&item.name))
@@ -1658,12 +1943,13 @@ fn map_bangumi(item: BangumiSubject, fallback_year: i64, fallback_month: i64) ->
     let (year, month) = parse_date(&date)
         .map(|(year, month, _)| (year, month))
         .unwrap_or((fallback_year, fallback_month));
+    let infobox = BangumiInfoboxIndex::new(item.infobox.as_deref());
     let mut external = Map::from_iter([("bangumi".to_owned(), Value::String(item.id.to_string()))]);
-    for value in collect_infobox_strings(item.infobox.as_deref()) {
-        if let Some(id) = capture_id(&value, r"(?i)anilist\.co/anime/(\d+)") {
+    for value in &infobox.all_values {
+        if let Some(id) = capture_id(value, &BANGUMI_ANILIST_ID_REGEX) {
             external.insert("anilist".to_owned(), Value::String(id));
         }
-        if let Some(id) = capture_id(&value, r"(?i)myanimelist\.net/anime/(\d+)") {
+        if let Some(id) = capture_id(value, &BANGUMI_MAL_ID_REGEX) {
             external.insert("mal".to_owned(), Value::String(id));
         }
     }
@@ -1677,10 +1963,10 @@ fn map_bangumi(item: BangumiSubject, fallback_year: i64, fallback_month: i64) ->
             push_alias(&mut aliases, &id, value, language, priority);
         }
     }
-    for value in infobox_values(item.infobox.as_deref(), &["中文名"]) {
+    for value in infobox.values(&["中文名"]) {
         push_alias(&mut aliases, &id, value, AnimeAliasLanguage::Zh, 88);
     }
-    for value in infobox_values(item.infobox.as_deref(), &["别名"]) {
+    for value in infobox.values(&["别名"]) {
         let is_english = value.is_ascii();
         let language = infer_alias_language(
             &value,
@@ -1698,48 +1984,8 @@ fn map_bangumi(item: BangumiSubject, fallback_year: i64, fallback_month: i64) ->
             if is_english { 78 } else { 82 },
         );
     }
-    let mut genres = item.tags.unwrap_or_default();
-    genres.sort_by_key(|tag| std::cmp::Reverse(tag.count.unwrap_or_default()));
-    let genres = genres
-        .into_iter()
-        .filter_map(|tag| tag.name)
-        .take(8)
-        .collect::<Vec<_>>();
-    let end_date = first_infobox_value(
-        item.infobox.as_deref(),
-        &["放送终了", "播放结束", "上映年度"],
-    )
-    .as_deref()
-    .and_then(normalize_full_date);
-    let format = item
-        .platform
-        .clone()
-        .or_else(|| first_infobox_value(item.infobox.as_deref(), &["平台", "类型"]));
-    let episode_count = item.total_episodes.filter(|value| *value > 0).or_else(|| {
-        first_infobox_value(item.infobox.as_deref(), &["话数", "集数"])
-            .as_deref()
-            .and_then(first_positive_integer)
-    });
-    let duration_minutes =
-        first_infobox_value(item.infobox.as_deref(), &["片长", "单集片长", "时长"])
-            .as_deref()
-            .and_then(parse_duration_minutes);
-    let mut detail = json!({
-        "format": map_bangumi_format(format.as_deref()),
-        "episodeCount": episode_count,
-        "airingStatus": infer_airing_status(&date, end_date.as_deref()),
-        "endDate": end_date,
-        "broadcast": first_infobox_value(item.infobox.as_deref(), &["放送星期", "播放星期", "放送时间"]).as_deref().and_then(parse_broadcast),
-        "genres": genres,
-        "studios": infobox_values(item.infobox.as_deref(), &["动画制作", "制作", "製作"]),
-        "staff": build_staff(item.infobox.as_deref(), &["导演", "原作", "系列构成", "脚本", "人物设定", "音乐", "总作画监督"], "bangumi"),
-        "sourceMaterial": infobox_values(item.infobox.as_deref(), &["原作", "原案"]).into_iter().next(),
-        "durationMinutes": duration_minutes,
-        "contentRating": first_infobox_value(item.infobox.as_deref(), &["分级", "等级"]),
-        "metadataSources": ["bangumi"],
-        "refreshedAt": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
-    });
-    remove_nulls(&mut detail);
+    let detail = (stage == BangumiMapStage::Detail)
+        .then(|| build_bangumi_detail(&mut item, &infobox, &date));
     Anime {
         id,
         title,
@@ -1768,8 +2014,58 @@ fn map_bangumi(item: BangumiSubject, fallback_year: i64, fallback_month: i64) ->
                 })
         }),
         external_ids: Value::Object(external),
-        detail: Some(detail),
+        detail,
     }
+}
+
+/// 从已建立的 infobox 索引构建完整 Bangumi 详情。
+fn build_bangumi_detail(
+    item: &mut BangumiSubject,
+    infobox: &BangumiInfoboxIndex,
+    premiere_date: &str,
+) -> Value {
+    let mut genres = item.tags.take().unwrap_or_default();
+    genres.sort_by_key(|tag| std::cmp::Reverse(tag.count.unwrap_or_default()));
+    let genres = genres
+        .into_iter()
+        .filter_map(|tag| tag.name)
+        .take(8)
+        .collect::<Vec<_>>();
+    let end_date = infobox
+        .first_value(&["放送终了", "播放结束", "上映年度"])
+        .as_deref()
+        .and_then(normalize_full_date);
+    let format = item
+        .platform
+        .clone()
+        .or_else(|| infobox.first_value(&["平台", "类型"]));
+    let episode_count = item.total_episodes.filter(|value| *value > 0).or_else(|| {
+        infobox
+            .first_value(&["话数", "集数"])
+            .as_deref()
+            .and_then(first_positive_integer)
+    });
+    let duration_minutes = infobox
+        .first_value(&["片长", "单集片长", "时长"])
+        .as_deref()
+        .and_then(parse_duration_minutes);
+    let mut detail = json!({
+        "format": map_bangumi_format(format.as_deref()),
+        "episodeCount": episode_count,
+        "airingStatus": infer_airing_status(premiere_date, end_date.as_deref()),
+        "endDate": end_date,
+        "broadcast": infobox.first_value(&["放送星期", "播放星期", "放送时间"]).as_deref().and_then(parse_broadcast),
+        "genres": genres,
+        "studios": infobox.values(&["动画制作", "制作", "製作"]),
+        "staff": build_staff(infobox, &["导演", "原作", "系列构成", "脚本", "人物设定", "音乐", "总作画监督"], "bangumi"),
+        "sourceMaterial": infobox.values(&["原作", "原案"]).into_iter().next(),
+        "durationMinutes": duration_minutes,
+        "contentRating": infobox.first_value(&["分级", "等级"]),
+        "metadataSources": ["bangumi"],
+        "refreshedAt": Utc::now().to_rfc3339_opts(SecondsFormat::Millis, true)
+    });
+    remove_nulls(&mut detail);
+    detail
 }
 
 fn map_bangumi_format(value: Option<&str>) -> Option<&'static str> {
@@ -1791,43 +2087,19 @@ fn map_bangumi_format(value: Option<&str>) -> Option<&'static str> {
     }
 }
 
-fn infobox_values(items: Option<&[BangumiInfoboxItem]>, keys: &[&str]) -> Vec<String> {
-    items
-        .unwrap_or_default()
-        .iter()
-        .filter(|item| item.key.as_deref().is_some_and(|key| keys.contains(&key)))
-        .flat_map(|item| collect_json_strings(item.value.as_ref()))
-        .collect()
-}
-
-/// 读取 Bangumi infobox 中第一个匹配值。
-fn first_infobox_value(items: Option<&[BangumiInfoboxItem]>, keys: &[&str]) -> Option<String> {
-    infobox_values(items, keys).into_iter().next()
-}
-
 /// 将 Bangumi 职员字段映射为统一职员条目。
-fn build_staff(items: Option<&[BangumiInfoboxItem]>, roles: &[&str], source: &str) -> Vec<Value> {
+fn build_staff(index: &BangumiInfoboxIndex, roles: &[&str], source: &str) -> Vec<Value> {
     roles
         .iter()
         .flat_map(|role| {
-            infobox_values(items, &[*role])
-                .into_iter()
-                .map(move |name| {
-                    json!({
-                        "name": name,
-                        "role": role,
-                        "source": source
-                    })
+            index.values(&[*role]).into_iter().map(move |name| {
+                json!({
+                    "name": name,
+                    "role": role,
+                    "source": source
                 })
+            })
         })
-        .collect()
-}
-
-fn collect_infobox_strings(items: Option<&[BangumiInfoboxItem]>) -> Vec<String> {
-    items
-        .unwrap_or_default()
-        .iter()
-        .flat_map(|item| collect_json_strings(item.value.as_ref()))
         .collect()
 }
 
@@ -2180,15 +2452,13 @@ fn parse_mikan_candidates(html: &str, base_url: &str) -> Result<Vec<MikanCandida
         .map_err(|error| SourceError::Parse(error.to_string()))?;
     let image_selector =
         Selector::parse("img").map_err(|error| SourceError::Parse(error.to_string()))?;
-    let id_regex = Regex::new(r"/Home/Bangumi/(\d+)")
-        .map_err(|error| SourceError::Parse(error.to_string()))?;
     let base = Url::parse(base_url).map_err(|error| SourceError::InvalidUrl(error.to_string()))?;
     let mut candidates = Vec::<MikanCandidate>::new();
     for link in document.select(&selector) {
         let Some(href) = link.value().attr("href") else {
             continue;
         };
-        let Some(id) = id_regex
+        let Some(id) = MIKAN_CANDIDATE_ID_REGEX
             .captures(href)
             .and_then(|capture| capture.get(1))
             .map(|value| value.as_str().to_owned())
@@ -2286,7 +2556,7 @@ fn parse_mikan_detail(html: &str, detail_url: &str) -> MikanDetail {
             .into_iter()
             .find_map(|label| read_labeled(html, label).and_then(|value| normalize_date(&value)))
             .or_else(|| normalize_date(html)),
-        bangumi_id: capture_id(html, r"(?i)(?:bgm\.tv|bangumi\.tv|chii\.in)/subject/(\d+)"),
+        bangumi_id: capture_id(html, &BANGUMI_SUBJECT_URL_REGEX),
         episode_count: read_labeled(html, "话数")
             .or_else(|| read_labeled(html, "集数"))
             .and_then(|value| first_positive_integer(&value)),
@@ -2401,9 +2671,8 @@ fn non_empty(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
-fn capture_id(value: &str, pattern: &str) -> Option<String> {
-    Regex::new(pattern)
-        .ok()?
+fn capture_id(value: &str, regex: &Regex) -> Option<String> {
+    regex
         .captures(value)?
         .get(1)
         .map(|value| value.as_str().to_owned())
@@ -2441,8 +2710,7 @@ fn read_tag_text(html: &str, tag: &str) -> Option<String> {
 
 /// 去除 Mikan 标题标签追加的站点名称。
 fn strip_mikan_title_suffix(value: String) -> Option<String> {
-    let normalized = Regex::new(r"\s*[-|].*$")
-        .ok()?
+    let normalized = MIKAN_TITLE_SUFFIX_REGEX
         .replace(&value, "")
         .trim()
         .to_owned();
@@ -2455,9 +2723,19 @@ fn is_ignored_mikan_title(value: &str) -> bool {
 }
 
 fn read_labeled(html: &str, label: &str) -> Option<String> {
-    let pattern = format!(r"{}\s*[：:]\s*([^<\n\r]+)", regex::escape(label));
-    Regex::new(&pattern)
-        .ok()?
+    let regex = {
+        let mut cache = LABELED_VALUE_REGEX_CACHE
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        cache
+            .entry(label.to_owned())
+            .or_insert_with(|| {
+                let pattern = format!(r"{}\s*[：:]\s*([^<\n\r]+)", regex::escape(label));
+                Regex::new(&pattern).expect("Mikan 固定标签正则必须有效")
+            })
+            .clone()
+    };
+    regex
         .captures(html)?
         .get(1)
         .map(|value| normalize_html_text(value.as_str()))
@@ -2465,8 +2743,7 @@ fn read_labeled(html: &str, label: &str) -> Option<String> {
 }
 
 fn normalize_date(value: &str) -> Option<String> {
-    let year_first = Regex::new(r"(20\d{2})[年./-]\s*(\d{1,2})(?:[月./-]\s*(\d{1,2}))?").ok()?;
-    if let Some(capture) = year_first.captures(value) {
+    if let Some(capture) = YEAR_FIRST_DATE_REGEX.captures(value) {
         return Some(format!(
             "{}-{:02}-{:02}",
             capture.get(1)?.as_str(),
@@ -2477,8 +2754,7 @@ fn normalize_date(value: &str) -> Option<String> {
                 .unwrap_or(1)
         ));
     }
-    let month_first = Regex::new(r"\b(\d{1,2})[./-](\d{1,2})[./-](20\d{2})\b").ok()?;
-    let capture = month_first.captures(value)?;
+    let capture = MONTH_FIRST_DATE_REGEX.captures(value)?;
     Some(format!(
         "{}-{:02}-{:02}",
         capture.get(3)?.as_str(),
@@ -2489,8 +2765,7 @@ fn normalize_date(value: &str) -> Option<String> {
 
 /// 仅接受包含年月日的日期，避免把不完整完结时间误判为已完结。
 fn normalize_full_date(value: &str) -> Option<String> {
-    let regex = Regex::new(r"(20\d{2})[年./-]\s*(\d{1,2})[月./-]\s*(\d{1,2})").ok()?;
-    let capture = regex.captures(value)?;
+    let capture = FULL_DATE_REGEX.captures(value)?;
     Some(format!(
         "{}-{:02}-{:02}",
         capture.get(1)?.as_str(),
@@ -2517,8 +2792,7 @@ fn infer_airing_status(premiere_date: &str, end_date: Option<&str>) -> Option<&'
 
 /// 从中文星期与时间文本解析统一放送计划。
 fn parse_broadcast(value: &str) -> Option<Value> {
-    let weekday = Regex::new(r"[周週星期]([日一二三四五六天])")
-        .ok()?
+    let weekday = WEEKDAY_REGEX
         .captures(value)
         .and_then(|capture| capture.get(1))
         .and_then(|value| match value.as_str() {
@@ -2531,8 +2805,7 @@ fn parse_broadcast(value: &str) -> Option<Value> {
             "六" => Some(6),
             _ => None,
         });
-    let time = Regex::new(r"(?:[01]\d|2[0-3]):[0-5]\d")
-        .ok()?
+    let time = CLOCK_TIME_REGEX
         .find(value)
         .map(|value| value.as_str().to_owned());
     if weekday.is_none() && time.is_none() {
@@ -2549,14 +2822,12 @@ fn parse_broadcast(value: &str) -> Option<Value> {
 
 /// 将小时与分钟混合文本换算为正整数分钟。
 fn parse_duration_minutes(value: &str) -> Option<i64> {
-    let hours = Regex::new(r"(?i)(\d+(?:\.\d+)?)\s*(?:小时|h)")
-        .ok()?
+    let hours = DURATION_HOURS_REGEX
         .captures(value)
         .and_then(|capture| capture.get(1))
         .and_then(|value| value.as_str().parse::<f64>().ok())
         .unwrap_or_default();
-    let minutes = Regex::new(r"(?i)(\d+)\s*(?:分钟|min)")
-        .ok()?
+    let minutes = DURATION_MINUTES_REGEX
         .captures(value)
         .and_then(|capture| capture.get(1))
         .and_then(|value| value.as_str().parse::<f64>().ok())
@@ -2613,8 +2884,7 @@ fn normalize_html_text(value: &str) -> String {
 }
 
 fn first_positive_integer(value: &str) -> Option<i64> {
-    Regex::new(r"\d+")
-        .ok()?
+    POSITIVE_INTEGER_REGEX
         .find(value)?
         .as_str()
         .parse::<i64>()
@@ -2658,7 +2928,7 @@ mod tests {
     use ani_domain::{Anime, AnimeAlias, AnimeAliasLanguage};
     use ani_repository::{RepositoryError, RepositoryResult};
     use chrono::Utc;
-    use serde_json::json;
+    use serde_json::{json, Value};
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use tokio::net::TcpListener;
 
@@ -2668,9 +2938,10 @@ mod tests {
     };
 
     use super::{
-        detail_retry_after_ms, map_bangumi, merge_anime_metadata_batches, parse_mikan_candidates,
-        parse_mikan_detail, preserve_catalog_cover, AnimeMetadataBatch, AnimeMetadataService,
-        BangumiInfoboxItem, BangumiSubject, MetadataEndpoints,
+        detail_retry_after_ms, map_bangumi, map_bangumi_catalog, merge_anime_metadata_batches,
+        parse_mikan_candidates, parse_mikan_detail, preserve_catalog_cover, AnimeMetadataBatch,
+        AnimeMetadataService, BangumiImages, BangumiInfoboxItem, BangumiRating, BangumiSubject,
+        BangumiTag, MetadataEndpoints,
     };
 
     #[derive(Default)]
@@ -2845,6 +3116,158 @@ mod tests {
         assert_eq!(detail["contentRating"], "PG-13");
     }
 
+    /// 验证基础目录延后详情时，全部顶层业务字段保持一致。
+    #[test]
+    fn defers_bangumi_detail_without_changing_catalog_fields() {
+        let subject = BangumiSubject {
+            id: 101,
+            subject_type: 2,
+            name: "Test Anime".to_owned(),
+            name_cn: "测试番".to_owned(),
+            summary: Some("测试简介".to_owned()),
+            date: Some("2026-07-03".to_owned()),
+            images: Some(BangumiImages {
+                large: Some("https://lain.bgm.tv/pic/cover/l/test.jpg".to_owned()),
+                common: None,
+                medium: None,
+                grid: None,
+            }),
+            infobox: Some(vec![
+                BangumiInfoboxItem {
+                    key: Some("别名".to_owned()),
+                    value: Some(json!(["Test Alias", "https://anilist.co/anime/202"])),
+                },
+                BangumiInfoboxItem {
+                    key: Some("关联".to_owned()),
+                    value: Some(json!("https://myanimelist.net/anime/303")),
+                },
+                BangumiInfoboxItem {
+                    key: Some("话数".to_owned()),
+                    value: Some(json!("12")),
+                },
+            ]),
+            rating: Some(BangumiRating {
+                score: Some(8.2),
+                total: Some(1234),
+            }),
+            platform: Some("TV".to_owned()),
+            total_episodes: Some(12),
+            tags: Some(vec![BangumiTag {
+                name: Some("动画".to_owned()),
+                count: Some(100),
+            }]),
+        };
+
+        let catalog = map_bangumi_catalog(subject.clone(), 2026, 7);
+        let mut detailed = map_bangumi(subject, 2026, 7);
+        assert!(catalog.detail.is_none());
+        assert!(detailed.detail.is_some());
+        detailed.detail = None;
+        assert_eq!(catalog, detailed);
+        assert_eq!(catalog.external_ids["anilist"], "202");
+        assert_eq!(catalog.external_ids["mal"], "303");
+    }
+
+    /// 验证分阶段合并后的最终字段优先级与原流程一致。
+    #[test]
+    fn preserves_final_detail_precedence_after_deferring_bangumi_detail() {
+        let catalog_subject = BangumiSubject {
+            id: 101,
+            subject_type: 2,
+            name: "Test Anime".to_owned(),
+            name_cn: "测试番".to_owned(),
+            date: Some("2026-07-03".to_owned()),
+            total_episodes: Some(12),
+            ..BangumiSubject::default()
+        };
+        let api_subject = BangumiSubject {
+            id: 101,
+            subject_type: 2,
+            name: "Test Anime".to_owned(),
+            name_cn: "测试番".to_owned(),
+            date: Some("2026-07-03".to_owned()),
+            total_episodes: Some(24),
+            ..BangumiSubject::default()
+        };
+        let mut anilist = anime(
+            "anilist-202",
+            "Test Anime",
+            json!({"bangumi": "101", "anilist": "202"}),
+        );
+        anilist.detail = Some(json!({
+            "episodeCount": 13,
+            "durationMinutes": 30,
+            "metadataSources": ["anilist"]
+        }));
+
+        let old_catalog = merge_anime_metadata_batches(&[
+            AnimeMetadataBatch {
+                source: "bangumi".to_owned(),
+                items: vec![map_bangumi(catalog_subject.clone(), 2026, 7)],
+            },
+            AnimeMetadataBatch {
+                source: "anilist".to_owned(),
+                items: vec![anilist.clone()],
+            },
+        ])
+        .remove(0);
+        let mut old_final = merge_anime_metadata_batches(&[
+            AnimeMetadataBatch {
+                source: "local".to_owned(),
+                items: vec![old_catalog],
+            },
+            AnimeMetadataBatch {
+                source: "bangumi".to_owned(),
+                items: vec![map_bangumi(api_subject.clone(), 2026, 7)],
+            },
+        ])
+        .remove(0);
+
+        let deferred_catalog = merge_anime_metadata_batches(&[
+            AnimeMetadataBatch {
+                source: "bangumi".to_owned(),
+                items: vec![map_bangumi_catalog(catalog_subject.clone(), 2026, 7)],
+            },
+            AnimeMetadataBatch {
+                source: "anilist".to_owned(),
+                items: vec![anilist],
+            },
+        ])
+        .remove(0);
+        let mut deferred_final = merge_anime_metadata_batches(&[
+            AnimeMetadataBatch {
+                source: "bangumi-cache".to_owned(),
+                items: vec![map_bangumi(catalog_subject, 2026, 7)],
+            },
+            AnimeMetadataBatch {
+                source: "local".to_owned(),
+                items: vec![deferred_catalog],
+            },
+            AnimeMetadataBatch {
+                source: "bangumi".to_owned(),
+                items: vec![map_bangumi(api_subject, 2026, 7)],
+            },
+        ])
+        .remove(0);
+
+        if let Some(detail) = old_final.detail.as_mut().and_then(Value::as_object_mut) {
+            detail.remove("refreshedAt");
+        }
+        if let Some(detail) = deferred_final
+            .detail
+            .as_mut()
+            .and_then(Value::as_object_mut)
+        {
+            detail.remove("refreshedAt");
+        }
+        assert_eq!(deferred_final, old_final);
+        assert_eq!(deferred_final.detail.as_ref().unwrap()["episodeCount"], 12);
+        assert_eq!(
+            deferred_final.detail.as_ref().unwrap()["durationMinutes"],
+            30
+        );
+    }
+
     /// 验证 Mikan HTML 可提取放送、职员和复合时长。
     #[test]
     fn parses_mikan_extended_detail_fields() {
@@ -2952,6 +3375,7 @@ mod tests {
                 mikan: base,
             },
             channel: NetworkRequestChannel::Interactive,
+            bangumi_catalog_cache: Mutex::new(HashMap::new()),
         };
         let result = service
             .search(&MemoryCircuitStore::default(), "测试番")
