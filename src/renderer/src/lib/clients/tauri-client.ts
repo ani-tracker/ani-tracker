@@ -70,6 +70,7 @@ import type {
   PlayerCommandResult,
   PlayerSnapshot
 } from "@shared/player-contract";
+import { emitManualDownloadAdded } from "@/lib/mobile-download-notification";
 
 const WINDOW_STATE_CHANGED_EVENT = "window-state-changed";
 const DOWNLOAD_SERVICE_STATUS_CHANGED_EVENT = "download-service-status-changed";
@@ -496,23 +497,29 @@ class TauriClientCore implements AppClient {
 
   /** 通过磁链或远程 torrent 文件添加任务。 */
   async addDownloadUrl(input: AddDownloadUrlInput): Promise<DownloadTask[]> {
-    return invoke<DownloadTask[]>("add_download_url", { input }).catch((error) => {
+    const tasks = await invoke<DownloadTask[]>("add_download_url", { input }).catch((error) => {
       throw normalizeTauriError("add_download_url", error);
     });
+    emitManualDownloadAdded();
+    return tasks;
   }
 
   /** 通过原生文件选择器导入本地 torrent。 */
   async importTorrentFile(): Promise<DownloadTask[] | null> {
-    return invoke<DownloadTask[] | null>("import_torrent_file").catch((error) => {
+    const tasks = await invoke<DownloadTask[] | null>("import_torrent_file").catch((error) => {
       throw normalizeTauriError("import_torrent_file", error);
     });
+    if (tasks) emitManualDownloadAdded();
+    return tasks;
   }
 
   /** 将资源搜索结果加入当前默认下载引擎。 */
   async addReleaseDownload(input: AddReleaseDownloadInput): Promise<DownloadTask[]> {
-    return invoke<DownloadTask[]>("add_release_download", { input }).catch((error) => {
+    const tasks = await invoke<DownloadTask[]>("add_release_download", { input }).catch((error) => {
       throw normalizeTauriError("add_release_download", error);
     });
+    emitManualDownloadAdded();
+    return tasks;
   }
 
   /** 测试当前 qBittorrent WebUI 登录与任务读取。 */

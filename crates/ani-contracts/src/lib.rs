@@ -110,6 +110,8 @@ pub struct EmbeddedTorrentCoreStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listen_port: Option<u16>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_policy_blocked: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_started_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_stopped_at: Option<String>,

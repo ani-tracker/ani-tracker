@@ -35,7 +35,11 @@ const [
   androidRevocationPolicyTest,
   mobilePluginRust,
   mobileConsumerRules,
-  sourceNetwork
+  sourceNetwork,
+  torrentRuntime,
+  androidTorrentService,
+  androidTorrentRecovery,
+  iosTorrentPlugin
 ] = await Promise.all([
   readFile("package.json", "utf8"),
   readFile(".github/workflows/tauri-mobile.yml", "utf8"),
@@ -69,7 +73,11 @@ const [
   readFile("crates/tauri-plugin-ani-mobile/android/src/test/java/org/rustls/platformverifier/AndroidCertificateRevocationPolicyTest.kt", "utf8"),
   readFile("crates/tauri-plugin-ani-mobile/src/android.rs", "utf8"),
   readFile("crates/tauri-plugin-ani-mobile/android/consumer-rules.pro", "utf8"),
-  readFile("crates/ani-sources/src/lib.rs", "utf8")
+  readFile("crates/ani-sources/src/lib.rs", "utf8"),
+  readFile("native/torrent-core/src/torrent_core_runtime.cpp", "utf8"),
+  readFile("crates/tauri-plugin-ani-torrent/android/src/main/java/dev/ani/tracker/torrent/TorrentDownloadService.kt", "utf8"),
+  readFile("crates/tauri-plugin-ani-torrent/android/src/main/java/dev/ani/tracker/torrent/TorrentRecoveryWorker.kt", "utf8"),
+  readFile("crates/tauri-plugin-ani-torrent/ios/Sources/AniTorrentPlugin.swift", "utf8")
 ]);
 
 const packageJson = JSON.parse(packageSource);
@@ -212,6 +220,19 @@ test("Android HTTPS 使用系统证书验证器并在业务请求前初始化", 
 test("来源网络失败日志仅保留定位所需的脱敏字段", () => {
   assert.match(sourceNetwork, /Rust 来源网络请求失败：source_id=\{\}, host=\{\}, elapsed_ms=\{\}, error_category=\{\}, failure_reason=\{\}/);
   assert.doesNotMatch(sourceNetwork, /Rust 来源网络请求失败[^\n]*error=\{\}/);
+});
+
+test("Android 与 iOS 下载核心统一执行移动网络会话策略", () => {
+  assert.match(torrentRuntime, /command\.method == "setNetworkPolicy"/);
+  assert.match(torrentRuntime, /session_\.pause\(\)/);
+  assert.match(torrentRuntime, /session_\.resume\(\)/);
+  assert.match(torrentRuntime, /result\.put\("networkPolicyBlocked", network_policy_blocked_\)/);
+  assert.match(androidTorrentService, /ConnectivityManager\.NetworkCallback/);
+  assert.match(androidTorrentService, /isActiveNetworkMetered/);
+  assert.match(androidTorrentRecovery, /NetworkType\.UNMETERED/);
+  assert.match(iosTorrentPlugin, /NWPathMonitor\(\)/);
+  assert.match(iosTorrentPlugin, /path\.isExpensive \|\| path\.isConstrained/);
+  assert.match(iosTorrentPlugin, /initialNetworkPolicyBlocked: blocked/);
 });
 
 test("移动播放器注册错误支持 Tauri PluginInvokeError", () => {

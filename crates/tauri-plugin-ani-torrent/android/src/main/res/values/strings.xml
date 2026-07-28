@@ -4,5 +4,6 @@
     <string name="ani_torrent_notification_title">Ani Tracker 正在下载</string>
     <string name="ani_torrent_notification_text">内置下载引擎正在后台运行</string>
     <string name="ani_torrent_notification_title_active">Ani Tracker · %1$d 个活动任务</string>
+    <string name="ani_torrent_notification_title_waiting_wifi">等待 Wi-Fi · %1$d 个任务</string>
     <string name="ani_torrent_notification_progress">下载 %1$s · 上传 %2$s · %3$d%%</string>
 </resources>

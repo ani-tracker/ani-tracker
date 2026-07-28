@@ -14,6 +14,8 @@ pub struct DownloadEngineStatus {
     pub task_count: usize,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub listen_port: Option<u16>,
+    #[serde(default)]
+    pub network_policy_blocked: bool,
 }
 
 /// 内置下载引擎的做种停止策略。
@@ -50,8 +52,15 @@ pub struct DownloadEngineConfig {
     pub max_active_downloads: u32,
     pub max_download_speed: u32,
     pub max_upload_speed: u32,
+    #[serde(default = "allow_metered_downloads_by_default")]
+    pub allow_metered_downloads: bool,
     #[serde(default)]
     pub seeding_limits: SeedingLimits,
+}
+
+/// 兼容旧配置和桌面调用方，未声明时保持允许计费网络。
+fn allow_metered_downloads_by_default() -> bool {
+    true
 }
 
 /// 添加种子时传给具体引擎的通用选项。

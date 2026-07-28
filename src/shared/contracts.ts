@@ -299,6 +299,7 @@ export interface EmbeddedTorrentCoreStatus {
   version?: string;
   taskCount?: number;
   listenPort?: number;
+  networkPolicyBlocked?: boolean;
   lastStartedAt?: string;
   lastStoppedAt?: string;
   lastError?: string;

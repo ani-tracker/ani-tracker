@@ -15,6 +15,7 @@ typedef struct ani_torrent_core_handle ani_torrent_core_handle;
 /** 创建 Apple 平台核心；失败时 error_message 返回需释放的 UTF-8 文本。 */
 ANI_TORRENT_CORE_API ani_torrent_core_handle* ani_torrent_core_start(
     const char* data_directory,
+    int initial_network_policy_blocked,
     char** error_message);
 
 /** 执行完整 NDJSON 请求；返回值和错误文本均由 ani_torrent_core_string_free 释放。 */

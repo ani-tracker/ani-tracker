@@ -9,7 +9,7 @@ namespace ani::torrent_core {
 /** 跨桌面 sidecar 与 Android JNI 复用的 libtorrent 运行时。 */
 class Runtime {
  public:
-  explicit Runtime(std::string data_directory);
+  explicit Runtime(std::string data_directory, bool initial_network_policy_blocked = false);
   ~Runtime();
 
   Runtime(const Runtime&) = delete;

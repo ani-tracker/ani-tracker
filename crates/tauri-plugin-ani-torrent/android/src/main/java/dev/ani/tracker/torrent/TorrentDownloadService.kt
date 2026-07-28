@@ -8,6 +8,9 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
+import android.net.ConnectivityManager
+import android.net.Network
+import android.net.NetworkCapabilities
 import android.os.Binder
 import android.os.Build
 import android.os.IBinder
@@ -26,12 +29,29 @@ class TorrentDownloadService : Service() {
     }
     private val binder = LocalBinder()
     private var nativeHandle = 0L
+    private lateinit var connectivityManager: ConnectivityManager
+    private var allowMeteredDownloads = false
+    private var appliedNetworkPolicyBlocked: Boolean? = null
     private var notificationVisible = false
     private var lastNotificationSummary: DownloadSummary? = null
+    private val networkCallback = object : ConnectivityManager.NetworkCallback() {
+        /** 网络接通后重新计算 BT 会话策略。 */
+        override fun onAvailable(network: Network) = scheduleNetworkPolicyRefresh("网络已连接")
+
+        /** 网络断开后立即阻止 BT 会话继续传输。 */
+        override fun onLost(network: Network) = scheduleNetworkPolicyRefresh("网络已断开")
+
+        /** 计费或验证状态变化后重新计算 BT 会话策略。 */
+        override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) =
+            scheduleNetworkPolicyRefresh("网络属性已变化")
+    }
 
     /** 建立通知后异步恢复下载核心，满足前台服务启动时限。 */
     override fun onCreate() {
         super.onCreate()
+        connectivityManager = getSystemService(ConnectivityManager::class.java)
+        allowMeteredDownloads = allowsMeteredDownloads(this)
+        connectivityManager.registerDefaultNetworkCallback(networkCallback)
         createNotificationChannel()
         startCoreForeground()
         executor.execute {
@@ -60,6 +80,8 @@ class TorrentDownloadService : Service() {
 
     /** 在系统销毁服务前等待原生状态落盘。 */
     override fun onDestroy() {
+        runCatching { connectivityManager.unregisterNetworkCallback(networkCallback) }
+            .onFailure { error -> Log.w(LOG_TAG, "network callback unregister failed", error) }
         try {
             executor.submit { stopCore() }.get(SHUTDOWN_TIMEOUT_SECONDS, TimeUnit.SECONDS)
         } catch (error: Exception) {
@@ -85,8 +107,17 @@ class TorrentDownloadService : Service() {
         return executor.submit(Callable {
             val response = NativeTorrentCore.nativeExecute(ensureCoreStarted(), requestJson)
             if (requestMethod(requestJson) == "configure" && isSuccessfulResponse(response)) {
-                check(preferences().edit().putString(CONFIGURE_REQUEST_KEY, requestJson).commit()) {
+                val updatedAllowMetered = configureAllowMeteredDownloads(requestJson)
+                val editor = preferences().edit().putString(CONFIGURE_REQUEST_KEY, requestJson)
+                updatedAllowMetered?.let { editor.putBoolean(ALLOW_METERED_DOWNLOADS_KEY, it) }
+                check(editor.commit()) {
                     "无法持久化 Android 下载配置"
+                }
+                if (updatedAllowMetered != null) {
+                    allowMeteredDownloads = updatedAllowMetered
+                    applyNetworkPolicy()
+                    TorrentRecoveryWorker.schedule(this)
+                    Log.i(LOG_TAG, "metered download setting updated: allowed=$allowMeteredDownloads")
                 }
             }
             if (isSuccessfulResponse(response)) {
@@ -105,18 +136,21 @@ class TorrentDownloadService : Service() {
             check(directory.exists() || directory.mkdirs()) {
                 "无法创建下载核心数据目录：${directory.absolutePath}"
             }
-            val handle = NativeTorrentCore.nativeStart(directory.absolutePath)
+            val initialBlocked = currentNetworkPolicyBlocked()
+            val handle = NativeTorrentCore.nativeStart(directory.absolutePath, initialBlocked)
             try {
                 preferences().getString(CONFIGURE_REQUEST_KEY, null)?.let { request ->
                     val response = NativeTorrentCore.nativeExecute(handle, request)
                     check(isSuccessfulResponse(response)) { "恢复 Android 下载配置失败：$response" }
                 }
                 nativeHandle = handle
+                appliedNetworkPolicyBlocked = initialBlocked
             } catch (error: Exception) {
                 NativeTorrentCore.nativeStop(handle)
+                appliedNetworkPolicyBlocked = null
                 throw error
             }
-            Log.i(LOG_TAG, "torrent core started")
+            Log.i(LOG_TAG, "torrent core started: networkPolicyBlocked=$initialBlocked")
         }
         return nativeHandle
     }
@@ -126,6 +160,7 @@ class TorrentDownloadService : Service() {
         if (nativeHandle == 0L) return
         NativeTorrentCore.nativeStop(nativeHandle)
         nativeHandle = 0L
+        appliedNetworkPolicyBlocked = null
         Log.i(LOG_TAG, "torrent core stopped")
     }
 
@@ -135,6 +170,51 @@ class TorrentDownloadService : Service() {
 
     private fun requestMethod(requestJson: String): String? =
         runCatching { JSONObject(requestJson).optString("method") }.getOrNull()
+
+    /** 从成功配置中读取移动网络开关，缺少字段时保留旧值。 */
+    private fun configureAllowMeteredDownloads(requestJson: String): Boolean? = runCatching {
+        val params = JSONObject(requestJson).optJSONObject("params") ?: return@runCatching null
+        if (params.has("allowMeteredDownloads")) params.optBoolean("allowMeteredDownloads") else null
+    }.getOrNull()
+
+    /** 将网络变化串行交给核心线程，避免与下载命令并发修改 Session。 */
+    private fun scheduleNetworkPolicyRefresh(reason: String) {
+        if (executor.isShutdown) return
+        runCatching {
+            executor.execute {
+                runCatching {
+                    applyNetworkPolicy()
+                    refreshDownloadNotification()
+                }.onFailure { error -> Log.w(LOG_TAG, "network policy refresh failed: $reason", error) }
+            }
+        }.onFailure { error -> Log.w(LOG_TAG, "network policy scheduling failed: $reason", error) }
+    }
+
+    /** 判断当前网络是否必须阻止 BT 传输；离线和未验证网络始终阻止。 */
+    private fun currentNetworkPolicyBlocked(): Boolean {
+        val network = connectivityManager.activeNetwork ?: return true
+        val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return true
+        if (!capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+            !capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        ) return true
+        return !allowMeteredDownloads && connectivityManager.isActiveNetworkMetered
+    }
+
+    /** 向共享核心下发会话级网络策略，不改变用户手动暂停的任务状态。 */
+    private fun applyNetworkPolicy() {
+        if (nativeHandle == 0L) return
+        val blocked = currentNetworkPolicyBlocked()
+        if (appliedNetworkPolicyBlocked == blocked) return
+        val request = JSONObject().apply {
+            put("id", "android-network-policy")
+            put("method", "setNetworkPolicy")
+            put("params", JSONObject().put("blocked", blocked))
+        }.toString()
+        val response = NativeTorrentCore.nativeExecute(nativeHandle, request)
+        check(isSuccessfulResponse(response)) { "更新 Android 下载网络策略失败：$response" }
+        appliedNetworkPolicyBlocked = blocked
+        Log.i(LOG_TAG, "network policy applied: blocked=$blocked")
+    }
 
     /** 兼容 property_tree 的字符串布尔值与标准 JSON 布尔值。 */
     private fun isSuccessfulResponse(response: String): Boolean {
@@ -155,6 +235,16 @@ class TorrentDownloadService : Service() {
         }.toString()
         val response = JSONObject(NativeTorrentCore.nativeExecute(nativeHandle, listRequest))
         check(isJsonTrue(response.opt("ok"))) { "读取 Android 下载任务失败：$response" }
+        val statusRequest = JSONObject().apply {
+            put("id", "android-notification-status")
+            put("method", "status")
+            put("params", JSONObject())
+        }.toString()
+        val statusResponse = JSONObject(NativeTorrentCore.nativeExecute(nativeHandle, statusRequest))
+        check(isJsonTrue(statusResponse.opt("ok"))) { "读取 Android 下载状态失败：$statusResponse" }
+        val networkPolicyBlocked = isJsonTrue(
+            statusResponse.optJSONObject("result")?.opt("networkPolicyBlocked")
+        )
         val tasks = response.optJSONObject("result")?.optJSONArray("tasks")
         var activeCount = 0
         var downloadSpeed = 0L
@@ -177,7 +267,8 @@ class TorrentDownloadService : Service() {
             downloadSpeed.coerceAtLeast(0),
             uploadSpeed.coerceAtLeast(0),
             downloadedBytes.coerceAtLeast(0),
-            totalBytes.coerceAtLeast(0)
+            totalBytes.coerceAtLeast(0),
+            networkPolicyBlocked
         )
         check(preferences().edit().putBoolean(ACTIVE_TASKS_KEY, summary.activeCount > 0).commit()) {
             "无法持久化 Android 下载恢复状态"
@@ -229,7 +320,11 @@ class TorrentDownloadService : Service() {
         val notification = Notification.Builder(this, NOTIFICATION_CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
             .setContentTitle(summary?.let {
-                getString(R.string.ani_torrent_notification_title_active, it.activeCount)
+                if (it.networkPolicyBlocked) {
+                    getString(R.string.ani_torrent_notification_title_waiting_wifi, it.activeCount)
+                } else {
+                    getString(R.string.ani_torrent_notification_title_active, it.activeCount)
+                }
             } ?: getString(R.string.ani_torrent_notification_title))
             .setContentText(summary?.let {
                 getString(
@@ -306,6 +401,7 @@ class TorrentDownloadService : Service() {
         private const val PREFERENCES_NAME = "ani_torrent_core"
         private const val CONFIGURE_REQUEST_KEY = "configure_request_v1"
         private const val ACTIVE_TASKS_KEY = "has_active_tasks_v1"
+        private const val ALLOW_METERED_DOWNLOADS_KEY = "allow_metered_downloads_v1"
         private const val ACTION_OPEN_DOWNLOADS = "com.ani.tracker.OPEN_DOWNLOADS"
         private const val NOTIFICATION_CHANNEL_ID = "ani_torrent_downloads"
         private const val NOTIFICATION_ID = 20021
@@ -349,6 +445,11 @@ class TorrentDownloadService : Service() {
         fun hasActiveTasks(context: Context): Boolean = context
             .getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
             .getBoolean(ACTIVE_TASKS_KEY, false)
+
+        /** 返回恢复任务应使用的计费网络策略，移动端默认禁止。 */
+        fun allowsMeteredDownloads(context: Context): Boolean = context
+            .getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
+            .getBoolean(ALLOW_METERED_DOWNLOADS_KEY, false)
     }
 
     /** Android 通知需要的全局下载统计。 */
@@ -357,7 +458,8 @@ class TorrentDownloadService : Service() {
         val downloadSpeed: Long,
         val uploadSpeed: Long,
         val downloadedBytes: Long,
-        val totalBytes: Long
+        val totalBytes: Long,
+        val networkPolicyBlocked: Boolean
     ) {
         val progressPercent: Int
             get() = if (totalBytes <= 0L) 0 else
