@@ -717,17 +717,39 @@ fn remote_secret_directory(user_data: &Path) -> PathBuf {
     user_data.join("remote-secrets")
 }
 
+/// 解析远程 PWA 目录，开发态使用工作区产物，发布态使用打包资源。
 fn resolve_remote_renderer_directory(app: &AppHandle) -> PathBuf {
-    let source_directory = std::env::current_dir()
-        .unwrap_or_else(|_| PathBuf::from("."))
-        .join(".tauri-remote-pwa");
-    if source_directory.join("index.html").is_file() {
-        return source_directory;
-    }
-    app.path()
+    let bundled_directory = app
+        .path()
         .resource_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
-        .join("remote-pwa")
+        .join("remote-pwa");
+    #[cfg(debug_assertions)]
+    let development_directory = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .map(|workspace| workspace.join(".tauri-remote-pwa"));
+    #[cfg(not(debug_assertions))]
+    let development_directory = None;
+    let directory = select_remote_renderer_directory(development_directory, bundled_directory);
+    if directory.join("index.html").is_file() {
+        log::info!("远程 PWA 资源目录已解析 path={}", directory.display());
+    } else {
+        log::warn!(
+            "远程 PWA 资源目录缺少 index.html path={}",
+            directory.display()
+        );
+    }
+    directory
+}
+
+/// 开发产物有效时优先选用，否则回退到 Tauri 打包资源目录。
+fn select_remote_renderer_directory(
+    development_directory: Option<PathBuf>,
+    bundled_directory: PathBuf,
+) -> PathBuf {
+    development_directory
+        .filter(|directory| directory.join("index.html").is_file())
+        .unwrap_or(bundled_directory)
 }
 
 async fn write_atomic(path: &Path, value: &[u8]) -> Result<(), String> {
@@ -783,6 +805,39 @@ mod tests {
         assert_eq!(directory, root.join(MACOS_REMOTE_SECRET_DIRECTORY));
         #[cfg(not(target_os = "macos"))]
         assert_eq!(directory, root.join("remote-secrets"));
+    }
+
+    /// 验证开发产物存在时优先使用工作区 PWA 目录。
+    #[test]
+    fn prefers_development_remote_renderer_directory() {
+        let root = std::env::temp_dir().join(format!(
+            "ani-remote-renderer-test-{}-{}",
+            std::process::id(),
+            uuid::Uuid::new_v4()
+        ));
+        let development = root.join("development");
+        let bundled = root.join("bundled");
+        std::fs::create_dir_all(&development).expect("create development renderer directory");
+        std::fs::write(development.join("index.html"), "renderer")
+            .expect("write development renderer index");
+
+        assert_eq!(
+            select_remote_renderer_directory(Some(development.clone()), bundled),
+            development
+        );
+        std::fs::remove_dir_all(root).expect("remove remote renderer test directory");
+    }
+
+    /// 验证开发产物缺失时回退到打包 PWA 目录。
+    #[test]
+    fn falls_back_to_bundled_remote_renderer_directory() {
+        let development = PathBuf::from("/missing/development/remote-pwa");
+        let bundled = PathBuf::from("/application/resources/remote-pwa");
+
+        assert_eq!(
+            select_remote_renderer_directory(Some(development), bundled.clone()),
+            bundled
+        );
     }
 
     /// 验证 macOS 文件主密钥可复用且权限仅允许当前用户访问。
