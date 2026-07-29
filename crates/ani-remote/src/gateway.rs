@@ -848,11 +848,22 @@ async fn serve_renderer(
     let bytes = tokio::fs::read(&selected)
         .await
         .map_err(|_| GatewayHttpError::new(404, "ASSET_NOT_FOUND", "静态资源不可用"))?;
+    let is_renderer_entry =
+        selected.file_name().and_then(|value| value.to_str()) == Some("index.html");
+    let script_nonce = is_renderer_entry.then(|| uuid::Uuid::new_v4().simple().to_string());
+    let bytes = if let Some(script_nonce) = script_nonce.as_deref() {
+        let html = String::from_utf8(bytes).map_err(|_| {
+            GatewayHttpError::new(500, "PWA_ENTRY_INVALID", "PWA 入口文件不是有效 UTF-8")
+        })?;
+        prepare_renderer_entry_html(&html, script_nonce).into_bytes()
+    } else {
+        bytes
+    };
     let content_type = mime_guess::from_path(&selected)
         .first_or_octet_stream()
         .essence_str()
         .to_owned();
-    let csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'";
+    let csp = create_renderer_content_security_policy(script_nonce.as_deref());
     response_with_headers(
         StatusCode::OK,
         if head_only {
@@ -865,15 +876,76 @@ async fn serve_renderer(
             (CONTENT_LENGTH, &bytes.len().to_string()),
             (
                 CACHE_CONTROL,
-                if selected.ends_with("index.html") {
+                if is_renderer_entry {
                     "no-cache"
                 } else {
                     "public, max-age=31536000, immutable"
                 },
             ),
-            (axum::http::header::CONTENT_SECURITY_POLICY, csp),
+            (axum::http::header::CONTENT_SECURITY_POLICY, &csp),
             (axum::http::header::REFERRER_POLICY, "no-referrer"),
         ],
+    )
+}
+
+/// 为远程入口页补齐根路径基准，并授权受控的内联初始化脚本。
+fn prepare_renderer_entry_html(html: &str, script_nonce: &str) -> String {
+    let lower = html.to_ascii_lowercase();
+    let with_base = if lower.contains("<base") {
+        html.to_owned()
+    } else if let Some(head_end) = lower
+        .find("<head")
+        .and_then(|start| lower[start..].find('>').map(|end| start + end + 1))
+    {
+        let mut output = String::with_capacity(html.len() + 24);
+        output.push_str(&html[..head_end]);
+        output.push_str("\n    <base href=\"/\" />");
+        output.push_str(&html[head_end..]);
+        output
+    } else {
+        format!("<base href=\"/\" />{html}")
+    };
+    add_inline_script_nonce(&with_base, script_nonce)
+}
+
+/// 仅为没有 src 和 nonce 的内联脚本追加当前响应随机 nonce。
+fn add_inline_script_nonce(html: &str, script_nonce: &str) -> String {
+    let mut output = String::with_capacity(html.len() + 48);
+    let mut cursor = 0;
+    while cursor < html.len() {
+        let remaining_lower = html[cursor..].to_ascii_lowercase();
+        let Some(relative_start) = remaining_lower.find("<script") else {
+            output.push_str(&html[cursor..]);
+            break;
+        };
+        let start = cursor + relative_start;
+        output.push_str(&html[cursor..start]);
+        let Some(relative_end) = html[start..].find('>') else {
+            output.push_str(&html[start..]);
+            break;
+        };
+        let end = start + relative_end;
+        let tag = &html[start..=end];
+        let tag_lower = tag.to_ascii_lowercase();
+        if tag_lower.contains(" src=") || tag_lower.contains(" nonce=") {
+            output.push_str(tag);
+        } else {
+            output.push_str(&tag[..tag.len() - 1]);
+            output.push_str(&format!(" nonce=\"{script_nonce}\">"));
+        }
+        cursor = end + 1;
+    }
+    output
+}
+
+/// 创建远程 PWA CSP，只放行当前入口响应的内联初始化脚本。
+fn create_renderer_content_security_policy(script_nonce: Option<&str>) -> String {
+    let script_source = script_nonce.map_or_else(
+        || "script-src 'self'".to_owned(),
+        |nonce| format!("script-src 'self' 'nonce-{nonce}'"),
+    );
+    format!(
+        "default-src 'self'; {script_source}; style-src 'self' 'unsafe-inline'; img-src 'self' data: https:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'"
     )
 }
 
@@ -1268,7 +1340,7 @@ mod tests {
         let temporary = TempDir::new().expect("temporary gateway directory");
         let renderer = temporary.path().join("renderer");
         let download = temporary.path().join("download");
-        tokio::fs::create_dir_all(&renderer)
+        tokio::fs::create_dir_all(renderer.join("assets"))
             .await
             .expect("create renderer directory");
         tokio::fs::create_dir_all(&download)
@@ -1276,10 +1348,19 @@ mod tests {
             .expect("create download directory");
         tokio::fs::write(
             renderer.join("index.html"),
-            b"<!doctype html><title>Ani</title>",
+            b"<!doctype html><html><head><link rel=\"manifest\" href=\"./manifest.webmanifest\"><link rel=\"stylesheet\" href=\"./assets/app.css\"><script>window.__theme=true</script><script type=\"module\" src=\"./assets/app.js\"></script><title>Ani</title></head><body></body></html>",
         )
         .await
         .expect("write renderer");
+        tokio::fs::write(renderer.join("assets/app.js"), b"window.__app=true")
+            .await
+            .expect("write renderer script");
+        tokio::fs::write(renderer.join("assets/app.css"), b"body{color:black}")
+            .await
+            .expect("write renderer style");
+        tokio::fs::write(renderer.join("manifest.webmanifest"), b"{}")
+            .await
+            .expect("write renderer manifest");
         let media_bytes = b"0123456789";
         tokio::fs::write(download.join("episode-01.mkv"), media_bytes)
             .await
@@ -1364,16 +1445,45 @@ mod tests {
             .expect("http client");
         let base_url = format!("http://127.0.0.1:{port}");
         let renderer_response = client
-            .get(&base_url)
+            .get(format!("{base_url}/player/task-1"))
             .send()
             .await
             .expect("renderer request");
         assert_eq!(renderer_response.status(), reqwest::StatusCode::OK);
-        assert!(renderer_response
-            .text()
+        let content_security_policy = renderer_response
+            .headers()
+            .get(reqwest::header::CONTENT_SECURITY_POLICY)
+            .and_then(|value| value.to_str().ok())
+            .expect("renderer csp")
+            .to_owned();
+        let renderer_html = renderer_response.text().await.expect("renderer body");
+        let script_nonce = renderer_html
+            .split("<script nonce=\"")
+            .nth(1)
+            .and_then(|value| value.split('\"').next())
+            .expect("inline script nonce");
+        assert!(renderer_html.contains("<base href=\"/\" />"));
+        assert!(renderer_html.contains("<title>Ani</title>"));
+        assert!(content_security_policy.contains(&format!("'nonce-{script_nonce}'")));
+        assert!(!content_security_policy.contains("script-src 'self' 'unsafe-inline'"));
+
+        for asset_path in ["/assets/app.js", "/assets/app.css", "/manifest.webmanifest"] {
+            let response = client
+                .get(format!("{base_url}{asset_path}"))
+                .send()
+                .await
+                .expect("renderer asset request");
+            assert_eq!(response.status(), reqwest::StatusCode::OK, "{asset_path}");
+        }
+        let missing_nested_asset = client
+            .get(format!("{base_url}/player/assets/app.js"))
+            .send()
             .await
-            .expect("renderer body")
-            .contains("<title>Ani</title>"));
+            .expect("missing nested asset request");
+        assert_eq!(
+            missing_nested_asset.status(),
+            reqwest::StatusCode::NOT_FOUND
+        );
 
         let forbidden = client
             .get(format!("{base_url}/api/health"))
