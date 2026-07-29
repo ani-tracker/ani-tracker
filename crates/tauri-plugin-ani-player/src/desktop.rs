@@ -62,19 +62,56 @@ pub fn init<R: Runtime, C: DeserializeOwned>(
 }
 
 fn desktop_runtime_roots<R: Runtime>(app: &AppHandle<R>) -> Vec<PathBuf> {
-    let mut roots = Vec::new();
-    if let Some(configured) = std::env::var_os("ANI_LIBVLC_DIR") {
-        roots.push(PathBuf::from(configured));
-    }
-    if let Ok(resource_directory) = app.path().resource_dir() {
-        roots.push(resource_directory.join("libvlc").join(platform_directory()));
-    }
+    let executable_directory = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(PathBuf::from));
     let current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    roots.extend([
-        current.join("out/libvlc").join(platform_directory()),
-        current.join("resources/libvlc").join(platform_directory()),
-    ]);
+    runtime_roots_for(
+        &platform_directory(),
+        std::env::var_os("ANI_LIBVLC_DIR").map(PathBuf::from),
+        executable_directory,
+        app.path().resource_dir().ok(),
+        current,
+    )
+}
+
+/// 生成 libVLC 搜索根，兼容自定义 Cargo target-dir 的开发产物目录。
+fn runtime_roots_for(
+    platform: &str,
+    configured: Option<PathBuf>,
+    executable_directory: Option<PathBuf>,
+    resource_directory: Option<PathBuf>,
+    current_directory: PathBuf,
+) -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Some(configured) = configured {
+        push_unique_root(&mut roots, configured);
+    }
+    if let Some(resource_directory) = resource_directory {
+        push_unique_root(&mut roots, resource_directory.join("libvlc").join(platform));
+    }
+    if let Some(executable_directory) = executable_directory {
+        push_unique_root(
+            &mut roots,
+            executable_directory.join("libvlc").join(platform),
+        );
+    }
+    push_unique_root(
+        &mut roots,
+        current_directory.join("out/libvlc").join(platform),
+    );
+    push_unique_root(
+        &mut roots,
+        current_directory.join("resources/libvlc").join(platform),
+    );
     roots
+}
+
+/// 追加尚未出现的运行时根目录，避免重复探测与重复日志。
+fn push_unique_root(roots: &mut Vec<PathBuf>, root: PathBuf) {
+    if !roots.contains(&root) {
+        roots.push(root);
+    }
 }
 
 /// 返回当前桌面目标对应的资源目录名。
@@ -100,7 +137,9 @@ fn platform_directory_for(os: &str, arch: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::platform_directory_for;
+    use std::path::PathBuf;
+
+    use super::{platform_directory_for, runtime_roots_for};
 
     #[test]
     fn maps_supported_desktop_resource_directories() {
@@ -108,5 +147,27 @@ mod tests {
         assert_eq!(platform_directory_for("macos", "x86_64"), "darwin-x64");
         assert_eq!(platform_directory_for("macos", "aarch64"), "darwin-arm64");
         assert_eq!(platform_directory_for("linux", "x86_64"), "linux-x64");
+    }
+
+    #[test]
+    fn resolves_runtime_next_to_custom_cargo_target_executable() {
+        let roots = runtime_roots_for(
+            "darwin-x64",
+            Some(PathBuf::from("/override/vlc")),
+            Some(PathBuf::from("/repo/out/cargo-target/debug")),
+            Some(PathBuf::from("/bundle/Contents/Resources")),
+            PathBuf::from("/repo/src-tauri"),
+        );
+
+        assert_eq!(
+            roots,
+            vec![
+                PathBuf::from("/override/vlc"),
+                PathBuf::from("/bundle/Contents/Resources/libvlc/darwin-x64"),
+                PathBuf::from("/repo/out/cargo-target/debug/libvlc/darwin-x64"),
+                PathBuf::from("/repo/src-tauri/out/libvlc/darwin-x64"),
+                PathBuf::from("/repo/src-tauri/resources/libvlc/darwin-x64"),
+            ]
+        );
     }
 }

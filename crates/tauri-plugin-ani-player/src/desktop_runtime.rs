@@ -762,8 +762,10 @@ impl PlayerTransport for DesktopPlayerTransport {
 }
 
 fn resolve_runtime(roots: &[PathBuf]) -> Result<(PathBuf, Option<PathBuf>), PlayerTransportError> {
+    let mut attempted_libraries = Vec::new();
     for root in roots {
         for library in library_candidates(root) {
+            attempted_libraries.push(library.clone());
             if library.is_file() {
                 let plugins = plugin_candidates(root)
                     .into_iter()
@@ -781,10 +783,19 @@ fn resolve_runtime(roots: &[PathBuf]) -> Result<(PathBuf, Option<PathBuf>), Play
         }
     }
     for library in system_library_candidates() {
+        attempted_libraries.push(library.clone());
         if library.is_file() || library.components().count() == 1 {
             return Ok((library, None));
         }
     }
+    log::warn!(
+        "Tauri 桌面 libVLC 搜索耗尽 candidates={}",
+        attempted_libraries
+            .iter()
+            .map(|path| path.display().to_string())
+            .collect::<Vec<_>>()
+            .join(" | ")
+    );
     Err(PlayerTransportError::Unavailable(
         "未找到 libVLC 3.0.x 运行时".to_owned(),
     ))
