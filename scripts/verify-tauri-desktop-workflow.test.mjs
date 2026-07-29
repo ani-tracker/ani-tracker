@@ -4,6 +4,7 @@ import test from "node:test";
 
 const workflow = await readFile(".github/workflows/tauri-release-desktop.yml", "utf8");
 const torrentCorePrepare = await readFile("scripts/prepare-desktop-torrent-core-dev.mjs", "utf8");
+const qbittorrentUnixBuild = await readFile("scripts/build-qbittorrent-nox-unix.sh", "utf8");
 
 test("桌面原生依赖按平台使用独立步骤和工具链", () => {
   assert.match(workflow, /name: Prepare Windows libVLC[\s\S]*?if: matrix\.platform == 'win32'[\s\S]*?shell: pwsh/);
@@ -41,20 +42,49 @@ test("macOS 发布通过临时钥匙串导入并信任自签 P12", () => {
   assert.match(workflow, /security find-identity -v -p codesigning/);
 });
 
-test("macOS 发布在 Tauri 打包前按由内到外顺序签名托管 qBittorrent", () => {
-  assert.match(workflow, /name: Sign staged macOS managed qBittorrent/);
+test("macOS 发布修复最终应用内的 qBittorrent 签名后再生成 DMG", () => {
+  const appBuildIndex = workflow.indexOf("name: Build self-signed macOS app");
+  const repairIndex = workflow.indexOf("name: Repair final macOS bundle signatures");
+  const dmgBuildIndex = workflow.indexOf("name: Build macOS DMG from repaired app");
+  assert.ok(appBuildIndex >= 0 && appBuildIndex < repairIndex && repairIndex < dmgBuildIndex);
+  assert.doesNotMatch(workflow, /name: Sign staged macOS managed qBittorrent/);
+  assert.match(workflow, /find out\/cargo-target\/release\/bundle\/macos[\s\S]*?-name '\*\.app'/);
+  assert.match(workflow, /managed_app="\$\{final_app\}\/Contents\/Resources\/qbittorrent\/darwin-\$\{\{ matrix\.arch \}\}\/qbittorrent-nox\.app"/);
+  assert.match(workflow, /rm -rf "\$\{framework\}\/Resources" "\$\{framework\}\/Versions\/Current" "\$\{framework\}\/_CodeSignature"/);
+  assert.match(workflow, /ln -s A "\$\{framework\}\/Versions\/Current"/);
+  assert.match(workflow, /ln -s "Versions\/Current\/\$\{framework_name\}" "\$\{framework\}\/\$\{framework_name\}"/);
+  assert.match(workflow, /ln -s Versions\/Current\/Resources "\$\{framework\}\/Resources"/);
   assert.match(workflow, /find "\$\{managed_app\}\/Contents" -type f -name '\*\.dylib'/);
   assert.match(workflow, /find "\$\{managed_app\}\/Contents\/Frameworks" -type d -name '\*\.framework'/);
   assert.match(workflow, /--sign "\$\{APPLE_SIGNING_IDENTITY\}" "\$\{managed_executable\}"/);
   assert.match(workflow, /--sign "\$\{APPLE_SIGNING_IDENTITY\}" "\$\{managed_app\}"/);
   assert.match(workflow, /codesign --verify --deep --strict "\$\{managed_app\}"/);
+  assert.match(workflow, /--sign "\$\{APPLE_SIGNING_IDENTITY\}" "\$\{final_app\}"/);
+  assert.match(workflow, /codesign --verify --deep --strict "\$\{final_app\}"/);
+  assert.match(workflow, /echo "ANI_FINAL_MACOS_APP=\$\{final_app\}" >> "\$\{GITHUB_ENV\}"/);
+  assert.doesNotMatch(workflow, /tauri bundle --ci --bundles dmg/);
+  assert.match(workflow, /find "\$\{dmg_dir\}" -maxdepth 1 -type f -name '\*\.dmg' -delete/);
+  assert.match(workflow, /ditto "\$\{final_app\}" "\$\{staged_app\}"/);
+  assert.match(workflow, /codesign --verify --deep --strict "\$\{staged_app\}"/);
+  assert.match(workflow, /hdiutil create[\s\S]*?-srcfolder "\$\{dmg_source\}"[\s\S]*?-format UDZO/);
 });
 
-test("macOS 产物拒绝 ad-hoc 并校验嵌入证书指纹", () => {
+test("Unix qBittorrent 构建对 vcpkg 网络瞬时失败进行有限重试", () => {
+  assert.match(qbittorrentUnixBuild, /local max_attempts=3/);
+  assert.match(qbittorrentUnixBuild, /if "\$\{vcpkg_root\}\/vcpkg" install/);
+  assert.match(qbittorrentUnixBuild, /retry_delay=5/);
+  assert.match(qbittorrentUnixBuild, /retry_delay=15/);
+  assert.match(qbittorrentUnixBuild, /return "\$\{exit_code\}"/);
+});
+
+test("macOS 应用和 DMG 内应用均拒绝 ad-hoc 并校验嵌入证书指纹", () => {
   assert.match(workflow, /codesign --verify --deep --strict/);
   assert.match(workflow, /Signature=adhoc/);
   assert.match(workflow, /codesign -d --extract-certificates/);
   assert.match(workflow, /actual_fingerprint[\s\S]*?expected_fingerprint/);
+  assert.match(workflow, /hdiutil attach -nobrowse -readonly/);
+  assert.match(workflow, /find "\$\{mount_dir\}" -type d -name '\*\.app'/);
+  assert.match(workflow, /No macOS DMG found for embedded app signature verification/);
   assert.match(workflow, /ani-tracker-macos-self-signed\.pem/);
 });
 

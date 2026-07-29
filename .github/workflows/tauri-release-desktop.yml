@@ -343,37 +343,6 @@ jobs:
           echo "thumbprint=${certificate_sha1}" >> "${GITHUB_OUTPUT}"
           echo "fingerprint_sha256=${certificate_sha256}" >> "${GITHUB_OUTPUT}"
 
-      - name: Sign staged macOS managed qBittorrent
-        if: matrix.platform == 'darwin'
-        shell: bash
-        run: |
-          managed_app="out/qbittorrent/darwin-${{ matrix.arch }}/qbittorrent-nox.app"
-          if [[ ! -d "${managed_app}" ]]; then
-            echo "未找到待签名的 macOS qBittorrent 应用：${managed_app}" >&2
-            exit 1
-          fi
-
-          # 资源目录中的嵌套应用不会由 Tauri 稳定递归签名，必须按由内到外顺序处理。
-          while IFS= read -r -d '' library; do
-            echo "[macos-signing] 签名动态库：${library}"
-            codesign --force --options runtime --timestamp=none \
-              --sign "${APPLE_SIGNING_IDENTITY}" "${library}"
-          done < <(find "${managed_app}/Contents" -type f -name '*.dylib' -print0)
-
-          while IFS= read -r -d '' framework; do
-            echo "[macos-signing] 签名框架：${framework}"
-            codesign --force --options runtime --timestamp=none \
-              --sign "${APPLE_SIGNING_IDENTITY}" "${framework}"
-          done < <(find "${managed_app}/Contents/Frameworks" -type d -name '*.framework' -print0)
-
-          managed_executable="${managed_app}/Contents/MacOS/qbittorrent-nox"
-          codesign --force --options runtime --timestamp=none \
-            --sign "${APPLE_SIGNING_IDENTITY}" "${managed_executable}"
-          codesign --force --options runtime --timestamp=none \
-            --sign "${APPLE_SIGNING_IDENTITY}" "${managed_app}"
-          codesign --verify --deep --strict "${managed_app}"
-          echo "[macos-signing] 托管 qBittorrent 嵌套签名校验通过：${managed_app}"
-
       - name: Build remote PWA for desktop bundle
         run: pnpm run build:tauri:remote-renderer
 
@@ -404,8 +373,129 @@ jobs:
           } | ConvertTo-Json -Depth 5 -Compress
           pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}" --config $config
 
-      - name: Build self-signed macOS and Linux bundles
-        if: matrix.platform != 'win32'
+      - name: Build self-signed macOS app
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          pnpm exec tauri build --ci --bundles app --config src-tauri/tauri.remote.conf.json
+
+      - name: Repair final macOS bundle signatures
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          final_app=""
+          while IFS= read -r -d '' candidate; do
+            if [[ -n "${final_app}" ]]; then
+              echo "发现多个最终 macOS 应用，无法确定签名目标" >&2
+              exit 1
+            fi
+            final_app="${candidate}"
+          done < <(find out/cargo-target/release/bundle/macos \
+            -mindepth 1 -maxdepth 1 -type d -name '*.app' -print0)
+          if [[ -z "${final_app}" ]]; then
+            echo "未找到 Tauri 生成的最终 macOS 应用" >&2
+            exit 1
+          fi
+
+          managed_app="${final_app}/Contents/Resources/qbittorrent/darwin-${{ matrix.arch }}/qbittorrent-nox.app"
+          if [[ ! -d "${managed_app}" ]]; then
+            echo "未找到最终包内的 macOS qBittorrent 应用：${managed_app}" >&2
+            exit 1
+          fi
+
+          # Tauri 资源复制会展开 Qt Framework 的版本符号链接，先恢复标准目录结构。
+          while IFS= read -r -d '' framework; do
+            framework_name="$(basename "${framework}" .framework)"
+            framework_version="${framework}/Versions/A"
+            if [[ ! -f "${framework_version}/${framework_name}" ]]; then
+              echo "Qt Framework 缺少版本化可执行文件：${framework}" >&2
+              exit 1
+            fi
+
+            rm -f "${framework}/${framework_name}"
+            rm -rf "${framework}/Resources" "${framework}/Versions/Current" "${framework}/_CodeSignature"
+            ln -s A "${framework}/Versions/Current"
+            ln -s "Versions/Current/${framework_name}" "${framework}/${framework_name}"
+            if [[ -d "${framework_version}/Resources" ]]; then
+              ln -s Versions/Current/Resources "${framework}/Resources"
+            fi
+            echo "[macos-signing] 已恢复 Qt Framework 符号链接：${framework}"
+          done < <(find "${managed_app}/Contents/Frameworks" -type d -name '*.framework' -print0)
+
+          # 资源结构修复后再按由内到外顺序签名，避免 Qt Framework 内容变化导致签名失效。
+          while IFS= read -r -d '' library; do
+            echo "[macos-signing] 签名最终包动态库：${library}"
+            codesign --force --options runtime --timestamp=none \
+              --sign "${APPLE_SIGNING_IDENTITY}" "${library}"
+          done < <(find "${managed_app}/Contents" -type f -name '*.dylib' -print0)
+
+          while IFS= read -r -d '' framework; do
+            echo "[macos-signing] 签名最终包框架：${framework}"
+            codesign --force --options runtime --timestamp=none \
+              --sign "${APPLE_SIGNING_IDENTITY}" "${framework}"
+          done < <(find "${managed_app}/Contents/Frameworks" -type d -name '*.framework' -print0)
+
+          managed_executable="${managed_app}/Contents/MacOS/qbittorrent-nox"
+          codesign --force --options runtime --timestamp=none \
+            --sign "${APPLE_SIGNING_IDENTITY}" "${managed_executable}"
+          codesign --force --options runtime --timestamp=none \
+            --sign "${APPLE_SIGNING_IDENTITY}" "${managed_app}"
+          codesign --verify --deep --strict "${managed_app}"
+
+          codesign --force --options runtime --timestamp=none \
+            --sign "${APPLE_SIGNING_IDENTITY}" "${final_app}"
+          codesign --verify --deep --strict "${final_app}"
+          echo "ANI_FINAL_MACOS_APP=${final_app}" >> "${GITHUB_ENV}"
+          echo "[macos-signing] 最终 macOS 应用签名修复完成：${final_app}"
+
+      - name: Build macOS DMG from repaired app
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          final_app="${ANI_FINAL_MACOS_APP}"
+          if [[ -z "${final_app}" || ! -d "${final_app}" ]]; then
+            echo "未找到已修复签名的最终 macOS 应用：${final_app}" >&2
+            exit 1
+          fi
+
+          product_name="$(basename "${final_app}" .app)"
+          version="${RELEASE_VERSION#v}"
+          case "${{ matrix.arch }}" in
+            arm64) dmg_arch="aarch64" ;;
+            x64) dmg_arch="x64" ;;
+            *) echo "不支持的 macOS DMG 架构：${{ matrix.arch }}" >&2; exit 1 ;;
+          esac
+          dmg_dir="out/cargo-target/release/bundle/dmg"
+          dmg_path="${dmg_dir}/${product_name}_${version}_${dmg_arch}.dmg"
+          mkdir -p "${dmg_dir}"
+          find "${dmg_dir}" -maxdepth 1 -type f -name '*.dmg' -delete
+
+          dmg_source="$(mktemp -d "${RUNNER_TEMP}/ani-tracker-dmg-source.XXXXXX")"
+          cleanup_dmg_source() {
+            if [[ -n "${dmg_source}" && "${dmg_source}" == "${RUNNER_TEMP}"/ani-tracker-dmg-source.* ]]; then
+              rm -rf "${dmg_source}"
+            fi
+          }
+          trap cleanup_dmg_source EXIT
+
+          # Tauri bundle 会重新复制资源并破坏 Qt Framework 符号链接，ditto 可保留修复后的应用结构。
+          staged_app="${dmg_source}/$(basename "${final_app}")"
+          ditto "${final_app}" "${staged_app}"
+          codesign --verify --deep --strict "${staged_app}"
+          ln -s /Applications "${dmg_source}/Applications"
+          hdiutil create \
+            -volname "${product_name}" \
+            -srcfolder "${dmg_source}" \
+            -ov -format UDZO \
+            "${dmg_path}"
+          echo "[macos-signing] 已从修复后的应用生成 DMG：${dmg_path}"
+
+          cleanup_dmg_source
+          dmg_source=""
+          trap - EXIT
+
+      - name: Build Linux bundles
+        if: matrix.platform == 'linux'
         shell: bash
         run: |
           pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}" --config src-tauri/tauri.remote.conf.json
@@ -423,9 +513,12 @@ jobs:
             exit 1
           fi
           verified=0
-          while IFS= read -r -d '' app; do
-            codesign --verify --deep --strict "$app"
-            signature_details="$(codesign -dv --verbose=4 "$app" 2>&1)"
+
+          # 校验应用及其嵌套应用均使用当前发布证书，拒绝 ad-hoc 签名。
+          verify_app_signature() {
+            local app="$1"
+            codesign --verify --deep --strict "${app}"
+            signature_details="$(codesign -dv --verbose=4 "${app}" 2>&1)"
             printf '%s\n' "${signature_details}"
             if printf '%s' "${signature_details}" | grep -q 'Signature=adhoc'; then
               echo "macOS app must not use an ad-hoc signature: ${app}" >&2
@@ -447,11 +540,61 @@ jobs:
             fi
             rm -f "${certificate_prefix}"*
             verified=$((verified + 1))
+          }
+
+          while IFS= read -r -d '' app; do
+            verify_app_signature "${app}"
           done < <(find out/cargo-target/release/bundle -type d -name '*.app' -print0)
           if [[ "$verified" -eq 0 ]]; then
             echo "No macOS app bundle found for self-signature verification" >&2
             exit 1
           fi
+
+          mounted_device=""
+          mount_dir=""
+          cleanup_mounted_dmg() {
+            if [[ -n "${mounted_device}" ]]; then
+              hdiutil detach "${mounted_device}" || true
+            fi
+            if [[ -n "${mount_dir}" ]]; then
+              rmdir "${mount_dir}" || true
+            fi
+          }
+          trap cleanup_mounted_dmg EXIT
+
+          verified_dmgs=0
+          while IFS= read -r -d '' dmg; do
+            mount_dir="$(mktemp -d "${RUNNER_TEMP}/ani-tracker-dmg.XXXXXX")"
+            attach_output="$(hdiutil attach -nobrowse -readonly -mountpoint "${mount_dir}" "${dmg}")"
+            printf '%s\n' "${attach_output}"
+            mounted_device="$(printf '%s\n' "${attach_output}" \
+              | awk -v mount="${mount_dir}" '$NF == mount { print $1; exit }')"
+            if [[ -z "${mounted_device}" ]]; then
+              echo "Failed to determine mounted device for macOS DMG: ${dmg}" >&2
+              exit 1
+            fi
+
+            dmg_apps=0
+            while IFS= read -r -d '' app; do
+              verify_app_signature "${app}"
+              dmg_apps=$((dmg_apps + 1))
+            done < <(find "${mount_dir}" -type d -name '*.app' -print0)
+            if [[ "${dmg_apps}" -eq 0 ]]; then
+              echo "No macOS app bundle found inside DMG: ${dmg}" >&2
+              exit 1
+            fi
+
+            hdiutil detach "${mounted_device}"
+            mounted_device=""
+            rmdir "${mount_dir}"
+            mount_dir=""
+            verified_dmgs=$((verified_dmgs + 1))
+          done < <(find out/cargo-target/release/bundle/dmg -type f -name '*.dmg' -print0)
+          if [[ "${verified_dmgs}" -eq 0 ]]; then
+            echo "No macOS DMG found for embedded app signature verification" >&2
+            exit 1
+          fi
+          trap - EXIT
 
       - name: Collect Unix release assets
         if: matrix.platform != 'win32'

@@ -69,15 +69,46 @@ qbittorrent_build="${target_root}/qbittorrent-build"
 bundle_input="${target_root}/bundle-input"
 installed_root="${vcpkg_root}/installed/${triplet}"
 
+# 安装静态依赖，网络瞬时失败时有限重试并保留最终退出码。
+install_vcpkg_dependencies() {
+  local max_attempts=3
+  local attempt=1
+  local exit_code=0
+  local retry_delay=0
+
+  while ((attempt <= max_attempts)); do
+    echo "[qbittorrent-build] 安装 vcpkg 依赖 attempt=${attempt}/${max_attempts}"
+    if "${vcpkg_root}/vcpkg" install \
+      "--triplet=${triplet}" \
+      "--x-manifest-root=${manifest_root}" \
+      "--x-install-root=${vcpkg_root}/installed" \
+      "--overlay-triplets=${triplets_root}"; then
+      return 0
+    else
+      exit_code=$?
+    fi
+
+    if ((attempt == max_attempts)); then
+      echo "vcpkg 依赖安装连续 ${max_attempts} 次失败，退出码：${exit_code}" >&2
+      return "${exit_code}"
+    fi
+
+    if ((attempt == 1)); then
+      retry_delay=5
+    else
+      retry_delay=15
+    fi
+    echo "[qbittorrent-build] vcpkg 安装失败，${retry_delay} 秒后重试" >&2
+    sleep "${retry_delay}"
+    attempt=$((attempt + 1))
+  done
+}
+
 echo "[qbittorrent-build] 准备固定版本源码 target=${target}"
 node "${repo_root}/scripts/prepare-qbittorrent-build-sources.mjs" --cache-root "${cache_root}"
 
 echo "[qbittorrent-build] 准备静态依赖 triplet=${triplet}"
-"${vcpkg_root}/vcpkg" install \
-  "--triplet=${triplet}" \
-  "--x-manifest-root=${manifest_root}" \
-  "--x-install-root=${vcpkg_root}/installed" \
-  "--overlay-triplets=${triplets_root}"
+install_vcpkg_dependencies
 
 libtorrent_options=(
   -G Ninja
