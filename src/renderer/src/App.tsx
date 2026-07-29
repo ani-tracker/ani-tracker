@@ -590,9 +590,13 @@ function MainApplication() {
         onNavigate={(pageId) => navigatePage(pageId as PageId)}
         contentRef={contentRef}
         secondaryView={detailView
-          ? { title: "番剧详情", onBack: () => window.history.back() }
+          ? { key: `anime-detail:${detailView.animeId}`, title: "番剧详情", onBack: () => window.history.back() }
           : discoverySchedule
-            ? { title: "新番时间表", onBack: () => window.history.back() }
+            ? {
+                key: `discovery-schedule:${discoverySchedule.target.year}:${discoverySchedule.target.season}`,
+                title: "新番时间表",
+                onBack: () => window.history.back()
+              }
             : undefined}
         status={applyMobileShellStatus(shellStatus, mobileStatus)}
         unreadCount={unreadCount}

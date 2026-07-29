@@ -25,6 +25,7 @@ import type {
   DesktopMediaToolsStatus,
   DownloadServiceStatus,
   EmbeddedTorrentCoreStatus,
+  ExportThemePackageInput,
   EpisodeReleasePreview,
   ImageCacheResolveResult,
   MediaScanResult,
@@ -45,11 +46,14 @@ import type {
   RssSubscriptionReleaseQuery,
   RssSubscriptionReleaseResult,
   SavePlaybackCheckpointInput,
+  SaveThemeBackgroundInput,
   SelectPlayerExecutableInput,
   SetAnimeSourceExclusionInput,
   SetAnimeWatchProgressInput,
   SourceSyncRunResult,
   SourceSyncSchedulerStatus,
+  ThemeBackgroundAsset,
+  ThemeBackgroundReference,
   TorrentConnectionTestResult
 } from "@shared/contracts";
 import type {
@@ -202,6 +206,38 @@ class TauriClientCore implements AppClient {
     return invoke<void>("invalidate_cached_image_url", { sourceUrl }).catch((error) => {
       throw normalizeTauriError("invalidate_cached_image_url", error);
     });
+  }
+
+  /** 将规范化主题背景写入应用私有目录。 */
+  async saveThemeBackground(input: SaveThemeBackgroundInput): Promise<ThemeBackgroundAsset> {
+    return invoke<ThemeBackgroundAsset>("save_theme_background", { input }).catch((error) => {
+      throw normalizeTauriError("save_theme_background", error);
+    });
+  }
+
+  /** 返回主题 JSON 引用的受控本地图片地址。 */
+  async resolveThemeBackground(themeId: string, fileName: string): Promise<ThemeBackgroundAsset | undefined> {
+    return invoke<ThemeBackgroundAsset | null>("resolve_theme_background", { themeId, fileName })
+      .then((asset) => asset ?? undefined)
+      .catch((error) => {
+        throw normalizeTauriError("resolve_theme_background", error);
+      });
+  }
+
+  /** 清理设置中已不再引用的主题背景图片。 */
+  async pruneThemeBackgrounds(references: ThemeBackgroundReference[]): Promise<void> {
+    return invoke<void>("prune_theme_backgrounds", { references }).catch((error) => {
+      throw normalizeTauriError("prune_theme_backgrounds", error);
+    });
+  }
+
+  /** 通过桌面或移动系统文件面板导出主题包。 */
+  async exportThemePackage(input: ExportThemePackageInput): Promise<string | undefined> {
+    return invoke<string | null>("export_theme_package", { input })
+      .then((fileName) => fileName ?? undefined)
+      .catch((error) => {
+        throw normalizeTauriError("export_theme_package", error);
+      });
   }
 
   /** 读取桌面远程网关、证书和设备状态。 */

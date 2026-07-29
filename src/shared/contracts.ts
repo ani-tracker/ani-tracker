@@ -18,6 +18,36 @@ export interface ImageCacheResolveResult {
   url: string;
 }
 
+/** Renderer 写入应用私有主题目录的规范化背景图片。 */
+export interface SaveThemeBackgroundInput {
+  themeId: string;
+  fileName: string;
+  contentType: "image/jpeg" | "image/png" | "image/webp";
+  dataBase64: string;
+}
+
+/** 宿主返回的主题背景资产及受控读取地址。 */
+export interface ThemeBackgroundAsset {
+  themeId: string;
+  fileName: string;
+  contentType: string;
+  size: number;
+  url: string;
+}
+
+/** 设置保存后仍被主题 JSON 引用的背景文件。 */
+export interface ThemeBackgroundReference {
+  themeId: string;
+  fileName: string;
+}
+
+/** 交由系统文件选择器导出的主题 JSON 或 ZIP。 */
+export interface ExportThemePackageInput {
+  fileName: string;
+  contentType: "application/json" | "application/zip";
+  dataBase64: string;
+}
+
 /** 无边框窗口控制区需要的最小窗口状态。 */
 export interface AppWindowState {
   maximized: boolean;

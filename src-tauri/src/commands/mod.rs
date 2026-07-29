@@ -10,6 +10,7 @@ pub(crate) mod player;
 pub(crate) mod remote;
 pub(crate) mod source_sync;
 pub(crate) mod sources;
+pub(crate) mod themes;
 pub(crate) mod window;
 
 pub(crate) use window::handle_window_event;

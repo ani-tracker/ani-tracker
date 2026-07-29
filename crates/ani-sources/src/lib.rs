@@ -80,7 +80,7 @@ impl Default for NativeHttpConfig {
         Self {
             proxy_mode: ProxyMode::System,
             proxy_url: None,
-            timeout_ms: 15_000,
+            timeout_ms: 30_000,
             max_response_bytes: 16 * 1024 * 1024,
             user_agent: "AniTracker/0.1".to_owned(),
         }

@@ -5,7 +5,7 @@
 ## 主题生成
 
 - [图片取色主题生成提示词](theme-generation/image-to-ani-theme-prompt.md)
-- [Theme Pack v1 示例](theme-generation/image-palette-example.ani-theme.json)
+- [Theme Pack v2 示例](theme-generation/image-palette-example.ani-theme.json)
 
 主题格式的代码事实位于 `src/shared/theme.ts`。提示词或示例与校验器冲突时，应更新本目录资料，而不是放宽运行时安全校验。
 

@@ -401,7 +401,7 @@ pub(crate) fn native_http_config(settings: &Value) -> NativeHttpConfig {
         timeout_ms: proxy
             .and_then(|value| value.get("timeoutMs"))
             .and_then(Value::as_u64)
-            .unwrap_or(15_000),
+            .unwrap_or(30_000),
         max_response_bytes: 16 * 1024 * 1024,
         user_agent: "AniTracker/0.1".to_owned(),
     }
@@ -429,5 +429,12 @@ mod tests {
         assert_eq!(config.proxy_mode, ProxyMode::Manual);
         assert_eq!(config.proxy_url.as_deref(), Some("http://127.0.0.1:7890"));
         assert_eq!(config.timeout_ms, 23_000);
+    }
+
+    /// 验证缺少用户设置时使用 30 秒元数据请求超时。
+    #[test]
+    fn defaults_native_http_timeout_to_thirty_seconds() {
+        let config = native_http_config(&json!({}));
+        assert_eq!(config.timeout_ms, 30_000);
     }
 }

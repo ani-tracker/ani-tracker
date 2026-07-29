@@ -31,6 +31,34 @@ test("Android SQLite 重启保留已有设置且不重复 seed", async () => {
   assert.equal(JSON.parse(driver.settings.get("settings") ?? "null").marker, "existing");
 });
 
+test("Android SQLite 将旧默认元数据超时迁移为三十秒", async () => {
+  const driver = new MemoryBootstrapDriver();
+  driver.meta.set("schema_version", String(SQLITE_SCHEMA_VERSION));
+  driver.meta.set("app_data_version", "24");
+  driver.settings.set("settings", JSON.stringify({
+    network: { metadataProxy: { mode: "system", timeoutMs: 15_000 } }
+  }));
+
+  await bootstrapSqliteDatabase(driver, defaults);
+
+  const settings = JSON.parse(driver.settings.get("settings") ?? "null") as AppSettings;
+  assert.equal(settings.network.metadataProxy.timeoutMs, 30_000);
+});
+
+test("Android SQLite 迁移保留用户自定义元数据超时", async () => {
+  const driver = new MemoryBootstrapDriver();
+  driver.meta.set("schema_version", String(SQLITE_SCHEMA_VERSION));
+  driver.meta.set("app_data_version", "24");
+  driver.settings.set("settings", JSON.stringify({
+    network: { metadataProxy: { mode: "system", timeoutMs: 23_000 } }
+  }));
+
+  await bootstrapSqliteDatabase(driver, defaults);
+
+  const settings = JSON.parse(driver.settings.get("settings") ?? "null") as AppSettings;
+  assert.equal(settings.network.metadataProxy.timeoutMs, 23_000);
+});
+
 test("Android SQLite 拒绝高于当前程序的结构版本", async () => {
   const driver = new MemoryBootstrapDriver();
   driver.meta.set("schema_version", String(SQLITE_SCHEMA_VERSION + 1));
@@ -48,12 +76,20 @@ class MemoryBootstrapDriver implements SqliteDriver {
   async execute(): Promise<void> {}
 
   async query<Row extends Record<string, unknown>>(_statement: string, values: SqliteValue[] = []): Promise<Row[]> {
+    if (_statement.includes("app_settings")) {
+      const valueJson = this.settings.get(String(values[0]));
+      return (valueJson === undefined ? [] : [{ value_json: valueJson }]) as unknown as Row[];
+    }
     const value = this.meta.get(String(values[0]));
     return (value === undefined ? [] : [{ value }]) as unknown as Row[];
   }
 
   async run(statement: string, values: SqliteValue[] = []): Promise<number> {
     if (statement.includes("app_settings")) {
+      if (statement.trimStart().startsWith("UPDATE")) {
+        this.settings.set("settings", String(values[0]));
+        return 1;
+      }
       const key = String(values[0]);
       if (!this.settings.has(key)) this.settings.set(key, String(values[1]));
       return 1;

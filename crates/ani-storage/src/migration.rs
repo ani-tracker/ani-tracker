@@ -1,6 +1,7 @@
 use ani_domain::TorrentEngineKind;
 use log::info;
 use rusqlite::{params, Connection, OptionalExtension, Transaction, TransactionBehavior};
+use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::{
@@ -300,7 +301,43 @@ fn migrate_app_data(
             stats.updated_tasks, stats.updated_references
         );
     }
+    if current_app_data_version < 25 && migrate_metadata_proxy_timeout_default(transaction)? {
+        info!("SQLite 元数据请求超时默认值迁移完成：15000ms -> 30000ms");
+    }
     Ok(())
+}
+
+/// 将旧版默认超时升级到 30 秒，同时保留用户主动设置的其他值。
+fn migrate_metadata_proxy_timeout_default(
+    transaction: &Transaction<'_>,
+) -> Result<bool, StorageError> {
+    let Some(settings_json) = transaction
+        .query_row(
+            "SELECT value_json FROM app_settings WHERE key = 'settings'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+    else {
+        return Ok(false);
+    };
+    let mut settings: Value =
+        serde_json::from_str(&settings_json).map_err(|source| StorageError::JsonData {
+            context: "元数据请求超时迁移",
+            source,
+        })?;
+    let Some(timeout) = settings.pointer_mut("/network/metadataProxy/timeoutMs") else {
+        return Ok(false);
+    };
+    if timeout.as_u64() != Some(15_000) {
+        return Ok(false);
+    }
+    *timeout = Value::from(30_000);
+    transaction.execute(
+        "UPDATE app_settings SET value_json = ?1, updated_at = ?2 WHERE key = 'settings'",
+        params![settings.to_string(), now_iso()],
+    )?;
+    Ok(true)
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]

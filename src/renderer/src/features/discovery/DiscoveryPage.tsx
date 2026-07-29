@@ -62,6 +62,7 @@ interface SeasonOption {
 }
 
 type DiscoverySortKey = "premiereAsc" | "premiereDesc" | "ratingDesc";
+const DEFAULT_DISCOVERY_SORT: DiscoverySortKey = "ratingDesc";
 type ScheduleView = "grid" | "list";
 interface DiscoveryPageProps {
   onOpenAnimeDetail?: (animeId: string) => void;
@@ -93,7 +94,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [keyword, setKeyword] = useState("");
   const [appliedKeyword, setAppliedKeyword] = useState("");
-  const [sortKey, setSortKey] = useState<DiscoverySortKey>("premiereAsc");
+  const [sortKey, setSortKey] = useState<DiscoverySortKey>(DEFAULT_DISCOVERY_SORT);
   const [items, setItems] = useState<Anime[]>([]);
   const [searchItems, setSearchItems] = useState<Anime[]>([]);
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
@@ -368,7 +369,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     }
   }
 
-  /** 清空目录筛选并恢复默认首播排序。 */
+  /** 清空目录筛选并恢复默认评分排序。 */
   function resetFilters() {
     setSelectedMonth(null);
     setKeyword("");
@@ -376,7 +377,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     setSearchItems([]);
     searchRequestId.current += 1;
     setSearching(false);
-    setSortKey("premiereAsc");
+    setSortKey(DEFAULT_DISCOVERY_SORT);
   }
 
   const collectingLabel = collecting
@@ -499,7 +500,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
 
       <div className="flex min-w-0 items-center justify-between gap-3 border-b pb-3">
         <div className="text-sm font-semibold tabular-nums text-primary">{resultLabel}</div>
-        {(selectedMonth !== null || appliedKeyword || sortKey !== "premiereAsc") && (
+        {(selectedMonth !== null || appliedKeyword || sortKey !== DEFAULT_DISCOVERY_SORT) && (
           <Button className="h-auto min-h-0 p-0 text-xs" onClick={resetFilters} variant="ghost">
             <RotateCcw data-icon="inline-start" />
             重置所有筛选

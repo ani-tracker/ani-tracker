@@ -6,7 +6,9 @@ use std::sync::{Arc, Mutex};
 use ani_domain::AppSettings;
 use ani_storage::{ReleaseSourceSeed, Storage, StorageError, StorageOptions, StorageSeed};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager};
+use tauri::AppHandle;
+#[cfg(not(target_os = "android"))]
+use tauri::Manager;
 
 #[cfg(not(target_os = "android"))]
 const DATABASE_FILE_NAME: &str = "ani-tracker.sqlite";
@@ -15,6 +17,7 @@ const DATABASE_FILE_NAME: &str = "ani-tracker.sqlite";
 #[derive(Debug, Clone)]
 struct AppDirectories {
     app_data: PathBuf,
+    theme_assets: PathBuf,
     database: PathBuf,
     cache: PathBuf,
     logs: PathBuf,
@@ -30,6 +33,7 @@ pub(crate) struct AppStorageState {
     storage: Arc<Mutex<Storage>>,
     platform_defaults: AppSettings,
     log_directory: PathBuf,
+    theme_asset_directory: PathBuf,
 }
 
 impl AppStorageState {
@@ -47,6 +51,11 @@ impl AppStorageState {
     pub(crate) fn log_directory(&self) -> &Path {
         &self.log_directory
     }
+
+    /// 返回不会被缓存清理淘汰的主题背景目录。
+    pub(crate) fn theme_asset_directory(&self) -> &Path {
+        &self.theme_asset_directory
+    }
 }
 
 /// 解析平台目录并完成 SQLite 复制、迁移和状态装配。
@@ -54,6 +63,7 @@ pub(crate) fn initialize(app: &AppHandle) -> Result<AppStorageState, StorageErro
     let directories = resolve_directories(app)?;
     let mut required_directories: Vec<&Path> = vec![
         directories.app_data.as_path(),
+        directories.theme_assets.as_path(),
         directories.cache.as_path(),
         directories.logs.as_path(),
         directories.downloads.as_path(),
@@ -108,6 +118,7 @@ pub(crate) fn initialize(app: &AppHandle) -> Result<AppStorageState, StorageErro
         storage: Arc::new(Mutex::new(storage)),
         platform_defaults,
         log_directory: directories.logs,
+        theme_asset_directory: directories.theme_assets,
     })
 }
 
@@ -125,6 +136,7 @@ fn resolve_directories(app: &AppHandle) -> Result<AppDirectories, StorageError> 
         })?;
     Ok(AppDirectories {
         app_data: directories.user_data_dir.clone(),
+        theme_assets: directories.user_data_dir.join("theme-assets"),
         database: directories.database_path,
         cache: directories.cache_dir,
         logs: directories.log_dir,
@@ -163,6 +175,7 @@ fn resolve_directories(app: &AppHandle) -> Result<AppDirectories, StorageError> 
         .unwrap_or_else(|_| app_data.clone());
     Ok(AppDirectories {
         database: app_data.join(DATABASE_FILE_NAME),
+        theme_assets: app_data.join("theme-assets"),
         incomplete: app_data.join("incomplete"),
         backup: app_data.join("backups"),
         app_data,
@@ -259,7 +272,7 @@ fn build_default_settings(directories: &AppDirectories) -> AppSettings {
         "network": {
             "metadataProxy": {
                 "mode": "system",
-                "timeoutMs": 15000
+                "timeoutMs": 30000
             },
             "remoteAccess": {
                 "lanEnabled": false,
@@ -701,6 +714,7 @@ mod tests {
     fn test_directories() -> AppDirectories {
         AppDirectories {
             app_data: PathBuf::from("C:/Data/com.ani.tracker/no_backup"),
+            theme_assets: PathBuf::from("C:/Data/com.ani.tracker/no_backup/theme-assets"),
             database: PathBuf::from("C:/Data/com.ani.tracker/databases/ani-tracker.sqlite"),
             cache: PathBuf::from("C:/Cache/com.ani.tracker"),
             logs: PathBuf::from("C:/Logs/com.ani.tracker"),

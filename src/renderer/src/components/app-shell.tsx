@@ -7,6 +7,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useRef,
   useState
 } from "react";
@@ -35,6 +36,8 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import { getAppRuntime } from "@/lib/runtime";
+import { useTheme } from "@/components/theme-provider";
+import { resolveThemePack } from "@shared/theme";
 
 const APP_LOGO_SRC = "./icons/ani-tracker-mark.png";
 const MOBILE_NAVIGATION_HISTORY_KEY = "mobile-navigation";
@@ -64,6 +67,7 @@ interface AppShellProps {
   status: AppShellStatus;
   unreadCount: number;
   secondaryView?: {
+    key: string;
     title: string;
     onBack: () => void;
   };
@@ -113,6 +117,11 @@ export function AppShell({
 }: AppShellProps) {
   const [mobileNavigationOpen, setMobileNavigationOpen] = useState(false);
   const [showDiscoveryScrollTop, setShowDiscoveryScrollTop] = useState(false);
+  const { appearance, backgroundUrl, resolvedTheme } = useTheme();
+  const activeThemePack = resolveThemePack(appearance);
+  const backgroundSettings = activeThemePack.backgroundImage;
+  const activeBackgroundUrl = backgroundSettings ? backgroundUrl : undefined;
+  const backgroundOverlayOpacity = backgroundSettings?.overlayOpacity[resolvedTheme] ?? 1;
   const expandedDesktopSidebar = useExpandedDesktopSidebar();
   const androidRuntime = getAppRuntime() === "android";
   const mainRef = useRef<HTMLElement | null>(null);
@@ -146,6 +155,18 @@ export function AppShell({
     scrollContainer.addEventListener("scroll", updateScrollTopVisibility, { passive: true });
     return () => scrollContainer.removeEventListener("scroll", updateScrollTopVisibility);
   }, [discoveryScrollTopEnabled]);
+
+  useLayoutEffect(() => {
+    if (!secondaryView) return;
+    const scrollContainer = mainRef.current;
+    if (!scrollContainer) return;
+    scrollContainer.focus({ preventScroll: true });
+    scrollContainer.scrollTo({ top: 0, behavior: "auto" });
+    const frame = window.requestAnimationFrame(() => {
+      scrollContainer.scrollTo({ top: 0, behavior: "auto" });
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [secondaryView?.key]);
 
   useEffect(() => {
     if (!androidRuntime) return;
@@ -206,16 +227,32 @@ export function AppShell({
 
   return (
     <TooltipProvider delayDuration={300}>
+      {activeBackgroundUrl && backgroundSettings && (
+        <div aria-hidden="true" className="pointer-events-none fixed inset-0" data-theme-background-layer="">
+          <div
+            className="absolute inset-0 bg-cover bg-no-repeat"
+            style={{
+              backgroundImage: `url(${JSON.stringify(activeBackgroundUrl)})`,
+              backgroundPosition: `${backgroundSettings.position.x}% ${backgroundSettings.position.y}%`
+            }}
+          />
+          <div
+            className="absolute inset-0"
+            style={{ backgroundColor: `hsl(var(--background) / ${backgroundOverlayOpacity})` }}
+          />
+        </div>
+      )}
       {framelessWindow && windowControls}
       <SidebarProvider
         data-frameless-window={framelessWindow ? "" : undefined}
+        data-theme-background={activeBackgroundUrl ? "" : undefined}
         open={expandedDesktopSidebar}
         style={{
           "--sidebar-width": "14rem",
           "--sidebar-width-icon": "4.5rem"
         } as CSSProperties}
       >
-        <Sidebar aria-label="主导航" className="hidden md:flex">
+        <Sidebar aria-label="主导航" className="hidden md:flex" data-theme-sidebar="">
           <SidebarHeader className="h-14 justify-center border-b-0 px-3 py-2">
             <div className="flex items-center gap-2 group-data-[state=collapsed]/sidebar:justify-center">
               <img
@@ -309,6 +346,8 @@ export function AppShell({
           ref={setMainElement}
           aria-label={`${activeItem?.label ?? "当前"}页面内容`}
           className="h-full max-h-full min-h-0 overflow-y-auto outline-none"
+          data-theme-inset=""
+          style={secondaryView ? { overflowAnchor: "none" } : undefined}
           tabIndex={-1}
         >
           <header
@@ -317,6 +356,7 @@ export function AppShell({
               framelessWindow && "pr-[calc(var(--window-controls-width)+max(1rem,var(--safe-area-right)))]"
             )}
             data-tauri-drag-region={framelessWindow ? "" : undefined}
+            data-theme-mobile-header=""
             data-window-drag-region={framelessWindow ? "" : undefined}
             style={framelessWindow ? dragRegionStyle : undefined}
           >

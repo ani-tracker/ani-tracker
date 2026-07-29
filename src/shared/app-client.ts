@@ -36,6 +36,7 @@ import type {
   DownloadServiceStatus,
   DesktopMediaToolsStatus,
   EmbeddedTorrentCoreStatus,
+  ExportThemePackageInput,
   EpisodeReleasePreview,
   ImageCacheResolveResult,
   MediaScanResult,
@@ -56,11 +57,14 @@ import type {
   RssSubscriptionReleaseQuery,
   RssSubscriptionReleaseResult,
   SavePlaybackCheckpointInput,
+  SaveThemeBackgroundInput,
   SelectPlayerExecutableInput,
   SetAnimeSourceExclusionInput,
   SetAnimeWatchProgressInput,
   SourceSyncRunResult,
   SourceSyncSchedulerStatus,
+  ThemeBackgroundAsset,
+  ThemeBackgroundReference,
   TorrentConnectionTestResult
 } from "./contracts";
 import type {
@@ -98,6 +102,14 @@ export interface AppClient {
   resolveCachedImageUrl(sourceUrl: string): Promise<ImageCacheResolveResult>;
   /** 删除本地宿主管理的指定图片缓存。 */
   invalidateCachedImageUrl?(sourceUrl: string): Promise<void>;
+  /** 将规范化主题背景写入应用私有目录。 */
+  saveThemeBackground(input: SaveThemeBackgroundInput): Promise<ThemeBackgroundAsset>;
+  /** 解析主题 JSON 引用的背景图片。 */
+  resolveThemeBackground(themeId: string, fileName: string): Promise<ThemeBackgroundAsset | undefined>;
+  /** 清理已不再被设置引用的主题背景文件。 */
+  pruneThemeBackgrounds(references: ThemeBackgroundReference[]): Promise<void>;
+  /** 通过系统文件选择器导出主题 JSON 或 ZIP。 */
+  exportThemePackage(input: ExportThemePackageInput): Promise<string | undefined>;
   /** 读取首页聚合数据。 */
   getDashboard(): Promise<DashboardData>;
 

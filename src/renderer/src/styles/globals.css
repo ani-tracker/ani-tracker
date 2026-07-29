@@ -159,6 +159,25 @@ select {
   min-height: 100dvh;
 }
 
+/* 图片主题只降低应用壳表面透明度，卡片与弹层继续使用不透明语义表面。 */
+[data-theme-background][data-sidebar-wrapper] {
+  background-color: transparent;
+}
+
+[data-theme-background] [data-theme-sidebar] {
+  background-color: hsl(var(--sidebar) / 0.92);
+  backdrop-filter: blur(12px);
+}
+
+[data-theme-background] [data-theme-inset] {
+  background-color: transparent;
+}
+
+[data-theme-background] [data-theme-mobile-header] {
+  background-color: hsl(var(--background) / 0.9);
+  backdrop-filter: blur(12px);
+}
+
 html.desktop-player-overlay-root,
 html.desktop-player-overlay-root body,
 html.desktop-player-overlay-root #root {

@@ -73,6 +73,7 @@ import type {
   RemotePairingChallenge
 } from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
+import { listAvailableThemePacks, type AppearanceSettings } from "@shared/theme";
 import { normalizeCandidateFansubNames, normalizeFansubMatchName } from "@shared/fansub-name-matcher";
 import { BUILTIN_PLAYER_PROFILE_ID } from "@shared/player-selection";
 
@@ -334,7 +335,8 @@ export function SettingsPage() {
         refreshQbittorrentManagedStatus(),
         refreshEmbeddedTorrentStatus(),
         capabilities.remoteGateway ? refreshRemoteStatus() : Promise.resolve(null),
-        refreshPlayerDetection(saved.players)
+        refreshPlayerDetection(saved.players),
+        pruneUnusedThemeBackgrounds(saved.appearance)
       ]);
       setSaveState("saved");
       if (saved.network.remoteAccess.lanEnabled && (!remote?.lanEnabled || remote.lastError)) {
@@ -361,6 +363,7 @@ export function SettingsPage() {
       await refreshSchedulerStatus();
       await refreshQbittorrentManagedStatus();
       await refreshEmbeddedTorrentStatus();
+      await pruneUnusedThemeBackgrounds(saved.appearance);
       setResetState("reset");
       window.setTimeout(() => setResetState("idle"), 1200);
     } catch (error) {
@@ -414,7 +417,8 @@ export function SettingsPage() {
         refreshQbittorrentManagedStatus(),
         refreshEmbeddedTorrentStatus(),
         capabilities.remoteGateway ? refreshRemoteStatus() : Promise.resolve(null),
-        refreshPlayerDetection(restored.players)
+        refreshPlayerDetection(restored.players),
+        pruneUnusedThemeBackgrounds(restored.appearance)
       ]);
       toast.success(`数据已恢复，恢复前快照：${rollbackFileName}`);
     } catch (error) {
@@ -422,6 +426,21 @@ export function SettingsPage() {
       throw error;
     } finally {
       setBackupAction("idle");
+    }
+  }
+
+  /** 清理设置中已无引用的主题图片；失败不回滚已持久化设置。 */
+  async function pruneUnusedThemeBackgrounds(appearance: AppearanceSettings): Promise<void> {
+    const references = listAvailableThemePacks(appearance)
+      .filter((pack) => Boolean(pack.backgroundImage))
+      .map((pack) => ({
+        themeId: pack.id,
+        fileName: pack.backgroundImage!.file
+      }));
+    try {
+      await appApi.pruneThemeBackgrounds(references);
+    } catch (error) {
+      console.warn("[settings] 未引用主题背景清理失败", error);
     }
   }
 

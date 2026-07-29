@@ -25,6 +25,7 @@ mod source_sync;
 mod sources;
 mod storage;
 mod system_integration;
+mod theme_assets;
 
 /// 装配并启动 Tauri 应用宿主。
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -51,9 +52,17 @@ pub fn run() {
         "ani-image",
         image_cache::handle_protocol_request,
     );
+    let builder = builder.register_asynchronous_uri_scheme_protocol(
+        "ani-theme",
+        theme_assets::handle_protocol_request,
+    );
     let builder = builder
         .setup(|app| {
             let storage_state = storage::initialize(app.handle())?;
+            let theme_asset_state = theme_assets::AppThemeAssetState::initialize(
+                storage_state.theme_asset_directory().to_path_buf(),
+            )
+            .map_err(std::io::Error::other)?;
             #[cfg(target_os = "android")]
             app.handle().plugin(
                 tauri_plugin_log::Builder::new()
@@ -178,6 +187,7 @@ pub fn run() {
             app.manage(player_state);
             app.manage(automation_state);
             app.manage(system_integration_state);
+            app.manage(theme_asset_state);
             #[cfg(mobile)]
             app.manage(image_cache_state);
             #[cfg(desktop)]
@@ -227,6 +237,10 @@ pub fn run() {
             commands::backup::export_database_backup,
             commands::backup::restore_database_backup,
             commands::logs::export_logs,
+            commands::themes::save_theme_background,
+            commands::themes::resolve_theme_background,
+            commands::themes::prune_theme_backgrounds,
+            commands::themes::export_theme_package,
             commands::sources::search_releases,
             commands::sources::search_anime_releases,
             commands::sources::search_rss_subscription_releases,

@@ -11,6 +11,7 @@ name = "ani_tracker_tauri_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+dotenvy = "0.15"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
@@ -24,6 +25,7 @@ ani-repository = { path = "../crates/ani-repository" }
 ani-sources = { path = "../crates/ani-sources" }
 ani-storage = { path = "../crates/ani-storage" }
 async-trait = "0.1"
+base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 dunce = "1"
 log = "0.4"

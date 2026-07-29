@@ -1,4 +1,5 @@
-export const THEME_SCHEMA_VERSION = 1 as const;
+export const THEME_SCHEMA_VERSION = 2 as const;
+export const LEGACY_THEME_SCHEMA_VERSION = 1 as const;
 export const DEFAULT_THEME_PACK_ID = "default";
 
 export type ThemeMode = "system" | "light" | "dark";
@@ -48,10 +49,22 @@ export const THEME_TOKEN_NAMES = [
 export type ThemeTokenName = (typeof THEME_TOKEN_NAMES)[number];
 export type ThemeTokens = Record<ThemeTokenName, string>;
 
+export interface ThemeBackgroundImageSettings {
+  file: string;
+  position: {
+    x: number;
+    y: number;
+  };
+  overlayOpacity: {
+    light: number;
+    dark: number;
+  };
+}
+
 /** 提供给导入器和外部主题工具复用的 JSON Schema。 */
 export const THEME_PACK_JSON_SCHEMA = {
   $schema: "https://json-schema.org/draft/2020-12/schema",
-  $id: "https://ani-tracker.local/schemas/theme-pack-v1.json",
+  $id: "https://ani-tracker.local/schemas/theme-pack-v2.json",
   title: "Ani Tracker Theme Pack",
   type: "object",
   additionalProperties: false,
@@ -76,6 +89,32 @@ export const THEME_PACK_JSON_SCHEMA = {
       properties: {
         light: { $ref: "#/$defs/themeTokens" },
         dark: { $ref: "#/$defs/themeTokens" }
+      }
+    },
+    backgroundImage: {
+      type: "object",
+      additionalProperties: false,
+      required: ["file", "position", "overlayOpacity"],
+      properties: {
+        file: { type: "string", pattern: "^background(?:-[a-z0-9]{8,32})?\\.(?:jpg|png|webp)$" },
+        position: {
+          type: "object",
+          additionalProperties: false,
+          required: ["x", "y"],
+          properties: {
+            x: { type: "number", minimum: 0, maximum: 100 },
+            y: { type: "number", minimum: 0, maximum: 100 }
+          }
+        },
+        overlayOpacity: {
+          type: "object",
+          additionalProperties: false,
+          required: ["light", "dark"],
+          properties: {
+            light: { type: "number", minimum: 0.55, maximum: 0.98 },
+            dark: { type: "number", minimum: 0.55, maximum: 0.98 }
+          }
+        }
       }
     }
   },
@@ -106,6 +145,7 @@ export interface ThemePackManifest {
     light: ThemeTokens;
     dark: ThemeTokens;
   };
+  backgroundImage?: ThemeBackgroundImageSettings;
 }
 
 export interface AppearanceSettings {
@@ -297,7 +337,17 @@ export const BUILT_IN_THEME_PACKS: readonly ThemePackManifest[] = [
 
 const BUILT_IN_THEME_IDS = new Set(BUILT_IN_THEME_PACKS.map((pack) => pack.id));
 const THEME_TOKEN_NAME_SET = new Set<string>(THEME_TOKEN_NAMES);
-const MANIFEST_KEYS = new Set(["schemaVersion", "id", "name", "version", "author", "description", "style", "tokens"]);
+const MANIFEST_KEYS = new Set([
+  "schemaVersion",
+  "id",
+  "name",
+  "version",
+  "author",
+  "description",
+  "style",
+  "tokens",
+  "backgroundImage"
+]);
 const TEXT_CONTRAST_PAIRS = [
   ["background", "foreground"],
   ["card", "card-foreground"],
@@ -322,6 +372,8 @@ const CONTROL_CONTRAST_PAIRS = [
 ] as const satisfies ReadonlyArray<readonly [ThemeTokenName, ThemeTokenName]>;
 const MINIMUM_TEXT_CONTRAST = 4.5;
 const MINIMUM_CONTROL_CONTRAST = 3;
+const THEME_BACKGROUND_FILE_PATTERN = /^background(?:-[a-z0-9]{8,32})?\.(?:jpg|png|webp)$/;
+const THEME_ARCHIVE_MANIFEST_PATTERN = /^[a-z0-9][a-z0-9-]{1,63}\.ani-theme\.json$/;
 
 /** 创建全新的默认外观设置，避免共享可变数组。 */
 export function createDefaultAppearanceSettings(): AppearanceSettings {
@@ -341,6 +393,18 @@ export function listAvailableThemePacks(appearance: AppearanceSettings): ThemePa
 export function resolveThemePack(appearance: AppearanceSettings): ThemePackManifest {
   return listAvailableThemePacks(appearance).find((pack) => pack.id === appearance.themePackId)
     ?? BUILT_IN_THEME_PACKS[0];
+}
+
+/** 判断主题背景文件名是否可安全映射到应用私有目录。 */
+export function isValidThemeBackgroundFileName(value: string): boolean {
+  return THEME_BACKGROUND_FILE_PATTERN.test(value);
+}
+
+/** 判断 ZIP 条目是否为根目录下允许的主题清单或背景图片。 */
+export function isValidThemeArchiveEntryName(value: string): boolean {
+  return !value.includes("/")
+    && !value.includes("\\")
+    && (THEME_ARCHIVE_MANIFEST_PATTERN.test(value) || isValidThemeBackgroundFileName(value));
 }
 
 /** 校验并规范化持久化外观设置，丢弃不可信主题包。 */
@@ -386,8 +450,12 @@ export function validateThemePack(value: unknown): ThemePackValidationResult {
       errors.push(`不支持的主题包字段：${key}`);
     }
   }
-  if (value.schemaVersion !== THEME_SCHEMA_VERSION) {
-    errors.push(`仅支持 schemaVersion ${THEME_SCHEMA_VERSION}`);
+  const legacySchema = value.schemaVersion === LEGACY_THEME_SCHEMA_VERSION;
+  if (!legacySchema && value.schemaVersion !== THEME_SCHEMA_VERSION) {
+    errors.push(`仅支持 schemaVersion ${LEGACY_THEME_SCHEMA_VERSION} 或 ${THEME_SCHEMA_VERSION}`);
+  }
+  if (legacySchema && value.backgroundImage !== undefined) {
+    errors.push("schemaVersion 1 不支持背景图片配置");
   }
   if (typeof value.id !== "string" || !/^[a-z0-9][a-z0-9-]{1,63}$/.test(value.id)) {
     errors.push("主题 ID 只能包含 2-64 位小写字母、数字和连字符");
@@ -436,6 +504,10 @@ export function validateThemePack(value: unknown): ThemePackValidationResult {
     validateTokenContrast(dark, "深色", errors);
   }
 
+  const backgroundImage = value.backgroundImage === undefined
+    ? undefined
+    : validateBackgroundImageSettings(value.backgroundImage, errors);
+
   if (errors.length > 0 || !light || !dark || typeof radius !== "string") {
     return { ok: false, errors };
   }
@@ -450,9 +522,86 @@ export function validateThemePack(value: unknown): ThemePackValidationResult {
       ? { description: value.description.trim() }
       : {}),
     style: { radius },
-    tokens: { light, dark }
+    tokens: { light, dark },
+    ...(backgroundImage ? { backgroundImage } : {})
   };
   return { ok: true, errors: [], pack };
+}
+
+/** 校验主题包中的可选背景图片描述，图片二进制由主题包单独携带。 */
+function validateBackgroundImageSettings(
+  value: unknown,
+  errors: string[]
+): ThemeBackgroundImageSettings | undefined {
+  const initialErrorCount = errors.length;
+  if (!isRecord(value)) {
+    errors.push("背景图片配置必须是对象");
+    return undefined;
+  }
+  rejectUnknownKeys(value, new Set(["file", "position", "overlayOpacity"]), "背景图片", errors);
+  const file = typeof value.file === "string" ? value.file : "";
+  if (!isValidThemeBackgroundFileName(file)) {
+    errors.push("背景图片文件名必须是安全的 background 图片文件名");
+  }
+
+  const position = readNumberPair(value.position, "背景焦点", 0, 100, errors, "x", "y");
+  const overlayOpacity = readNumberPair(
+    value.overlayOpacity,
+    "背景遮罩",
+    0.55,
+    0.98,
+    errors,
+    "light",
+    "dark"
+  );
+  if (errors.length > initialErrorCount || !position || !overlayOpacity) {
+    return undefined;
+  }
+  return {
+    file,
+    position: { x: position[0], y: position[1] },
+    overlayOpacity: { light: overlayOpacity[0], dark: overlayOpacity[1] }
+  };
+}
+
+/** 读取只允许两个数值字段的受限配置对象。 */
+function readNumberPair(
+  value: unknown,
+  label: string,
+  minimum: number,
+  maximum: number,
+  errors: string[],
+  firstKey: string,
+  secondKey: string
+): [number, number] | undefined {
+  if (!isRecord(value)) {
+    errors.push(`${label}配置必须是对象`);
+    return undefined;
+  }
+  rejectUnknownKeys(value, new Set([firstKey, secondKey]), label, errors);
+  const first = value[firstKey];
+  const second = value[secondKey];
+  if (!isNumberInRange(first, minimum, maximum) || !isNumberInRange(second, minimum, maximum)) {
+    errors.push(`${label}数值必须在 ${minimum}-${maximum} 范围内`);
+    return undefined;
+  }
+  return [first, second];
+}
+
+/** 拒绝声明式主题配置中的未知字段。 */
+function rejectUnknownKeys(
+  value: Record<string, unknown>,
+  allowed: ReadonlySet<string>,
+  label: string,
+  errors: string[]
+): void {
+  for (const key of Object.keys(value)) {
+    if (!allowed.has(key)) errors.push(`${label}包含未知字段：${key}`);
+  }
+}
+
+function isNumberInRange(value: unknown, minimum: number, maximum: number): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= minimum && value <= maximum;
 }
 
 /** 将十六进制颜色转换为主题使用的 HSL 通道。 */

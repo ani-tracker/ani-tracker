@@ -34,6 +34,8 @@ interface ThemeSnapshot {
 
 interface ThemeContextValue {
   appearance: AppearanceSettings;
+  backgroundState: "none" | "loading" | "ready" | "missing" | "error";
+  backgroundUrl?: string;
   resolvedTheme: ResolvedThemeMode;
   themePacks: ThemePackManifest[];
   previewAppearance: (appearance: AppearanceSettings) => void;
@@ -46,13 +48,16 @@ const ThemeContext = createContext<ThemeContextValue | null>(null);
 interface ThemeProviderProps {
   children: ReactNode;
   loadAppearance?: () => Promise<AppearanceSettings | undefined>;
+  resolveBackground?: (themeId: string, fileName: string) => Promise<string | undefined>;
 }
 
 /** 管理跨端主题解析、预览、缓存和可选的平台设置加载。 */
-export function ThemeProvider({ children, loadAppearance }: ThemeProviderProps) {
+export function ThemeProvider({ children, loadAppearance, resolveBackground }: ThemeProviderProps) {
   const [persistedAppearance, setPersistedAppearance] = useState(readCachedAppearance);
   const [preview, setPreview] = useState<AppearanceSettings | null>(null);
   const [systemDark, setSystemDark] = useState(readSystemDark);
+  const [backgroundUrl, setBackgroundUrl] = useState<string>();
+  const [backgroundState, setBackgroundState] = useState<ThemeContextValue["backgroundState"]>("none");
   const appearance = preview ?? persistedAppearance;
   const resolvedTheme = resolveThemeMode(appearance, systemDark);
   const themePack = resolveThemePack(appearance);
@@ -68,6 +73,39 @@ export function ThemeProvider({ children, loadAppearance }: ThemeProviderProps) 
   useEffect(() => {
     applyThemeToDocument(themePack, resolvedTheme);
   }, [resolvedTheme, themePack]);
+
+  useEffect(() => {
+    let active = true;
+    const background = themePack.backgroundImage;
+    if (!background || !resolveBackground) {
+      setBackgroundUrl(undefined);
+      setBackgroundState("none");
+      return () => {
+        active = false;
+      };
+    }
+    setBackgroundUrl(undefined);
+    setBackgroundState("loading");
+    void resolveBackground(themePack.id, background.file)
+      .then((url) => {
+        if (!active) return;
+        setBackgroundUrl(url);
+        setBackgroundState(url ? "ready" : "missing");
+      })
+      .catch((error: unknown) => {
+        if (!active) return;
+        setBackgroundUrl(undefined);
+        setBackgroundState("error");
+        console.error("[renderer] 主题背景加载失败", {
+          themeId: themePack.id,
+          file: background.file,
+          error
+        });
+      });
+    return () => {
+      active = false;
+    };
+  }, [resolveBackground, themePack.backgroundImage?.file, themePack.id]);
 
   useEffect(() => {
     writeThemeSnapshot(persistedAppearance, systemDark);
@@ -107,12 +145,14 @@ export function ThemeProvider({ children, loadAppearance }: ThemeProviderProps) 
 
   const value = useMemo<ThemeContextValue>(() => ({
     appearance,
+    backgroundState,
+    backgroundUrl,
     resolvedTheme,
     themePacks: listAvailableThemePacks(appearance),
     previewAppearance,
     clearPreview,
     commitAppearance
-  }), [appearance, clearPreview, commitAppearance, previewAppearance, resolvedTheme]);
+  }), [appearance, backgroundState, backgroundUrl, clearPreview, commitAppearance, previewAppearance, resolvedTheme]);
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;
 }

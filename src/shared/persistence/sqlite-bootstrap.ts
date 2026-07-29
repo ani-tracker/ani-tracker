@@ -34,6 +34,8 @@ export async function bootstrapSqliteDatabase(
         "INSERT OR IGNORE INTO app_settings (key, value_json, updated_at) VALUES (?, ?, ?)",
         ["settings", JSON.stringify(defaults), now]
       );
+    } else if (appDataVersion < 25) {
+      await migrateMetadataProxyTimeoutDefault(driver, now);
     }
     await writeMetaVersion(driver, "schema_version", SQLITE_SCHEMA_VERSION, now);
     await writeMetaVersion(driver, "app_data_version", APP_DATA_VERSION, now);
@@ -44,6 +46,28 @@ export async function bootstrapSqliteDatabase(
     schemaVersion: SQLITE_SCHEMA_VERSION,
     appDataVersion: APP_DATA_VERSION
   };
+}
+
+/** 将旧版默认元数据超时升级到 30 秒，其他用户配置保持不变。 */
+async function migrateMetadataProxyTimeoutDefault(driver: SqliteDriver, updatedAt: string): Promise<void> {
+  const rows = await driver.query<{ value_json: string }>(
+    "SELECT value_json FROM app_settings WHERE key = ? LIMIT 1",
+    ["settings"]
+  );
+  const valueJson = rows[0]?.value_json;
+  if (!valueJson) return;
+  let settings: AppSettings;
+  try {
+    settings = JSON.parse(valueJson) as AppSettings;
+  } catch (error) {
+    throw new Error(`应用设置 JSON 无效：${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (settings.network?.metadataProxy?.timeoutMs !== 15_000) return;
+  settings.network.metadataProxy.timeoutMs = 30_000;
+  await driver.run(
+    "UPDATE app_settings SET value_json = ?, updated_at = ? WHERE key = 'settings'",
+    [JSON.stringify(settings), updatedAt]
+  );
 }
 
 /** 读取非负数据库版本；缺失版本按零处理。 */

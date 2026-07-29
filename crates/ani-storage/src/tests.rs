@@ -82,7 +82,7 @@ fn initializes_new_database_with_seed() {
     assert_eq!(storage.report().schema_version, SQLITE_SCHEMA_VERSION);
     assert_eq!(storage.report().app_data_version, APP_DATA_VERSION);
     assert_eq!(read_meta(&storage.connection, "schema_version"), "20");
-    assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "25");
     assert_eq!(
         storage
             .connection
@@ -113,7 +113,7 @@ fn updates_and_resets_settings_through_repository() {
         .expect("open settings write database");
     let defaults = json!({
         "appearance": { "mode": "system" },
-        "network": { "metadataProxy": { "mode": "system", "timeoutMs": 15000 } },
+        "network": { "metadataProxy": { "mode": "system", "timeoutMs": 30000 } },
         "storage": { "databasePath": "host-owned.sqlite" }
     });
     let updated = storage
@@ -233,7 +233,7 @@ fn backs_up_and_migrates_legacy_versions() {
         "detail_json"
     ));
     assert_eq!(read_meta(&storage.connection, "schema_version"), "20");
-    assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "25");
     assert_eq!(source_count(&storage.connection, "prowlarr"), 0);
     assert_eq!(source_proxy(&storage.connection, "anibt"), 0);
     storage.verify().expect("migrated database integrity");
@@ -343,7 +343,7 @@ fn migrates_historical_oversized_release_ids() {
         )
         .expect("read migrated preference release id");
 
-    assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "25");
     assert_eq!(migrated_task_id, migrated_preference_id);
     assert!(migrated_task_id.starts_with("release:"));
     assert!(migrated_task_id.len() <= 200);
@@ -439,7 +439,7 @@ fn migrates_download_task_engine_identity() {
 
     let storage = Storage::open(options).expect("download identities must migrate");
     let scoped_id = "qbittorrent:shared-hash";
-    assert_eq!(read_meta(&storage.connection, "app_data_version"), "24");
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "25");
     for (table, column) in [
         ("download_task", "id"),
         ("torrent_file", "download_task_id"),
@@ -469,6 +469,85 @@ fn migrates_download_task_engine_identity() {
         "qbittorrent:shared-hash:0"
     );
     storage.verify().expect("migrated database integrity");
+}
+
+/// 验证版本 25 将旧版默认元数据超时升级为 30 秒。
+#[test]
+fn migrates_legacy_metadata_proxy_timeout_default() {
+    let directory = TestDirectory::new("metadata-timeout-migration");
+    let options = test_options(&directory, "active.sqlite");
+    let database_path = options.database_path.clone();
+    drop(Storage::open(options.clone()).expect("create current database"));
+
+    let legacy = Connection::open(&database_path).expect("open metadata timeout fixture");
+    legacy
+        .execute(
+            "UPDATE app_meta SET value = '24' WHERE key = 'app_data_version'",
+            [],
+        )
+        .expect("downgrade app data version");
+    legacy
+        .execute(
+            "UPDATE app_settings SET value_json = ?1 WHERE key = 'settings'",
+            [json!({
+                "network": { "metadataProxy": { "mode": "system", "timeoutMs": 15_000 } }
+            })
+            .to_string()],
+        )
+        .expect("write legacy metadata timeout");
+    drop(legacy);
+
+    let storage = Storage::open(options).expect("metadata timeout must migrate");
+    let settings: serde_json::Value = storage
+        .connection
+        .query_row(
+            "SELECT value_json FROM app_settings WHERE key = 'settings'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|value| serde_json::from_str(&value).expect("parse migrated settings"))
+        .expect("read migrated settings");
+    assert_eq!(settings["network"]["metadataProxy"]["timeoutMs"], 30_000);
+    assert_eq!(read_meta(&storage.connection, "app_data_version"), "25");
+}
+
+/// 验证版本 25 不覆盖用户主动配置的元数据超时。
+#[test]
+fn preserves_custom_metadata_proxy_timeout_during_migration() {
+    let directory = TestDirectory::new("custom-metadata-timeout-migration");
+    let options = test_options(&directory, "active.sqlite");
+    let database_path = options.database_path.clone();
+    drop(Storage::open(options.clone()).expect("create current database"));
+
+    let legacy = Connection::open(&database_path).expect("open custom timeout fixture");
+    legacy
+        .execute(
+            "UPDATE app_meta SET value = '24' WHERE key = 'app_data_version'",
+            [],
+        )
+        .expect("downgrade app data version");
+    legacy
+        .execute(
+            "UPDATE app_settings SET value_json = ?1 WHERE key = 'settings'",
+            [json!({
+                "network": { "metadataProxy": { "mode": "manual", "timeoutMs": 23_000 } }
+            })
+            .to_string()],
+        )
+        .expect("write custom metadata timeout");
+    drop(legacy);
+
+    let storage = Storage::open(options).expect("custom timeout migration must succeed");
+    let settings: serde_json::Value = storage
+        .connection
+        .query_row(
+            "SELECT value_json FROM app_settings WHERE key = 'settings'",
+            [],
+            |row| row.get::<_, String>(0),
+        )
+        .map(|value| serde_json::from_str(&value).expect("parse preserved settings"))
+        .expect("read preserved settings");
+    assert_eq!(settings["network"]["metadataProxy"]["timeoutMs"], 23_000);
 }
 
 /// 验证 Tauri 首启只复制 Electron 数据库，不修改或删除源文件。
@@ -689,7 +768,7 @@ fn reads_p2_business_views_from_sqlite() {
     let settings = repository
         .get_settings(&json!({
             "appearance": { "mode": "system", "themePackId": "default" },
-            "network": { "metadataProxy": { "mode": "off", "timeoutMs": 15000 } },
+            "network": { "metadataProxy": { "mode": "off", "timeoutMs": 30000 } },
             "storage": { "databasePath": "C:/tauri/ani-tracker.sqlite", "cacheDir": "C:/tauri/cache" },
             "players": [
                 { "id": "built-in", "name": "内置播放器", "executablePath": "", "argumentTemplate": "{file}" },
@@ -699,7 +778,7 @@ fn reads_p2_business_views_from_sqlite() {
         .expect("read merged settings");
     assert_eq!(settings["appearance"]["mode"], "dark");
     assert_eq!(settings["appearance"]["themePackId"], "default");
-    assert_eq!(settings["network"]["metadataProxy"]["timeoutMs"], 15_000);
+    assert_eq!(settings["network"]["metadataProxy"]["timeoutMs"], 30_000);
     assert_eq!(
         settings["storage"]["databasePath"],
         "C:/tauri/ani-tracker.sqlite"

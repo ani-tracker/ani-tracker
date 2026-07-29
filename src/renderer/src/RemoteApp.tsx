@@ -173,7 +173,9 @@ function RemoteApplication() {
       contentRef={contentRef}
       items={remoteNavItems}
       onNavigate={(pageId) => navigatePage(pageId as RemotePageId)}
-      secondaryView={detailView ? { title: "番剧详情", onBack: () => window.history.back() } : undefined}
+      secondaryView={detailView
+        ? { key: `anime-detail:${detailView.animeId}`, title: "番剧详情", onBack: () => window.history.back() }
+        : undefined}
       status={connectedStatus}
       unreadCount={unreadCount}
     >

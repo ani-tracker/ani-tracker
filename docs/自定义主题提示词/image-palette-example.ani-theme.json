@@ -1,10 +1,10 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "id": "image-palette-example",
   "name": "图片取色示例",
   "version": "1.0.0",
   "author": "Image Palette Generator",
-  "description": "Ani-tracker 图片取色主题包 v1 的可导入示例与字段规范。",
+  "description": "Ani Tracker Theme Pack v2 纯色模式的可导入示例。",
   "style": {
     "radius": "6px"
   },

@@ -185,7 +185,7 @@ impl AppRemoteGatewayState {
             secret_store,
         ));
         let renderer_directory = resolve_remote_renderer_directory(app);
-        let trusted_origins_value = std::env::var("ANI_TRUSTED_ORIGINS").ok();
+        let trusted_origins_value = trusted_origins_value();
         let trusted_origins = parse_trusted_origins(trusted_origins_value.as_deref());
         let gateway = Arc::new(RemoteGateway::new(RemoteGatewayDependencies {
             auth,
@@ -339,6 +339,25 @@ impl AppRemoteGatewayState {
             gateway.stop().await;
         }
     }
+}
+
+/// 运行时环境优先，缺失时使用构建阶段从 .env 注入的值。
+fn trusted_origins_value() -> Option<String> {
+    resolve_trusted_origins_value(
+        std::env::var("ANI_TRUSTED_ORIGINS").ok(),
+        option_env!("ANI_TRUSTED_ORIGINS"),
+    )
+}
+
+/// 合并运行时与构建时可信来源，空白值按未配置处理。
+fn resolve_trusted_origins_value(
+    runtime: Option<String>,
+    compiled: Option<&str>,
+) -> Option<String> {
+    runtime
+        .or_else(|| compiled.map(str::to_owned))
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty())
 }
 
 /// 设置更新后异步重配远程网关，不让远程能力错误回滚其他设置。
@@ -805,6 +824,23 @@ mod tests {
         assert_eq!(directory, root.join(MACOS_REMOTE_SECRET_DIRECTORY));
         #[cfg(not(target_os = "macos"))]
         assert_eq!(directory, root.join("remote-secrets"));
+    }
+
+    /// 验证运行时配置覆盖构建值，缺失时才使用 .env 编译回退。
+    #[test]
+    fn resolves_runtime_and_compiled_trusted_origins() {
+        assert_eq!(
+            resolve_trusted_origins_value(
+                Some(" https://runtime.example ".to_owned()),
+                Some("https://compiled.example"),
+            ),
+            Some("https://runtime.example".to_owned())
+        );
+        assert_eq!(
+            resolve_trusted_origins_value(None, Some(" https://compiled.example ")),
+            Some("https://compiled.example".to_owned())
+        );
+        assert_eq!(resolve_trusted_origins_value(None, Some("  ")), None);
     }
 
     /// 验证开发产物存在时优先使用工作区 PWA 目录。
