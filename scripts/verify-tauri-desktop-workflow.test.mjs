@@ -41,6 +41,15 @@ test("macOS 发布通过临时钥匙串导入并信任自签 P12", () => {
   assert.match(workflow, /security find-identity -v -p codesigning/);
 });
 
+test("macOS 发布在 Tauri 打包前按由内到外顺序签名托管 qBittorrent", () => {
+  assert.match(workflow, /name: Sign staged macOS managed qBittorrent/);
+  assert.match(workflow, /find "\$\{managed_app\}\/Contents" -type f -name '\*\.dylib'/);
+  assert.match(workflow, /find "\$\{managed_app\}\/Contents\/Frameworks" -type d -name '\*\.framework'/);
+  assert.match(workflow, /--sign "\$\{APPLE_SIGNING_IDENTITY\}" "\$\{managed_executable\}"/);
+  assert.match(workflow, /--sign "\$\{APPLE_SIGNING_IDENTITY\}" "\$\{managed_app\}"/);
+  assert.match(workflow, /codesign --verify --deep --strict "\$\{managed_app\}"/);
+});
+
 test("macOS 产物拒绝 ad-hoc 并校验嵌入证书指纹", () => {
   assert.match(workflow, /codesign --verify --deep --strict/);
   assert.match(workflow, /Signature=adhoc/);

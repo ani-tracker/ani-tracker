@@ -343,6 +343,37 @@ jobs:
           echo "thumbprint=${certificate_sha1}" >> "${GITHUB_OUTPUT}"
           echo "fingerprint_sha256=${certificate_sha256}" >> "${GITHUB_OUTPUT}"
 
+      - name: Sign staged macOS managed qBittorrent
+        if: matrix.platform == 'darwin'
+        shell: bash
+        run: |
+          managed_app="out/qbittorrent/darwin-${{ matrix.arch }}/qbittorrent-nox.app"
+          if [[ ! -d "${managed_app}" ]]; then
+            echo "未找到待签名的 macOS qBittorrent 应用：${managed_app}" >&2
+            exit 1
+          fi
+
+          # 资源目录中的嵌套应用不会由 Tauri 稳定递归签名，必须按由内到外顺序处理。
+          while IFS= read -r -d '' library; do
+            echo "[macos-signing] 签名动态库：${library}"
+            codesign --force --options runtime --timestamp=none \
+              --sign "${APPLE_SIGNING_IDENTITY}" "${library}"
+          done < <(find "${managed_app}/Contents" -type f -name '*.dylib' -print0)
+
+          while IFS= read -r -d '' framework; do
+            echo "[macos-signing] 签名框架：${framework}"
+            codesign --force --options runtime --timestamp=none \
+              --sign "${APPLE_SIGNING_IDENTITY}" "${framework}"
+          done < <(find "${managed_app}/Contents/Frameworks" -type d -name '*.framework' -print0)
+
+          managed_executable="${managed_app}/Contents/MacOS/qbittorrent-nox"
+          codesign --force --options runtime --timestamp=none \
+            --sign "${APPLE_SIGNING_IDENTITY}" "${managed_executable}"
+          codesign --force --options runtime --timestamp=none \
+            --sign "${APPLE_SIGNING_IDENTITY}" "${managed_app}"
+          codesign --verify --deep --strict "${managed_app}"
+          echo "[macos-signing] 托管 qBittorrent 嵌套签名校验通过：${managed_app}"
+
       - name: Build remote PWA for desktop bundle
         run: pnpm run build:tauri:remote-renderer
 
