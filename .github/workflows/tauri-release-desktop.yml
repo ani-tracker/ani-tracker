@@ -230,15 +230,20 @@ jobs:
         if: matrix.platform == 'win32' && env.WINDOWS_CERTIFICATE_BASE64 != ''
         id: windows-signing
         shell: pwsh
+        timeout-minutes: 2
         run: |
+          $ErrorActionPreference = "Stop"
           $certificatePath = Join-Path $env:RUNNER_TEMP "ani-tracker-release.pfx"
+          Write-Host "[windows-signing] 解码 PFX 证书"
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
           $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
+          Write-Host "[windows-signing] 导入签名证书到 CurrentUser\\My"
           $importedCertificates = @(Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password)
           $certificate = $importedCertificates | Where-Object HasPrivateKey | Select-Object -First 1
           if (-not $certificate) {
             throw "Windows self-signing certificate does not contain a private key"
           }
+          Write-Host "[windows-signing] 校验自签证书、有效期和代码签名用途"
           if ($certificate.Subject -ne $certificate.Issuer) {
             throw "Windows signing certificate must be self-signed"
           }
@@ -264,10 +269,23 @@ jobs:
             throw "Windows self-signing certificate is missing the Code Signing EKU"
           }
           $publicCertificatePath = Join-Path $env:RUNNER_TEMP "ani-tracker-release.cer"
+          Write-Host "[windows-signing] 导出公开证书"
           Export-Certificate -Cert $certificate -FilePath $publicCertificatePath | Out-Null
-          Import-Certificate -FilePath $publicCertificatePath -CertStoreLocation Cert:\CurrentUser\Root | Out-Null
-          Import-Certificate -FilePath $publicCertificatePath -CertStoreLocation Cert:\CurrentUser\TrustedPublisher | Out-Null
+
+          Write-Host "[windows-signing] 无交互导入 CurrentUser\\Root"
+          & certutil.exe -user -f -addstore Root $publicCertificatePath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to import Windows self-signing certificate into CurrentUser\\Root"
+          }
+
+          Write-Host "[windows-signing] 无交互导入 CurrentUser\\TrustedPublisher"
+          & certutil.exe -user -f -addstore TrustedPublisher $publicCertificatePath
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to import Windows self-signing certificate into CurrentUser\\TrustedPublisher"
+          }
+
           "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
+          Write-Host "[windows-signing] Windows 自签证书导入完成"
 
       - name: Import macOS self-signing certificate
         if: matrix.platform == 'darwin'
