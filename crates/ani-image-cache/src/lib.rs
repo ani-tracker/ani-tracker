@@ -447,7 +447,7 @@ impl ImageCache {
     }
 }
 
-/// 校验图片请求目标；Mikan/BGM 官方域名交由系统网络栈解析，兼容任意 VPN 路由。
+/// 校验图片请求目标；官方图片域名交由系统网络栈解析，兼容系统代理与 VPN 路由。
 async fn validate_request_target(url: &Url) -> Result<(), ImageCacheError> {
     let hostname = url
         .host_str()
@@ -475,7 +475,7 @@ async fn validate_request_target(url: &Url) -> Result<(), ImageCacheError> {
         _ => {}
     }
     if uses_system_routed_image_host(&hostname) {
-        log::debug!("Mikan/BGM 图片缓存请求遵循系统网络路由 host={hostname}");
+        log::debug!("官方图片缓存请求遵循系统网络路由 host={hostname}");
         return Ok(());
     }
     let port = url
@@ -500,9 +500,15 @@ async fn validate_request_target(url: &Url) -> Result<(), ImageCacheError> {
 
 /// 判断图片域名是否属于需要完整遵循系统代理/VPN 策略的官方来源。
 fn uses_system_routed_image_host(hostname: &str) -> bool {
-    ["mikanani.me", "bgm.tv", "bangumi.tv", "chii.in"]
-        .iter()
-        .any(|root| hostname == *root || hostname.ends_with(&format!(".{root}")))
+    [
+        "mikanani.me",
+        "bgm.tv",
+        "bangumi.tv",
+        "chii.in",
+        "anilist.co",
+    ]
+    .iter()
+    .any(|root| hostname == *root || hostname.ends_with(&format!(".{root}")))
 }
 
 fn normalize_source_url(value: &str) -> Result<String, ImageCacheError> {
@@ -701,15 +707,17 @@ mod tests {
         ))));
     }
 
-    /// 验证 Mikan/BGM 官方域名遵循系统路由，近似域名不能绕过公网校验。
+    /// 验证官方图片域名遵循系统路由，近似域名不能绕过公网校验。
     #[test]
     fn identifies_system_routed_image_hosts() {
         assert!(uses_system_routed_image_host("mikanani.me"));
         assert!(uses_system_routed_image_host("img.mikanani.me"));
         assert!(uses_system_routed_image_host("lain.bgm.tv"));
         assert!(uses_system_routed_image_host("api.bangumi.tv"));
+        assert!(uses_system_routed_image_host("s4.anilist.co"));
         assert!(!uses_system_routed_image_host("fakebgm.tv"));
         assert!(!uses_system_routed_image_host("bgm.tv.example.com"));
+        assert!(!uses_system_routed_image_host("anilist.co.example.com"));
     }
 
     /// 验证系统路由来源无需预解析，直写私网地址仍会在发起请求前被拒绝。

@@ -1,7 +1,7 @@
 import { ImageOff } from "lucide-react";
 import { useEffect, useRef, useState, type ImgHTMLAttributes, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { invalidateCachedImageUrl, resolveCachedImageUrl } from "@/lib/api";
+import { resolveCachedImageUrl } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
 interface CachedImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "alt" | "src"> {
@@ -48,8 +48,8 @@ export function CachedImage({
     };
   }, [sourceUrl]);
 
-  /** 解码失败后让宿主失效缓存，并使用新 URL 参数自动重试一次。 */
-  async function retryAfterDecodeFailure(): Promise<void> {
+  /** 加载失败后保留同 URL 的磁盘缓存，并使用新令牌自动重试一次。 */
+  async function retryAfterLoadFailure(): Promise<void> {
     if (retriedRef.current) {
       setFailed(true);
       return;
@@ -58,7 +58,6 @@ export function CachedImage({
     const requestId = requestIdRef.current;
     setResolvedUrl(undefined);
     try {
-      await invalidateCachedImageUrl(sourceUrl);
       const nextUrl = await resolveCachedImageUrl(sourceUrl);
       if (requestIdRef.current !== requestId) return;
       const separator = nextUrl.includes("?") ? "&" : "?";
@@ -94,7 +93,7 @@ export function CachedImage({
       className={className}
       onError={(event) => {
         onError?.(event);
-        void retryAfterDecodeFailure();
+        void retryAfterLoadFailure();
       }}
       src={resolvedUrl}
     />

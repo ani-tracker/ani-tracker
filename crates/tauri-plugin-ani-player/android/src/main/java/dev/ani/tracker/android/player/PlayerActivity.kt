@@ -69,7 +69,7 @@ class PlayerActivity : ComponentActivity() {
         configureSystemBars()
     }
 
-    /** 返回前台时恢复生命周期暂停的媒体。 */
+    /** 返回前台时恢复视频表面，但保持后台切换产生的暂停状态。 */
     override fun onStart() {
         super.onStart()
         playerViewModel.onHostStart()

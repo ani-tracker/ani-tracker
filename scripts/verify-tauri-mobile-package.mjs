@@ -1,8 +1,12 @@
 #!/usr/bin/env node
+import { execFile } from "node:child_process";
 import { open, readdir, stat } from "node:fs/promises";
 import { extname, resolve } from "node:path";
 import process from "node:process";
+import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
+
+const execFileAsync = promisify(execFile);
 
 const ARCHIVE_EXTENSIONS = {
   android: new Set([".apk", ".aab"]),
@@ -58,6 +62,9 @@ async function main(args) {
   for (const archive of archives) {
     const entries = await readZipEntryNames(archive);
     verifyEntries(options.platform, archive, entries);
+    if (options.platform === "android" && extname(archive).toLowerCase() === ".apk") {
+      await verifyAndroidLibVlcDexArchive(archive);
+    }
     if (options.requireUnsigned) verifyUnsignedIosPackage(options.platform, archive, entries);
   }
 
@@ -85,6 +92,33 @@ export function verifyEntries(platform, archive, entries) {
   );
   if (missing.length > 0) {
     throw new Error(`[mobile-package] ${platform} 安装包缺少发布必需能力：${missing.map((item) => item.name).join("、")}`);
+  }
+}
+
+/** 验证 Release 混淆后仍保留 libvlcjni 依赖的固定 Java 类名。 */
+export function verifyAndroidLibVlcDexCode(archive, code) {
+  if (!/Lorg\/videolan\/libvlc\/interfaces\/IMedia\$Track;/.test(code)) {
+    throw new Error(`[mobile-package] Android 安装包缺少 LibVLC JNI 必需类：${archive}`);
+  }
+}
+
+/** 使用 Android SDK 检查 APK 的 DEX 类清单。 */
+async function verifyAndroidLibVlcDexArchive(archive) {
+  try {
+    const { stdout } = await execFileAsync(
+      "apkanalyzer",
+      ["dex", "code", "--class", "org.videolan.libvlc.interfaces.IMedia$Track", archive],
+      { maxBuffer: 1024 * 1024 }
+    );
+    verifyAndroidLibVlcDexCode(archive, stdout);
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      throw new Error("[mobile-package] Android 安装包校验需要 Android SDK apkanalyzer");
+    }
+    if (error?.message?.includes("LibVLC JNI 必需类")) throw error;
+    throw new Error(`[mobile-package] Android 安装包缺少 LibVLC JNI 必需类：${archive}`, {
+      cause: error
+    });
   }
 }
 

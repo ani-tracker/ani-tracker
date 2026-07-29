@@ -7,8 +7,8 @@ use ani_automation::{
 };
 use ani_domain::{
     AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult, AnimeDiscoverySyncPhase,
-    AnimeDiscoverySyncTaskResult, AnimeDiscoverySyncTaskStatus, AppSettings, NotificationKind,
-    NotificationRecord, NotificationSeverity,
+    AnimeDiscoverySyncTaskResult, AnimeDiscoverySyncTaskStatus, AnimeSeasonSyncState, AppSettings,
+    NotificationKind, NotificationRecord, NotificationSeverity,
 };
 use ani_repository::prelude::*;
 use ani_storage::Storage;
@@ -124,7 +124,7 @@ impl AppDiscoverySyncState {
         outcome
     }
 
-    /// 串行补齐当年过去季度，再按天同步当前季度。
+    /// 串行同步当前季度，再补齐当年过去季度。
     async fn run_due(&self, trigger: &'static str) {
         if self.reserve_sync(None).await.is_err() {
             return;
@@ -167,33 +167,14 @@ impl AppDiscoverySyncState {
         .await
         .map_err(|error| format!("读取新番同步上下文失败：{error}"))??;
 
-        let mut due = Vec::new();
-        for (index, (season, _)) in SEASONS.iter().enumerate() {
-            let state = states
-                .iter()
-                .find(|(candidate, _)| candidate == season)
-                .and_then(|(_, state)| state.as_ref());
-            if index < current_index
-                && state
-                    .and_then(|state| state.completed_at.as_ref())
-                    .is_none()
-            {
-                due.push((*season).to_owned());
-            }
-        }
-        let current_season = SEASONS[current_index].0;
-        let current_state = states
-            .iter()
-            .find(|(season, _)| season == current_season)
-            .and_then(|(_, state)| state.as_ref());
-        if !is_same_local_day(
-            current_state.and_then(|state| state.last_successful_sync_at.as_deref()),
-            now,
-        ) {
-            due.push(current_season.to_owned());
-        }
+        let due = due_seasons(&states, current_index, now);
         if due.is_empty() {
             log::info!("Tauri 新番季度同步无需补跑 trigger={trigger}");
+        } else {
+            log::info!(
+                "Tauri 新番季度同步队列 trigger={trigger} order={}",
+                due.join(",")
+            );
         }
 
         let network = self
@@ -616,6 +597,40 @@ fn season_index(month: u32) -> usize {
     }
 }
 
+/// 按“当前季度优先、过去季度补齐”生成串行执行队列。
+fn due_seasons(
+    states: &[(String, Option<AnimeSeasonSyncState>)],
+    current_index: usize,
+    now: DateTime<Utc>,
+) -> Vec<String> {
+    let mut due = Vec::new();
+    let current_season = SEASONS[current_index].0;
+    let current_state = states
+        .iter()
+        .find(|(season, _)| season == current_season)
+        .and_then(|(_, state)| state.as_ref());
+    if !is_same_local_day(
+        current_state.and_then(|state| state.last_successful_sync_at.as_deref()),
+        now,
+    ) {
+        due.push(current_season.to_owned());
+    }
+    for (index, (season, _)) in SEASONS.iter().enumerate() {
+        let state = states
+            .iter()
+            .find(|(candidate, _)| candidate == season)
+            .and_then(|(_, state)| state.as_ref());
+        if index < current_index
+            && state
+                .and_then(|state| state.completed_at.as_ref())
+                .is_none()
+        {
+            due.push((*season).to_owned());
+        }
+    }
+    due
+}
+
 /// 将季度标识转换为通知标题使用的中文名称。
 fn season_label(season: &str) -> &'static str {
     match season {
@@ -653,7 +668,10 @@ fn to_iso(value: DateTime<Utc>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::season_index;
+    use ani_domain::AnimeSeasonSyncState;
+    use chrono::{TimeZone, Utc};
+
+    use super::{due_seasons, season_index, SEASONS};
 
     /// 验证自然月稳定映射到四个季度。
     #[test]
@@ -663,4 +681,50 @@ mod tests {
         assert_eq!(season_index(7), 2);
         assert_eq!(season_index(12), 3);
     }
+
+    /// 验证首次启动先执行当前季度，再按自然顺序补齐过去季度。
+    #[test]
+    fn schedules_current_season_before_past_seasons() {
+        let states = SEASONS
+            .iter()
+            .map(|(season, _)| ((*season).to_owned(), None))
+            .collect::<Vec<OptionState>>();
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 29, 2, 0, 0)
+            .single()
+            .expect("valid UTC time");
+
+        assert_eq!(
+            due_seasons(&states, 2, now),
+            vec!["summer", "winter", "spring"]
+        );
+    }
+
+    /// 验证当前季度当天已成功后只补齐尚未完成的过去季度。
+    #[test]
+    fn skips_current_season_after_same_day_success() {
+        let successful_at = "2026-07-29T02:00:00.000Z".to_owned();
+        let states = SEASONS
+            .iter()
+            .map(|(season, _)| {
+                let state = (*season == "summer").then(|| AnimeSeasonSyncState {
+                    year: 2026,
+                    season: (*season).to_owned(),
+                    last_attempt_at: Some(successful_at.clone()),
+                    last_successful_sync_at: Some(successful_at.clone()),
+                    completed_at: Some(successful_at.clone()),
+                    last_anilist_error: None,
+                });
+                ((*season).to_owned(), state)
+            })
+            .collect::<Vec<OptionState>>();
+        let now = Utc
+            .with_ymd_and_hms(2026, 7, 29, 3, 0, 0)
+            .single()
+            .expect("valid UTC time");
+
+        assert_eq!(due_seasons(&states, 2, now), vec!["winter", "spring"]);
+    }
+
+    type OptionState = (String, Option<AnimeSeasonSyncState>);
 }

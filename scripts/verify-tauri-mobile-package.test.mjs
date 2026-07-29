@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  verifyAndroidLibVlcDexCode,
   verifyEntries,
   verifyUnsignedIosPackage
 } from "./verify-tauri-mobile-package.mjs";
@@ -59,6 +60,23 @@ test("拒绝缺少 LibVLC JNI 的 Android 安装包", () => {
       androidEntries.filter((entry) => !entry.endsWith("libvlcjni.so"))
     ),
     /ARM64 LibVLC JNI/
+  );
+});
+
+test("接受保留 LibVLC JNI 固定类名的 Android DEX", () => {
+  assert.doesNotThrow(() => verifyAndroidLibVlcDexCode(
+    "ani-tracker.apk",
+    ".class public abstract Lorg/videolan/libvlc/interfaces/IMedia$Track;\n"
+  ));
+});
+
+test("拒绝混淆后缺少 LibVLC JNI 固定类名的 Android DEX", () => {
+  assert.throws(
+    () => verifyAndroidLibVlcDexCode(
+      "ani-tracker.apk",
+      ".class public interface abstract Lorg/videolan/libvlc/interfaces/IMedia;\n"
+    ),
+    /LibVLC JNI 必需类/
   );
 });
 

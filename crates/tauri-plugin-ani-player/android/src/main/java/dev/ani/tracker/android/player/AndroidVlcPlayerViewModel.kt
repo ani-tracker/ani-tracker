@@ -41,10 +41,10 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     private var libVlc: LibVLC? = null
     private var mediaPlayer: MediaPlayer? = null
     private var attachedLayout: VLCVideoLayout? = null
+    private var videoViewsAttached = false
     private var pendingStartPositionMillis = 0L
     private var pendingPlayUntilVideoAttached = false
     private var autoplay = true
-    private var resumeAfterHostStop = false
     private var resumeAfterFocusGain = false
     private var released = false
     private var autoNextRunnable: Runnable? = null
@@ -98,47 +98,40 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
 
     /** 把当前 VLC 视频输出绑定到新建的原生 Surface。 */
     fun attachVideoLayout(layout: VLCVideoLayout) {
-        if (attachedLayout === layout) return
-        val player = mediaPlayer ?: return
-        try {
-            if (attachedLayout != null) player.detachViews()
-            player.attachViews(layout, null, true, false)
-            attachedLayout = layout
-            Log.i(TAG, "Android libVLC 视频表面已绑定")
-            if (pendingPlayUntilVideoAttached) {
-                pendingPlayUntilVideoAttached = false
-                play()
-            }
-        } catch (error: Throwable) {
-            fail("视频表面初始化失败", error)
-        }
+        if (attachedLayout === layout && videoViewsAttached) return
+        if (attachedLayout !== layout) detachVideoOutput(reason = "replace-layout", clearLayout = true)
+        attachedLayout = layout
+        attachVideoOutput(layout, reason = "compose-attach")
     }
 
     /** 仅解绑仍由当前 Compose 节点持有的视频 Surface。 */
     fun detachVideoLayout(layout: VLCVideoLayout) {
         if (attachedLayout !== layout) return
-        try {
-            mediaPlayer?.detachViews()
-        } catch (error: Throwable) {
-            Log.w(TAG, "Android libVLC 视频表面解绑失败", error)
-        } finally {
-            attachedLayout = null
-        }
+        detachVideoOutput(reason = "compose-dispose", clearLayout = true)
     }
 
-    /** 在宿主进入后台时暂停，旋转重建时保持播放会话。 */
+    /** 在宿主进入后台时暂停并解绑 Surface，同时保留播放器界面和媒体会话。 */
     fun onHostStop(changingConfigurations: Boolean) {
         if (changingConfigurations) return
         persistCheckpoint(completed = stateFlow.value.status == PlayerStatus.ENDED, reason = "host-stop")
-        resumeAfterHostStop = mediaPlayer?.isPlaying == true
-        if (resumeAfterHostStop) pauseInternal(abandonFocus = true)
+        val pausedForBackground = mediaPlayer?.isPlaying == true ||
+            pendingPlayUntilVideoAttached ||
+            stateFlow.value.status == PlayerStatus.PLAYING ||
+            stateFlow.value.status == PlayerStatus.BUFFERING
+        pendingPlayUntilVideoAttached = false
+        resumeAfterFocusGain = false
+        if (pausedForBackground) pauseInternal(abandonFocus = true)
+        detachVideoOutput(reason = "host-stop", clearLayout = false)
+        Log.i(TAG, "Android libVLC 宿主进入后台 paused=$pausedForBackground")
     }
 
-    /** 返回前台后仅恢复由生命周期自动暂停的媒体。 */
+    /** 返回前台后只重绑 Surface，保持后台切换产生的暂停状态。 */
     fun onHostStart() {
-        if (!resumeAfterHostStop) return
-        resumeAfterHostStop = false
-        play()
+        val layout = attachedLayout
+        if (layout != null && !videoViewsAttached) {
+            attachVideoOutput(layout, reason = "host-start")
+            Log.i(TAG, "Android libVLC 宿主返回前台，保持暂停状态")
+        }
     }
 
     /** 在播放与暂停之间切换。 */
@@ -149,7 +142,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     /** 获取音频焦点并开始或继续播放。 */
     fun play() {
         val player = mediaPlayer ?: return
-        if (attachedLayout == null) {
+        if (attachedLayout == null || !videoViewsAttached) {
             pendingPlayUntilVideoAttached = true
             patch(status = PlayerStatus.READY, errorMessage = null)
             Log.i(TAG, "Android libVLC 等待视频表面后开始播放")
@@ -173,7 +166,6 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     /** 暂停当前媒体并释放音频焦点。 */
     fun pause() {
         pendingPlayUntilVideoAttached = false
-        resumeAfterHostStop = false
         resumeAfterFocusGain = false
         pauseInternal(abandonFocus = true)
         persistCheckpoint(completed = false, reason = "pause")
@@ -234,8 +226,13 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     /** 应用统一播放器契约中的画面比例。 */
     fun setAspectRatio(aspectRatio: String?) {
         val next = aspectRatio?.takeUnless { it == "default" || it == "fit" }
-        mediaPlayer?.setScale(0f)
-        mediaPlayer?.setAspectRatio(next)
+        mediaPlayer?.apply {
+            setUseOrientationFromBounds(true)
+            setVideoScale(MediaPlayer.ScaleType.SURFACE_BEST_FIT)
+            updateVideoSurfaces()
+            setScale(0f)
+            setAspectRatio(next)
+        }
         stateFlow.value = stateFlow.value.copy(aspectRatio = next)
     }
 
@@ -280,7 +277,6 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     /** 停止当前媒体，供宿主主动关闭前调用。 */
     fun closePlayback() {
         pendingPlayUntilVideoAttached = false
-        resumeAfterHostStop = false
         resumeAfterFocusGain = false
         persistCheckpoint(completed = stateFlow.value.status == PlayerStatus.ENDED, reason = "close")
         cancelAutoNextCountdown()
@@ -310,6 +306,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
         } finally {
             pendingPlayUntilVideoAttached = false
             attachedLayout = null
+            videoViewsAttached = false
             mediaPlayer = null
             libVlc = null
         }
@@ -331,6 +328,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             mediaPlayer = MediaPlayer(runtime).also { player ->
                 player.setEventListener(::handleVlcEvent)
                 player.setVolume(stateFlow.value.volume)
+                player.setUseOrientationFromBounds(true)
             }
             Log.i(TAG, "Android libVLC 运行时初始化完成")
         } catch (error: Throwable) {
@@ -575,6 +573,59 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             fail("暂停播放失败", error)
         }
         if (abandonFocus) audioManager.abandonAudioFocusRequest(audioFocusRequest)
+    }
+
+    /** 绑定 VLCVideoLayout，并在布局完成后刷新窗口尺寸和待恢复播放。 */
+    private fun attachVideoOutput(layout: VLCVideoLayout, reason: String) {
+        val player = mediaPlayer ?: return
+        try {
+            if (videoViewsAttached || player.vlcVout.areViewsAttached()) player.detachViews()
+            player.setUseOrientationFromBounds(true)
+            player.attachViews(layout, null, true, false)
+            player.setVideoScale(MediaPlayer.ScaleType.SURFACE_BEST_FIT)
+            videoViewsAttached = true
+            layout.post {
+                if (released || attachedLayout !== layout || !videoViewsAttached) return@post
+                try {
+                    player.updateVideoSurfaces()
+                    if (reason == "host-start" && stateFlow.value.status == PlayerStatus.PAUSED) {
+                        val pausedPosition = player.time
+                            .takeIf { it >= 0L }
+                            ?: stateFlow.value.positionMillis
+                        player.setTime(pausedPosition, false)
+                        Log.i(TAG, "Android libVLC 已刷新暂停帧 position=$pausedPosition")
+                    }
+                    Log.i(
+                        TAG,
+                        "Android libVLC 视频表面已绑定 reason=$reason size=${layout.width}x${layout.height}"
+                    )
+                    if (pendingPlayUntilVideoAttached) {
+                        pendingPlayUntilVideoAttached = false
+                        play()
+                    }
+                } catch (error: Throwable) {
+                    fail("视频表面刷新失败", error)
+                }
+            }
+        } catch (error: Throwable) {
+            videoViewsAttached = false
+            fail("视频表面初始化失败", error)
+        }
+    }
+
+    /** 解绑当前 VLC Surface；后台切换时保留 Compose 布局引用供前台重绑。 */
+    private fun detachVideoOutput(reason: String, clearLayout: Boolean) {
+        try {
+            if (videoViewsAttached || mediaPlayer?.vlcVout?.areViewsAttached() == true) {
+                mediaPlayer?.detachViews()
+                Log.i(TAG, "Android libVLC 视频表面已解绑 reason=$reason")
+            }
+        } catch (error: Throwable) {
+            Log.w(TAG, "Android libVLC 视频表面解绑失败 reason=$reason", error)
+        } finally {
+            videoViewsAttached = false
+            if (clearLayout) attachedLayout = null
+        }
     }
 
     /** 原子更新常用播放字段，避免原生回调覆盖其他状态。 */
