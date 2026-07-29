@@ -1,8 +1,11 @@
 import { strToU8, zipSync } from "fflate";
 import {
   THEME_SCHEMA_VERSION,
+  detectThemeBackgroundContentType,
+  themeBackgroundExtension,
   validateThemePack,
   type ThemeBackgroundImageSettings,
+  type ThemeBackgroundContentType,
   type ThemePackManifest,
   type ThemeTokens
 } from "@shared/theme";
@@ -212,24 +215,18 @@ async function normalizeThemeBackground(bytes: Uint8Array, sourceName: string): 
   image.dispose();
 
   const samples = sampleCanvas(canvas);
-  let output = await encodeCanvas(canvas, "image/webp", 0.86);
-  let contentType: SaveThemeBackgroundInput["contentType"] = "image/webp";
-  if (!output || output.size > MAX_BACKGROUND_BYTES) output = await encodeCanvas(canvas, "image/jpeg", 0.82);
-  if (output?.type === "image/jpeg") contentType = "image/jpeg";
-  if (!output || output.size > MAX_BACKGROUND_BYTES) {
-    throw new Error("背景图片压缩后仍超过 3 MiB，请选择尺寸或细节更低的图片");
-  }
-  const outputBytes = new Uint8Array(await output.arrayBuffer());
-  const digest = await crypto.subtle.digest("SHA-256", outputBytes);
+  const output = await encodeThemeBackground(canvas);
+  const outputBytes = output.bytes;
+  const digest = await crypto.subtle.digest("SHA-256", copyToArrayBuffer(outputBytes));
   const hash = [...new Uint8Array(digest)]
     .slice(0, 8)
     .map((value) => value.toString(16).padStart(2, "0"))
     .join("");
-  const extension = contentType === "image/webp" ? "webp" : "jpg";
+  const extension = themeBackgroundExtension(output.contentType);
   return {
     writeInput: {
       fileName: `background-${hash}.${extension}`,
-      contentType,
+      contentType: output.contentType,
       dataBase64: bytesToBase64(outputBytes)
     },
     samples
@@ -309,12 +306,8 @@ function relativeLuminance(rgb: readonly number[]): number {
 }
 
 function detectImageType(bytes: Uint8Array, sourceName: string): SaveThemeBackgroundInput["contentType"] {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return "image/jpeg";
-  if (bytes.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
-    .every((value, index) => bytes[index] === value)) return "image/png";
-  if (bytes.length >= 12
-    && new TextDecoder().decode(bytes.subarray(0, 4)) === "RIFF"
-    && new TextDecoder().decode(bytes.subarray(8, 12)) === "WEBP") return "image/webp";
+  const contentType = detectThemeBackgroundContentType(bytes);
+  if (contentType) return contentType;
   throw new Error(`背景图片 ${sourceName} 仅支持 JPEG、PNG 或 WebP`);
 }
 
@@ -347,6 +340,32 @@ function loadImage(blob: Blob): Promise<{ width: number; height: number; element
 
 function encodeCanvas(canvas: HTMLCanvasElement, type: string, quality: number): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob(resolve, type, quality));
+}
+
+/** 压缩背景并按真实文件头返回格式，兼容 WebView 忽略目标 MIME 的情况。 */
+async function encodeThemeBackground(
+  canvas: HTMLCanvasElement
+): Promise<{ bytes: Uint8Array; contentType: ThemeBackgroundContentType }> {
+  const candidates = [
+    { requestedType: "image/webp", quality: 0.86 },
+    { requestedType: "image/jpeg", quality: 0.82 }
+  ] as const;
+  for (const candidate of candidates) {
+    const blob = await encodeCanvas(canvas, candidate.requestedType, candidate.quality);
+    if (!blob) continue;
+    const bytes = new Uint8Array(await blob.arrayBuffer());
+    const contentType = detectThemeBackgroundContentType(bytes);
+    if (!contentType || bytes.byteLength > MAX_BACKGROUND_BYTES) continue;
+    if (candidate.requestedType !== contentType || (blob.type && blob.type !== contentType)) {
+      console.info("主题背景未按请求格式编码，已按文件内容修正", {
+        requestedType: candidate.requestedType,
+        declaredType: blob.type,
+        contentType
+      });
+    }
+    return { bytes, contentType };
+  }
+  throw new Error("背景图片压缩后仍超过 3 MiB，请选择尺寸或细节更低的图片");
 }
 
 function bytesToBase64(bytes: Uint8Array): string {

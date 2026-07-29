@@ -3,7 +3,9 @@ import { test } from "node:test";
 import {
   BUILT_IN_THEME_PACKS,
   THEME_PACK_JSON_SCHEMA,
+  detectThemeBackgroundContentType,
   isValidThemeArchiveEntryName,
+  themeBackgroundExtension,
   validateThemePack
 } from "../theme";
 
@@ -66,4 +68,18 @@ test("主题 ZIP 条目只允许根目录清单和受限图片名", () => {
   assert.equal(isValidThemeArchiveEntryName("../background-a1b2c3d4.webp"), false);
   assert.equal(isValidThemeArchiveEntryName("nested/image-theme.ani-theme.json"), false);
   assert.equal(isValidThemeArchiveEntryName("background.svg"), false);
+});
+
+test("主题背景按文件头识别 JPEG、PNG 与 WebP", () => {
+  const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0x00]);
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const webp = new Uint8Array([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]);
+
+  assert.equal(detectThemeBackgroundContentType(jpeg), "image/jpeg");
+  assert.equal(detectThemeBackgroundContentType(png), "image/png");
+  assert.equal(detectThemeBackgroundContentType(webp), "image/webp");
+  assert.equal(detectThemeBackgroundContentType(new Uint8Array([1, 2, 3])), undefined);
+  assert.equal(themeBackgroundExtension("image/jpeg"), "jpg");
+  assert.equal(themeBackgroundExtension("image/png"), "png");
+  assert.equal(themeBackgroundExtension("image/webp"), "webp");
 });

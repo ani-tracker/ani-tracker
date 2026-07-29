@@ -4,6 +4,7 @@ export const DEFAULT_THEME_PACK_ID = "default";
 
 export type ThemeMode = "system" | "light" | "dark";
 export type ResolvedThemeMode = Exclude<ThemeMode, "system">;
+export type ThemeBackgroundContentType = "image/jpeg" | "image/png" | "image/webp";
 
 export const THEME_TOKEN_NAMES = [
   "background",
@@ -398,6 +399,36 @@ export function resolveThemePack(appearance: AppearanceSettings): ThemePackManif
 /** 判断主题背景文件名是否可安全映射到应用私有目录。 */
 export function isValidThemeBackgroundFileName(value: string): boolean {
   return THEME_BACKGROUND_FILE_PATTERN.test(value);
+}
+
+/** 根据图片文件头识别主题背景真实格式，不信任文件扩展名或 MIME 声明。 */
+export function detectThemeBackgroundContentType(bytes: Uint8Array): ThemeBackgroundContentType | undefined {
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (bytes.length >= 8 && [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]
+    .every((value, index) => bytes[index] === value)) {
+    return "image/png";
+  }
+  if (bytes.length >= 12
+    && bytes[0] === 0x52
+    && bytes[1] === 0x49
+    && bytes[2] === 0x46
+    && bytes[3] === 0x46
+    && bytes[8] === 0x57
+    && bytes[9] === 0x45
+    && bytes[10] === 0x42
+    && bytes[11] === 0x50) {
+    return "image/webp";
+  }
+  return undefined;
+}
+
+/** 将主题背景真实内容类型映射为安全文件扩展名。 */
+export function themeBackgroundExtension(contentType: ThemeBackgroundContentType): "jpg" | "png" | "webp" {
+  if (contentType === "image/jpeg") return "jpg";
+  if (contentType === "image/png") return "png";
+  return "webp";
 }
 
 /** 判断 ZIP 条目是否为根目录下允许的主题清单或背景图片。 */
