@@ -307,14 +307,16 @@ final class AniPlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
         return payload
     }
 
-    /** 请求当前场景切换横竖屏方向。 */
+    /** iOS 16+ 请求目标方向，iOS 15 保留系统手动旋转。 */
     private func setFullscreen(_ fullscreen: Bool) {
         guard let scene = Self.activeWindowScene else { return }
-        let preferences = UIWindowScene.GeometryPreferences.iOS(
-            interfaceOrientations: fullscreen ? .landscape : .portrait
-        )
-        scene.requestGeometryUpdate(preferences) { error in
-            NSLog("AniPlayerPlugin orientation update failed: %@", error.localizedDescription)
+        if #available(iOS 16.0, *) {
+            let preferences = UIWindowScene.GeometryPreferences.iOS(
+                interfaceOrientations: fullscreen ? .landscape : .portrait
+            )
+            scene.requestGeometryUpdate(preferences) { error in
+                NSLog("AniPlayerPlugin orientation update failed: %@", error.localizedDescription)
+            }
         }
         UIViewController.attemptRotationToDeviceOrientation()
     }

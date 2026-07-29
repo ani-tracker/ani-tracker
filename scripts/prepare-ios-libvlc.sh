@@ -47,5 +47,5 @@ fi
 
 rm -rf "${output_path}"
 cp -R "${source_path}" "${output_path}"
-verify_ios_xcframework "${output_path}" MobileVLCKit 16.0
+verify_ios_xcframework "${output_path}" MobileVLCKit 15.0
 echo "iOS MobileVLCKit ${version} 已准备：${output_path}"

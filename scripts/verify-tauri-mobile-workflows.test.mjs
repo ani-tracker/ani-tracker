@@ -16,6 +16,7 @@ const [
   iosTorrentCmake,
   iosTorrentModuleMap,
   iosFrameworkVerifier,
+  iosDeploymentTargetSync,
   iosConfigSource,
   playerPackage,
   torrentPackage,
@@ -55,6 +56,7 @@ const [
   readFile("native/torrent-core/CMakeLists.txt", "utf8"),
   readFile("native/torrent-core/apple/AniTorrentCore.modulemap", "utf8"),
   readFile("scripts/verify-ios-xcframework.sh", "utf8"),
+  readFile("scripts/sync-tauri-ios-deployment-target.mjs", "utf8"),
   readFile("src-tauri/tauri.ios.conf.json", "utf8"),
   readFile("crates/tauri-plugin-ani-player/ios/Package.swift", "utf8"),
   readFile("crates/tauri-plugin-ani-torrent/ios/Package.swift", "utf8"),
@@ -102,8 +104,11 @@ test("移动持续门禁真实编译两端产物并检查原生与包边界", ()
   assert.match(mobileGate, /:tauri-plugin-ani-mobile:testDebugUnitTest/);
   assert.match(mobileGate, /verify:tauri:android-package/);
   assert.match(mobileGate, /tauri ios build --target aarch64 --ci --no-sign/);
+  assert.match(mobileGate, /IPHONEOS_DEPLOYMENT_TARGET: "15\.0"/);
+  assert.match(mobileGate, /key: mobile-ios15-arm64/);
   assert.match(mobileGate, /build-for-testing/);
   assert.match(mobileGate, /verify:tauri:ios-package -- --require-unsigned/);
+  assert.match(mobileGate, /plutil -extract MinimumOSVersion raw/);
 });
 
 test("Android 正式发布同时强制长期 JKS、自签校验与原生单测", () => {
@@ -132,8 +137,20 @@ test("Android 播放器固定已验证的 Kotlin Compose 编译器与 JVM 资源
 test("iOS 正式发布保持未签名 IPA 与用户重签边界", () => {
   assert.match(iosRelease, /tauri ios build --target aarch64 --ci --no-sign/);
   assert.match(iosRelease, /package-unsigned-ios-ipa\.sh/);
+  assert.match(iosRelease, /IPHONEOS_DEPLOYMENT_TARGET: "15\.0"/);
   assert.match(iosRelease, /verify:tauri:ios-package -- --require-unsigned/);
+  assert.match(iosRelease, /plutil -extract MinimumOSVersion raw/);
   assert.doesNotMatch(iosRelease, /APPLE_(?:CERTIFICATE|PROVISIONING_PROFILE)/);
+});
+
+test("iOS 15 保持真机兼容并仅在 iOS 16 强制切换方向", () => {
+  assert.equal(iosConfig.bundle.iOS.minimumSystemVersion, "15.0");
+  assert.match(packageJson.scripts["init:tauri:ios"], /sync:tauri:ios-target/);
+  assert.match(packageJson.scripts["package:tauri:ios"], /sync:tauri:ios-target/);
+  assert.match(iosDeploymentTargetSync, /IPHONEOS_DEPLOYMENT_TARGET/);
+  assert.match(playerPackage, /\.iOS\(\.v15\)/);
+  assert.match(playerPlugin, /if #available\(iOS 16\.0, \*\)/);
+  assert.match(playerScreen, /if #available\(iOS 16\.0, \*\)/);
 });
 
 test("三端正式发布使用专用令牌与 Node 24 Release Action", () => {

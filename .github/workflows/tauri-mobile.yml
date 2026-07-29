@@ -25,6 +25,7 @@ on:
       - "scripts/prepare-android-torrent-dependencies.sh"
       - "scripts/prepare-ios-libvlc.sh"
       - "scripts/prepare-ios-torrent-core.sh"
+      - "scripts/sync-tauri-ios-deployment-target.mjs"
       - "scripts/verify-ios-xcframework.sh"
       - "scripts/verify-renderer-boundaries.mjs"
       - "scripts/verify-tauri-mobile-package.mjs"
@@ -49,6 +50,7 @@ on:
       - "scripts/prepare-android-torrent-dependencies.sh"
       - "scripts/prepare-ios-libvlc.sh"
       - "scripts/prepare-ios-torrent-core.sh"
+      - "scripts/sync-tauri-ios-deployment-target.mjs"
       - "scripts/verify-ios-xcframework.sh"
       - "scripts/verify-renderer-boundaries.mjs"
       - "scripts/verify-tauri-mobile-package.mjs"
@@ -173,8 +175,10 @@ jobs:
           pnpm run verify:tauri:android-package
 
   ios:
-    name: ios-arm64-unsigned
+    name: ios-15-arm64-unsigned
     runs-on: macos-15
+    env:
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
     steps:
       - uses: actions/checkout@v4
 
@@ -195,7 +199,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: . -> out/cargo-target
-          key: mobile-ios-arm64
+          key: mobile-ios15-arm64
 
       - uses: actions/checkout@v4
         with:
@@ -248,6 +252,18 @@ jobs:
           CODE_SIGNING_ALLOWED=NO build-for-testing
 
       - name: Verify iOS package boundaries
+        env:
+          EXPECTED_IOS_MINIMUM_VERSION: "15.0"
         run: |
           pnpm run verify:tauri:renderer-boundaries -- --renderer local
           pnpm run verify:tauri:ios-package -- --require-unsigned
+          ipa_path="src-tauri/gen/apple/build/ani-tracker-ios-arm64-unsigned.ipa"
+          actual_minimum_version="$(
+            unzip -p "${ipa_path}" 'Payload/*.app/Info.plist' \
+              | plutil -extract MinimumOSVersion raw -o - -- -
+          )"
+          if [[ "${actual_minimum_version}" != "${EXPECTED_IOS_MINIMUM_VERSION}" ]]; then
+            echo "iOS IPA 最低系统版本不匹配 expected=${EXPECTED_IOS_MINIMUM_VERSION} actual=${actual_minimum_version}" >&2
+            exit 1
+          fi
+          echo "iOS 15 兼容门禁通过 minimum=${actual_minimum_version}"

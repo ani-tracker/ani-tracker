@@ -69,7 +69,7 @@ let mobileVLCKitSearchFlags = xcframeworkSearchFlags(named: "MobileVLCKit")
 let package = Package(
     name: "tauri-plugin-ani-player",
     platforms: [
-        .iOS(.v16)
+        .iOS(.v15)
     ],
     products: [
         .library(

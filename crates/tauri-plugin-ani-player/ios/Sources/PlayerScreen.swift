@@ -253,15 +253,17 @@ struct PlayerScreen: View {
         onClose()
     }
 
-    /** 请求 iOS 16 场景切换为目标方向。 */
+    /** iOS 16+ 请求目标方向，iOS 15 保留系统手动旋转。 */
     private func requestOrientation(_ orientations: UIInterfaceOrientationMask) {
         guard let scene = UIApplication.shared.connectedScenes
             .compactMap({ $0 as? UIWindowScene })
             .first(where: { $0.activationState == .foregroundActive })
         else { return }
 
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: orientations)) { error in
-            playerScreenLogger.error("iOS 播放器方向切换失败: \(error.localizedDescription, privacy: .public)")
+        if #available(iOS 16.0, *) {
+            scene.requestGeometryUpdate(.iOS(interfaceOrientations: orientations)) { error in
+                playerScreenLogger.error("iOS 播放器方向切换失败: \(error.localizedDescription, privacy: .public)")
+            }
         }
         UIViewController.attemptRotationToDeviceOrientation()
     }
