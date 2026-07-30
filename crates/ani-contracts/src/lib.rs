@@ -288,6 +288,8 @@ pub struct PlayerCapabilities {
     pub playback_rates: Vec<f64>,
     pub supports_audio_tracks: bool,
     pub supports_subtitle_tracks: bool,
+    #[serde(default)]
+    pub supports_subtitle_scale: bool,
     pub supports_aspect_ratio: bool,
     pub supports_fullscreen: bool,
     pub supports_picture_in_picture: bool,
@@ -438,6 +440,9 @@ pub enum PlayerCommandAction {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         track_id: Option<String>,
     },
+    SetSubtitleScale {
+        subtitle_scale: u16,
+    },
     SetAspectRatio {
         aspect_ratio: PlayerAspectRatio,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -468,6 +473,7 @@ impl PlayerCommand {
             PlayerCommandAction::SetRate { .. } => "set-rate",
             PlayerCommandAction::SelectAudioTrack { .. } => "select-audio-track",
             PlayerCommandAction::SelectSubtitleTrack { .. } => "select-subtitle-track",
+            PlayerCommandAction::SetSubtitleScale { .. } => "set-subtitle-scale",
             PlayerCommandAction::SetAspectRatio { .. } => "set-aspect-ratio",
             PlayerCommandAction::SetFullscreen { .. } => "set-fullscreen",
             PlayerCommandAction::SetPictureInPicture { .. } => "set-picture-in-picture",
@@ -510,11 +516,18 @@ pub struct PlayerSnapshot {
     pub playback_rate: f64,
     pub audio_tracks: Vec<PlayerTrack>,
     pub subtitle_tracks: Vec<PlayerTrack>,
+    #[serde(default = "default_subtitle_scale")]
+    pub subtitle_scale: u16,
     pub aspect_ratio: PlayerAspectRatio,
     pub fullscreen: bool,
     pub picture_in_picture: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<PlayerError>,
+}
+
+/// 兼容旧播放器快照缺少字幕缩放字段的情况。
+const fn default_subtitle_scale() -> u16 {
+    100
 }
 
 /// 创建桌面播放器窗口时使用的受限目标。
@@ -703,6 +716,7 @@ mod tests {
     struct PlayerCommandFixture {
         load_command: PlayerCommand,
         rejected_result: PlayerCommandResult,
+        subtitle_scale_command: PlayerCommand,
         android_capabilities: super::PlayerCapabilities,
         ios_capabilities: super::PlayerCapabilities,
         playback_session: PlaybackSession,
@@ -760,6 +774,7 @@ mod tests {
         assert_eq!(decoded.payload.status, PlayerStatus::Playing);
         assert_eq!(decoded.payload.sequence, 7);
         assert_eq!(decoded.payload.audio_tracks.len(), 2);
+        assert_eq!(decoded.payload.subtitle_scale, 150);
         assert_eq!(decoded.payload.subtitle_tracks.len(), 1);
     }
 
@@ -842,6 +857,12 @@ mod tests {
             PlayerCommandAction::Load { .. }
         ));
         assert_eq!(decoded.payload.load_command.action_name(), "load");
+        assert!(matches!(
+            &decoded.payload.subtitle_scale_command.action,
+            PlayerCommandAction::SetSubtitleScale {
+                subtitle_scale: 150
+            }
+        ));
         assert!(!decoded.payload.rejected_result.accepted);
         assert_eq!(
             decoded.payload.android_capabilities.platform,

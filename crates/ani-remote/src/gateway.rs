@@ -45,7 +45,7 @@ pub struct GatewayConfig {
 impl Default for GatewayConfig {
     fn default() -> Self {
         Self {
-            lan_enabled: false,
+            lan_enabled: true,
             port: DEFAULT_PORT,
         }
     }

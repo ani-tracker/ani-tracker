@@ -48,7 +48,11 @@ import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import type { RemotePlaybackRequestMode, RemotePlaybackSubtitle } from "@shared/contracts";
-import type { PlayerAspectRatio } from "@shared/player-contract";
+import {
+  PLAYER_SUBTITLE_SCALES,
+  type PlayerAspectRatio,
+  type PlayerSubtitleScale
+} from "@shared/player-contract";
 import { formatPlaybackTime } from "./player-ui-model";
 import type { DesktopWindowDragHandlers } from "./use-desktop-window-drag";
 
@@ -73,6 +77,7 @@ interface PlayerChromeProps {
   onChangeMode?: (mode: RemotePlaybackRequestMode) => void;
   onChangeRate: (rate: number) => void;
   onChangeSubtitle: (subtitleId?: string) => void;
+  onChangeSubtitleScale: (subtitleScale: PlayerSubtitleScale) => void;
   onClose: () => void;
   onGoNext: () => void;
   onGoPrevious: () => void;
@@ -92,6 +97,8 @@ interface PlayerChromeProps {
   playing: boolean;
   selectedSubtitleId?: string;
   statusBadges: string[];
+  subtitleScale: PlayerSubtitleScale;
+  subtitleScaleAvailable: boolean;
   subtitles: RemotePlaybackSubtitle[];
   visible: boolean;
   volume: number;
@@ -303,7 +310,12 @@ function SubtitleMenu(props: PlayerChromeProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button aria-label="字幕" disabled={props.subtitles.length === 0} size="icon" variant="media">
+        <Button
+          aria-label="字幕"
+          disabled={props.subtitles.length === 0 && !props.subtitleScaleAvailable}
+          size="icon"
+          variant="media"
+        >
           <Captions />
         </Button>
       </DropdownMenuTrigger>
@@ -320,6 +332,20 @@ function SubtitleMenu(props: PlayerChromeProps) {
             </DropdownMenuRadioItem>
           ))}
         </DropdownMenuRadioGroup>
+        {props.subtitleScaleAvailable && (
+          <>
+            <DropdownMenuSeparator />
+            <DropdownMenuLabel>字幕大小</DropdownMenuLabel>
+            <DropdownMenuRadioGroup
+              onValueChange={(value) => props.onChangeSubtitleScale(Number(value) as PlayerSubtitleScale)}
+              value={String(props.subtitleScale)}
+            >
+              {PLAYER_SUBTITLE_SCALES.map((scale) => (
+                <DropdownMenuRadioItem key={scale} value={String(scale)}>{scale}%</DropdownMenuRadioItem>
+              ))}
+            </DropdownMenuRadioGroup>
+          </>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -464,6 +490,22 @@ function PlayerSettingsSheet(
               </div>
             )}
           </div>
+          {props.subtitleScaleAvailable && (
+            <div className="flex flex-col gap-2">
+              <h3 className="text-sm font-medium">字幕大小</h3>
+              <ToggleGroup
+                className="flex-wrap justify-start"
+                onValueChange={(value) => value && props.onChangeSubtitleScale(Number(value) as PlayerSubtitleScale)}
+                type="single"
+                value={String(props.subtitleScale)}
+                variant="outline"
+              >
+                {PLAYER_SUBTITLE_SCALES.map((scale) => (
+                  <ToggleGroupItem key={scale} value={String(scale)}>{scale}%</ToggleGroupItem>
+                ))}
+              </ToggleGroup>
+            </div>
+          )}
           {props.onOpenExternalPlayer && (
             <Button disabled={props.externalPlayerOpening} onClick={props.onOpenExternalPlayer} variant="outline">
               <ExternalLink data-icon="inline-start" />

@@ -20,7 +20,8 @@ import {
   type PlayerAspectRatio,
   type PlayerCapabilities,
   type PlayerCommand,
-  type PlayerSnapshot
+  type PlayerSnapshot,
+  type PlayerSubtitleScale
 } from "@shared/player-contract";
 import {
   buildRemotePlaylist,
@@ -35,6 +36,7 @@ import { PlayerPlaylistSheet } from "./PlayerPlaylistSheet";
 import { buildPlayerEpisodeItems, type PlayerEpisodeUiItem } from "./player-ui-model";
 import { useDesktopWindowDrag } from "./use-desktop-window-drag";
 import { usePlaybackBusiness } from "./use-playback-business";
+import { readStoredSubtitleScale, storeSubtitleScale } from "./subtitle-scale";
 
 const TOOLBAR_HIDE_DELAY_MS = 3_000;
 
@@ -165,6 +167,8 @@ function DesktopVlcControls({
   const toolbarTimerRef = useRef<number>();
   const activeSessionIdRef = useRef<string>();
   const commandSequenceRef = useRef(0);
+  const [subtitleScale, setSubtitleScale] = useState<PlayerSubtitleScale>(readStoredSubtitleScale);
+  const initialSubtitleScaleRef = useRef(subtitleScale);
   const [capabilities, setCapabilities] = useState<PlayerCapabilities>();
   const [session, setSession] = useState<RemotePlaybackSession | null>(null);
   const [snapshot, setSnapshot] = useState<PlayerSnapshot>();
@@ -293,6 +297,19 @@ function DesktopVlcControls({
         };
         const dispatchResult = await appApi.dispatchDesktopPlayerCommand(command);
         if (!dispatchResult.accepted) throw new Error(dispatchResult.error.message);
+        const subtitleScaleCommand: Extract<PlayerCommand, { type: "set-subtitle-scale" }> = {
+          type: "set-subtitle-scale",
+          commandId: createCommandId(commandSequenceRef),
+          sessionId: result.id,
+          subtitleScale: initialSubtitleScaleRef.current
+        };
+        const subtitleScaleResult = await appApi.dispatchDesktopPlayerCommand(subtitleScaleCommand);
+        if (!subtitleScaleResult.accepted) {
+          console.warn("[player] 桌面字幕大小恢复失败", {
+            subtitleScale: initialSubtitleScaleRef.current,
+            error: subtitleScaleResult.error.message
+          });
+        }
       }).catch((caught) => {
         if (!active) return;
         console.error("[player] 桌面 libVLC 会话加载失败", {
@@ -392,6 +409,20 @@ function DesktopVlcControls({
       trackId
     });
     if (command) void dispatchCommand(command);
+  };
+  const changeSubtitleScale = (value: PlayerSubtitleScale): void => {
+    const command = createCommand<Extract<PlayerCommand, { type: "set-subtitle-scale" }>>({
+      type: "set-subtitle-scale",
+      subtitleScale: value
+    });
+    if (!command) return;
+    void dispatchCommand(command).then((accepted) => {
+      if (!accepted) return;
+      initialSubtitleScaleRef.current = value;
+      setSubtitleScale(value);
+      storeSubtitleScale(value);
+      console.info("[player] 桌面字幕大小已保存", { subtitleScale: value });
+    });
   };
   const toggleFullscreen = (): void => {
     const command = createCommand<Extract<PlayerCommand, { type: "set-fullscreen" }>>({
@@ -505,6 +536,7 @@ function DesktopVlcControls({
           onActivity={revealToolbar}
           onChangeRate={setRate}
           onChangeSubtitle={changeSubtitle}
+          onChangeSubtitleScale={changeSubtitleScale}
           onClose={() => closeAfterFlush(onClose)}
           onGoNext={() => nextItem && selectItemAfterFlush(nextItem)}
           onGoPrevious={() => previousItem && selectItemAfterFlush(previousItem)}
@@ -523,6 +555,8 @@ function DesktopVlcControls({
           playing={playing}
           selectedSubtitleId={selectedSubtitleId}
           statusBadges={statusBadges}
+          subtitleScale={subtitleScale}
+          subtitleScaleAvailable={capabilities?.supportsSubtitleScale ?? false}
           subtitles={subtitleOptions}
           visible={toolbarVisible}
           volume={snapshot?.volume ?? 0.7}

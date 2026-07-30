@@ -995,7 +995,7 @@ export function SettingsPage() {
             <ToggleSetting
               icon={<Smartphone />}
               label="局域网 HTTPS"
-              description="显式开启后允许同一私有网络中的设备访问；不会开放裸 HTTP 或公网映射。"
+              description="桌面新安装默认开启，仅允许本机回环和当前网卡内网地址；不会开放裸 HTTP 或公网映射。"
               checked={draft.network.remoteAccess.lanEnabled}
               onChange={(value) =>
                 setDraft({

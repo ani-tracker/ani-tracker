@@ -36,6 +36,12 @@ export type PlayerRecoveryAction = "retry" | "transcode" | "close";
 /** 画面比例选项，custom 用于后端返回的额外比例。 */
 export type PlayerAspectRatio = "default" | "16:9" | "4:3" | "fill" | "fit" | "custom";
 
+/** 内置播放器支持的离散字幕缩放比例。 */
+export type PlayerSubtitleScale = 100 | 125 | 150 | 175 | 200;
+
+/** UI 与各平台后端共用的字幕缩放选项。 */
+export const PLAYER_SUBTITLE_SCALES: readonly PlayerSubtitleScale[] = [100, 125, 150, 175, 200];
+
 /** 播放器错误的跨平台展示模型。 */
 export interface PlayerError {
   code: PlayerErrorCode;
@@ -55,6 +61,7 @@ export interface PlayerCapabilities {
   playbackRates: number[];
   supportsAudioTracks: boolean;
   supportsSubtitleTracks: boolean;
+  supportsSubtitleScale: boolean;
   supportsAspectRatio: boolean;
   supportsFullscreen: boolean;
   supportsPictureInPicture: boolean;
@@ -130,6 +137,7 @@ export type PlayerCommand =
   | (PlayerCommandBase & { type: "set-rate"; rate: number })
   | (PlayerCommandBase & { type: "select-audio-track"; trackId: string })
   | (PlayerCommandBase & { type: "select-subtitle-track"; trackId?: string })
+  | (PlayerCommandBase & { type: "set-subtitle-scale"; subtitleScale: PlayerSubtitleScale })
   | (PlayerCommandBase & { type: "set-aspect-ratio"; aspectRatio: PlayerAspectRatio; value?: string })
   | (PlayerCommandBase & { type: "set-fullscreen"; fullscreen: boolean })
   | (PlayerCommandBase & { type: "set-picture-in-picture"; enabled: boolean })
@@ -161,6 +169,7 @@ export interface PlayerSnapshot {
   playbackRate: number;
   audioTracks: PlayerTrack[];
   subtitleTracks: PlayerTrack[];
+  subtitleScale: PlayerSubtitleScale;
   aspectRatio: PlayerAspectRatio;
   fullscreen: boolean;
   pictureInPicture: boolean;
@@ -190,6 +199,7 @@ export function createUnavailablePlayerCapabilities(
     playbackRates: [1],
     supportsAudioTracks: false,
     supportsSubtitleTracks: false,
+    supportsSubtitleScale: false,
     supportsAspectRatio: false,
     supportsFullscreen: false,
     supportsPictureInPicture: false,
@@ -233,6 +243,7 @@ export function createInitialPlayerSnapshot(input: InitialPlayerSnapshotInput): 
     playbackRate: 1,
     audioTracks: [],
     subtitleTracks: [],
+    subtitleScale: 100,
     aspectRatio: "default",
     fullscreen: false,
     pictureInPicture: false

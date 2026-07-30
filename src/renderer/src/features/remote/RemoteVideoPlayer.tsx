@@ -35,8 +35,10 @@ import type { Anime, DownloadTask, Episode } from "@shared/domain";
 import type {
   PlayerAspectRatio,
   PlayerCommand,
-  PlayerSnapshot
+  PlayerSnapshot,
+  PlayerSubtitleScale
 } from "@shared/player-contract";
+import { readStoredSubtitleScale, storeSubtitleScale } from "@/features/player/subtitle-scale";
 import { ArtPlayerAdapter } from "./art-player-adapter";
 import {
   buildExternalPlayerProtocolUrl,
@@ -94,6 +96,8 @@ export function RemoteVideoPlayer({
   const toolbarTimerRef = useRef<number>();
   const automaticFallbackStartedRef = useRef(false);
   const commandSequenceRef = useRef(0);
+  const [subtitleScale, setSubtitleScale] = useState<PlayerSubtitleScale>(readStoredSubtitleScale);
+  const subtitleScaleRef = useRef(subtitleScale);
   const [requestedMode, setRequestedMode] = useState<RemotePlaybackRequestMode>("direct");
   const [session, setSession] = useState<RemotePlaybackSession | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
@@ -276,7 +280,11 @@ export function RemoteVideoPlayer({
   useEffect(() => {
     const container = playerContainerRef.current;
     if (!container || !session || !activeItem) return;
-    const adapter = new ArtPlayerAdapter({ container, sessionId: session.id });
+    const adapter = new ArtPlayerAdapter({
+      container,
+      sessionId: session.id,
+      subtitleScale: subtitleScaleRef.current
+    });
     playerAdapterRef.current = adapter;
     const unsubscribe = adapter.subscribe((nextSnapshot) => {
       setPlayerSnapshot(nextSnapshot);
@@ -447,6 +455,21 @@ export function RemoteVideoPlayer({
       trackId: subtitleId
     });
     if (command) void dispatchPlayerCommand(command);
+  };
+
+  /** 即时调整并保存远程网页字幕大小。 */
+  const changeSubtitleScale = (value: PlayerSubtitleScale): void => {
+    const command = createPlayerCommand<Extract<PlayerCommand, { type: "set-subtitle-scale" }>>({
+      type: "set-subtitle-scale",
+      subtitleScale: value
+    });
+    if (!command) return;
+    void dispatchPlayerCommand(command).then((accepted) => {
+      if (!accepted) return;
+      subtitleScaleRef.current = value;
+      setSubtitleScale(value);
+      storeSubtitleScale(value);
+    });
   };
 
   /** 设置视频比例并保持默认模式不裁切。 */
@@ -654,6 +677,7 @@ export function RemoteVideoPlayer({
           onChangeMode={handleModeChange}
           onChangeRate={setPlayerRate}
           onChangeSubtitle={changeSubtitle}
+          onChangeSubtitleScale={changeSubtitleScale}
           onClose={() => closeAfterFlush(onClose)}
           onGoNext={() => nextItem && selectItemAfterFlush(nextItem)}
           onGoPrevious={() => previousItem && selectItemAfterFlush(previousItem)}
@@ -672,6 +696,8 @@ export function RemoteVideoPlayer({
           playing={playing}
           selectedSubtitleId={selectedSubtitleId}
           statusBadges={statusBadges}
+          subtitleScale={subtitleScale}
+          subtitleScaleAvailable={playerSnapshot?.capabilities.supportsSubtitleScale ?? true}
           subtitles={session?.subtitles ?? []}
           visible={toolbarVisible}
           volume={volume}

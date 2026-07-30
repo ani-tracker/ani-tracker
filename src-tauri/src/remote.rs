@@ -243,7 +243,7 @@ impl AppRemoteGatewayState {
         let lan_enabled = settings
             .pointer("/network/remoteAccess/lanEnabled")
             .and_then(Value::as_bool)
-            .unwrap_or(false);
+            .unwrap_or(true);
         let port = settings
             .pointer("/network/remoteAccess/port")
             .and_then(Value::as_u64)

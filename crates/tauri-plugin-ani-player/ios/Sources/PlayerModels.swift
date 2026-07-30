@@ -98,6 +98,7 @@ struct PlayerSnapshot: Equatable {
     var playbackRate: Float = 1
     var audioTracks: [PlayerTrack] = []
     var subtitleTracks: [PlayerTrack] = []
+    var subtitleScale = 100
     var aspectRatio: PlayerAspectRatio = .automatic
     var watchedEpisodeIDs: Set<String> = []
     var autoNextSecondsRemaining: Int?

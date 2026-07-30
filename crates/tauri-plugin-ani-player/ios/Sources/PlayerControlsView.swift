@@ -249,6 +249,19 @@ private struct PlayerSubtitleMenu: View {
                     }
                 }
             }
+            Section("字幕大小") {
+                ForEach(MobileVLCPlayerController.supportedSubtitleScales, id: \.self) { scale in
+                    Button {
+                        controller.setSubtitleScale(scale)
+                        onActivity()
+                    } label: {
+                        Label(
+                            "\(scale)%",
+                            systemImage: scale == controller.snapshot.subtitleScale ? "checkmark" : "textformat.size"
+                        )
+                    }
+                }
+            }
         } label: {
             Image(systemName: "captions.bubble")
                 .frame(width: 44, height: 44)
@@ -376,6 +389,20 @@ private struct PlayerSettingsMenu: View {
                         onActivity()
                     } label: {
                         Label(track.label, systemImage: track.selected ? "checkmark" : "captions.bubble")
+                    }
+                }
+            }
+
+            Section("字幕大小") {
+                ForEach(MobileVLCPlayerController.supportedSubtitleScales, id: \.self) { scale in
+                    Button {
+                        controller.setSubtitleScale(scale)
+                        onActivity()
+                    } label: {
+                        Label(
+                            "\(scale)%",
+                            systemImage: scale == controller.snapshot.subtitleScale ? "checkmark" : "textformat.size"
+                        )
                     }
                 }
             }

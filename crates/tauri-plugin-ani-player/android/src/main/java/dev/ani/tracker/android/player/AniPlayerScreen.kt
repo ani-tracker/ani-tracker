@@ -622,7 +622,11 @@ private fun PlayerSubtitleMenu(
             expanded = true
             onActivity()
         })
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.heightIn(max = 320.dp)
+        ) {
             DropdownMenuItem(
                 text = { Text("关闭字幕") },
                 onClick = {
@@ -638,6 +642,19 @@ private fun PlayerSubtitleMenu(
                     },
                     onClick = {
                         viewModel.selectSubtitleTrack(track.id)
+                        expanded = false
+                    }
+                )
+            }
+            HorizontalDivider()
+            AndroidVlcPlayerViewModel.SUPPORTED_SUBTITLE_SCALES.forEach { scale ->
+                DropdownMenuItem(
+                    text = { Text("字幕大小 $scale%") },
+                    leadingIcon = {
+                        if (scale == state.subtitleScale) Icon(Icons.Rounded.CheckCircleOutline, null)
+                    },
+                    onClick = {
+                        viewModel.setSubtitleScale(scale)
                         expanded = false
                     }
                 )
@@ -661,7 +678,8 @@ private fun PlayerSettingsMenu(
         })
         DropdownMenu(
             expanded = expanded,
-            onDismissRequest = { expanded = false }
+            onDismissRequest = { expanded = false },
+            modifier = Modifier.heightIn(max = 360.dp)
         ) {
             DropdownMenuItem(
                 text = { Text("画面比例 ${state.aspectRatio ?: "默认"}") },
@@ -709,6 +727,19 @@ private fun PlayerSettingsMenu(
                     leadingIcon = { Icon(Icons.Rounded.ClosedCaption, null) },
                     onClick = {
                         viewModel.selectSubtitleTrack(track.id)
+                        expanded = false
+                    }
+                )
+            }
+            HorizontalDivider()
+            AndroidVlcPlayerViewModel.SUPPORTED_SUBTITLE_SCALES.forEach { scale ->
+                DropdownMenuItem(
+                    text = { Text("字幕大小 $scale%") },
+                    leadingIcon = {
+                        if (scale == state.subtitleScale) Icon(Icons.Rounded.CheckCircleOutline, null)
+                    },
+                    onClick = {
+                        viewModel.setSubtitleScale(scale)
                         expanded = false
                     }
                 )

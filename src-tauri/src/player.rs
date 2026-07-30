@@ -1017,6 +1017,7 @@ fn unavailable_capabilities(reason: String) -> PlayerCapabilities {
         playback_rates: vec![1.0],
         supports_audio_tracks: false,
         supports_subtitle_tracks: false,
+        supports_subtitle_scale: false,
         supports_aspect_ratio: false,
         supports_fullscreen: false,
         supports_picture_in_picture: false,

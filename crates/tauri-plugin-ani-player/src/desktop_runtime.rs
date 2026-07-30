@@ -56,6 +56,7 @@ type VlcGetTrackDescriptions =
 type VlcTrackDescriptionsRelease = unsafe extern "C" fn(*mut VlcTrackDescription);
 type VlcSetAspectRatio = unsafe extern "C" fn(*mut VlcMediaPlayer, *const c_char);
 type VlcSetScale = unsafe extern "C" fn(*mut VlcMediaPlayer, c_float);
+type VlcSetSpuTextScale = unsafe extern "C" fn(*mut VlcMediaPlayer, c_uint) -> c_int;
 
 #[cfg(target_os = "windows")]
 type VlcSetVideoTarget = unsafe extern "C" fn(*mut VlcMediaPlayer, *mut c_void);
@@ -100,6 +101,7 @@ struct VlcApi {
     track_description_list_release: VlcTrackDescriptionsRelease,
     video_set_aspect_ratio: VlcSetAspectRatio,
     video_set_scale: VlcSetScale,
+    video_set_spu_text_scale: Option<VlcSetSpuTextScale>,
     set_video_target: VlcSetVideoTarget,
 }
 
@@ -154,6 +156,10 @@ impl VlcApi {
                 )?,
                 video_set_aspect_ratio: load_symbol(&library, b"libvlc_video_set_aspect_ratio\0")?,
                 video_set_scale: load_symbol(&library, b"libvlc_video_set_scale\0")?,
+                video_set_spu_text_scale: load_optional_symbol(
+                    &library,
+                    b"libvlc_video_set_spu_text_scale\0",
+                ),
                 #[cfg(target_os = "windows")]
                 set_video_target: load_symbol(&library, b"libvlc_media_player_set_hwnd\0")?,
                 #[cfg(target_os = "macos")]
@@ -217,10 +223,17 @@ unsafe fn load_symbol<T: Copy>(library: &Library, name: &[u8]) -> Result<T, Play
     Ok(*symbol)
 }
 
+/// 读取仅部分 libVLC 版本导出的可选符号。
+unsafe fn load_optional_symbol<T: Copy>(library: &Library, name: &[u8]) -> Option<T> {
+    unsafe { library.get::<T>(name) }.ok().map(|symbol| *symbol)
+}
+
 struct RuntimeState {
     active_session_id: Option<String>,
     active_source: Option<PlayerMediaSource>,
     pending_start_position_ms: Option<i64>,
+    pending_pause_after_start: bool,
+    subtitle_scale: u16,
     snapshot: Option<PlayerSnapshot>,
     sequence: u64,
     closed: bool,
@@ -297,6 +310,8 @@ impl VlcRuntime {
                 active_session_id: None,
                 active_source: None,
                 pending_start_position_ms: None,
+                pending_pause_after_start: false,
+                subtitle_scale: 100,
                 snapshot: None,
                 sequence: 0,
                 closed: false,
@@ -370,6 +385,7 @@ impl VlcRuntime {
                 &command.session_id,
                 source.clone(),
                 *start_position_seconds,
+                true,
             )?,
             PlayerCommandAction::Play => {
                 ensure_success(
@@ -422,6 +438,56 @@ impl VlcRuntime {
                     "切换字幕轨失败",
                 )?;
             }
+            PlayerCommandAction::SetSubtitleScale { subtitle_scale } => {
+                if state.subtitle_scale == *subtitle_scale {
+                    log::debug!(
+                        "Tauri 桌面 libVLC 字幕大小未变化，跳过更新 scale={} session_id={}",
+                        subtitle_scale,
+                        command.session_id
+                    );
+                    return Ok(());
+                }
+                if let Some(set_scale) = self.api.video_set_spu_text_scale {
+                    ensure_success(
+                        unsafe { set_scale(self.player(), c_uint::from(*subtitle_scale)) },
+                        "设置字幕大小失败",
+                    )?;
+                    state.subtitle_scale = *subtitle_scale;
+                    if let Some(snapshot) = state.snapshot.as_mut() {
+                        snapshot.subtitle_scale = *subtitle_scale;
+                    }
+                } else {
+                    let source = state.active_source.clone().ok_or_else(|| {
+                        PlayerTransportError::InvalidResponse("没有可重载的媒体资源".to_owned())
+                    })?;
+                    let position =
+                        ms_to_seconds(unsafe { (self.api.media_player_get_time)(self.player()) });
+                    let resume_playback = state.snapshot.as_ref().is_some_and(|snapshot| {
+                        matches!(
+                            snapshot.status,
+                            PlayerStatus::Loading | PlayerStatus::Buffering | PlayerStatus::Playing
+                        )
+                    });
+                    let previous_scale = state.subtitle_scale;
+                    state.subtitle_scale = *subtitle_scale;
+                    if let Err(error) = self.load_source(
+                        &mut state,
+                        &command.session_id,
+                        source,
+                        Some(position),
+                        resume_playback,
+                    ) {
+                        state.subtitle_scale = previous_scale;
+                        return Err(error);
+                    }
+                }
+                log::info!(
+                    "Tauri 桌面 libVLC 字幕大小已更新 scale={} session_id={} immediate={}",
+                    subtitle_scale,
+                    command.session_id,
+                    self.api.video_set_spu_text_scale.is_some()
+                );
+            }
             PlayerCommandAction::SetAspectRatio {
                 aspect_ratio,
                 value,
@@ -435,7 +501,7 @@ impl VlcRuntime {
                 let source = state.active_source.clone().ok_or_else(|| {
                     PlayerTransportError::InvalidResponse("没有可重试的媒体资源".to_owned())
                 })?;
-                self.load_source(&mut state, &command.session_id, source, None)?;
+                self.load_source(&mut state, &command.session_id, source, None, true)?;
             }
             PlayerCommandAction::SetFullscreen { fullscreen } => {
                 if let Some(snapshot) = state.snapshot.as_mut() {
@@ -458,6 +524,7 @@ impl VlcRuntime {
         session_id: &str,
         source: PlayerMediaSource,
         start_position_seconds: Option<f64>,
+        play_when_ready: bool,
     ) -> Result<(), PlayerTransportError> {
         let media_uri = if source.uri.contains("://") {
             source.uri.clone()
@@ -477,7 +544,7 @@ impl VlcRuntime {
             return Err(PlayerTransportError::Native("媒体对象创建失败".to_owned()));
         }
         let result = (|| {
-            for option in media_options(&source)? {
+            for option in media_options(&source, state.subtitle_scale)? {
                 unsafe { (self.api.media_add_option)(media, option.as_ptr()) };
             }
             for subtitle in &source.subtitles {
@@ -506,15 +573,22 @@ impl VlcRuntime {
         unsafe { (self.api.media_release)(media) };
         result?;
 
-        state.active_session_id = Some(session_id.to_owned());
         state.active_source = Some(source.clone());
         state.pending_start_position_ms = start_position_seconds.map(seconds_to_ms);
-        state.sequence = 1;
+        state.pending_pause_after_start = !play_when_ready;
+        state.sequence = next_media_sequence(
+            state.active_session_id.as_deref(),
+            state.snapshot.is_some(),
+            session_id,
+            state.sequence,
+        );
+        state.active_session_id = Some(session_id.to_owned());
         state.snapshot = Some(initial_snapshot(
             session_id,
             source,
             self.capabilities.clone(),
             state.sequence,
+            state.subtitle_scale,
         ));
         log::info!(
             "Tauri 桌面 libVLC 已加载媒体 session_id={} task_id={}",
@@ -573,9 +647,15 @@ impl VlcRuntime {
             return Ok(());
         };
         let vlc_state = unsafe { (self.api.media_player_get_state)(self.player()) };
+        let mut paused_after_start = false;
         if matches!(vlc_state, 3 | 4) {
             if let Some(start_position) = state.pending_start_position_ms.take() {
                 unsafe { (self.api.media_player_set_time)(self.player(), start_position) };
+            }
+            if state.pending_pause_after_start {
+                unsafe { (self.api.media_player_set_pause)(self.player(), 1) };
+                state.pending_pause_after_start = false;
+                paused_after_start = true;
             }
         }
         let position_seconds =
@@ -583,12 +663,16 @@ impl VlcRuntime {
         let duration_seconds =
             ms_to_seconds(unsafe { (self.api.media_player_get_length)(self.player()) });
         let reported_status = player_status(vlc_state);
-        let next_status = resolve_advancing_player_status(
-            snapshot.status.clone(),
-            reported_status.clone(),
-            snapshot.position_seconds,
-            position_seconds,
-        );
+        let next_status = if paused_after_start {
+            PlayerStatus::Paused
+        } else {
+            resolve_advancing_player_status(
+                snapshot.status.clone(),
+                reported_status.clone(),
+                snapshot.position_seconds,
+                position_seconds,
+            )
+        };
         if next_status == PlayerStatus::Playing
             && reported_status != PlayerStatus::Playing
             && snapshot.status != PlayerStatus::Playing
@@ -884,10 +968,19 @@ fn runtime_options(plugin_directory: Option<&Path>) -> Result<Vec<CString>, Play
         .collect()
 }
 
-fn media_options(source: &PlayerMediaSource) -> Result<Vec<CString>, PlayerTransportError> {
-    let mut values = vec![":no-video-title-show"];
+fn media_options(
+    source: &PlayerMediaSource,
+    subtitle_scale: u16,
+) -> Result<Vec<CString>, PlayerTransportError> {
+    let mut values = vec![
+        ":no-video-title-show".to_owned(),
+        format!(
+            ":freetype-rel-fontsize={}",
+            subtitle_relative_font_size(subtitle_scale)
+        ),
+    ];
     if source.mode == ani_contracts::PlayerMediaMode::Hls {
-        values.push(":network-caching=1000");
+        values.push(":network-caching=1000".to_owned());
     }
     values
         .into_iter()
@@ -950,6 +1043,7 @@ fn desktop_capabilities() -> PlayerCapabilities {
         playback_rates: PLAYBACK_RATES.to_vec(),
         supports_audio_tracks: true,
         supports_subtitle_tracks: true,
+        supports_subtitle_scale: true,
         supports_aspect_ratio: true,
         supports_fullscreen: true,
         supports_picture_in_picture: false,
@@ -970,6 +1064,7 @@ fn unavailable_capabilities(reason: Option<&str>) -> PlayerCapabilities {
         playback_rates: vec![1.0],
         supports_audio_tracks: false,
         supports_subtitle_tracks: false,
+        supports_subtitle_scale: false,
         supports_aspect_ratio: false,
         supports_fullscreen: false,
         supports_picture_in_picture: false,
@@ -987,6 +1082,7 @@ fn initial_snapshot(
     source: PlayerMediaSource,
     capabilities: PlayerCapabilities,
     sequence: u64,
+    subtitle_scale: u16,
 ) -> PlayerSnapshot {
     PlayerSnapshot {
         session_id: session_id.to_owned(),
@@ -1008,6 +1104,7 @@ fn initial_snapshot(
         playback_rate: 1.0,
         audio_tracks: Vec::new(),
         subtitle_tracks: Vec::new(),
+        subtitle_scale,
         aspect_ratio: PlayerAspectRatio::Default,
         fullscreen: false,
         picture_in_picture: false,
@@ -1090,6 +1187,25 @@ fn ms_to_seconds(value: i64) -> f64 {
     value.max(0) as f64 / 1_000.0
 }
 
+/// 将百分比换算为 VLC 使用的视频高度相对字号。
+fn subtitle_relative_font_size(scale: u16) -> u16 {
+    (1_600 + scale / 2) / scale
+}
+
+/// 新会话从首个快照开始，同会话重载沿用递增序号。
+fn next_media_sequence(
+    active_session_id: Option<&str>,
+    has_snapshot: bool,
+    session_id: &str,
+    current_sequence: u64,
+) -> u64 {
+    if has_snapshot && active_session_id == Some(session_id) {
+        current_sequence.saturating_add(1)
+    } else {
+        1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1155,6 +1271,33 @@ mod tests {
             ),
             PlayerStatus::Buffering
         );
+    }
+
+    /// 同会话重载必须保持快照序号递增，新会话则重新从 1 开始。
+    #[test]
+    fn advances_snapshot_sequence_when_reloading_same_session() {
+        assert_eq!(
+            next_media_sequence(Some("session-a"), true, "session-a", 8),
+            9
+        );
+        assert_eq!(
+            next_media_sequence(Some("session-a"), true, "session-b", 8),
+            1
+        );
+        assert_eq!(
+            next_media_sequence(Some("session-a"), false, "session-a", 8),
+            1
+        );
+    }
+
+    /// 五档百分比必须稳定映射为 VLC 的相对字号参数。
+    #[test]
+    fn maps_subtitle_scales_to_vlc_relative_font_sizes() {
+        assert_eq!(subtitle_relative_font_size(100), 16);
+        assert_eq!(subtitle_relative_font_size(125), 13);
+        assert_eq!(subtitle_relative_font_size(150), 11);
+        assert_eq!(subtitle_relative_font_size(175), 9);
+        assert_eq!(subtitle_relative_font_size(200), 8);
     }
 
     /// 本地已准备 VLC 运行库时验证依赖搜索和核心符号可加载。

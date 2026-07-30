@@ -21,7 +21,17 @@ import org.videolan.libvlc.util.VLCVideoLayout
 
 /** 在配置变更期间保留同一个 LibVLC 会话，并向 Compose 暴露稳定快照。 */
 class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(application) {
-    private val stateFlow = MutableStateFlow(PlayerUiState())
+    private val subtitlePreferences = application.getSharedPreferences(
+        SUBTITLE_PREFERENCES_NAME,
+        Context.MODE_PRIVATE
+    )
+    private val stateFlow = MutableStateFlow(
+        PlayerUiState(
+            subtitleScale = normalizeSubtitleScale(
+                subtitlePreferences.getInt(SUBTITLE_SCALE_KEY, DEFAULT_SUBTITLE_SCALE)
+            )
+        )
+    )
     private val mainHandler = Handler(Looper.getMainLooper())
     private val checkpointStore = PlaybackCheckpointStore(application)
     private val audioManager = application.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -87,6 +97,7 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             episodes = request.episodes,
             activeIndex = request.activeIndex,
             volume = stateFlow.value.volume,
+            subtitleScale = stateFlow.value.subtitleScale,
             watchedEpisodeIds = watchedEpisodeIds
         )
         val activeEpisode = request.episodes.getOrNull(request.activeIndex)
@@ -246,6 +257,21 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
         if (mediaPlayer?.setSpuTrack(trackId ?: -1) == true) refreshTracks()
     }
 
+    /** 保存字幕缩放比例，并按原位置和播放状态重建 VLC Media。 */
+    fun setSubtitleScale(scale: Int) {
+        val normalized = normalizeSubtitleScale(scale)
+        if (normalized == stateFlow.value.subtitleScale) return
+        val shouldResume = mediaPlayer?.isPlaying == true ||
+            pendingPlayUntilVideoAttached ||
+            stateFlow.value.status == PlayerStatus.PLAYING ||
+            stateFlow.value.status == PlayerStatus.BUFFERING
+        val positionMillis = stateFlow.value.positionMillis
+        stateFlow.value = stateFlow.value.copy(subtitleScale = normalized)
+        subtitlePreferences.edit().putInt(SUBTITLE_SCALE_KEY, normalized).apply()
+        Log.i(TAG, "Android 字幕大小已保存: scale=$normalized")
+        loadEpisode(stateFlow.value.activeIndex, positionMillis, shouldResume)
+    }
+
     /** 切换到播放列表中的指定单集。 */
     fun selectEpisode(index: Int) {
         loadEpisode(index, null)
@@ -337,7 +363,11 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
     }
 
     /** 创建新的 VLC Media，并在同一 ViewModel 内保持播放列表会话。 */
-    private fun loadEpisode(index: Int, startPositionMillis: Long?) {
+    private fun loadEpisode(
+        index: Int,
+        startPositionMillis: Long?,
+        playWhenReady: Boolean = autoplay
+    ) {
         val episode = stateFlow.value.episodes.getOrNull(index) ?: return
         val runtime = libVlc
         val player = mediaPlayer
@@ -365,14 +395,19 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
             val media = Media(runtime, Uri.parse(episode.uri)).apply {
                 setHWDecoderEnabled(true, false)
                 addOption(":network-caching=1500")
+                addOption(":freetype-rel-fontsize=${subtitleRelativeFontSize(stateFlow.value.subtitleScale)}")
                 episode.subtitles.forEach { subtitle ->
                     addSlave(IMedia.Slave(IMedia.Slave.Type.Subtitle, 4, subtitle.uri))
                 }
             }
             player.setMedia(media)
             media.release()
-            if (autoplay) play() else stateFlow.value = stateFlow.value.copy(status = PlayerStatus.READY)
-            Log.i(TAG, "Android libVLC 已加载媒体: session=${stateFlow.value.sessionId}, index=$index")
+            if (playWhenReady) play() else stateFlow.value = stateFlow.value.copy(status = PlayerStatus.READY)
+            Log.i(
+                TAG,
+                "Android libVLC 已加载媒体: session=${stateFlow.value.sessionId}, " +
+                    "index=$index, subtitleScale=${stateFlow.value.subtitleScale}"
+            )
         } catch (error: Throwable) {
             fail("当前媒体无法加载", error)
         }
@@ -658,6 +693,19 @@ class AndroidVlcPlayerViewModel(application: Application) : AndroidViewModel(app
         private const val TAG = "AniVlcPlayer"
         private const val CHECKPOINT_INTERVAL_MILLIS = 10_000L
         private const val AUTO_NEXT_COUNTDOWN_SECONDS = 5
+        private const val SUBTITLE_PREFERENCES_NAME = "ani_player_preferences"
+        private const val SUBTITLE_SCALE_KEY = "subtitle_scale"
+        private const val DEFAULT_SUBTITLE_SCALE = 100
         val SUPPORTED_RATES = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+        val SUPPORTED_SUBTITLE_SCALES = listOf(100, 125, 150, 175, 200)
+
+        /** 将任意比例收敛到支持的字幕缩放档位。 */
+        private fun normalizeSubtitleScale(scale: Int): Int =
+            SUPPORTED_SUBTITLE_SCALES.minByOrNull { kotlin.math.abs(it - scale) }
+                ?: DEFAULT_SUBTITLE_SCALE
+
+        /** 将百分比换算为 VLC 使用的视频高度相对字号。 */
+        private fun subtitleRelativeFontSize(scale: Int): Int =
+            (1_600 + scale / 2) / scale
     }
 }
