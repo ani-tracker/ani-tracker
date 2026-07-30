@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 const workflow = await readFile(".github/workflows/tauri-release-desktop.yml", "utf8");
 const torrentCorePrepare = await readFile("scripts/prepare-desktop-torrent-core-dev.mjs", "utf8");
 const qbittorrentUnixBuild = await readFile("scripts/build-qbittorrent-nox-unix.sh", "utf8");
+const windowsSigningImport = await readFile("scripts/import-windows-signing-certificate.ps1", "utf8");
+const windowsSignatureVerification = await readFile("scripts/verify-windows-self-signature.ps1", "utf8");
 
 test("桌面原生依赖按平台使用独立步骤和工具链", () => {
   assert.match(workflow, /name: Prepare Windows libVLC[\s\S]*?if: matrix\.platform == 'win32'[\s\S]*?shell: pwsh/);
@@ -30,17 +33,55 @@ test("桌面发布强制 Windows 与 macOS 使用固定自签凭据", () => {
   assert.match(workflow, /Missing required macOS self-signing secret/);
 });
 
-test("Windows 自签证书通过 certutil 无交互导入并限制执行时间", () => {
+test("Windows 自签证书仅导入私钥并限制执行时间", () => {
   const importStep = workflow.match(
     /name: Import Windows signing certificate[\s\S]*?(?=\n      - name: Import macOS self-signing certificate)/
   )?.[0];
   assert.ok(importStep);
   assert.match(importStep, /timeout-minutes: 2/);
-  assert.match(importStep, /certutil\.exe -user -f -addstore Root \$publicCertificatePath/);
-  assert.match(importStep, /certutil\.exe -user -f -addstore TrustedPublisher \$publicCertificatePath/);
-  assert.match(importStep, /if \(\$LASTEXITCODE -ne 0\)/);
-  assert.match(importStep, /\[windows-signing\] Windows 自签证书导入完成/);
-  assert.doesNotMatch(importStep, /Import-Certificate/);
+  assert.match(importStep, /scripts\/import-windows-signing-certificate\.ps1/);
+  assert.match(windowsSigningImport, /Import-PfxCertificate/);
+  assert.match(windowsSigningImport, /Cert:\\CurrentUser\\My/);
+  assert.match(windowsSigningImport, /\[windows-signing\] Windows 自签证书私钥导入完成/);
+  assert.doesNotMatch(windowsSigningImport, /TrustedPeople|TrustedPublisher|StoreName\]::Root/);
+  assert.doesNotMatch(windowsSigningImport, /certutil\.exe/);
+  assert.doesNotMatch(windowsSigningImport, /\bImport-Certificate\b/);
+  assert.match(workflow, /scripts\/verify-windows-self-signature\.ps1/);
+  assert.match(windowsSignatureVerification, /SignatureStatus\]::UnknownError/);
+  assert.match(windowsSignatureVerification, /X509ChainStatusFlags\]::UntrustedRoot/);
+  assert.match(windowsSignatureVerification, /SignerCertificate\.Thumbprint/);
+});
+
+test("Windows 自签证书可无交互签名且篡改文件会被拒绝", { skip: process.platform !== "win32" }, () => {
+  const pwshProbe = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"]);
+  const hasPwsh = pwshProbe.error?.code !== "ENOENT";
+  const powershellExecutable = hasPwsh ? "pwsh" : "powershell.exe";
+  const powershellArguments = hasPwsh
+    ? [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/import-windows-signing-certificate.test.ps1"
+      ]
+    : [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "$content = [IO.File]::ReadAllText('scripts/import-windows-signing-certificate.test.ps1', [Text.Encoding]::UTF8); & ([ScriptBlock]::Create($content))"
+      ];
+  const result = spawnSync(
+    powershellExecutable,
+    powershellArguments,
+    {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      timeout: 30_000
+    }
+  );
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
 test("macOS 发布通过临时钥匙串导入并信任自签 P12", () => {

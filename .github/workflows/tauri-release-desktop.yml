@@ -231,61 +231,7 @@ jobs:
         id: windows-signing
         shell: pwsh
         timeout-minutes: 2
-        run: |
-          $ErrorActionPreference = "Stop"
-          $certificatePath = Join-Path $env:RUNNER_TEMP "ani-tracker-release.pfx"
-          Write-Host "[windows-signing] 解码 PFX 证书"
-          [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
-          $password = ConvertTo-SecureString $env:WINDOWS_CERTIFICATE_PASSWORD -AsPlainText -Force
-          Write-Host "[windows-signing] 导入签名证书到 CurrentUser\\My"
-          $importedCertificates = @(Import-PfxCertificate -FilePath $certificatePath -CertStoreLocation Cert:\CurrentUser\My -Password $password)
-          $certificate = $importedCertificates | Where-Object HasPrivateKey | Select-Object -First 1
-          if (-not $certificate) {
-            throw "Windows self-signing certificate does not contain a private key"
-          }
-          Write-Host "[windows-signing] 校验自签证书、有效期和代码签名用途"
-          if ($certificate.Subject -ne $certificate.Issuer) {
-            throw "Windows signing certificate must be self-signed"
-          }
-          $chain = [System.Security.Cryptography.X509Certificates.X509Chain]::new()
-          try {
-            $chain.ChainPolicy.TrustMode = [System.Security.Cryptography.X509Certificates.X509ChainTrustMode]::CustomRootTrust
-            $chain.ChainPolicy.RevocationMode = [System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
-            [void]$chain.ChainPolicy.CustomTrustStore.Add($certificate)
-            if (-not $chain.Build($certificate) -or $chain.ChainElements.Count -ne 1) {
-              throw "Windows signing certificate failed cryptographic self-signature validation"
-            }
-          } finally {
-            $chain.Dispose()
-          }
-          if ($certificate.NotAfter -le (Get-Date)) {
-            throw "Windows self-signing certificate has expired"
-          }
-          $codeSigningEku = $certificate.Extensions |
-            Where-Object { $_ -is [System.Security.Cryptography.X509Certificates.X509EnhancedKeyUsageExtension] } |
-            ForEach-Object { $_.EnhancedKeyUsages } |
-            Where-Object { $_.Value -eq '1.3.6.1.5.5.7.3.3' }
-          if (-not $codeSigningEku) {
-            throw "Windows self-signing certificate is missing the Code Signing EKU"
-          }
-          $publicCertificatePath = Join-Path $env:RUNNER_TEMP "ani-tracker-release.cer"
-          Write-Host "[windows-signing] 导出公开证书"
-          Export-Certificate -Cert $certificate -FilePath $publicCertificatePath | Out-Null
-
-          Write-Host "[windows-signing] 无交互导入 CurrentUser\\Root"
-          & certutil.exe -user -f -addstore Root $publicCertificatePath
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to import Windows self-signing certificate into CurrentUser\\Root"
-          }
-
-          Write-Host "[windows-signing] 无交互导入 CurrentUser\\TrustedPublisher"
-          & certutil.exe -user -f -addstore TrustedPublisher $publicCertificatePath
-          if ($LASTEXITCODE -ne 0) {
-            throw "Failed to import Windows self-signing certificate into CurrentUser\\TrustedPublisher"
-          }
-
-          "thumbprint=$($certificate.Thumbprint)" >> $env:GITHUB_OUTPUT
-          Write-Host "[windows-signing] Windows 自签证书导入完成"
+        run: pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/import-windows-signing-certificate.ps1
 
       - name: Import macOS self-signing certificate
         if: matrix.platform == 'darwin'
@@ -643,10 +589,9 @@ jobs:
           Get-ChildItem $destination -File |
             Where-Object { $_.Extension -in @('.exe', '.msi') } |
             ForEach-Object {
-              $signature = Get-AuthenticodeSignature $_.FullName
-              if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne '${{ steps.windows-signing.outputs.thumbprint }}') {
-                throw "Invalid Windows self-signature: $($_.FullName) [$($signature.Status)]"
-              }
+              & scripts/verify-windows-self-signature.ps1 `
+                -FilePath $_.FullName `
+                -ExpectedThumbprint '${{ steps.windows-signing.outputs.thumbprint }}'
             }
           $certificate = Get-Item "Cert:\CurrentUser\My\${{ steps.windows-signing.outputs.thumbprint }}"
           Export-Certificate -Cert $certificate -FilePath "$destination/ani-tracker-windows-self-signed.cer" | Out-Null
