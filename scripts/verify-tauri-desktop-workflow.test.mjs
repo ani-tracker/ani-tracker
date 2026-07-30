@@ -30,6 +30,19 @@ test("桌面发布强制 Windows 与 macOS 使用固定自签凭据", () => {
   assert.match(workflow, /Missing required macOS self-signing secret/);
 });
 
+test("Windows 自签证书通过 certutil 无交互导入并限制执行时间", () => {
+  const importStep = workflow.match(
+    /name: Import Windows signing certificate[\s\S]*?(?=\n      - name: Import macOS self-signing certificate)/
+  )?.[0];
+  assert.ok(importStep);
+  assert.match(importStep, /timeout-minutes: 2/);
+  assert.match(importStep, /certutil\.exe -user -f -addstore Root \$publicCertificatePath/);
+  assert.match(importStep, /certutil\.exe -user -f -addstore TrustedPublisher \$publicCertificatePath/);
+  assert.match(importStep, /if \(\$LASTEXITCODE -ne 0\)/);
+  assert.match(importStep, /\[windows-signing\] Windows 自签证书导入完成/);
+  assert.doesNotMatch(importStep, /Import-Certificate/);
+});
+
 test("macOS 发布通过临时钥匙串导入并信任自签 P12", () => {
   assert.match(workflow, /openssl pkcs12[\s\S]*?-clcerts -nokeys/);
   assert.doesNotMatch(workflow, /openssl x509[^\n]*-purpose/);
