@@ -76,14 +76,14 @@
       "fileIndex": 0,
       "positionSeconds": 1380,
       "durationSeconds": 1500,
-      "completed": false
+      "completed": true
     },
     "checkpoint": {
       "taskId": "download-p3-1",
       "fileIndex": 0,
       "positionSeconds": 1380,
       "durationSeconds": 1500,
-      "completed": false,
+      "completed": true,
       "watchedReported": true,
       "updatedAt": "2026-07-25T00:30:00.000Z"
     }

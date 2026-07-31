@@ -4,6 +4,7 @@ import {
   acceptPlayerSnapshot,
   createInitialPlayerSnapshot,
   createUnavailablePlayerCapabilities,
+  isPlaybackCompleted,
   rejectUnsupportedPlayerCommand,
   type PlayerCapabilities
 } from "../player-contract";
@@ -59,6 +60,13 @@ test("acceptPlayerSnapshot 丢弃旧会话和乱序事件", () => {
   assert.equal(acceptPlayerSnapshot("session-a", current, stale), current);
   assert.equal(acceptPlayerSnapshot("session-a", current, oldSession), current);
   assert.equal(acceptPlayerSnapshot("session-a", current, next), next);
+});
+
+test("isPlaybackCompleted 在 90% 边界或自然结束时判定完成", () => {
+  assert.equal(isPlaybackCompleted("playing", 89.99, 100), false);
+  assert.equal(isPlaybackCompleted("playing", 90, 100), true);
+  assert.equal(isPlaybackCompleted("ended", 0, 0), true);
+  assert.equal(isPlaybackCompleted("playing", Number.NaN, 100), false);
 });
 
 test("rejectUnsupportedPlayerCommand 返回可展示的结构化错误", () => {

@@ -30,6 +30,60 @@ use crate::{
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// 验证 90% 完成边界以及完成状态不可被后续低进度覆盖。
+#[test]
+fn playback_checkpoint_completion_is_threshold_based_and_monotonic() {
+    let directory = TestDirectory::new("checkpoint-completion");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("checkpoint database must initialize");
+    let task_id = "checkpoint-threshold-task";
+    storage
+        .connection
+        .execute(
+            "INSERT INTO download_task (
+               id, engine, name, status, progress, download_speed, upload_speed,
+               save_path, created_at, updated_at
+             ) VALUES (?1, 'embedded', 'checkpoint threshold', 'completed', 1, 0, 0,
+               'C:/video', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')",
+            [task_id],
+        )
+        .expect("insert checkpoint download task");
+    let repository = storage.repository();
+
+    let below_threshold = repository
+        .save_playback_checkpoint(&SavePlaybackCheckpointInput {
+            task_id: task_id.to_owned(),
+            file_index: Some(0),
+            position_seconds: 89.99,
+            duration_seconds: 100.0,
+            completed: Some(false),
+        })
+        .expect("save checkpoint below threshold");
+    assert!(!below_threshold.completed);
+
+    let at_threshold = repository
+        .save_playback_checkpoint(&SavePlaybackCheckpointInput {
+            task_id: task_id.to_owned(),
+            file_index: Some(0),
+            position_seconds: 90.0,
+            duration_seconds: 100.0,
+            completed: Some(false),
+        })
+        .expect("save checkpoint at threshold");
+    assert!(at_threshold.completed);
+
+    let rewound = repository
+        .save_playback_checkpoint(&SavePlaybackCheckpointInput {
+            task_id: task_id.to_owned(),
+            file_index: Some(0),
+            position_seconds: 10.0,
+            duration_seconds: 100.0,
+            completed: Some(false),
+        })
+        .expect("save rewound checkpoint");
+    assert!(rewound.completed);
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ContractFixture<T> {

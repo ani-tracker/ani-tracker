@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { appApi } from "@/lib/api";
-import type { PlayerSnapshot } from "@shared/player-contract";
+import {
+  isPlaybackCompleted,
+  PLAYER_COMPLETION_THRESHOLD_PERCENT,
+  type PlayerSnapshot
+} from "@shared/player-contract";
 import type { RemotePlaylistItem } from "@/features/player/playback-list-model";
 
 const CHECKPOINT_INTERVAL_MS = 10_000;
@@ -66,7 +70,11 @@ export function usePlaybackBusiness({
         fileIndex: item.fileIndex,
         positionSeconds: currentSnapshot.positionSeconds,
         durationSeconds: currentSnapshot.durationSeconds,
-        completed: currentSnapshot.status === "ended"
+        completed: isPlaybackCompleted(
+          currentSnapshot.status,
+          currentSnapshot.positionSeconds,
+          currentSnapshot.durationSeconds
+        )
       }))
       .then((checkpoint) => {
         if (reason !== "interval") {
@@ -134,7 +142,10 @@ export function usePlaybackBusiness({
       || !isSnapshotForItem(snapshot, activeItem)
     ) return;
     const percent = snapshot.positionSeconds / snapshot.durationSeconds * 100;
-    if (percent < 90 || watchedThresholdKeyRef.current === activeKey) return;
+    if (
+      percent < PLAYER_COMPLETION_THRESHOLD_PERCENT
+      || watchedThresholdKeyRef.current === activeKey
+    ) return;
     watchedThresholdKeyRef.current = activeKey;
     flushCheckpoint("watched-threshold");
   }, [activeItem, flushCheckpoint, snapshot]);

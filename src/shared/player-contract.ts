@@ -42,6 +42,25 @@ export type PlayerSubtitleScale = 100 | 125 | 150 | 175 | 200;
 /** UI 与各平台后端共用的字幕缩放选项。 */
 export const PLAYER_SUBTITLE_SCALES: readonly PlayerSubtitleScale[] = [100, 125, 150, 175, 200];
 
+/** 播放进度达到该百分比后视为已完成。 */
+export const PLAYER_COMPLETION_THRESHOLD_PERCENT = 90;
+
+/** 根据播放器状态和有效进度判断当前媒体是否完成。 */
+export function isPlaybackCompleted(
+  status: PlayerStatus,
+  positionSeconds: number,
+  durationSeconds: number
+): boolean {
+  if (status === "ended") return true;
+  if (
+    !Number.isFinite(positionSeconds)
+    || !Number.isFinite(durationSeconds)
+    || positionSeconds < 0
+    || durationSeconds <= 0
+  ) return false;
+  return positionSeconds / durationSeconds * 100 >= PLAYER_COMPLETION_THRESHOLD_PERCENT;
+}
+
 /** 播放器错误的跨平台展示模型。 */
 export interface PlayerError {
   code: PlayerErrorCode;

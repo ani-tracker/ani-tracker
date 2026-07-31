@@ -1357,7 +1357,7 @@ impl<'connection> SqliteRepository<'connection> {
         &self,
         input: &ReportPlaybackProgressInput,
     ) -> Result<bool, StorageError> {
-        if !input.percent.is_finite() || input.percent < 90.0 {
+        if !input.percent.is_finite() || input.percent < PLAYBACK_COMPLETION_THRESHOLD_PERCENT {
             return Ok(false);
         }
         if input.file_index.is_some_and(|index| index < 0) {
@@ -1452,19 +1452,24 @@ impl<'connection> SqliteRepository<'connection> {
         let mut watched_reported = existing
             .as_ref()
             .is_some_and(|checkpoint| checkpoint.watched_reported);
-        if !watched_reported && percent >= 90.0 {
+        if !watched_reported && percent >= PLAYBACK_COMPLETION_THRESHOLD_PERCENT {
             watched_reported = self.report_playback_progress(&ReportPlaybackProgressInput {
                 task_id: normalized.task_id.clone(),
                 file_index: normalized.file_index,
                 percent,
             })?;
         }
+        let completed = existing
+            .as_ref()
+            .is_some_and(|checkpoint| checkpoint.completed)
+            || normalized.completed == Some(true)
+            || percent >= PLAYBACK_COMPLETION_THRESHOLD_PERCENT;
         let checkpoint = PlaybackCheckpoint {
             task_id: normalized.task_id,
             file_index: normalized.file_index,
             position_seconds: normalized.position_seconds,
             duration_seconds: normalized.duration_seconds,
-            completed: normalized.completed.unwrap_or(false),
+            completed,
             watched_reported,
             updated_at: now_iso(),
         };
@@ -1489,8 +1494,12 @@ impl<'connection> SqliteRepository<'connection> {
             ],
         )?;
         info!(
-            "Rust 续播位置保存完成：task_id={}, file_index={:?}, watched_reported={}",
-            checkpoint.task_id, checkpoint.file_index, checkpoint.watched_reported
+            "Rust 续播位置保存完成：task_id={}, file_index={:?}, percent={:.2}, completed={}, watched_reported={}",
+            checkpoint.task_id,
+            checkpoint.file_index,
+            percent,
+            checkpoint.completed,
+            checkpoint.watched_reported
         );
         Ok(checkpoint)
     }
@@ -3421,6 +3430,8 @@ fn calculate_playback_percent(position_seconds: f64, duration_seconds: f64) -> f
     }
     (position_seconds / duration_seconds * 100.0).clamp(0.0, 100.0)
 }
+
+const PLAYBACK_COMPLETION_THRESHOLD_PERCENT: f64 = 90.0;
 
 /// 判断秒数是否处于播放器允许持久化的范围。
 fn is_playback_seconds(value: f64) -> bool {

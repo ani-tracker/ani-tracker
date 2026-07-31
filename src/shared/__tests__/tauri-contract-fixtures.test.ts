@@ -163,6 +163,8 @@ test("Tauri P3 追番写模型契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.preference.episodeId, fixture.payload.episode.id);
   assert.equal(fixture.payload.reportPlaybackProgressInput.percent, 92);
   assert.equal(fixture.payload.savePlaybackCheckpointInput.fileIndex, 0);
+  assert.equal(fixture.payload.savePlaybackCheckpointInput.completed, true);
+  assert.equal(fixture.payload.checkpoint.completed, true);
   assert.equal(fixture.payload.checkpoint.watchedReported, true);
   assert.equal(progress.totalEpisodeCount, 12);
 });
