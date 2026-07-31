@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use serde_json::{json, Map, Value};
 
 const HIDDEN_LOCAL_PATH: &str = "本机路径已隐藏";
+pub const REMOTE_SECRET_PLACEHOLDER: &str = "********";
 
 #[derive(Clone, Copy)]
 struct MethodDefinition {
@@ -35,6 +36,8 @@ const METHODS: &[MethodDefinition] = &[
         RpcEffect::Write,
     ),
     method("listMyAnime", "library.read", RpcEffect::Read),
+    method("upsertMyAnime", "library.write", RpcEffect::Write),
+    method("removeMyAnime", "library.write", RpcEffect::Write),
     method("listMyAnimeWatchProgress", "library.read", RpcEffect::Read),
     method("setAnimeWatchProgress", "library.write", RpcEffect::Write),
     method("reportPlaybackProgress", "library.write", RpcEffect::Write),
@@ -44,11 +47,78 @@ const METHODS: &[MethodDefinition] = &[
     method("searchAnimeCatalog", "catalog.read", RpcEffect::Read),
     method("listFansubs", "library.read", RpcEffect::Read),
     method("listEpisodes", "library.read", RpcEffect::Read),
+    method("upsertEpisode", "library.write", RpcEffect::Write),
     method("listEpisodePreferences", "library.read", RpcEffect::Read),
+    method("upsertEpisodePreference", "library.write", RpcEffect::Write),
+    method("removeEpisodePreference", "library.write", RpcEffect::Write),
+    method("previewEpisodeReleases", "sources.read", RpcEffect::Read),
+    method("searchReleases", "sources.read", RpcEffect::Read),
+    method("searchAnimeReleases", "sources.read", RpcEffect::Read),
+    method(
+        "searchRssSubscriptionReleases",
+        "sources.read",
+        RpcEffect::Read,
+    ),
+    method(
+        "getAnimeSourceBindingState",
+        "sources.read",
+        RpcEffect::Read,
+    ),
+    method(
+        "confirmAnimeSourceBinding",
+        "sources.write",
+        RpcEffect::Write,
+    ),
+    method(
+        "reportAnimeSourceCandidateMismatch",
+        "sources.write",
+        RpcEffect::Write,
+    ),
+    method(
+        "removeAnimeSourceCandidateMismatch",
+        "sources.write",
+        RpcEffect::Write,
+    ),
+    method("setAnimeSourceExcluded", "sources.write", RpcEffect::Write),
+    method(
+        "removeAnimeSourceBinding",
+        "sources.write",
+        RpcEffect::Write,
+    ),
     method("listDownloads", "downloads.read", RpcEffect::Read),
     method("refreshDownloads", "downloads.control", RpcEffect::Write),
     method("pauseDownload", "downloads.control", RpcEffect::Write),
     method("resumeDownload", "downloads.control", RpcEffect::Write),
+    method("removeDownload", "downloads.control", RpcEffect::Write),
+    method(
+        "setDownloadFilePriority",
+        "downloads.control",
+        RpcEffect::Write,
+    ),
+    method("addDownloadUrl", "downloads.control", RpcEffect::Write),
+    method("addReleaseDownload", "downloads.control", RpcEffect::Write),
+    method("listSources", "sources.read", RpcEffect::Read),
+    method("setSourceEnabled", "sources.write", RpcEffect::Write),
+    method("upsertSource", "sources.write", RpcEffect::Write),
+    method("getSourceSyncStatus", "sources.read", RpcEffect::Read),
+    method("getSettings", "settings.read", RpcEffect::Read),
+    method("updateSettings", "settings.write", RpcEffect::Write),
+    method(
+        "getAutomationSchedulerStatus",
+        "settings.read",
+        RpcEffect::Read,
+    ),
+    method(
+        "getQbittorrentManagedStatus",
+        "host.control",
+        RpcEffect::Read,
+    ),
+    method("startQbittorrentManaged", "host.control", RpcEffect::Write),
+    method("stopQbittorrentManaged", "host.control", RpcEffect::Write),
+    method("getEmbeddedTorrentStatus", "host.control", RpcEffect::Read),
+    method("startEmbeddedTorrent", "host.control", RpcEffect::Write),
+    method("stopEmbeddedTorrent", "host.control", RpcEffect::Write),
+    method("restartEmbeddedTorrent", "host.control", RpcEffect::Write),
 ];
 
 const fn method(name: &'static str, scope: &'static str, effect: RpcEffect) -> MethodDefinition {
@@ -155,6 +225,9 @@ impl RemoteRpcService {
                 log::error!("Rust 远程 RPC 调用失败 method={method_name} error={error}");
                 RemoteRpcError::new(500, "HANDLER_FAILED", "远程操作执行失败")
             })?;
+        if definition.effect == RpcEffect::Write {
+            log::info!("Rust 远程 RPC 写操作完成 method={method_name}");
+        }
         sanitize_result(method_name, result)
     }
 }
@@ -172,13 +245,26 @@ fn validate_args(method: &str, args: Vec<Value>) -> Result<Vec<Value>, RemoteRpc
         | "listMyAnime"
         | "listMyAnimeWatchProgress"
         | "listDownloads"
-        | "refreshDownloads" => require_count(args, 0),
+        | "refreshDownloads"
+        | "listSources"
+        | "getSourceSyncStatus"
+        | "getSettings"
+        | "getAutomationSchedulerStatus"
+        | "getQbittorrentManagedStatus"
+        | "startQbittorrentManaged"
+        | "stopQbittorrentManaged"
+        | "getEmbeddedTorrentStatus"
+        | "startEmbeddedTorrent"
+        | "stopEmbeddedTorrent"
+        | "restartEmbeddedTorrent" => require_count(args, 0),
         "markNotificationRead"
         | "getAnimeDetail"
         | "listEpisodes"
         | "listEpisodePreferences"
         | "pauseDownload"
-        | "resumeDownload" => {
+        | "resumeDownload"
+        | "removeMyAnime"
+        | "removeEpisodePreference" => {
             let args = require_count(args, 1)?;
             parse_id(&args[0], "标识")?;
             Ok(args)
@@ -204,6 +290,257 @@ fn validate_args(method: &str, args: Vec<Value>) -> Result<Vec<Value>, RemoteRpc
             Ok(vec![Value::String(keyword.to_owned())])
         }
         "listAnimeCatalog" => validate_year_month(args),
+        "upsertMyAnime" => validate_domain_object::<ani_domain::MyAnime>(
+            args,
+            &[
+                "id",
+                "anime",
+                "status",
+                "defaultFansubGroupId",
+                "autoDownload",
+                "rssSubscriptions",
+                "preferredResolution",
+                "preferredCodec",
+                "preferredBitDepth",
+                "preferredSubtitleLanguages",
+                "preferredSubtitle",
+                "addedAt",
+                "updatedAt",
+            ],
+            |object| {
+                parse_id(object.get("id").unwrap_or(&Value::Null), "追番标识")?;
+                let anime = object
+                    .get("anime")
+                    .and_then(Value::as_object)
+                    .ok_or_else(|| invalid_args("番剧信息格式无效"))?;
+                parse_id(anime.get("id").unwrap_or(&Value::Null), "番剧标识")?;
+                validate_text(anime.get("title"), "番剧名称", 1, 300)?;
+                if let Some(Value::Array(subscriptions)) = object.get("rssSubscriptions") {
+                    if subscriptions.len() > 32 {
+                        return Err(invalid_args("单部追番最多允许 32 条 RSS 订阅"));
+                    }
+                    for subscription in subscriptions {
+                        let subscription = subscription
+                            .as_object()
+                            .ok_or_else(|| invalid_args("RSS 订阅格式无效"))?;
+                        parse_id(
+                            subscription.get("id").unwrap_or(&Value::Null),
+                            "RSS 订阅标识",
+                        )?;
+                        validate_http_url(subscription.get("url"), "RSS 地址")?;
+                    }
+                }
+                Ok(())
+            },
+        ),
+        "upsertEpisode" => validate_domain_object::<ani_domain::Episode>(
+            args,
+            &["id", "animeId", "episodeNo", "title", "airTime", "status"],
+            |object| {
+                parse_id(object.get("id").unwrap_or(&Value::Null), "单集标识")?;
+                parse_id(object.get("animeId").unwrap_or(&Value::Null), "番剧标识")?;
+                validate_number(object.get("episodeNo"), "集数", 0.0, 100_000.0)?;
+                Ok(())
+            },
+        ),
+        "upsertEpisodePreference" => validate_domain_object::<ani_domain::EpisodePreference>(
+            args,
+            &[
+                "id",
+                "animeId",
+                "episodeId",
+                "fansubGroupId",
+                "releaseId",
+                "isManualOverride",
+            ],
+            |object| {
+                for (key, label) in [
+                    ("id", "偏好标识"),
+                    ("animeId", "番剧标识"),
+                    ("episodeId", "单集标识"),
+                ] {
+                    parse_id(object.get(key).unwrap_or(&Value::Null), label)?;
+                }
+                Ok(())
+            },
+        ),
+        "previewEpisodeReleases" | "removeAnimeSourceBinding" => {
+            let args = require_count(args, 2)?;
+            parse_id(&args[0], "番剧标识")?;
+            parse_id(&args[1], "关联标识")?;
+            Ok(args)
+        }
+        "getAnimeSourceBindingState" => {
+            if !(1..=2).contains(&args.len()) {
+                return Err(invalid_args("来源绑定查询参数数量无效"));
+            }
+            parse_id(&args[0], "番剧标识")?;
+            if args.len() == 2 && !args[1].is_null() && !args[1].is_boolean() {
+                return Err(invalid_args("候选发现开关必须是布尔值"));
+            }
+            Ok(args)
+        }
+        "searchReleases" => validate_domain_object::<ani_domain::ReleaseQuery>(
+            args,
+            &[
+                "keyword",
+                "animeId",
+                "episodeNo",
+                "fansubGroupId",
+                "preferredResolution",
+                "limit",
+                "cacheTtlMs",
+                "forceRefresh",
+            ],
+            validate_release_query,
+        ),
+        "searchAnimeReleases" => validate_domain_object::<ani_domain::AnimeReleaseQuery>(
+            args,
+            &[
+                "animeId",
+                "episodeNo",
+                "fansubGroupId",
+                "preferredResolution",
+                "limit",
+                "cacheTtlMs",
+                "forceRefresh",
+            ],
+            |object| {
+                parse_id(object.get("animeId").unwrap_or(&Value::Null), "番剧标识")?;
+                validate_search_limits(object)
+            },
+        ),
+        "searchRssSubscriptionReleases" => {
+            validate_domain_object::<ani_domain::RssSubscriptionReleaseQuery>(
+                args,
+                &["animeId", "subscriptionId", "preferredResolution", "limit"],
+                |object| {
+                    parse_id(object.get("animeId").unwrap_or(&Value::Null), "番剧标识")?;
+                    parse_id(
+                        object.get("subscriptionId").unwrap_or(&Value::Null),
+                        "RSS 订阅标识",
+                    )?;
+                    validate_limit(object.get("limit"))
+                },
+            )
+        }
+        "confirmAnimeSourceBinding" => {
+            validate_domain_object::<ani_domain::ConfirmAnimeSourceBindingInput>(
+                args,
+                &[
+                    "animeId",
+                    "sourceId",
+                    "sourceAnimeId",
+                    "sourceAnimeTitle",
+                    "sourceUrl",
+                    "confidence",
+                ],
+                |object| validate_binding_ids(object, &["animeId", "sourceId", "sourceAnimeId"]),
+            )
+        }
+        "reportAnimeSourceCandidateMismatch" => {
+            validate_domain_object::<ani_domain::ReportAnimeSourceCandidateMismatchInput>(
+                args,
+                &[
+                    "animeId",
+                    "sourceId",
+                    "sourceAnimeId",
+                    "sourceAnimeTitle",
+                    "score",
+                    "reasons",
+                ],
+                |object| validate_binding_ids(object, &["animeId", "sourceId", "sourceAnimeId"]),
+            )
+        }
+        "removeAnimeSourceCandidateMismatch" => {
+            validate_domain_object::<ani_domain::RemoveAnimeSourceCandidateMismatchInput>(
+                args,
+                &["animeId", "sourceId", "sourceAnimeId"],
+                |object| validate_binding_ids(object, &["animeId", "sourceId", "sourceAnimeId"]),
+            )
+        }
+        "setAnimeSourceExcluded" => {
+            validate_domain_object::<ani_domain::SetAnimeSourceExclusionInput>(
+                args,
+                &["animeId", "sourceId", "excluded"],
+                |object| validate_binding_ids(object, &["animeId", "sourceId"]),
+            )
+        }
+        "removeDownload" => {
+            let args = require_count(args, 2)?;
+            parse_id(&args[0], "下载任务标识")?;
+            if args[1].as_bool() != Some(false) {
+                return Err(invalid_args("远程端只能保留文件并移除任务记录"));
+            }
+            Ok(args)
+        }
+        "setDownloadFilePriority" => {
+            let args = require_count(args, 3)?;
+            parse_id(&args[0], "下载任务标识")?;
+            let indexes = args[1]
+                .as_array()
+                .filter(|items| !items.is_empty() && items.len() <= 2_048)
+                .ok_or_else(|| invalid_args("文件索引列表格式无效"))?;
+            if indexes
+                .iter()
+                .any(|value| value.as_i64().is_none_or(|index| index < 0))
+            {
+                return Err(invalid_args("文件索引必须是非负整数"));
+            }
+            if args[2]
+                .as_i64()
+                .is_none_or(|priority| !(0..=7).contains(&priority))
+            {
+                return Err(invalid_args("文件优先级必须是 0 到 7 的整数"));
+            }
+            Ok(args)
+        }
+        "addDownloadUrl" => validate_object_input(args, &["url", "name", "paused"], |object| {
+            validate_download_url(object.get("url"))?;
+            validate_optional_text(object.get("name"), "任务名称", 300)?;
+            validate_optional_bool(object.get("paused"), "暂停状态")
+        }),
+        "addReleaseDownload" => validate_object_input(
+            args,
+            &[
+                "release",
+                "animeId",
+                "episodeId",
+                "episodeNo",
+                "fansubGroupId",
+                "paused",
+            ],
+            validate_add_release_download,
+        ),
+        "setSourceEnabled" => {
+            let args = require_count(args, 2)?;
+            parse_id(&args[0], "下载源标识")?;
+            if !args[1].is_boolean() {
+                return Err(invalid_args("下载源启用状态必须是布尔值"));
+            }
+            Ok(args)
+        }
+        "upsertSource" => validate_domain_object::<ani_domain::ReleaseSourceConfig>(
+            args,
+            &[
+                "id",
+                "name",
+                "kind",
+                "enabled",
+                "useProxy",
+                "requestIntervalMs",
+                "baseUrl",
+                "apiKey",
+                "rssUrl",
+                "tags",
+            ],
+            validate_source,
+        ),
+        "updateSettings" => validate_object_input(
+            args,
+            &["automation", "sourceSync", "network"],
+            validate_settings_patch,
+        ),
         "setAnimeWatchProgress" => {
             validate_object_input(args, &["animeId", "watchedEpisodeCount"], |object| {
                 parse_id(object.get("animeId").unwrap_or(&Value::Null), "番剧标识")?;
@@ -260,6 +597,303 @@ fn validate_args(method: &str, args: Vec<Value>) -> Result<Vec<Value>, RemoteRpc
         ),
         _ => Err(invalid_args("远程参数校验失败")),
     }
+}
+
+fn validate_domain_object<T: serde::de::DeserializeOwned>(
+    args: Vec<Value>,
+    allowed_keys: &[&str],
+    validate: impl FnOnce(&Map<String, Value>) -> Result<(), RemoteRpcError>,
+) -> Result<Vec<Value>, RemoteRpcError> {
+    let args = validate_object_input(args, allowed_keys, validate)?;
+    serde_json::from_value::<T>(args[0].clone())
+        .map_err(|_| invalid_args("远程对象字段类型无效"))?;
+    Ok(args)
+}
+
+fn validate_text(
+    value: Option<&Value>,
+    label: &str,
+    minimum: usize,
+    maximum: usize,
+) -> Result<(), RemoteRpcError> {
+    let text = value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|text| {
+            let length = text.chars().count();
+            (minimum..=maximum).contains(&length) && !text.chars().any(char::is_control)
+        })
+        .ok_or_else(|| invalid_args(format!("{label}长度或格式无效")))?;
+    if text.is_empty() && minimum > 0 {
+        return Err(invalid_args(format!("{label}不能为空")));
+    }
+    Ok(())
+}
+
+fn validate_optional_text(
+    value: Option<&Value>,
+    label: &str,
+    maximum: usize,
+) -> Result<(), RemoteRpcError> {
+    match value {
+        None | Some(Value::Null) => Ok(()),
+        Some(value) => validate_text(Some(value), label, 0, maximum),
+    }
+}
+
+fn validate_optional_bool(value: Option<&Value>, label: &str) -> Result<(), RemoteRpcError> {
+    match value {
+        None | Some(Value::Null) | Some(Value::Bool(_)) => Ok(()),
+        _ => Err(invalid_args(format!("{label}必须是布尔值"))),
+    }
+}
+
+fn validate_number(
+    value: Option<&Value>,
+    label: &str,
+    minimum: f64,
+    maximum: f64,
+) -> Result<(), RemoteRpcError> {
+    value
+        .and_then(Value::as_f64)
+        .filter(|number| number.is_finite() && (minimum..=maximum).contains(number))
+        .map(|_| ())
+        .ok_or_else(|| invalid_args(format!("{label}范围无效")))
+}
+
+fn validate_http_url(value: Option<&Value>, label: &str) -> Result<(), RemoteRpcError> {
+    let raw = value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 4_096)
+        .ok_or_else(|| invalid_args(format!("{label}格式无效")))?;
+    let parsed = url::Url::parse(raw).map_err(|_| invalid_args(format!("{label}格式无效")))?;
+    if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
+        return Err(invalid_args(format!("{label}只允许 HTTP(S) 地址")));
+    }
+    Ok(())
+}
+
+fn validate_download_url(value: Option<&Value>) -> Result<(), RemoteRpcError> {
+    let raw = value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 8_192)
+        .ok_or_else(|| invalid_args("下载地址格式无效"))?;
+    let parsed = url::Url::parse(raw).map_err(|_| invalid_args("下载地址格式无效"))?;
+    if !matches!(parsed.scheme(), "magnet" | "http" | "https") {
+        return Err(invalid_args("下载地址只允许 magnet 或 HTTP(S)"));
+    }
+    Ok(())
+}
+
+fn validate_limit(value: Option<&Value>) -> Result<(), RemoteRpcError> {
+    match value {
+        None | Some(Value::Null) => Ok(()),
+        Some(value)
+            if value
+                .as_u64()
+                .is_some_and(|limit| (1..=200).contains(&limit)) =>
+        {
+            Ok(())
+        }
+        _ => Err(invalid_args("搜索数量必须是 1 到 200 的整数")),
+    }
+}
+
+fn validate_search_limits(object: &Map<String, Value>) -> Result<(), RemoteRpcError> {
+    validate_limit(object.get("limit"))?;
+    if let Some(value) = object.get("episodeNo") {
+        validate_number(Some(value), "集数", 0.0, 100_000.0)?;
+    }
+    if let Some(value) = object.get("cacheTtlMs") {
+        value
+            .as_u64()
+            .filter(|ttl| *ttl <= 31_536_000_000)
+            .ok_or_else(|| invalid_args("缓存时长范围无效"))?;
+    }
+    Ok(())
+}
+
+fn validate_release_query(object: &Map<String, Value>) -> Result<(), RemoteRpcError> {
+    validate_text(object.get("keyword"), "搜索关键词", 1, 300)?;
+    validate_search_limits(object)
+}
+
+fn validate_binding_ids(object: &Map<String, Value>, keys: &[&str]) -> Result<(), RemoteRpcError> {
+    for key in keys {
+        parse_id(object.get(*key).unwrap_or(&Value::Null), "来源绑定标识")?;
+    }
+    Ok(())
+}
+
+fn validate_add_release_download(object: &Map<String, Value>) -> Result<(), RemoteRpcError> {
+    let release = object
+        .get("release")
+        .and_then(Value::as_object)
+        .ok_or_else(|| invalid_args("资源信息格式无效"))?;
+    parse_id(release.get("id").unwrap_or(&Value::Null), "资源标识")?;
+    let source = ["magnetUrl", "torrentUrl"]
+        .iter()
+        .filter_map(|key| release.get(*key))
+        .find(|value| value.as_str().is_some_and(|url| !url.trim().is_empty()));
+    validate_download_url(source)?;
+    for key in ["animeId", "episodeId", "fansubGroupId"] {
+        if let Some(value) = object.get(key).filter(|value| !value.is_null()) {
+            parse_id(value, "下载关联标识")?;
+        }
+    }
+    if let Some(value) = object.get("episodeNo") {
+        validate_number(Some(value), "集数", 0.0, 100_000.0)?;
+    }
+    validate_optional_bool(object.get("paused"), "暂停状态")
+}
+
+fn validate_source(object: &Map<String, Value>) -> Result<(), RemoteRpcError> {
+    parse_id(object.get("id").unwrap_or(&Value::Null), "下载源标识")?;
+    validate_text(object.get("name"), "下载源名称", 1, 120)?;
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .ok_or_else(|| invalid_args("下载源类型无效"))?;
+    match kind {
+        "rss" => validate_http_url(object.get("rssUrl"), "RSS 地址")?,
+        "torznab" | "site_adapter" => validate_http_url(object.get("baseUrl"), "服务地址")?,
+        "manual" => {}
+        _ => return Err(invalid_args("下载源类型无效")),
+    }
+    object
+        .get("requestIntervalMs")
+        .and_then(Value::as_i64)
+        .filter(|interval| (250..=86_400_000).contains(interval))
+        .ok_or_else(|| invalid_args("下载源请求间隔范围无效"))?;
+    validate_optional_text(object.get("apiKey"), "访问凭据", 2_048)
+}
+
+fn validate_settings_patch(object: &Map<String, Value>) -> Result<(), RemoteRpcError> {
+    if object.is_empty() {
+        return Err(invalid_args("设置更新不能为空"));
+    }
+    if let Some(automation) = object.get("automation") {
+        let automation = validate_nested_object(
+            automation,
+            &[
+                "scheduledCheckEnabled",
+                "checkIntervalMinutes",
+                "notifyOnNewEpisode",
+                "autoDownloadEnabledGlobally",
+                "fallbackWhenDefaultFansubMissing",
+                "candidateFansubNames",
+            ],
+            "自动化设置",
+        )?;
+        for key in [
+            "scheduledCheckEnabled",
+            "notifyOnNewEpisode",
+            "autoDownloadEnabledGlobally",
+        ] {
+            validate_optional_bool(automation.get(key), "自动化开关")?;
+        }
+        if let Some(interval) = automation.get("checkIntervalMinutes") {
+            interval
+                .as_i64()
+                .filter(|value| (5..=10_080).contains(value))
+                .ok_or_else(|| invalid_args("自动检查间隔必须是 5 到 10080 分钟"))?;
+        }
+        if let Some(fallback) = automation.get("fallbackWhenDefaultFansubMissing") {
+            fallback
+                .as_str()
+                .filter(|value| matches!(*value, "wait" | "candidate" | "notify_only"))
+                .ok_or_else(|| invalid_args("默认字幕组缺失策略无效"))?;
+        }
+        if let Some(Value::Array(names)) = automation.get("candidateFansubNames") {
+            if names.len() > 64 {
+                return Err(invalid_args("候选字幕组名称数量过多"));
+            }
+            for name in names {
+                validate_text(Some(name), "候选字幕组名称", 1, 120)?;
+            }
+        } else if automation.contains_key("candidateFansubNames") {
+            return Err(invalid_args("候选字幕组名称格式无效"));
+        }
+    }
+    if let Some(source_sync) = object.get("sourceSync") {
+        let source_sync =
+            validate_nested_object(source_sync, &["enabled", "dailyTime"], "来源同步设置")?;
+        validate_optional_bool(source_sync.get("enabled"), "来源同步开关")?;
+        if let Some(time) = source_sync.get("dailyTime") {
+            let time = time
+                .as_str()
+                .filter(|value| is_daily_time(value))
+                .ok_or_else(|| invalid_args("每日同步时间格式无效"))?;
+            if time.len() != 5 {
+                return Err(invalid_args("每日同步时间格式无效"));
+            }
+        }
+    }
+    if let Some(network) = object.get("network") {
+        let network = validate_nested_object(network, &["metadataProxy"], "网络设置")?;
+        let proxy = network
+            .get("metadataProxy")
+            .ok_or_else(|| invalid_args("元数据代理设置缺失"))?;
+        let proxy = validate_nested_object(proxy, &["mode", "url", "timeoutMs"], "元数据代理")?;
+        let mode = proxy
+            .get("mode")
+            .and_then(Value::as_str)
+            .filter(|mode| matches!(*mode, "off" | "system" | "manual"))
+            .ok_or_else(|| invalid_args("元数据代理模式无效"))?;
+        if mode == "manual" {
+            validate_proxy_url(proxy.get("url"))?;
+        } else {
+            validate_optional_text(proxy.get("url"), "代理地址", 2_048)?;
+        }
+        proxy
+            .get("timeoutMs")
+            .and_then(Value::as_u64)
+            .filter(|timeout| (1_000..=120_000).contains(timeout))
+            .ok_or_else(|| invalid_args("代理超时必须是 1 到 120 秒"))?;
+    }
+    Ok(())
+}
+
+fn validate_nested_object<'a>(
+    value: &'a Value,
+    allowed_keys: &[&str],
+    label: &str,
+) -> Result<&'a Map<String, Value>, RemoteRpcError> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| invalid_args(format!("{label}格式无效")))?;
+    if object
+        .keys()
+        .any(|key| !allowed_keys.contains(&key.as_str()))
+    {
+        return Err(invalid_args(format!("{label}包含不允许的字段")));
+    }
+    Ok(object)
+}
+
+fn validate_proxy_url(value: Option<&Value>) -> Result<(), RemoteRpcError> {
+    let raw = value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && value.len() <= 2_048)
+        .ok_or_else(|| invalid_args("手动代理地址格式无效"))?;
+    let parsed = url::Url::parse(raw).map_err(|_| invalid_args("手动代理地址格式无效"))?;
+    if !matches!(parsed.scheme(), "http" | "https" | "socks5" | "socks5h") {
+        return Err(invalid_args("手动代理协议不受支持"));
+    }
+    Ok(())
+}
+
+fn is_daily_time(value: &str) -> bool {
+    let Some((hour, minute)) = value.split_once(':') else {
+        return false;
+    };
+    hour.len() == 2
+        && minute.len() == 2
+        && hour.parse::<u8>().is_ok_and(|hour| hour < 24)
+        && minute.parse::<u8>().is_ok_and(|minute| minute < 60)
 }
 
 fn require_count(args: Vec<Value>, expected: usize) -> Result<Vec<Value>, RemoteRpcError> {
@@ -339,10 +973,28 @@ fn invalid_args(message: impl Into<String>) -> RemoteRpcError {
 
 fn sanitize_result(method: &str, mut value: Value) -> Result<Value, RemoteRpcError> {
     match method {
-        "listMyAnime" => sanitize_array(&mut value, sanitize_my_anime)?,
-        "listDownloads" | "refreshDownloads" | "pauseDownload" | "resumeDownload" => {
-            sanitize_array(&mut value, sanitize_download)?
+        "listMyAnime" | "upsertMyAnime" | "removeMyAnime" => {
+            sanitize_array(&mut value, sanitize_my_anime)?
         }
+        "listDownloads"
+        | "refreshDownloads"
+        | "pauseDownload"
+        | "resumeDownload"
+        | "removeDownload"
+        | "setDownloadFilePriority"
+        | "addDownloadUrl"
+        | "addReleaseDownload" => sanitize_array(&mut value, sanitize_download)?,
+        "listSources" | "setSourceEnabled" | "upsertSource" => {
+            sanitize_array(&mut value, sanitize_source)?
+        }
+        "getSettings" | "updateSettings" => sanitize_settings(&mut value)?,
+        "getQbittorrentManagedStatus" | "startQbittorrentManaged" | "stopQbittorrentManaged" => {
+            sanitize_qbittorrent_status(&mut value)?
+        }
+        "getEmbeddedTorrentStatus"
+        | "startEmbeddedTorrent"
+        | "stopEmbeddedTorrent"
+        | "restartEmbeddedTorrent" => sanitize_embedded_status(&mut value)?,
         "getDashboard" => {
             let object = require_result_object(&mut value, "首页看板")?;
             if let Some(downloads) = object.get_mut("activeDownloads") {
@@ -385,6 +1037,14 @@ fn sanitize_result(method: &str, mut value: Value) -> Result<Value, RemoteRpcErr
                 }
             }
         }
+        "searchReleases" | "searchAnimeReleases" | "searchRssSubscriptionReleases" => {
+            let object = require_result_object(&mut value, "资源搜索结果")?;
+            redact_error_list(object.get_mut("errors"));
+        }
+        "previewEpisodeReleases" | "getAnimeSourceBindingState" => {
+            let object = require_result_object(&mut value, "来源操作结果")?;
+            redact_error_list(object.get_mut("errors"));
+        }
         "reportPlaybackProgress" if !value.is_boolean() => {
             return Err(invalid_result("远程处理结果格式无效"));
         }
@@ -406,7 +1066,50 @@ fn sanitize_array(
 fn sanitize_my_anime(value: &mut Value) -> Result<(), RemoteRpcError> {
     let object = require_result_object(value, "追番记录")?;
     object.remove("downloadDir");
-    object.remove("rssSubscriptions");
+    Ok(())
+}
+
+fn sanitize_source(value: &mut Value) -> Result<(), RemoteRpcError> {
+    let object = require_result_object(value, "下载源")?;
+    if object
+        .get("apiKey")
+        .and_then(Value::as_str)
+        .is_some_and(|value| !value.is_empty())
+    {
+        object.insert(
+            "apiKey".to_owned(),
+            Value::String(REMOTE_SECRET_PLACEHOLDER.to_owned()),
+        );
+    } else {
+        object.remove("apiKey");
+    }
+    Ok(())
+}
+
+fn sanitize_settings(value: &mut Value) -> Result<(), RemoteRpcError> {
+    let object = require_result_object(value, "应用设置")?;
+    object.retain(|key, _| matches!(key.as_str(), "automation" | "sourceSync" | "network"));
+    if let Some(network) = object.get_mut("network") {
+        let network = require_result_object(network, "网络设置")?;
+        network.retain(|key, _| key == "metadataProxy");
+    }
+    Ok(())
+}
+
+fn sanitize_qbittorrent_status(value: &mut Value) -> Result<(), RemoteRpcError> {
+    let object = require_result_object(value, "qBittorrent 状态")?;
+    object.remove("binaryPath");
+    object.remove("profileDir");
+    object.insert("webUiUrl".to_owned(), Value::String(String::new()));
+    redact_string(object.get_mut("lastError"));
+    Ok(())
+}
+
+fn sanitize_embedded_status(value: &mut Value) -> Result<(), RemoteRpcError> {
+    let object = require_result_object(value, "内置下载核心状态")?;
+    object.remove("binaryPath");
+    object.remove("dataDir");
+    redact_string(object.get_mut("lastError"));
     Ok(())
 }
 
@@ -525,6 +1228,27 @@ mod tests {
                     "savePath": "C:\\Downloads",
                     "files": []
                 }])),
+                "listMyAnime" => Ok(json!([{
+                    "id": "my-1",
+                    "downloadDir": "/Users/test/Downloads",
+                    "rssSubscriptions": [{ "id": "rss-1", "url": "https://example.com/feed.xml" }]
+                }])),
+                "listSources" => Ok(json!([{
+                    "id": "source-1",
+                    "name": "受控来源",
+                    "apiKey": "real-secret"
+                }])),
+                "getSettings" => Ok(json!({
+                    "appearance": { "themeMode": "dark" },
+                    "automation": { "scheduledCheckEnabled": true },
+                    "sourceSync": { "enabled": true, "dailyTime": "09:00" },
+                    "network": {
+                        "metadataProxy": { "mode": "system", "timeoutMs": 30000 },
+                        "remoteAccess": { "lanEnabled": true, "port": 18083 }
+                    },
+                    "storage": { "userDataDir": "/Users/test" },
+                    "players": [{ "id": "builtin" }]
+                })),
                 "pauseDownload" => Ok(json!([])),
                 _ => Ok(json!({ "args": args })),
             }
@@ -537,7 +1261,10 @@ mod tests {
         let service = RemoteRpcService::new(std::sync::Arc::new(EchoHandler));
         let scopes = vec!["downloads.read".to_owned()];
         let unknown = service
-            .dispatch(json!({ "method": "removeDownload", "args": [] }), &scopes)
+            .dispatch(
+                json!({ "method": "runAutomationOnce", "args": [] }),
+                &scopes,
+            )
             .await
             .expect_err("unknown method");
         assert_eq!(unknown.code, "METHOD_NOT_FOUND");
@@ -561,6 +1288,27 @@ mod tests {
         assert_eq!(invalid.code, "INVALID_ARGUMENTS");
     }
 
+    /// 验证远程下载和设置写入不能越过本地文件与桌面字段边界。
+    #[tokio::test]
+    async fn rejects_local_file_and_desktop_mutations() {
+        let service = RemoteRpcService::new(std::sync::Arc::new(EchoHandler));
+        for request in [
+            json!({ "method": "removeDownload", "args": ["task-1", true] }),
+            json!({ "method": "addDownloadUrl", "args": [{ "url": "magnet:?xt=urn:btih:abc", "savePath": "/tmp" }] }),
+            json!({ "method": "updateSettings", "args": [{ "storage": { "userDataDir": "/tmp" } }] }),
+            json!({ "method": "updateSettings", "args": [{ "network": { "remoteAccess": { "port": 1 } } }] }),
+        ] {
+            let error = service
+                .dispatch(
+                    request,
+                    &["downloads.control".to_owned(), "settings.write".to_owned()],
+                )
+                .await
+                .expect_err("local mutation must fail");
+            assert_eq!(error.code, "INVALID_ARGUMENTS");
+        }
+    }
+
     /// 验证下载结果不会向远程客户端泄漏哈希、关联标签和保存路径。
     #[tokio::test]
     async fn sanitizes_download_result() {
@@ -576,5 +1324,42 @@ mod tests {
         assert!(task.get("torrentHash").is_none());
         assert!(task.get("correlationTag").is_none());
         assert_eq!(task["savePath"], HIDDEN_LOCAL_PATH);
+    }
+
+    /// 验证共享 RSS 保留，同时本地目录、来源秘密与宿主设置保持隐藏。
+    #[tokio::test]
+    async fn sanitizes_shared_business_data_without_removing_rss() {
+        let service = RemoteRpcService::new(std::sync::Arc::new(EchoHandler));
+        let anime = service
+            .dispatch(
+                json!({ "method": "listMyAnime", "args": [] }),
+                &["library.read".to_owned()],
+            )
+            .await
+            .expect("dispatch anime");
+        assert!(anime[0].get("downloadDir").is_none());
+        assert_eq!(anime[0]["rssSubscriptions"][0]["id"], "rss-1");
+
+        let sources = service
+            .dispatch(
+                json!({ "method": "listSources", "args": [] }),
+                &["sources.read".to_owned()],
+            )
+            .await
+            .expect("dispatch sources");
+        assert_eq!(sources[0]["apiKey"], REMOTE_SECRET_PLACEHOLDER);
+
+        let settings = service
+            .dispatch(
+                json!({ "method": "getSettings", "args": [] }),
+                &["settings.read".to_owned()],
+            )
+            .await
+            .expect("dispatch settings");
+        assert!(settings.get("storage").is_none());
+        assert!(settings.get("players").is_none());
+        assert!(settings.get("appearance").is_none());
+        assert!(settings["network"].get("remoteAccess").is_none());
+        assert!(settings["network"].get("metadataProxy").is_some());
     }
 }

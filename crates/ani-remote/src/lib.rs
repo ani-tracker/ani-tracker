@@ -20,5 +20,5 @@ pub use media::{
 pub use network::{
     is_private_ipv4, list_private_ipv4_addresses, parse_trusted_origins, TrustedOrigin,
 };
-pub use rpc::{RemoteRpcError, RemoteRpcHandler, RemoteRpcService};
+pub use rpc::{RemoteRpcError, RemoteRpcHandler, RemoteRpcService, REMOTE_SECRET_PLACEHOLDER};
 pub use tls::{RemoteTlsBundle, RemoteTlsCertificateStore};

@@ -65,6 +65,7 @@ type DiscoverySortKey = "premiereAsc" | "premiereDesc" | "ratingDesc";
 const DEFAULT_DISCOVERY_SORT: DiscoverySortKey = "ratingDesc";
 type ScheduleView = "grid" | "list";
 interface DiscoveryPageProps {
+  allowCollection?: boolean;
   onOpenAnimeDetail?: (animeId: string) => void;
   onOpenSchedule?: (target: SeasonTarget) => void;
 }
@@ -89,7 +90,11 @@ function normalizeAnilistError(error?: string): string | null {
 }
 
 /** Renders the seasonal anime catalog and its follow actions. */
-export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPageProps = {}) {
+export function DiscoveryPage({
+  allowCollection = true,
+  onOpenAnimeDetail,
+  onOpenSchedule
+}: DiscoveryPageProps = {}) {
   const [target, setTarget] = useState<SeasonTarget>(getCurrentSeasonTarget);
   const [selectedMonth, setSelectedMonth] = useState<number | null>(null);
   const [keyword, setKeyword] = useState("");
@@ -127,6 +132,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
   }, [target.year, target.season]);
 
   useEffect(() => {
+    if (!allowCollection) return;
     let active = true;
 
     /** 定期读取本地同步状态，使后台 AniList 失败能及时显示。 */
@@ -144,9 +150,10 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
       active = false;
       window.clearInterval(timer);
     };
-  }, [target.year, target.season]);
+  }, [allowCollection, target.year, target.season]);
 
   useEffect(() => {
+    if (!allowCollection) return;
     let active = true;
     let initialized = false;
     let wasInFlight = false;
@@ -212,7 +219,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
       window.clearInterval(timer);
       window.removeEventListener("focus", refreshTaskStatus);
     };
-  }, [target.year, target.season]);
+  }, [allowCollection, target.year, target.season]);
 
   /** Loads and merges the three local month catalogs in the selected season. */
   async function loadSeasonCatalog(year: number, season: Season) {
@@ -224,7 +231,9 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
       const [catalogs, followed, syncState] = await Promise.all([
         Promise.all(months.map((month) => appApi.listAnimeCatalog(year, month))),
         appApi.listMyAnime(),
-        appApi.getAnimeSeasonSyncState(year, season)
+        allowCollection
+          ? appApi.getAnimeSeasonSyncState(year, season)
+          : Promise.resolve(undefined)
       ]);
 
       if (requestId !== loadRequestId.current) {
@@ -394,17 +403,19 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
     <Page>
       <PageHeader>
         <PageHeading description="按季度浏览新番目录，并查看作品信息。" title="新番发现" />
-        <PageActions className="grid grid-cols-1 sm:grid-cols-2">
+        <PageActions className={cn("grid grid-cols-1", allowCollection && "sm:grid-cols-2")}>
           <Button className="w-full" variant="outline" onClick={() => onOpenSchedule?.(target)}>
             <CalendarRange data-icon="inline-start" />
             新番时间表
           </Button>
-          <Button className="w-full" onClick={() => void collectSeason(false)} disabled={collecting}>
-            {collecting
-              ? <LoaderCircle className="animate-spin" data-icon="inline-start" />
-              : <CalendarPlus data-icon="inline-start" />}
-            {collectingLabel}
-          </Button>
+          {allowCollection && (
+            <Button className="w-full" onClick={() => void collectSeason(false)} disabled={collecting}>
+              {collecting
+                ? <LoaderCircle className="animate-spin" data-icon="inline-start" />
+                : <CalendarPlus data-icon="inline-start" />}
+              {collectingLabel}
+            </Button>
+          )}
         </PageActions>
       </PageHeader>
 
@@ -534,20 +545,22 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
               <EmptyMedia variant="icon">
                 {emptyCatalog ? <CalendarPlus /> : <Search />}
               </EmptyMedia>
-              <EmptyTitle>{emptyCatalog ? "当前季度暂无本地目录" : "没有匹配的新番"}</EmptyTitle>
+              <EmptyTitle>{emptyCatalog ? "当前季度暂无目录" : "没有匹配的新番"}</EmptyTitle>
               <EmptyDescription>
                 {emptyCatalog
-                  ? "采集当前季度后即可浏览新番数据。"
+                  ? allowCollection
+                    ? "采集当前季度后即可浏览新番数据。"
+                    : "桌面端完成目录采集后会自动显示在这里。"
                   : appliedKeyword ? "请更换关键词后重试。" : "请调整月份后重试。"}
               </EmptyDescription>
             </EmptyHeader>
             <EmptyContent>
-              {emptyCatalog ? (
+              {emptyCatalog && allowCollection ? (
                 <Button onClick={() => void collectSeason(false)} disabled={collecting}>
                   <CalendarPlus data-icon="inline-start" />
                   {collectingLabel}
                 </Button>
-              ) : (
+              ) : !emptyCatalog ? (
                 <Button
                   variant="outline"
                   onClick={() => {
@@ -562,7 +575,7 @@ export function DiscoveryPage({ onOpenAnimeDetail, onOpenSchedule }: DiscoveryPa
                   <RotateCcw data-icon="inline-start" />
                   清除筛选
                 </Button>
-              )}
+              ) : null}
             </EmptyContent>
           </Empty>
         )

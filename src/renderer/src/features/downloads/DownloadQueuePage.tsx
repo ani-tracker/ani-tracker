@@ -53,8 +53,10 @@ export type DownloadQueueClient = Pick<
 >>;
 
 interface DownloadQueuePageProps {
+  allowDeleteFiles?: boolean;
   client: DownloadQueueClient;
   logScope: "local" | "remote";
+  showLocalPaths?: boolean;
 }
 
 const downloadStatusText: Record<DownloadStatus, string> = {
@@ -73,7 +75,12 @@ const downloadStatusText: Record<DownloadStatus, string> = {
 };
 
 /** 渲染本地与远端共用的下载队列页面。 */
-export function DownloadQueuePage({ client, logScope }: DownloadQueuePageProps) {
+export function DownloadQueuePage({
+  allowDeleteFiles = true,
+  client,
+  logScope,
+  showLocalPaths = true
+}: DownloadQueuePageProps) {
   const capabilities = getAppCapabilities();
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
   const [myAnime, setMyAnime] = useState<MyAnime[]>([]);
@@ -411,10 +418,10 @@ export function DownloadQueuePage({ client, logScope }: DownloadQueuePageProps) 
                           </div>
                         </div>
                       </div>
-                      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground sm:max-w-[45%]">
+                      {showLocalPaths && <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground sm:max-w-[45%]">
                         <Folder className="size-4 shrink-0" />
                         <span className="truncate" title={animeGroup.savePath}>{animeGroup.savePath}</span>
-                      </div>
+                      </div>}
                     </div>
 
                     {!collapsed && (
@@ -465,7 +472,7 @@ export function DownloadQueuePage({ client, logScope }: DownloadQueuePageProps) 
       {client.removeDownload && (
         <ConfirmActionDialog
           confirmLabel={deleteFilesOnRemove ? "删除任务和文件" : "移除任务"}
-          content={removeTarget?.files.some((file) => file.progress > 0) ? (
+          content={allowDeleteFiles && removeTarget?.files.some((file) => file.progress > 0) ? (
             <div
               className={cn(
                 "flex items-start gap-3 rounded-md border p-3",

@@ -850,6 +850,7 @@ async fn serve_renderer(
         .map_err(|_| GatewayHttpError::new(404, "ASSET_NOT_FOUND", "静态资源不可用"))?;
     let is_renderer_entry =
         selected.file_name().and_then(|value| value.to_str()) == Some("index.html");
+    let is_service_worker = selected.file_name().and_then(|value| value.to_str()) == Some("sw.js");
     let script_nonce = is_renderer_entry.then(|| uuid::Uuid::new_v4().simple().to_string());
     let bytes = if let Some(script_nonce) = script_nonce.as_deref() {
         let html = String::from_utf8(bytes).map_err(|_| {
@@ -876,7 +877,7 @@ async fn serve_renderer(
             (CONTENT_LENGTH, &bytes.len().to_string()),
             (
                 CACHE_CONTROL,
-                if is_renderer_entry {
+                if is_renderer_entry || is_service_worker {
                     "no-cache"
                 } else {
                     "public, max-age=31536000, immutable"
@@ -1361,6 +1362,12 @@ mod tests {
         tokio::fs::write(renderer.join("manifest.webmanifest"), b"{}")
             .await
             .expect("write renderer manifest");
+        tokio::fs::write(
+            renderer.join("sw.js"),
+            b"self.addEventListener('fetch',()=>{})",
+        )
+        .await
+        .expect("write renderer service worker");
         let media_bytes = b"0123456789";
         tokio::fs::write(download.join("episode-01.mkv"), media_bytes)
             .await
@@ -1475,6 +1482,19 @@ mod tests {
                 .expect("renderer asset request");
             assert_eq!(response.status(), reqwest::StatusCode::OK, "{asset_path}");
         }
+        let service_worker_response = client
+            .get(format!("{base_url}/sw.js"))
+            .send()
+            .await
+            .expect("renderer service worker request");
+        assert_eq!(service_worker_response.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            service_worker_response
+                .headers()
+                .get(reqwest::header::CACHE_CONTROL)
+                .and_then(|value| value.to_str().ok()),
+            Some("no-cache")
+        );
         let missing_nested_asset = client
             .get(format!("{base_url}/player/assets/app.js"))
             .send()

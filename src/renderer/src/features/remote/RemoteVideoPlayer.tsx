@@ -46,6 +46,7 @@ import {
 } from "./external-player-launch";
 import type { PlaybackSessionClient } from "./playback-session-client";
 import type { RemotePlaylistItem } from "@/features/player/playback-list-model";
+import { readRemotePlaybackMode, storeRemotePlaybackMode } from "./remote-playback-preferences";
 
 const TOOLBAR_HIDE_DELAY_MS = 3_000;
 
@@ -98,7 +99,7 @@ export function RemoteVideoPlayer({
   const commandSequenceRef = useRef(0);
   const [subtitleScale, setSubtitleScale] = useState<PlayerSubtitleScale>(readStoredSubtitleScale);
   const subtitleScaleRef = useRef(subtitleScale);
-  const [requestedMode, setRequestedMode] = useState<RemotePlaybackRequestMode>("direct");
+  const [requestedMode, setRequestedMode] = useState<RemotePlaybackRequestMode>(readRemotePlaybackMode);
   const [session, setSession] = useState<RemotePlaybackSession | null>(null);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [retryNonce, setRetryNonce] = useState(0);
@@ -344,6 +345,7 @@ export function RemoteVideoPlayer({
     automaticFallbackStartedRef.current = value === "transcode";
     setPlaybackError(null);
     setRequestedMode(value);
+    storeRemotePlaybackMode(value);
     console.info("[remote] 手动切换播放模式", {
       taskId: activeItem?.task.id,
       requestedMode: value

@@ -40,7 +40,7 @@ interface ThemeContextValue {
   themePacks: ThemePackManifest[];
   previewAppearance: (appearance: AppearanceSettings) => void;
   clearPreview: () => void;
-  commitAppearance: (appearance: AppearanceSettings) => void;
+  commitAppearance: (appearance: AppearanceSettings) => boolean;
 }
 
 const ThemeContext = createContext<ThemeContextValue | null>(null);
@@ -139,9 +139,11 @@ export function ThemeProvider({ children, loadAppearance, resolveBackground }: T
 
   const commitAppearance = useCallback((next: AppearanceSettings) => {
     const normalized = normalizeAppearanceSettings(next);
+    const cached = writeThemeSnapshot(normalized, systemDark);
     setPersistedAppearance(normalized);
     setPreview(null);
-  }, []);
+    return cached;
+  }, [systemDark]);
 
   const value = useMemo<ThemeContextValue>(() => ({
     appearance,
@@ -215,7 +217,7 @@ function readCachedAppearance(): AppearanceSettings {
   }
 }
 
-function writeThemeSnapshot(appearance: AppearanceSettings, systemDark: boolean): void {
+function writeThemeSnapshot(appearance: AppearanceSettings, systemDark: boolean): boolean {
   const normalized = normalizeAppearanceSettings(appearance);
   const resolvedTheme = resolveThemeMode(normalized, systemDark);
   const pack = resolveThemePack(normalized);
@@ -228,8 +230,10 @@ function writeThemeSnapshot(appearance: AppearanceSettings, systemDark: boolean)
   };
   try {
     window.localStorage.setItem(THEME_CACHE_KEY, JSON.stringify(snapshot));
+    return true;
   } catch (error) {
     console.warn("[renderer] 主题缓存写入失败", error);
+    return false;
   }
 }
 

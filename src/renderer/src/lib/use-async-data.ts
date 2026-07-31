@@ -10,7 +10,7 @@ export function useAsyncData<T>(loader: () => Promise<T>, deps: unknown[] = []) 
 
     setLoading(true);
     Promise.resolve()
-      .then(loader)
+      .then(() => loader())
       .then((result) => {
         if (active) {
           setData(result);

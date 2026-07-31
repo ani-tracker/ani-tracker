@@ -8,15 +8,16 @@ use std::{
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Nonce};
-use ani_contracts::{RemoteGatewayStatus, RemotePairingChallenge};
+use ani_contracts::{AppCommandError, RemoteGatewayStatus, RemotePairingChallenge};
 use ani_domain::{
-    AppSettings, ReportPlaybackProgressInput, SavePlaybackCheckpointInput,
-    SetAnimeWatchProgressInput,
+    AppSettings, Episode, EpisodePreference, MyAnime, ReleaseSourceConfig,
+    ReportPlaybackProgressInput, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
 };
 use ani_remote::{
     parse_trusted_origins, GatewayConfig, ImageCache, ImageCacheAsset, RemoteDeviceAuth,
     RemoteGateway, RemoteGatewayDependencies, RemoteMediaRepository, RemoteMediaSessionService,
     RemoteRpcHandler, RemoteRpcService, RemoteSecretStore, RemoteTlsCertificateStore,
+    REMOTE_SECRET_PLACEHOLDER,
 };
 use ani_repository::prelude::*;
 use ani_storage::Storage;
@@ -168,9 +169,9 @@ impl AppRemoteGatewayState {
         let image_cache = Arc::new(ImageCache::new(cache_directory, image_signing_secret)?);
         let auth = Arc::new(RemoteDeviceAuth::new(Arc::clone(&secret_store)));
         let rpc = Arc::new(RemoteRpcService::new(Arc::new(TauriRemoteRpcHandler {
+            app: app.clone(),
             storage: Arc::clone(&storage),
             downloads: downloads.clone(),
-            media: media.clone(),
         })));
         let media_sessions = Arc::new(RemoteMediaSessionService::new(
             Arc::new(TauriRemoteMediaRepository {
@@ -370,9 +371,9 @@ pub(crate) async fn apply_settings(app: &AppHandle, settings: &AppSettings) {
 }
 
 struct TauriRemoteRpcHandler {
+    app: AppHandle,
     storage: Arc<Mutex<Storage>>,
     downloads: AppDownloadState,
-    media: AppMediaState,
 }
 
 #[async_trait]
@@ -406,6 +407,23 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                     .await
             }
             "listMyAnime" => self.query(|repository| repository.list_my_anime()).await,
+            "upsertMyAnime" => {
+                let mut item: MyAnime = value_arg(&args, 0)?;
+                self.query(move |repository| {
+                    item.download_dir = repository
+                        .list_my_anime()?
+                        .into_iter()
+                        .find(|current| current.id == item.id)
+                        .and_then(|current| current.download_dir);
+                    repository.upsert_my_anime(item)
+                })
+                .await
+            }
+            "removeMyAnime" => {
+                let id = string_arg(&args, 0)?;
+                self.query(move |repository| repository.remove_my_anime(&id))
+                    .await
+            }
             "listMyAnimeWatchProgress" => {
                 self.query(|repository| repository.list_my_anime_watch_progress())
                     .await
@@ -451,10 +469,141 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                 self.query(move |repository| repository.list_episodes(&id))
                     .await
             }
+            "upsertEpisode" => {
+                let episode: Episode = value_arg(&args, 0)?;
+                self.query(move |repository| repository.upsert_episode(&episode))
+                    .await
+            }
             "listEpisodePreferences" => {
                 let id = string_arg(&args, 0)?;
                 self.query(move |repository| repository.list_episode_preferences(&id))
                     .await
+            }
+            "upsertEpisodePreference" => {
+                let preference: EpisodePreference = value_arg(&args, 0)?;
+                self.query(move |repository| repository.upsert_episode_preference(&preference))
+                    .await
+            }
+            "removeEpisodePreference" => {
+                let id = string_arg(&args, 0)?;
+                self.query(move |repository| repository.remove_episode_preference(&id))
+                    .await
+            }
+            "previewEpisodeReleases" => {
+                let anime_id = string_arg(&args, 0)?;
+                let episode_id = string_arg(&args, 1)?;
+                command_value(
+                    crate::commands::sources::preview_episode_releases(
+                        anime_id,
+                        episode_id,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "searchReleases" => {
+                let query = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::sources::search_releases(
+                        query,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "searchAnimeReleases" => {
+                let query = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::sources::search_anime_releases(
+                        query,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "searchRssSubscriptionReleases" => {
+                let query = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::sources::search_rss_subscription_releases(
+                        query,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "getAnimeSourceBindingState" => {
+                let anime_id = string_arg(&args, 0)?;
+                let discover_candidates = args.get(1).and_then(Value::as_bool);
+                command_value(
+                    crate::commands::sources::get_anime_source_binding_state(
+                        anime_id,
+                        discover_candidates,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "confirmAnimeSourceBinding" => {
+                let input = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::sources::confirm_anime_source_binding(
+                        input,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "reportAnimeSourceCandidateMismatch" => {
+                let input = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::sources::report_anime_source_candidate_mismatch(
+                        input,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "removeAnimeSourceCandidateMismatch" => {
+                let input = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::sources::remove_anime_source_candidate_mismatch(
+                        input,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "setAnimeSourceExcluded" => {
+                let input = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::sources::set_anime_source_excluded(
+                        input,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "removeAnimeSourceBinding" => {
+                let anime_id = string_arg(&args, 0)?;
+                let source_id = string_arg(&args, 1)?;
+                command_value(
+                    crate::commands::sources::remove_anime_source_binding(
+                        anime_id,
+                        source_id,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
             }
             "listDownloads" => {
                 let settings = self.downloads.settings()?;
@@ -476,13 +625,27 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                     .downloads
                     .default_engine(&settings)
                     .map_err(|error| error.to_string())?;
+                if engine == ani_domain::TorrentEngineKind::Qbittorrent {
+                    let managed = self.downloads.managed_qbittorrent_status().await?;
+                    if managed.enabled && !managed.running {
+                        log::debug!(
+                            "Rust 远程下载刷新跳过：托管 qBittorrent 未运行，返回持久化快照"
+                        );
+                        return serde_json::to_value(
+                            self.downloads
+                                .service()
+                                .list_for_engine(&engine)
+                                .map_err(|error| error.to_string())?,
+                        )
+                        .map_err(|error| error.to_string());
+                    }
+                }
                 let result = self
                     .downloads
                     .service()
                     .refresh(engine)
                     .await
                     .map_err(|error| error.to_string())?;
-                self.media.schedule_completed_scan(result.tasks.clone());
                 serde_json::to_value(result.tasks).map_err(|error| error.to_string())
             }
             "pauseDownload" => {
@@ -517,6 +680,163 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                 )
                 .map_err(|error| error.to_string())
             }
+            "removeDownload" => {
+                let id = string_arg(&args, 0)?;
+                let settings = self.downloads.settings()?;
+                let engine = self
+                    .downloads
+                    .default_engine(&settings)
+                    .map_err(|error| error.to_string())?;
+                serde_json::to_value(
+                    self.downloads
+                        .service()
+                        .remove(&id, false, &engine)
+                        .await
+                        .map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())
+            }
+            "setDownloadFilePriority" => {
+                let id = string_arg(&args, 0)?;
+                let file_indexes: Vec<i64> = value_arg(&args, 1)?;
+                let priority = args
+                    .get(2)
+                    .and_then(Value::as_i64)
+                    .ok_or_else(|| "远程文件优先级参数缺失".to_owned())?;
+                let settings = self.downloads.settings()?;
+                let engine = self
+                    .downloads
+                    .default_engine(&settings)
+                    .map_err(|error| error.to_string())?;
+                serde_json::to_value(
+                    self.downloads
+                        .service()
+                        .set_file_priority(&id, &file_indexes, priority, &engine)
+                        .await
+                        .map_err(|error| error.to_string())?,
+                )
+                .map_err(|error| error.to_string())
+            }
+            "addDownloadUrl" => {
+                let input = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::downloads::add_download_url(
+                        input,
+                        self.app.clone(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "addReleaseDownload" => {
+                let input = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::downloads::add_release_download(
+                        input,
+                        self.app.clone(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "listSources" => self.query(|repository| repository.list_sources()).await,
+            "setSourceEnabled" => {
+                let source_id = string_arg(&args, 0)?;
+                let enabled = args
+                    .get(1)
+                    .and_then(Value::as_bool)
+                    .ok_or_else(|| "远程下载源状态参数缺失".to_owned())?;
+                self.query(move |repository| repository.set_source_enabled(&source_id, enabled))
+                    .await
+            }
+            "upsertSource" => {
+                let mut source: ReleaseSourceConfig = value_arg(&args, 0)?;
+                self.query(move |repository| {
+                    let incoming_secret = source.api_key.as_deref().map(str::trim);
+                    if incoming_secret.is_none_or(|secret| {
+                        secret.is_empty() || secret == REMOTE_SECRET_PLACEHOLDER
+                    }) {
+                        source.api_key = repository
+                            .list_sources()?
+                            .into_iter()
+                            .find(|current| current.id == source.id)
+                            .and_then(|current| current.api_key);
+                    }
+                    repository.upsert_source(&source)
+                })
+                .await
+            }
+            "getSourceSyncStatus" => command_value(
+                crate::commands::source_sync::get_source_sync_status(self.app.state()).await,
+            ),
+            "getSettings" => {
+                let defaults = self.app.state::<crate::storage::AppStorageState>();
+                let platform_defaults = defaults.platform_defaults().clone();
+                self.query(move |repository| repository.get_settings(&platform_defaults))
+                    .await
+            }
+            "updateSettings" => {
+                let patch = args
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| "远程设置参数缺失".to_owned())?;
+                command_value(
+                    crate::commands::data::update_settings(
+                        patch,
+                        self.app.clone(),
+                        self.app.state(),
+                        self.app.state(),
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "getAutomationSchedulerStatus" => command_value(
+                crate::commands::automation::get_automation_scheduler_status(self.app.state())
+                    .await,
+            ),
+            "getQbittorrentManagedStatus" => command_value(
+                crate::commands::downloads::get_qbittorrent_managed_status(self.app.state()).await,
+            ),
+            "startQbittorrentManaged" => command_value(
+                crate::commands::downloads::start_qbittorrent_managed(
+                    self.app.clone(),
+                    self.app.state(),
+                )
+                .await,
+            ),
+            "stopQbittorrentManaged" => command_value(
+                crate::commands::downloads::stop_qbittorrent_managed(
+                    self.app.clone(),
+                    self.app.state(),
+                )
+                .await,
+            ),
+            "getEmbeddedTorrentStatus" => command_value(
+                crate::commands::downloads::get_embedded_torrent_status(self.app.state()).await,
+            ),
+            "startEmbeddedTorrent" => command_value(
+                crate::commands::downloads::start_embedded_torrent(
+                    self.app.clone(),
+                    self.app.state(),
+                )
+                .await,
+            ),
+            "stopEmbeddedTorrent" => command_value(
+                crate::commands::downloads::stop_embedded_torrent(
+                    self.app.clone(),
+                    self.app.state(),
+                )
+                .await,
+            ),
+            "restartEmbeddedTorrent" => command_value(
+                crate::commands::downloads::restart_embedded_torrent(
+                    self.app.clone(),
+                    self.app.state(),
+                )
+                .await,
+            ),
             _ => Err("远程方法未装配".to_owned()),
         }
     }
@@ -539,6 +859,13 @@ impl TauriRemoteRpcHandler {
         .map_err(|error| error.to_string())?
         .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string()))
     }
+}
+
+/** 将 Tauri 命令结果转换为远程 RPC 的 JSON 返回值。 */
+fn command_value<T: serde::Serialize>(result: Result<T, AppCommandError>) -> Result<Value, String> {
+    result
+        .map_err(|error| format!("Tauri command failed code={}", error.code))
+        .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string()))
 }
 
 struct TauriRemoteMediaRepository {
