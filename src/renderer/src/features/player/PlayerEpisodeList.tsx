@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/cn";
 import type { PlayerEpisodeUiItem, PlayerEpisodeUiStatus } from "./player-ui-model";
 
@@ -66,9 +67,14 @@ export function PlayerEpisodeList({
   }, [activeItemId, scrollable]);
 
   const content = (
-    <div className="flex flex-col" role="list" aria-label={`${animeTitle} 播放列表`}>
+    <div className="flex min-w-0 max-w-full flex-col overflow-hidden" role="list" aria-label={`${animeTitle} 播放列表`}>
       {items.map((item, index) => (
-        <div key={item.id} ref={item.id === activeItemId ? activeRowRef : undefined} role="listitem">
+        <div
+          key={item.id}
+          ref={item.id === activeItemId ? activeRowRef : undefined}
+          className="min-w-0 max-w-full overflow-hidden"
+          role="listitem"
+        >
           <EpisodeRow item={item} onSelect={onSelect} />
           {index < items.length - 1 && <Separator />}
         </div>
@@ -77,29 +83,36 @@ export function PlayerEpisodeList({
   );
 
   return (
-    <section
-      aria-label={showHeader ? undefined : `${animeTitle} 播放列表`}
-      aria-labelledby={showHeader ? "player-playlist-title" : undefined}
-      className={cn("flex min-h-0 flex-col", scrollable && "h-full")}
-    >
-      {showHeader && (
-        <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
-          <div className="min-w-0">
-            <h2 id="player-playlist-title" className="text-base font-semibold">播放列表</h2>
+    <TooltipProvider delayDuration={300}>
+      <section
+        aria-label={showHeader ? undefined : `${animeTitle} 播放列表`}
+        aria-labelledby={showHeader ? "player-playlist-title" : undefined}
+        className={cn("flex min-w-0 max-w-full flex-col overflow-hidden", scrollable && "h-full min-h-0")}
+      >
+        {showHeader && (
+          <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5">
+            <div className="min-w-0">
+              <h2 id="player-playlist-title" className="text-base font-semibold">播放列表</h2>
+            </div>
+            <Badge>{viewedCount}/{items.length}</Badge>
           </div>
-          <Badge>{viewedCount}/{items.length}</Badge>
-        </div>
-      )}
-      {items.length === 0 ? (
-        <div className="flex min-h-32 flex-col items-center justify-center gap-2 px-4 text-center text-muted-foreground">
-          <ListVideo />
-          <p className="text-sm font-medium text-foreground">没有可播放视频</p>
-          <p className="text-xs">当前番剧暂时没有已完成的视频文件</p>
-        </div>
-      ) : scrollable ? (
-        <ScrollArea ref={scrollAreaRef} className="min-h-0 flex-1 px-2">{content}</ScrollArea>
-      ) : content}
-    </section>
+        )}
+        {items.length === 0 ? (
+          <div className="flex min-h-32 flex-col items-center justify-center gap-2 px-4 text-center text-muted-foreground">
+            <ListVideo />
+            <p className="text-sm font-medium text-foreground">没有可播放视频</p>
+            <p className="text-xs">当前番剧暂时没有已完成的视频文件</p>
+          </div>
+        ) : scrollable ? (
+          <ScrollArea
+            ref={scrollAreaRef}
+            className="min-h-0 min-w-0 max-w-full flex-1 px-2 [&_[data-radix-scroll-area-viewport]>div]:!block [&_[data-radix-scroll-area-viewport]>div]:!w-full"
+          >
+            {content}
+          </ScrollArea>
+        ) : content}
+      </section>
+    </TooltipProvider>
   );
 }
 
@@ -119,7 +132,7 @@ function EpisodeRow({
       aria-current={active ? "true" : undefined}
       aria-label={`${item.numberLabel} ${item.title}，${item.statusLabel}`}
       className={cn(
-        "h-auto min-h-14 w-full justify-start rounded-none border-l-2 border-transparent px-4 py-2 text-left sm:px-3",
+        "h-auto min-h-14 w-full min-w-0 max-w-full justify-start overflow-hidden rounded-none border-l-2 border-transparent px-4 py-2 text-left sm:px-3",
         active && "border-primary bg-primary/10 hover:bg-primary/15"
       )}
       disabled={disabled}
@@ -131,7 +144,14 @@ function EpisodeRow({
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex min-w-0 items-center gap-2">
-          <span className="truncate text-sm font-medium">{item.title}</span>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="min-w-0 truncate text-sm font-medium">{item.title}</span>
+            </TooltipTrigger>
+            <TooltipContent className="max-w-[min(28rem,calc(100vw-2rem))] break-words" side="left">
+              {item.title}
+            </TooltipContent>
+          </Tooltip>
           {active && <Badge tone="primary-soft">正在播放</Badge>}
         </span>
         <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
