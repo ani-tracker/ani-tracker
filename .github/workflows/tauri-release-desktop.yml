@@ -325,6 +325,7 @@ jobs:
         run: |
           $thumbprint = "${{ steps.windows-signing.outputs.thumbprint }}"
           if (-not $thumbprint) { throw "Windows signing certificate was not imported" }
+          $configPath = Join-Path $env:RUNNER_TEMP "tauri-windows-release.conf.json"
           $config = @{
             bundle = @{
               resources = @{ "../.tauri-remote-pwa/" = "remote-pwa/" }
@@ -335,7 +336,9 @@ jobs:
               }
             }
           } | ConvertTo-Json -Depth 5 -Compress
-          pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}" --config $config
+          [IO.File]::WriteAllText($configPath, $config, [Text.UTF8Encoding]::new($false))
+          Write-Host "[windows-build] Tauri 动态配置已写入 $configPath"
+          pnpm exec tauri build --ci --bundles "${{ matrix.bundles }}" --config "$configPath"
 
       - name: Build self-signed macOS app
         if: matrix.platform == 'darwin'

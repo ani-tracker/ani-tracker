@@ -52,6 +52,20 @@ test("Windows 自签证书仅导入私钥并限制执行时间", () => {
   assert.match(windowsSignatureVerification, /SignerCertificate\.Thumbprint/);
 });
 
+test("Windows 构建通过临时 JSON 文件传递动态签名配置", () => {
+  const buildStep = workflow.match(
+    /name: Build signed Windows installers[\s\S]*?(?=\n      - name: Build self-signed macOS app)/
+  )?.[0];
+  assert.ok(buildStep);
+  assert.match(buildStep, /\$configPath = Join-Path \$env:RUNNER_TEMP "tauri-windows-release\.conf\.json"/);
+  assert.match(
+    buildStep,
+    /\[IO\.File\]::WriteAllText\(\$configPath, \$config, \[Text\.UTF8Encoding\]::new\(\$false\)\)/
+  );
+  assert.match(buildStep, /--config "\$configPath"/);
+  assert.doesNotMatch(buildStep, /--config\s+["']?\$config["']?(?:\s|$)/m);
+});
+
 test("Windows 自签证书可无交互签名且篡改文件会被拒绝", { skip: process.platform !== "win32" }, () => {
   const pwshProbe = spawnSync("pwsh", ["-NoProfile", "-Command", "exit 0"]);
   const hasPwsh = pwshProbe.error?.code !== "ENOENT";
