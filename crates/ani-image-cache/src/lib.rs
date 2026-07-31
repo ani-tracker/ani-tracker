@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, Ipv6Addr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -20,6 +20,7 @@ use url::{Host, Url};
 const DEFAULT_MAX_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 const DEFAULT_MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 const TOKEN_LIFETIME: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const REMOTE_PATH_PRUNE_THRESHOLD: usize = 4_096;
 const MAX_REDIRECTS: usize = 3;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -77,6 +78,12 @@ struct ImageCacheMetadata {
     created_at: String,
 }
 
+#[derive(Debug, Clone)]
+struct RemoteImagePath {
+    path: String,
+    expires_at: u64,
+}
+
 /// 下载公网图片到共享磁盘缓存，并签发短期防篡改同源 URL。
 pub struct ImageCache {
     cache_directory: RwLock<PathBuf>,
@@ -85,6 +92,7 @@ pub struct ImageCache {
     max_bytes: u64,
     max_image_bytes: u64,
     key_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    remote_paths: StdMutex<HashMap<String, RemoteImagePath>>,
 }
 
 impl ImageCache {
@@ -104,6 +112,7 @@ impl ImageCache {
             max_bytes: DEFAULT_MAX_BYTES,
             max_image_bytes: DEFAULT_MAX_IMAGE_BYTES,
             key_locks: Mutex::new(HashMap::new()),
+            remote_paths: StdMutex::new(HashMap::new()),
         })
     }
 
@@ -120,23 +129,60 @@ impl ImageCache {
         *self.cache_directory.write().await = directory;
     }
 
-    /// 为公开 HTTP(S) 图片创建七天有效的同源缓存路径。
+    /// 为公开 HTTP(S) 图片复用或创建七天有效的同源缓存路径。
     pub fn create_remote_path(&self, source_url: &str) -> Result<String, ImageCacheError> {
+        self.create_remote_path_at(source_url, now_millis())
+    }
+
+    /// 在指定时间复用未过期路径，供签名逻辑和边界测试共用。
+    fn create_remote_path_at(
+        &self,
+        source_url: &str,
+        now_millis: u64,
+    ) -> Result<String, ImageCacheError> {
         let source_url = normalize_source_url(source_url)?;
+        let cache_key = hex_digest(Sha256::digest(source_url.as_bytes()));
+        let mut remote_paths = self
+            .remote_paths
+            .lock()
+            .map_err(|_| ImageCacheError::new("IMAGE_TOKEN_INVALID", "图片签名缓存暂时不可用"))?;
+        if let Some(record) = remote_paths.get(&cache_key) {
+            if record.expires_at >= now_millis {
+                log::debug!(
+                    "图片签名路径复用 cache_key={cache_key}, expires_at={}",
+                    record.expires_at
+                );
+                return Ok(record.path.clone());
+            }
+            remote_paths.remove(&cache_key);
+        }
         let payload = ImageTokenPayload {
             source_url,
-            expires_at: now_millis()
+            expires_at: now_millis
                 .saturating_add(TOKEN_LIFETIME.as_millis().try_into().unwrap_or(u64::MAX)),
         };
+        let expires_at = payload.expires_at;
         let payload = URL_SAFE_NO_PAD.encode(
             serde_json::to_vec(&payload)
                 .map_err(|_| ImageCacheError::new("IMAGE_TOKEN_INVALID", "图片地址无效"))?,
         );
         let signature = self.sign(payload.as_bytes());
-        Ok(format!(
+        let path = format!(
             "/api/images/{payload}.{}",
             URL_SAFE_NO_PAD.encode(signature)
-        ))
+        );
+        if remote_paths.len() >= REMOTE_PATH_PRUNE_THRESHOLD {
+            remote_paths.retain(|_, record| record.expires_at >= now_millis);
+        }
+        log::debug!("图片签名路径已签发 cache_key={cache_key}, expires_at={expires_at}");
+        remote_paths.insert(
+            cache_key,
+            RemoteImagePath {
+                path: path.clone(),
+                expires_at,
+            },
+        );
+        Ok(path)
     }
 
     /// 校验签名令牌，命中磁盘缓存或安全下载图片。
@@ -692,6 +738,27 @@ mod tests {
                 .code,
             "IMAGE_TOKEN_INVALID"
         );
+    }
+
+    /// 验证同一源图在签名有效期内复用原路径，过期后才重新签发。
+    #[test]
+    fn reuses_remote_path_until_token_expires() {
+        let cache = ImageCache::new(PathBuf::from("cache"), vec![7; 32]).expect("create cache");
+        let first = cache
+            .create_remote_path_at("https://example.com/image.png", 1_000)
+            .expect("create first token");
+        let reused = cache
+            .create_remote_path_at("https://example.com/image.png", 2_000)
+            .expect("reuse token");
+        let renewed = cache
+            .create_remote_path_at(
+                "https://example.com/image.png",
+                1_001 + TOKEN_LIFETIME.as_millis() as u64,
+            )
+            .expect("renew token");
+
+        assert_eq!(reused, first);
+        assert_ne!(renewed, first);
     }
 
     /// 验证常见本地、私网和文档地址均不能被缓存入口访问。
