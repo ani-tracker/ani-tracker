@@ -14,7 +14,7 @@ import { ReleaseSearchPage } from "@/features/release-search/ReleaseSearchPage";
 import { RemoteDownloadsPage } from "@/features/remote/RemoteDownloadsPage";
 import { RemotePairingPage } from "@/features/remote/RemotePairingPage";
 import { RemotePlayerPage, resolveRemotePlayerTaskId } from "@/features/remote/RemotePlayerPage";
-import { RemoteSettingsPage } from "@/features/remote/RemoteSettingsPage";
+import { SettingsPage } from "@/features/settings/SettingsPage";
 import { SourcesPage } from "@/features/sources/SourcesPage";
 import {
   appApi,
@@ -300,6 +300,6 @@ function renderRemotePage(page: RemotePageId, options: {
     case "sources":
       return <SourcesPage allowImmediateSync={false} />;
     case "settings":
-      return <RemoteSettingsPage />;
+      return <SettingsPage />;
   }
 }

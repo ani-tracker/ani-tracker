@@ -32,9 +32,8 @@ async function loadRuntimeAppearance(): Promise<AppearanceSettings | undefined> 
   return (await appApi.getSettings()).appearance;
 }
 
-/** 将主题 JSON 中的逻辑图片引用解析为宿主受控地址。 */
+/** 将主题 JSON 中的逻辑图片引用解析为当前运行时受控地址。 */
 async function resolveRuntimeThemeBackground(themeId: string, fileName: string): Promise<string | undefined> {
-  if (!isLocalAppRuntime()) return undefined;
   return (await appApi.resolveThemeBackground(themeId, fileName))?.url;
 }
 

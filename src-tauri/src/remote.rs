@@ -776,10 +776,22 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                     .await
             }
             "updateSettings" => {
-                let patch = args
+                let mut patch = args
                     .first()
                     .cloned()
                     .ok_or_else(|| "远程设置参数缺失".to_owned())?;
+                if patch
+                    .pointer("/download/qbittorrent/password")
+                    .and_then(Value::as_str)
+                    == Some(REMOTE_SECRET_PLACEHOLDER)
+                {
+                    let defaults = self.app.state::<crate::storage::AppStorageState>();
+                    let platform_defaults = defaults.platform_defaults().clone();
+                    let current = self
+                        .query(move |repository| repository.get_settings(&platform_defaults))
+                        .await?;
+                    restore_remote_settings_secrets(&mut patch, &current);
+                }
                 command_value(
                     crate::commands::data::update_settings(
                         patch,
@@ -791,6 +803,9 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                     )
                     .await,
                 )
+            }
+            "testQbittorrent" => {
+                command_value(crate::commands::downloads::test_qbittorrent(self.app.state()).await)
             }
             "getAutomationSchedulerStatus" => command_value(
                 crate::commands::automation::get_automation_scheduler_status(self.app.state())
@@ -858,6 +873,20 @@ impl TauriRemoteRpcHandler {
         .await
         .map_err(|error| error.to_string())?
         .and_then(|value| serde_json::to_value(value).map_err(|error| error.to_string()))
+    }
+}
+
+/// 将远程脱敏占位值替换为 SQLite 中现有秘密，避免无意覆盖密码。
+fn restore_remote_settings_secrets(patch: &mut Value, current: &Value) {
+    let Some(password) = patch.pointer_mut("/download/qbittorrent/password") else {
+        return;
+    };
+    if password.as_str() != Some(REMOTE_SECRET_PLACEHOLDER) {
+        return;
+    }
+    if let Some(current_password) = current.pointer("/download/qbittorrent/password") {
+        *password = current_password.clone();
+        log::debug!("Rust 远程设置保留现有 qBittorrent 密码");
     }
 }
 
@@ -1168,6 +1197,24 @@ mod tests {
             Some("https://compiled.example".to_owned())
         );
         assert_eq!(resolve_trusted_origins_value(None, Some("  ")), None);
+    }
+
+    /// 验证远程回传脱敏密码时继续使用宿主现有秘密。
+    #[test]
+    fn preserves_qbittorrent_password_placeholder() {
+        let mut patch = serde_json::json!({
+            "download": { "qbittorrent": { "password": REMOTE_SECRET_PLACEHOLDER } }
+        });
+        let current = serde_json::json!({
+            "download": { "qbittorrent": { "password": "existing-secret" } }
+        });
+
+        restore_remote_settings_secrets(&mut patch, &current);
+
+        assert_eq!(
+            patch.pointer("/download/qbittorrent/password"),
+            Some(&Value::String("existing-secret".to_owned()))
+        );
     }
 
     /// 验证开发产物存在时优先使用工作区 PWA 目录。

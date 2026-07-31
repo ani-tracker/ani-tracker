@@ -103,6 +103,7 @@ const METHODS: &[MethodDefinition] = &[
     method("getSourceSyncStatus", "sources.read", RpcEffect::Read),
     method("getSettings", "settings.read", RpcEffect::Read),
     method("updateSettings", "settings.write", RpcEffect::Write),
+    method("testQbittorrent", "host.control", RpcEffect::Read),
     method(
         "getAutomationSchedulerStatus",
         "settings.read",
@@ -249,6 +250,7 @@ fn validate_args(method: &str, args: Vec<Value>) -> Result<Vec<Value>, RemoteRpc
         | "listSources"
         | "getSourceSyncStatus"
         | "getSettings"
+        | "testQbittorrent"
         | "getAutomationSchedulerStatus"
         | "getQbittorrentManagedStatus"
         | "startQbittorrentManaged"
@@ -538,7 +540,7 @@ fn validate_args(method: &str, args: Vec<Value>) -> Result<Vec<Value>, RemoteRpc
         ),
         "updateSettings" => validate_object_input(
             args,
-            &["automation", "sourceSync", "network"],
+            &["download", "automation", "sourceSync", "network"],
             validate_settings_patch,
         ),
         "setAnimeWatchProgress" => {
@@ -770,9 +772,169 @@ fn validate_source(object: &Map<String, Value>) -> Result<(), RemoteRpcError> {
     validate_optional_text(object.get("apiKey"), "访问凭据", 2_048)
 }
 
+/// 校验远程可修改的完整下载配置边界。
+fn validate_download_settings(value: &Value) -> Result<(), RemoteRpcError> {
+    let download = validate_nested_object(
+        value,
+        &[
+            "defaultDownloadDir",
+            "createAnimeFolder",
+            "animeFolderPattern",
+            "temporaryDownloadDir",
+            "defaultTorrentEngine",
+            "allowMeteredDownloads",
+            "embedded",
+            "qbittorrent",
+        ],
+        "下载设置",
+    )?;
+    if download.contains_key("defaultDownloadDir") {
+        validate_text(download.get("defaultDownloadDir"), "默认下载目录", 1, 4_096)?;
+    }
+    if download.contains_key("animeFolderPattern") {
+        validate_text(download.get("animeFolderPattern"), "番剧目录模板", 1, 512)?;
+    }
+    validate_optional_text(download.get("temporaryDownloadDir"), "临时下载目录", 4_096)?;
+    validate_optional_bool(download.get("createAnimeFolder"), "创建番剧目录开关")?;
+    validate_optional_bool(download.get("allowMeteredDownloads"), "移动网络下载开关")?;
+    if let Some(engine) = download.get("defaultTorrentEngine") {
+        engine
+            .as_str()
+            .filter(|value| matches!(*value, "embedded" | "qbittorrent"))
+            .ok_or_else(|| invalid_args("默认下载引擎无效"))?;
+    }
+    if let Some(embedded) = download.get("embedded") {
+        validate_embedded_download_settings(embedded)?;
+    }
+    if let Some(qbittorrent) = download.get("qbittorrent") {
+        validate_qbittorrent_settings(qbittorrent)?;
+    }
+    Ok(())
+}
+
+/// 校验内置 torrent-core 的远程配置。
+fn validate_embedded_download_settings(value: &Value) -> Result<(), RemoteRpcError> {
+    let embedded = validate_nested_object(
+        value,
+        &[
+            "enabled",
+            "listenPort",
+            "dhtEnabled",
+            "upnpEnabled",
+            "maxActiveDownloads",
+            "maxDownloadSpeed",
+            "maxUploadSpeed",
+            "seedingLimits",
+        ],
+        "内置下载核心设置",
+    )?;
+    for key in ["enabled", "dhtEnabled", "upnpEnabled"] {
+        validate_optional_bool(embedded.get(key), "内置下载核心开关")?;
+    }
+    validate_optional_integer(embedded.get("listenPort"), "监听端口", 1_024, 65_535)?;
+    validate_optional_integer(embedded.get("maxActiveDownloads"), "活动下载数", 1, 100)?;
+    for key in ["maxDownloadSpeed", "maxUploadSpeed"] {
+        validate_optional_integer(embedded.get(key), "内置核心限速", 0, 10_000_000)?;
+    }
+    if let Some(seeding) = embedded.get("seedingLimits") {
+        validate_seeding_limits(seeding)?;
+    }
+    Ok(())
+}
+
+/// 校验外部和托管 qBittorrent 的远程配置。
+fn validate_qbittorrent_settings(value: &Value) -> Result<(), RemoteRpcError> {
+    let qbittorrent = validate_nested_object(
+        value,
+        &[
+            "baseUrl",
+            "username",
+            "password",
+            "autoConnect",
+            "downloadLimitKiBps",
+            "uploadLimitKiBps",
+            "seedingLimits",
+            "managed",
+        ],
+        "qBittorrent 设置",
+    )?;
+    if qbittorrent.contains_key("baseUrl") {
+        validate_http_url(qbittorrent.get("baseUrl"), "qBittorrent WebUI 地址")?;
+    }
+    validate_optional_text(qbittorrent.get("username"), "qBittorrent 用户名", 256)?;
+    validate_optional_text(qbittorrent.get("password"), "qBittorrent 密码", 2_048)?;
+    validate_optional_bool(qbittorrent.get("autoConnect"), "qBittorrent 自动连接开关")?;
+    for key in ["downloadLimitKiBps", "uploadLimitKiBps"] {
+        validate_optional_integer(qbittorrent.get(key), "qBittorrent 限速", 0, 10_000_000)?;
+    }
+    if let Some(seeding) = qbittorrent.get("seedingLimits") {
+        validate_seeding_limits(seeding)?;
+    }
+    if let Some(managed) = qbittorrent.get("managed") {
+        let managed = validate_nested_object(
+            managed,
+            &["enabled", "startupTimeoutMs"],
+            "托管 qBittorrent 设置",
+        )?;
+        validate_optional_bool(managed.get("enabled"), "托管 qBittorrent 开关")?;
+        validate_optional_integer(
+            managed.get("startupTimeoutMs"),
+            "托管 qBittorrent 启动超时",
+            1_000,
+            120_000,
+        )?;
+    }
+    Ok(())
+}
+
+/// 校验两种下载引擎共用的做种限制。
+fn validate_seeding_limits(value: &Value) -> Result<(), RemoteRpcError> {
+    let limits = validate_nested_object(
+        value,
+        &[
+            "enabled",
+            "ratioEnabled",
+            "ratioLimit",
+            "timeEnabled",
+            "timeLimitMinutes",
+        ],
+        "做种限制",
+    )?;
+    for key in ["enabled", "ratioEnabled", "timeEnabled"] {
+        validate_optional_bool(limits.get(key), "做种限制开关")?;
+    }
+    if let Some(ratio) = limits.get("ratioLimit") {
+        validate_number(Some(ratio), "分享率", 0.1, 1_000.0)?;
+    }
+    validate_optional_integer(limits.get("timeLimitMinutes"), "做种时间", 0, 525_600)
+}
+
+/// 校验可选整数是否位于允许范围。
+fn validate_optional_integer(
+    value: Option<&Value>,
+    label: &str,
+    minimum: i64,
+    maximum: i64,
+) -> Result<(), RemoteRpcError> {
+    match value {
+        None | Some(Value::Null) => Ok(()),
+        Some(value)
+            if value
+                .as_i64()
+                .is_some_and(|number| (minimum..=maximum).contains(&number)) =>
+        {
+            Ok(())
+        }
+        _ => Err(invalid_args(format!("{label}范围无效"))),
+    }
+}
+
 fn validate_settings_patch(object: &Map<String, Value>) -> Result<(), RemoteRpcError> {
     if object.is_empty() {
         return Err(invalid_args("设置更新不能为空"));
+    }
+    if let Some(download) = object.get("download") {
+        validate_download_settings(download)?;
     }
     if let Some(automation) = object.get("automation") {
         let automation = validate_nested_object(
@@ -1088,7 +1250,33 @@ fn sanitize_source(value: &mut Value) -> Result<(), RemoteRpcError> {
 
 fn sanitize_settings(value: &mut Value) -> Result<(), RemoteRpcError> {
     let object = require_result_object(value, "应用设置")?;
-    object.retain(|key, _| matches!(key.as_str(), "automation" | "sourceSync" | "network"));
+    object.retain(|key, _| {
+        matches!(
+            key.as_str(),
+            "download" | "automation" | "sourceSync" | "network"
+        )
+    });
+    if let Some(download) = object.get_mut("download") {
+        let download = require_result_object(download, "下载设置")?;
+        if let Some(qbittorrent) = download.get_mut("qbittorrent") {
+            let qbittorrent = require_result_object(qbittorrent, "qBittorrent 设置")?;
+            if qbittorrent
+                .get("password")
+                .and_then(Value::as_str)
+                .is_some_and(|password| !password.is_empty())
+            {
+                qbittorrent.insert(
+                    "password".to_owned(),
+                    Value::String(REMOTE_SECRET_PLACEHOLDER.to_owned()),
+                );
+            }
+            if let Some(managed) = qbittorrent.get_mut("managed") {
+                let managed = require_result_object(managed, "托管 qBittorrent 设置")?;
+                managed.remove("binaryPath");
+                managed.remove("profileDir");
+            }
+        }
+    }
     if let Some(network) = object.get_mut("network") {
         let network = require_result_object(network, "网络设置")?;
         network.retain(|key, _| key == "metadataProxy");
@@ -1240,6 +1428,28 @@ mod tests {
                 }])),
                 "getSettings" => Ok(json!({
                     "appearance": { "themeMode": "dark" },
+                    "download": {
+                        "defaultDownloadDir": "/Users/test/Downloads",
+                        "createAnimeFolder": true,
+                        "animeFolderPattern": "{title}",
+                        "defaultTorrentEngine": "qbittorrent",
+                        "embedded": { "enabled": false },
+                        "qbittorrent": {
+                            "baseUrl": "http://127.0.0.1:18080",
+                            "username": "admin",
+                            "password": "real-password",
+                            "autoConnect": true,
+                            "downloadLimitKiBps": 0,
+                            "uploadLimitKiBps": 0,
+                            "seedingLimits": {},
+                            "managed": {
+                                "enabled": true,
+                                "binaryPath": "/usr/bin/qbittorrent-nox",
+                                "profileDir": "/Users/test/qbittorrent",
+                                "startupTimeoutMs": 15000
+                            }
+                        }
+                    },
                     "automation": { "scheduledCheckEnabled": true },
                     "sourceSync": { "enabled": true, "dailyTime": "09:00" },
                     "network": {
@@ -1288,6 +1498,41 @@ mod tests {
         assert_eq!(invalid.code, "INVALID_ARGUMENTS");
     }
 
+    /// 验证远程可以保存下载目录、引擎和做种配置。
+    #[tokio::test]
+    async fn accepts_remote_download_settings() {
+        let service = RemoteRpcService::new(std::sync::Arc::new(EchoHandler));
+        let result = service
+            .dispatch(
+                json!({
+                    "method": "updateSettings",
+                    "args": [{
+                        "download": {
+                            "defaultDownloadDir": "/Users/test/Downloads",
+                            "createAnimeFolder": true,
+                            "animeFolderPattern": "{year}-{month}/{title}",
+                            "temporaryDownloadDir": "/Users/test/Downloads/.incomplete",
+                            "defaultTorrentEngine": "embedded",
+                            "embedded": {
+                                "enabled": true,
+                                "listenPort": 51413,
+                                "maxActiveDownloads": 3,
+                                "seedingLimits": {
+                                    "enabled": true,
+                                    "ratioLimit": 2.0,
+                                    "timeLimitMinutes": 120
+                                }
+                            }
+                        }
+                    }]
+                }),
+                &["settings.write".to_owned()],
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
     /// 验证远程下载和设置写入不能越过本地文件与桌面字段边界。
     #[tokio::test]
     async fn rejects_local_file_and_desktop_mutations() {
@@ -1297,6 +1542,7 @@ mod tests {
             json!({ "method": "addDownloadUrl", "args": [{ "url": "magnet:?xt=urn:btih:abc", "savePath": "/tmp" }] }),
             json!({ "method": "updateSettings", "args": [{ "storage": { "userDataDir": "/tmp" } }] }),
             json!({ "method": "updateSettings", "args": [{ "network": { "remoteAccess": { "port": 1 } } }] }),
+            json!({ "method": "updateSettings", "args": [{ "download": { "qbittorrent": { "managed": { "binaryPath": "/tmp/qb" } } } }] }),
         ] {
             let error = service
                 .dispatch(
@@ -1361,5 +1607,15 @@ mod tests {
         assert!(settings.get("appearance").is_none());
         assert!(settings["network"].get("remoteAccess").is_none());
         assert!(settings["network"].get("metadataProxy").is_some());
+        assert_eq!(
+            settings["download"]["qbittorrent"]["password"],
+            REMOTE_SECRET_PLACEHOLDER
+        );
+        assert!(settings["download"]["qbittorrent"]["managed"]
+            .get("binaryPath")
+            .is_none());
+        assert!(settings["download"]["qbittorrent"]["managed"]
+            .get("profileDir")
+            .is_none());
     }
 }
