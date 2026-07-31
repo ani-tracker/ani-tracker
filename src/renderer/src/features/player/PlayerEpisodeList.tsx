@@ -152,10 +152,9 @@ function EpisodeRow({
               {item.title}
             </TooltipContent>
           </Tooltip>
-          {active && <Badge tone="primary-soft">正在播放</Badge>}
         </span>
         <span className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">
-          {item.meta} · {item.statusLabel}
+          {item.meta}{active ? null : ` · ${item.statusLabel}`}
         </span>
         {item.progress > 0 && item.progress < 1 && (
           <Progress className="mt-1 h-1" value={item.progress} />
