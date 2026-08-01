@@ -658,6 +658,7 @@ async fn maps_torrent_core_protocol_and_options() {
         .expect("add call");
     assert_eq!(add.1["selectedFileIndexes"], json!([0]));
     assert_eq!(add.1["paused"], true);
+    assert_eq!(add.1["savePath"], "C:/Downloads");
     assert_eq!(*transport.shutdown_count.lock().expect("shutdown count"), 1);
 }
 

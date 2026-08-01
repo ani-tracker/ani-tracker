@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod download_path;
+
+pub use download_path::resolve_anime_download_path;
+
 /// 追番状态，与 TypeScript `AnimeStatus` 契约保持一致。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

@@ -9,7 +9,7 @@ use ani_contracts::{
     QbittorrentManagedStatus,
 };
 use ani_domain::{
-    AppSettings, DownloadTask, Episode, Release, SubtitleLanguage, SubtitlePreference,
+    AppSettings, DownloadTask, Episode, MyAnime, Release, SubtitleLanguage, SubtitlePreference,
     TorrentEngineKind, TorrentFile,
 };
 use ani_downloads::{
@@ -365,6 +365,19 @@ impl AppDownloadState {
             .repository()
             .get_settings(&self.platform_defaults)
             .map_err(|error| format!("读取下载设置失败：{error}"))
+    }
+
+    /// 按番剧目录 ID 读取追番配置，供下载路径规则解析使用。
+    pub(crate) fn find_my_anime(&self, anime_id: &str) -> Result<Option<MyAnime>, String> {
+        let storage = self
+            .storage
+            .lock()
+            .map_err(|error| format!("读取追番下载目录失败：{error}"))?;
+        storage
+            .repository()
+            .list_my_anime()
+            .map_err(|error| format!("读取追番下载目录失败：{error}"))
+            .map(|items| items.into_iter().find(|item| item.anime.id == anime_id))
     }
 
     /// 读取当前设置选择的默认下载引擎。

@@ -4,7 +4,7 @@ use ani_contracts::{
     AppCommandError, DownloadServiceStatus, EmbeddedTorrentCoreStatus, QbittorrentManagedStatus,
     TorrentConnectionTestResult,
 };
-use ani_domain::{DownloadTask, Release, TorrentEngineKind};
+use ani_domain::{resolve_anime_download_path, DownloadTask, MyAnime, Release, TorrentEngineKind};
 use ani_downloads::{
     AddTorrentOptions, DownloadAddRequest, DownloadServiceError, DownloadTaskContext,
 };
@@ -447,6 +447,17 @@ pub(crate) async fn add_release_download(
     let fansub_group_id = input
         .fansub_group_id
         .or_else(|| input.release.fansub_group_id.clone());
+    let tracked_anime = match anime_id.as_deref() {
+        Some(anime_id) => state
+            .find_my_anime(anime_id)
+            .map_err(|error| runtime_error("读取追番下载目录", error))?,
+        None => None,
+    };
+    let save_path = resolve_release_save_path(
+        input.save_path.as_deref(),
+        &settings,
+        tracked_anime.as_ref(),
+    )?;
     let correlation_tag = build_correlation_tag(
         anime_id.as_deref(),
         input.episode_id.as_deref(),
@@ -467,7 +478,7 @@ pub(crate) async fn add_release_download(
             engine,
             source: prepared.source(),
             options: AddTorrentOptions {
-                save_path: resolve_save_path(input.save_path.as_deref(), &settings)?,
+                save_path,
                 correlation_tag: Some(correlation_tag),
                 paused: input.paused,
                 ..AddTorrentOptions::default()
@@ -476,6 +487,27 @@ pub(crate) async fn add_release_download(
         })
         .await
         .map_err(|error| map_download_error("添加资源下载", error))
+}
+
+/// 解析资源下载目录，显式目录优先于追番规则和全局默认目录。
+fn resolve_release_save_path(
+    requested: Option<&str>,
+    settings: &Value,
+    anime: Option<&MyAnime>,
+) -> Result<String, AppCommandError> {
+    if requested
+        .map(str::trim)
+        .is_some_and(|value| !value.is_empty())
+    {
+        return resolve_save_path(requested, settings);
+    }
+    let resolved = resolve_anime_download_path(settings, anime);
+    log::info!(
+        "Tauri 资源下载目录已解析 anime_id={} save_path={}",
+        anime.map(|item| item.anime.id.as_str()).unwrap_or("none"),
+        resolved
+    );
+    resolve_save_path(Some(&resolved), settings)
 }
 
 /// 读取显式保存路径或回退到当前平台默认目录。
