@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use ani_domain::Anime;
+
 /// 跨语言契约金样的版本化外层结构。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -22,6 +24,89 @@ pub struct AppWindowState {
 pub struct AppCommandError {
     pub code: String,
     pub message: String,
+}
+
+/// 本地媒体后台任务当前阶段。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalMediaImportPhase {
+    #[default]
+    Idle,
+    Scanning,
+    Matching,
+    Importing,
+    AwaitingReview,
+    Verifying,
+    Completed,
+    Cancelled,
+    Failed,
+}
+
+/// 扫描目录中按番剧聚合的一组本地媒体候选。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMediaImportCandidate {
+    pub id: String,
+    pub title_hint: String,
+    pub relative_directory: String,
+    pub file_count: usize,
+    pub episode_numbers: Vec<f64>,
+    pub confidence: u8,
+    pub suggested_anime_id: Option<String>,
+    pub alternatives: Vec<Anime>,
+}
+
+/// Renderer 确认低置信度候选时提交的番剧选择。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMediaImportSelection {
+    pub candidate_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anime_id: Option<String>,
+    #[serde(default)]
+    pub create_local: bool,
+}
+
+/// 本地媒体扫描、导入或校验任务的共享状态。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMediaImportJobStatus {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    pub phase: LocalMediaImportPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_root: Option<String>,
+    pub discovered_files: usize,
+    pub processed_files: usize,
+    pub total_files: usize,
+    pub imported_anime_count: usize,
+    pub imported_media_count: usize,
+    pub available_files: usize,
+    pub changed_files: usize,
+    pub missing_files: usize,
+    pub unavailable_files: usize,
+    #[serde(default)]
+    pub candidates: Vec<LocalMediaImportCandidate>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub completed_at: Option<String>,
+}
+
+/// 设置页展示的已管理本地媒体目录汇总。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMediaSourceSummary {
+    pub root_path: String,
+    pub media_count: usize,
+    pub available_count: usize,
+    pub problem_count: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_scanned_at: Option<String>,
 }
 
 /// 当前默认下载服务的实现模式。

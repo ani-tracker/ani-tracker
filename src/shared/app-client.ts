@@ -39,6 +39,9 @@ import type {
   ExportThemePackageInput,
   EpisodeReleasePreview,
   ImageCacheResolveResult,
+  LocalMediaImportJobStatus,
+  LocalMediaImportSelection,
+  LocalMediaSourceSummary,
   MediaScanResult,
   MobileNavigationIntent,
   MobileNotificationPermission,
@@ -277,6 +280,23 @@ export interface AppClient {
   scanDownloadMedia(taskId: string): Promise<MediaScanResult>;
   /** 读取桌面 FFprobe 与 FFmpeg 状态。 */
   getDesktopMediaToolsStatus(): Promise<DesktopMediaToolsStatus>;
+  /** 选择本机目录并启动后台媒体扫描。 */
+  startLocalMediaImport(): Promise<LocalMediaImportJobStatus | undefined>;
+  /** 读取本地媒体后台任务状态。 */
+  getLocalMediaImportStatus(): Promise<LocalMediaImportJobStatus>;
+  /** 按用户选择继续导入低置信度候选。 */
+  confirmLocalMediaImport(
+    jobId: string,
+    selections: LocalMediaImportSelection[]
+  ): Promise<LocalMediaImportJobStatus>;
+  /** 请求取消当前本地媒体后台任务。 */
+  cancelLocalMediaImport(): Promise<LocalMediaImportJobStatus>;
+  /** 启动全部已登记媒体的后台可用性校验。 */
+  startMediaAvailabilityCheck(): Promise<LocalMediaImportJobStatus>;
+  /** 汇总全部原地导入目录。 */
+  listLocalMediaSources(): Promise<LocalMediaSourceSummary[]>;
+  /** 订阅本地媒体后台任务状态。 */
+  onLocalMediaImportStatusChanged(listener: (status: LocalMediaImportJobStatus) => void): () => void;
   /** 使用当前平台播放器播放媒体。 */
   playMedia(filePath: string, profileId?: string): Promise<void>;
   /** 打开桌面内置播放器窗口。 */

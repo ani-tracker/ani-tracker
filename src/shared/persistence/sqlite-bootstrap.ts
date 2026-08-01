@@ -16,6 +16,7 @@ export async function bootstrapSqliteDatabase(
 ): Promise<SqliteBootstrapResult> {
   await driver.execute("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   await driver.execute(SQLITE_SCHEMA);
+  await ensureMediaFileAvailabilitySchema(driver);
 
   const schemaVersion = await readMetaVersion(driver, "schema_version");
   if (schemaVersion > SQLITE_SCHEMA_VERSION) {
@@ -46,6 +47,28 @@ export async function bootstrapSqliteDatabase(
     schemaVersion: SQLITE_SCHEMA_VERSION,
     appDataVersion: APP_DATA_VERSION
   };
+}
+
+/** 补齐本地媒体可用性字段，并在字段存在后创建目录索引。 */
+async function ensureMediaFileAvailabilitySchema(driver: SqliteDriver): Promise<void> {
+  const columns = await driver.query<{ name: string }>("PRAGMA table_info(media_file)");
+  const existing = new Set(columns.map((column) => column.name));
+  for (const [column, definition] of [
+    ["origin", "origin TEXT NOT NULL DEFAULT 'download'"],
+    ["source_root", "source_root TEXT"],
+    ["fingerprint", "fingerprint TEXT"],
+    ["file_modified_at", "file_modified_at TEXT"],
+    ["availability", "availability TEXT NOT NULL DEFAULT 'available'"],
+    ["last_verified_at", "last_verified_at TEXT"],
+    ["availability_error", "availability_error TEXT"]
+  ] as const) {
+    if (!existing.has(column)) {
+      await driver.execute(`ALTER TABLE media_file ADD COLUMN ${definition};`);
+    }
+  }
+  await driver.execute(
+    "CREATE INDEX IF NOT EXISTS idx_media_file_source_root ON media_file (source_root, availability);"
+  );
 }
 
 /** 将旧版默认元数据超时升级到 30 秒，其他用户配置保持不变。 */

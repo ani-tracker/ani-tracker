@@ -7,12 +7,13 @@ use ani_domain::{
     AnimeSeasonSyncState, AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
     AnimeSourceExclusionScope, AnimeStatus, AnimeWatchProgress, AppSettings, DailyReminderItem,
     DailyReminderSummary, DashboardData, DownloadStatus, DownloadTask, Episode, EpisodePreference,
-    EpisodeStatus, EpisodeSummary, FansubGroup, MediaFile, MyAnime, NormalizedVideoCodec,
-    NotificationKind, NotificationRecord, NotificationSeverity, PendingAction, PlaybackCheckpoint,
-    Release, ReleaseResolution, ReleaseSourceConfig, ReleaseSourceSyncState,
-    ReportPlaybackProgressInput, RequestCircuitState, SavePlaybackCheckpointInput, SecretReference,
-    SecretValue, SecureStore, SetAnimeWatchProgressInput, SourceHealth, SourceKind,
-    SubtitleLanguage, SubtitlePreference, TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
+    EpisodeStatus, EpisodeSummary, FansubGroup, MediaAvailability, MediaFile, MediaOrigin, MyAnime,
+    NormalizedVideoCodec, NotificationKind, NotificationRecord, NotificationSeverity,
+    PendingAction, PlaybackCheckpoint, Release, ReleaseResolution, ReleaseSourceConfig,
+    ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
+    SavePlaybackCheckpointInput, SecretReference, SecretValue, SecureStore,
+    SetAnimeWatchProgressInput, SourceHealth, SourceKind, SubtitleLanguage, SubtitlePreference,
+    TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
 };
 use ani_repository::{
     AnimeCatalogRepository, AnimeCatalogWriteResult, AnimeSourceBindingRepository,
@@ -1805,10 +1806,12 @@ impl<'connection> SqliteRepository<'connection> {
                        id, anime_id, episode_id, download_task_id, file_path, file_name, size,
                        container, declared_video_codec, detected_video_codec,
                        normalized_video_codec, resolution, bit_depth, audio_codecs_json,
-                       subtitle_tracks_json, duration_seconds, downloaded_at, probed_at
+                       subtitle_tracks_json, duration_seconds, downloaded_at, probed_at,
+                       origin, source_root, fingerprint, file_modified_at, availability,
+                       last_verified_at, availability_error
                      ) VALUES (
                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                       ?15, ?16, ?17, ?18
+                       ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
                      ) ON CONFLICT(id) DO UPDATE SET
                        anime_id = excluded.anime_id,
                        episode_id = excluded.episode_id,
@@ -1826,7 +1829,14 @@ impl<'connection> SqliteRepository<'connection> {
                        subtitle_tracks_json = excluded.subtitle_tracks_json,
                        duration_seconds = excluded.duration_seconds,
                        downloaded_at = excluded.downloaded_at,
-                       probed_at = excluded.probed_at",
+                       probed_at = excluded.probed_at,
+                       origin = excluded.origin,
+                       source_root = excluded.source_root,
+                       fingerprint = excluded.fingerprint,
+                       file_modified_at = excluded.file_modified_at,
+                       availability = excluded.availability,
+                       last_verified_at = excluded.last_verified_at,
+                       availability_error = excluded.availability_error",
                     params![
                         &media.id,
                         &media.anime_id,
@@ -1846,6 +1856,13 @@ impl<'connection> SqliteRepository<'connection> {
                         media.duration_seconds,
                         media.downloaded_at.as_deref(),
                         media.probed_at.as_deref(),
+                        media_origin_value(&media.origin),
+                        media.source_root.as_deref(),
+                        media.fingerprint.as_deref(),
+                        media.file_modified_at.as_deref(),
+                        media_availability_value(&media.availability),
+                        media.last_verified_at.as_deref(),
+                        media.availability_error.as_deref(),
                     ],
                 )?;
             }
@@ -4806,6 +4823,13 @@ struct MediaFileRow {
     duration_seconds: Option<i64>,
     downloaded_at: Option<String>,
     probed_at: Option<String>,
+    origin: String,
+    source_root: Option<String>,
+    fingerprint: Option<String>,
+    file_modified_at: Option<String>,
+    availability: String,
+    last_verified_at: Option<String>,
+    availability_error: Option<String>,
 }
 
 impl MediaFileRow {
@@ -4830,6 +4854,13 @@ impl MediaFileRow {
             duration_seconds: self.duration_seconds,
             downloaded_at: self.downloaded_at,
             probed_at: self.probed_at,
+            origin: parse_media_origin(&self.origin)?,
+            source_root: self.source_root,
+            fingerprint: self.fingerprint,
+            file_modified_at: self.file_modified_at,
+            availability: parse_media_availability(&self.availability)?,
+            last_verified_at: self.last_verified_at,
+            availability_error: self.availability_error,
         })
     }
 }
@@ -5151,6 +5182,13 @@ fn map_media_file_row(row: &Row<'_>) -> rusqlite::Result<MediaFileRow> {
         duration_seconds: row.get("duration_seconds")?,
         downloaded_at: row.get("downloaded_at")?,
         probed_at: row.get("probed_at")?,
+        origin: row.get("origin")?,
+        source_root: row.get("source_root")?,
+        fingerprint: row.get("fingerprint")?,
+        file_modified_at: row.get("file_modified_at")?,
+        availability: row.get("availability")?,
+        last_verified_at: row.get("last_verified_at")?,
+        availability_error: row.get("availability_error")?,
     })
 }
 
@@ -5232,6 +5270,44 @@ fn parse_torrent_engine(value: &str) -> Result<TorrentEngineKind, StorageError> 
         "embedded" => Ok(TorrentEngineKind::Embedded),
         "qbittorrent" => Ok(TorrentEngineKind::Qbittorrent),
         _ => invalid_value("download_task.engine", value),
+    }
+}
+
+/// 解析媒体登记来源。
+fn parse_media_origin(value: &str) -> Result<MediaOrigin, StorageError> {
+    match value {
+        "download" => Ok(MediaOrigin::Download),
+        "imported" => Ok(MediaOrigin::Imported),
+        _ => invalid_value("media_file.origin", value),
+    }
+}
+
+/// 返回媒体登记来源的 SQLite 字面量。
+fn media_origin_value(value: &MediaOrigin) -> &'static str {
+    match value {
+        MediaOrigin::Download => "download",
+        MediaOrigin::Imported => "imported",
+    }
+}
+
+/// 解析媒体文件当前可用状态。
+fn parse_media_availability(value: &str) -> Result<MediaAvailability, StorageError> {
+    match value {
+        "available" => Ok(MediaAvailability::Available),
+        "changed" => Ok(MediaAvailability::Changed),
+        "missing" => Ok(MediaAvailability::Missing),
+        "unavailable" => Ok(MediaAvailability::Unavailable),
+        _ => invalid_value("media_file.availability", value),
+    }
+}
+
+/// 返回媒体可用状态的 SQLite 字面量。
+fn media_availability_value(value: &MediaAvailability) -> &'static str {
+    match value {
+        MediaAvailability::Available => "available",
+        MediaAvailability::Changed => "changed",
+        MediaAvailability::Missing => "missing",
+        MediaAvailability::Unavailable => "unavailable",
     }
 }
 

@@ -401,6 +401,62 @@ export interface MediaScanResult {
   }>;
 }
 
+export type LocalMediaImportPhase =
+  | "idle"
+  | "scanning"
+  | "matching"
+  | "importing"
+  | "awaiting_review"
+  | "verifying"
+  | "completed"
+  | "cancelled"
+  | "failed";
+
+export interface LocalMediaImportCandidate {
+  id: string;
+  titleHint: string;
+  relativeDirectory: string;
+  fileCount: number;
+  episodeNumbers: number[];
+  confidence: number;
+  suggestedAnimeId?: string;
+  alternatives: Anime[];
+}
+
+export interface LocalMediaImportSelection {
+  candidateId: string;
+  animeId?: string;
+  createLocal?: boolean;
+}
+
+export interface LocalMediaImportJobStatus {
+  jobId?: string;
+  phase: LocalMediaImportPhase;
+  sourceRoot?: string;
+  discoveredFiles: number;
+  processedFiles: number;
+  totalFiles: number;
+  importedAnimeCount: number;
+  importedMediaCount: number;
+  availableFiles: number;
+  changedFiles: number;
+  missingFiles: number;
+  unavailableFiles: number;
+  candidates: LocalMediaImportCandidate[];
+  message?: string;
+  error?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface LocalMediaSourceSummary {
+  rootPath: string;
+  mediaCount: number;
+  availableCount: number;
+  problemCount: number;
+  lastScannedAt?: string;
+}
+
 export interface EpisodeReleaseCandidate {
   release: Release;
   score: number;

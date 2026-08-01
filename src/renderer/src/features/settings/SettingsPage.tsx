@@ -63,6 +63,7 @@ import { useTheme } from "@/components/theme-provider";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { StickyActionBar } from "@/components/page-layout";
 import { AppearanceSettingsSection } from "./AppearanceSettingsSection";
+import { LocalMediaLibrarySettingsSection } from "./LocalMediaLibrarySettingsSection";
 import { RemotePlaybackSettingsSection } from "./RemotePlaybackSettingsSection";
 import type {
   AutomationSchedulerStatus,
@@ -915,6 +916,15 @@ export function SettingsPage() {
             />
           </div>
         </SettingsSection>
+
+        {!mobileRuntime && !remoteRuntime && (
+          <SettingsSection
+            title="本地媒体库"
+            description="扫描本机番剧目录、确认匹配结果并维护媒体可用状态。"
+          >
+            <LocalMediaLibrarySettingsSection />
+          </SettingsSection>
+        )}
 
         {!remoteRuntime && (
         <SettingsSection title="用户数据" description="数据库、缓存、日志和备份都应随用户数据目录迁移。">

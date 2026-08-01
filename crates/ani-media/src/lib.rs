@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ani_domain::{DownloadTask, MediaFile, TorrentFile};
+use ani_domain::{DownloadTask, MediaAvailability, MediaFile, MediaOrigin, TorrentFile};
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -384,6 +384,13 @@ fn build_media_file(
             .and_then(|format| parse_duration(format.duration.as_deref())),
         downloaded_at: context.downloaded_at.clone(),
         probed_at: Some(now_iso()),
+        origin: MediaOrigin::Download,
+        source_root: None,
+        fingerprint: None,
+        file_modified_at: None,
+        availability: MediaAvailability::Available,
+        last_verified_at: Some(now_iso()),
+        availability_error: None,
     }
 }
 

@@ -931,6 +931,13 @@ mod tests {
             duration_seconds: None,
             downloaded_at: None,
             probed_at: None,
+            origin: Default::default(),
+            source_root: None,
+            fingerprint: None,
+            file_modified_at: None,
+            availability: Default::default(),
+            last_verified_at: None,
+            availability_error: None,
         }
     }
 
