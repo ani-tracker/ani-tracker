@@ -378,7 +378,9 @@ function MainApplication() {
       return;
     }
     if (!target.taskId) {
-      throw new Error("当前媒体缺少下载任务关联，无法使用内置播放器");
+      await appApi.playMedia(target.filePath);
+      console.info("[player] 原地导入媒体使用系统播放器", { filePath: target.filePath });
+      return;
     }
     let fileIndex = target.fileIndex;
     if (fileIndex === undefined) {
@@ -638,6 +640,7 @@ function MainApplication() {
             onBack={() => window.history.back()}
             onOpenLibraryAction={openLibraryAction}
             onOpenReleaseSearch={openReleaseSearch}
+            onPlayMedia={(filePath) => playMedia({ filePath })}
             refreshKey={detailRevision}
             sourceLabel={detailView.origin.label}
           />

@@ -25,6 +25,7 @@ import {
 } from "@shared/player-contract";
 import {
   buildRemotePlaylist,
+  playlistItemLabel,
   resolveInitialPlaylistItem,
   type RemotePlaylistItem
 } from "@/features/player/playback-list-model";
@@ -87,7 +88,7 @@ export function DesktopPlayerPage({ taskId, initialFileIndex, onClose }: Desktop
         ? tasks.filter((task) => task.animeId === matchedTask.animeId)
         : [matchedTask]);
       setActiveItemId(initialItem.id);
-      document.title = `${initialItem.fileName} - Ani Tracker`;
+      document.title = `${initialItem.displayTitle} - Ani Tracker`;
       if (matchedTask.animeId) {
         void appApi.getAnimeDetail(matchedTask.animeId).then((detail) => {
           if (!active) return;
@@ -118,7 +119,7 @@ export function DesktopPlayerPage({ taskId, initialFileIndex, onClose }: Desktop
   /** 切集时保留当前独立窗口，仅由新会话触发 libVLC 换源。 */
   const selectItem = useCallback((item: RemotePlaylistItem): void => {
     setActiveItemId(item.id);
-    document.title = `${item.fileName} - Ani Tracker`;
+    document.title = `${item.displayTitle} - Ani Tracker`;
     console.info("[player] 桌面 libVLC 切换文件", {
       taskId: item.task.id,
       fileIndex: item.fileIndex
@@ -190,9 +191,7 @@ function DesktopVlcControls({
   const playing = snapshot?.status === "playing";
   const buffering = !snapshot || snapshot.status === "loading" || snapshot.status === "buffering";
   const animeTitle = anime?.title ?? activeItem?.task.animeTitle ?? "Ani Tracker";
-  const episodeLabel = activeItem?.task.episodeNo === undefined
-    ? "当前视频"
-    : `第 ${String(activeItem.task.episodeNo).padStart(2, "0")} 集`;
+  const episodeLabel = activeItem ? playlistItemLabel(activeItem) : "当前视频";
   const runtimeError = capabilities?.availability === "unavailable"
     ? capabilities.unavailableReason ?? "libVLC 原生运行时不可用"
     : null;
@@ -513,9 +512,7 @@ function DesktopVlcControls({
         )}
         {autoNextSeconds !== undefined && nextItem && (
           <PlayerAutoNextPrompt
-            episodeLabel={nextItem.task.episodeNo === undefined
-              ? nextItem.fileName
-              : `第 ${String(nextItem.task.episodeNo).padStart(2, "0")} 集`}
+            episodeLabel={playlistItemLabel(nextItem)}
             onCancel={cancelAutoNext}
             onPlayNow={() => selectItemAfterFlush(nextItem)}
             seconds={autoNextSeconds}

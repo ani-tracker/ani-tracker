@@ -58,7 +58,7 @@ export function RemotePlayerPage({ taskId }: RemotePlayerPageProps) {
         }
         setPlaylist(items);
         setActiveItemId(initialItem.id);
-        document.title = `${initialItem.fileName} - Ani Tracker`;
+        document.title = `${initialItem.displayTitle} - Ani Tracker`;
         console.info("[remote] 独立播放器播放列表读取完成", {
           taskId,
           itemCount: items.length,
@@ -102,7 +102,7 @@ export function RemotePlayerPage({ taskId }: RemotePlayerPageProps) {
       playerUrl.searchParams.set("file", String(item.fileIndex));
     }
     window.history.replaceState(null, "", `${playerUrl.pathname}${playerUrl.search}`);
-    document.title = `${item.fileName} - Ani Tracker`;
+    document.title = `${item.displayTitle} - Ani Tracker`;
     console.info("[player] 播放列表切换文件", {
       taskId: item.task.id,
       fileIndex: item.fileIndex

@@ -150,7 +150,10 @@ const previewActiveItem: RemotePlaylistItem = {
   id: "preview-task-08:file:0",
   task: previewTask,
   fileIndex: 0,
+  episodeNo: 8,
   fileName: "越过静默轨道",
+  displayTitle: "星海回声 · E8",
+  contentKind: "episode",
   size: 1_460_288_307
 };
 
@@ -193,21 +196,52 @@ const previewSession: RemotePlaybackSession = {
 
 /** 构造与 Stitch 稿一致的十二集预览状态。 */
 function createPreviewEpisodeItems(): PlayerEpisodeUiItem[] {
-  return previewEpisodes.map((episode) => {
+  const episodes = previewEpisodes.map<PlayerEpisodeUiItem>((episode) => {
     const playing = episode.episodeNo === 8;
     const watched = episode.episodeNo <= 7;
     const ready = episode.episodeNo === 9;
     const downloading = episode.episodeNo === 10;
+    const playable = playing || watched || ready;
+    const originalFileName = `[Polaris] Stellar Echo - ${String(episode.episodeNo).padStart(2, "0")} [1080p].mkv`;
     return {
       id: episode.id,
       episodeNo: episode.episodeNo,
       numberLabel: String(episode.episodeNo).padStart(2, "0"),
-      title: episode.title ?? `第 ${episode.episodeNo} 集`,
-      meta: playing ? "24:18 · 1080P · HEVC" : ready ? "24:00 · 1080P · 1.36 GB" : "24:00 · 1080P",
+      title: playable ? `星海回声 · E${episode.episodeNo}` : episode.title ?? `第 ${episode.episodeNo} 集`,
+      meta: playable
+        ? `${originalFileName} · ${playing ? "24:18" : "24:00"} · 1080P${ready ? " · 1.36 GB" : ""}`
+        : "24:00 · 1080P",
       status: playing ? "playing" : watched ? "watched" : ready ? "ready" : downloading ? "downloading" : "unavailable",
       statusLabel: playing ? "正在播放" : watched ? "已看" : ready ? "已下载" : downloading ? "下载中 45%" : "未下载",
       progress: playing ? 0.77 : watched ? 1 : downloading ? 0.45 : 0,
-      playlistItem: playing || watched || ready ? { ...previewActiveItem, id: `preview-${episode.episodeNo}` } : undefined
+      section: "episodes",
+      playlistItem: playable ? {
+        ...previewActiveItem,
+        id: `preview-${episode.episodeNo}`,
+        episodeNo: episode.episodeNo,
+        fileName: originalFileName,
+        displayTitle: `星海回声 · E${episode.episodeNo}`
+      } : undefined
     };
   });
+  const specialPlaylistItem: RemotePlaylistItem = {
+    ...previewActiveItem,
+    id: "preview-special-01",
+    episodeNo: undefined,
+    fileName: "[Polaris] Stellar Echo SP01 [1080p].mkv",
+    displayTitle: "星海回声 · SP01",
+    contentKind: "special",
+    specialNo: "SP01"
+  };
+  return [...episodes, {
+    id: specialPlaylistItem.id,
+    numberLabel: "SP01",
+    title: specialPlaylistItem.displayTitle,
+    meta: `${specialPlaylistItem.fileName} · 05:12 · 1080P`,
+    status: "ready",
+    statusLabel: "已下载",
+    progress: 0,
+    section: "specials",
+    playlistItem: specialPlaylistItem
+  }];
 }

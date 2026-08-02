@@ -1,5 +1,5 @@
 /** 桌面与 Android 共用的 SQLite 结构版本。 */
-export const SQLITE_SCHEMA_VERSION = 21;
+export const SQLITE_SCHEMA_VERSION = 22;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -327,6 +327,8 @@ CREATE TABLE IF NOT EXISTS media_file (
   anime_id TEXT NOT NULL,
   episode_id TEXT,
   download_task_id TEXT,
+  content_kind TEXT NOT NULL DEFAULT 'unknown',
+  special_no TEXT,
   file_path TEXT NOT NULL,
   file_name TEXT NOT NULL,
   size INTEGER NOT NULL,

@@ -12,7 +12,7 @@ import { readStoredSubtitleScale, storeSubtitleScale } from "@/features/player/s
 import {
   readRemotePlaybackMode,
   storeRemotePlaybackMode
-} from "@/features/remote/remote-playback-preferences";
+} from "@/features/player/remote-playback-preferences";
 import type { RemotePlaybackRequestMode } from "@shared/contracts";
 import { PLAYER_SUBTITLE_SCALES, type PlayerSubtitleScale } from "@shared/player-contract";
 

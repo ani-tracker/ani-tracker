@@ -8,7 +8,7 @@ use crate::{
     now_iso, ReleaseSourceSeed, StorageError, StorageSeed, APP_DATA_VERSION, SQLITE_SCHEMA_VERSION,
 };
 
-const CURRENT_SCHEMA: &str = include_str!("schema_v21.sql");
+const CURRENT_SCHEMA: &str = include_str!("schema_v22.sql");
 const MAX_RELEASE_ID_BYTES: usize = 200;
 
 /// 数据库中记录的结构和应用数据版本。
@@ -194,6 +194,12 @@ fn ensure_legacy_columns(transaction: &Transaction<'_>) -> Result<(), StorageErr
             "availability_error",
             "availability_error TEXT",
         ),
+        (
+            "media_file",
+            "content_kind",
+            "content_kind TEXT NOT NULL DEFAULT 'unknown'",
+        ),
+        ("media_file", "special_no", "special_no TEXT"),
     ] {
         ensure_column(transaction, table, column, definition)?;
     }
@@ -292,6 +298,14 @@ fn migrate_schema_data(
     if current_schema_version < 15 {
         transaction.execute("DELETE FROM release WHERE anime_id IS NOT NULL", [])?;
         transaction.execute("DELETE FROM release_search_cache", [])?;
+    }
+    if current_schema_version < 22 {
+        let updated = transaction.execute(
+            "UPDATE media_file SET content_kind = 'episode' \
+             WHERE episode_id IS NOT NULL AND content_kind = 'unknown'",
+            [],
+        )?;
+        info!("SQLite 媒体内容类型迁移完成：episode_count={updated}");
     }
     Ok(())
 }

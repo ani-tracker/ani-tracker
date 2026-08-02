@@ -358,6 +358,8 @@ fn migrates_v20_media_availability_schema() {
         "availability",
         "last_verified_at",
         "availability_error",
+        "content_kind",
+        "special_no",
     ] {
         assert!(column_exists(&storage.connection, "media_file", column));
     }
@@ -383,6 +385,48 @@ fn migrates_v20_media_availability_schema() {
             )
             .expect("read media source index"),
         1
+    );
+}
+
+/// 验证版本 21 的单集媒体回填为正片，未关联媒体保持未知。
+#[test]
+fn migrates_v21_media_content_kind() {
+    let directory = TestDirectory::new("media-content-kind-migration");
+    let options = test_options(&directory, "active.sqlite");
+    let database_path = options.database_path.clone();
+    drop(Storage::open(options.clone()).expect("create current database"));
+
+    let legacy = Connection::open(&database_path).expect("open media content fixture");
+    legacy
+        .execute_batch(
+            "INSERT INTO media_file (
+               id, anime_id, episode_id, file_path, file_name, size, normalized_video_codec
+             ) VALUES
+               ('legacy-episode', 'anime-1', 'episode-1', '/media/e01.mkv', 'e01.mkv', 1, 'Unknown'),
+               ('legacy-unknown', 'anime-1', NULL, '/media/unknown.mkv', 'unknown.mkv', 1, 'Unknown');
+             UPDATE app_meta SET value = '21' WHERE key = 'schema_version';",
+        )
+        .expect("prepare v21 media content fixture");
+    drop(legacy);
+
+    let storage = Storage::open(options).expect("v21 media content must migrate");
+    let kinds = storage
+        .connection
+        .prepare("SELECT id, content_kind FROM media_file ORDER BY id")
+        .expect("prepare media kind query")
+        .query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        })
+        .expect("query media kinds")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("collect media kinds");
+
+    assert_eq!(
+        kinds,
+        vec![
+            ("legacy-episode".to_owned(), "episode".to_owned()),
+            ("legacy-unknown".to_owned(), "unknown".to_owned()),
+        ]
     );
 }
 
@@ -1207,6 +1251,8 @@ fn removes_download_snapshot_and_rolls_back_invalid_files() {
             anime_id: "anime-p3-1".to_owned(),
             episode_id: Some("episode-anime-p3-1-1".to_owned()),
             download_task_id: Some(task.id.clone()),
+            content_kind: ani_domain::MediaContentKind::Episode,
+            special_no: None,
             file_path: "C:/video/episode-1.mkv".to_owned(),
             file_name: "episode-1.mkv".to_owned(),
             size: 1024,
@@ -1288,6 +1334,8 @@ fn upserts_media_files_and_deduplicates_paths() {
         anime_id: "anime-1".to_owned(),
         episode_id: Some("episode-1".to_owned()),
         download_task_id: Some("download-1".to_owned()),
+        content_kind: ani_domain::MediaContentKind::Episode,
+        special_no: None,
         file_path: "C:/Anime/episode-1.mkv".to_owned(),
         file_name: "episode-1.mkv".to_owned(),
         size: 1024,
@@ -1324,8 +1372,31 @@ fn upserts_media_files_and_deduplicates_paths() {
     assert_eq!(replaced[0].id, "media-new");
     assert_eq!(replaced[0].duration_seconds, Some(1500));
 
-    let remaining = MediaRepository::remove_media_files(&repository, &["media-new".to_owned()])
-        .expect("remove media by id");
+    let mut special = replaced[0].clone();
+    special.id = "media-special".to_owned();
+    special.episode_id = None;
+    special.file_path = "C:/Anime/SP/episode-sp1.mkv".to_owned();
+    special.file_name = "episode-sp1.mkv".to_owned();
+    special.content_kind = ani_domain::MediaContentKind::Special;
+    special.special_no = Some("SP01".to_owned());
+    let with_special =
+        MediaRepository::upsert_media_files(&repository, &[special]).expect("save special media");
+    let saved_special = with_special
+        .iter()
+        .find(|item| item.id == "media-special")
+        .expect("read special media");
+    assert_eq!(
+        saved_special.content_kind,
+        ani_domain::MediaContentKind::Special
+    );
+    assert_eq!(saved_special.special_no.as_deref(), Some("SP01"));
+    assert_eq!(saved_special.episode_id, None);
+
+    let remaining = MediaRepository::remove_media_files(
+        &repository,
+        &["media-new".to_owned(), "media-special".to_owned()],
+    )
+    .expect("remove media by id");
     assert!(remaining.is_empty());
 }
 
@@ -1355,6 +1426,8 @@ fn removing_media_restores_only_orphaned_episode_status() {
         anime_id: episode.anime_id.clone(),
         episode_id: Some(episode.id.clone()),
         download_task_id: None,
+        content_kind: ani_domain::MediaContentKind::Episode,
+        special_no: None,
         file_path: "/media/._episode.mkv".to_owned(),
         file_name: "._episode.mkv".to_owned(),
         size: 1024,
@@ -1475,6 +1548,8 @@ fn rebinds_media_and_cleans_only_untouched_imported_anime() {
         anime_id: "local-old".to_owned(),
         episode_id: Some("episode-old-1".to_owned()),
         download_task_id: None,
+        content_kind: ani_domain::MediaContentKind::Episode,
+        special_no: None,
         file_path: "/media/episode-1.mkv".to_owned(),
         file_name: "episode-1.mkv".to_owned(),
         size: 1024,

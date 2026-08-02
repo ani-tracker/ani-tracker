@@ -1196,6 +1196,23 @@ pub enum MediaAvailability {
     Unavailable,
 }
 
+/// 媒体文件在番剧中的内容类型。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaContentKind {
+    Episode,
+    Special,
+    Ova,
+    Oad,
+    Opening,
+    Ending,
+    Pv,
+    Cm,
+    Extra,
+    #[default]
+    Unknown,
+}
+
 /// 首页最近完成区域使用的媒体文件。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1206,6 +1223,10 @@ pub struct MediaFile {
     pub episode_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download_task_id: Option<String>,
+    #[serde(default)]
+    pub content_kind: MediaContentKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub special_no: Option<String>,
     pub file_path: String,
     pub file_name: String,
     pub size: i64,

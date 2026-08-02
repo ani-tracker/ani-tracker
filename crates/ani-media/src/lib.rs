@@ -3,7 +3,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use ani_domain::{DownloadTask, MediaAvailability, MediaFile, MediaOrigin, TorrentFile};
+use ani_domain::{
+    DownloadTask, MediaAvailability, MediaContentKind, MediaFile, MediaOrigin, TorrentFile,
+};
 use async_trait::async_trait;
 use chrono::{SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -338,6 +340,12 @@ fn build_media_file(
             .unwrap_or_else(|| "unmatched".to_owned()),
         episode_id: context.episode_id.clone(),
         download_task_id: context.download_task_id.clone(),
+        content_kind: if context.episode_id.is_some() {
+            MediaContentKind::Episode
+        } else {
+            MediaContentKind::Unknown
+        },
+        special_no: None,
         file_path: file_path.to_string_lossy().into_owned(),
         file_name,
         size: i64::try_from(metadata_size)

@@ -1,6 +1,7 @@
 import { formatBytes } from "@/lib/format";
 import type { DownloadTask, Episode } from "@shared/domain";
 import type { RemotePlaybackSession } from "@shared/contracts";
+import { isSpecialMediaContent } from "@shared/media-content";
 import type { RemotePlaylistItem } from "@/features/player/playback-list-model";
 
 export type PlayerEpisodeUiStatus = "playing" | "watched" | "ready" | "downloading" | "unavailable";
@@ -14,6 +15,7 @@ export interface PlayerEpisodeUiItem {
   status: PlayerEpisodeUiStatus;
   statusLabel: string;
   progress: number;
+  section: "episodes" | "specials";
   playlistItem?: RemotePlaylistItem;
 }
 
@@ -29,22 +31,34 @@ interface BuildPlayerEpisodeItemsInput {
 
 /** 合并番剧集数、下载任务与可播放文件，生成完整播放器列表。 */
 export function buildPlayerEpisodeItems(input: BuildPlayerEpisodeItemsInput): PlayerEpisodeUiItem[] {
+  const regularPlaylist = input.playlist.filter((item) => !isSpecialMediaContent(item.contentKind));
+  const specialPlaylist = input.playlist.filter((item) => isSpecialMediaContent(item.contentKind));
+  const specialOnlyTaskIds = new Set(
+    specialPlaylist
+      .filter((item) => !regularPlaylist.some((regular) => regular.task.id === item.task.id))
+      .map((item) => item.task.id)
+  );
   const episodeNumbers = new Set<number>();
   input.episodes.forEach((episode) => episodeNumbers.add(episode.episodeNo));
   input.downloadTasks.forEach((task) => {
-    if (task.episodeNo !== undefined) episodeNumbers.add(task.episodeNo);
+    if (task.episodeNo !== undefined && !specialOnlyTaskIds.has(task.id)) episodeNumbers.add(task.episodeNo);
   });
-  input.playlist.forEach((item) => {
-    if (item.task.episodeNo !== undefined) episodeNumbers.add(item.task.episodeNo);
+  regularPlaylist.forEach((item) => {
+    if (item.episodeNo !== undefined) episodeNumbers.add(item.episodeNo);
   });
 
+  const specialItems = specialPlaylist.map((item) => buildSpecialItem(item, input));
   if (episodeNumbers.size === 0) {
-    return input.playlist.map((item, index) => buildPlaylistOnlyItem(item, index, input));
+    return [
+      ...regularPlaylist.map((item, index) => buildPlaylistOnlyItem(item, index, input)),
+      ...specialItems
+    ];
   }
 
-  return [...episodeNumbers]
+  const episodeItems = [...episodeNumbers]
     .sort((left, right) => left - right)
     .map((episodeNo) => buildEpisodeItem(episodeNo, input));
+  return [...episodeItems, ...specialItems];
 }
 
 /** 为有明确集数的条目生成状态、规格与观看进度。 */
@@ -54,22 +68,26 @@ function buildEpisodeItem(
 ): PlayerEpisodeUiItem {
   const episode = input.episodes.find((item) => item.episodeNo === episodeNo);
   const task = input.downloadTasks.find((item) => item.episodeNo === episodeNo);
-  const playlistItem = input.playlist.find((item) => item.task.episodeNo === episodeNo);
+  const playlistItem = input.playlist.find((item) =>
+    !isSpecialMediaContent(item.contentKind) && item.episodeNo === episodeNo
+  );
+  const resolvedTask = playlistItem?.task ?? task;
   const active = playlistItem?.id === input.activeItem?.id;
-  const state = resolveEpisodeState(active, episode, task, playlistItem);
+  const state = resolveEpisodeState(active, episode, resolvedTask, playlistItem);
   const currentProgress = active && input.durationSeconds > 0
     ? clamp(input.currentTimeSeconds / input.durationSeconds)
-    : state.status === "watched" ? 1 : task?.progress ?? 0;
+    : state.status === "watched" ? 1 : resolvedTask?.progress ?? 0;
 
   return {
     id: episode?.id ?? playlistItem?.id ?? task?.id ?? `episode-${episodeNo}`,
     episodeNo,
     numberLabel: String(episodeNo).padStart(2, "0"),
-    title: episode?.title?.trim() || playlistItem?.fileName || task?.name || `第 ${episodeNo} 集`,
-    meta: formatEpisodeMeta(active ? input.session : null, playlistItem, task),
+    title: playlistItem?.displayTitle || episode?.title?.trim() || resolvedTask?.name || `第 ${episodeNo} 集`,
+    meta: formatEpisodeMeta(active ? input.session : null, playlistItem, resolvedTask),
     status: state.status,
     statusLabel: state.label,
     progress: currentProgress,
+    section: "episodes",
     playlistItem
   };
 }
@@ -83,15 +101,37 @@ function buildPlaylistOnlyItem(
   const active = item.id === input.activeItem?.id;
   return {
     id: item.id,
-    episodeNo: item.task.episodeNo,
-    numberLabel: String(item.task.episodeNo ?? index + 1).padStart(2, "0"),
-    title: item.fileName,
+    episodeNo: item.episodeNo,
+    numberLabel: String(item.episodeNo ?? index + 1).padStart(2, "0"),
+    title: item.displayTitle,
     meta: formatEpisodeMeta(active ? input.session : null, item, item.task),
     status: active ? "playing" : "ready",
     statusLabel: active ? "正在播放" : "已下载",
     progress: active && input.durationSeconds > 0
       ? clamp(input.currentTimeSeconds / input.durationSeconds)
       : 0,
+    section: "episodes",
+    playlistItem: item
+  };
+}
+
+/** 为 SP、OVA 和特典生成不参与正片进度的列表项。 */
+function buildSpecialItem(
+  item: RemotePlaylistItem,
+  input: BuildPlayerEpisodeItemsInput
+): PlayerEpisodeUiItem {
+  const active = item.id === input.activeItem?.id;
+  return {
+    id: item.id,
+    numberLabel: item.specialNo ?? "SP",
+    title: item.displayTitle,
+    meta: formatEpisodeMeta(active ? input.session : null, item, item.task),
+    status: active ? "playing" : "ready",
+    statusLabel: active ? "正在播放" : "已下载",
+    progress: active && input.durationSeconds > 0
+      ? clamp(input.currentTimeSeconds / input.durationSeconds)
+      : 0,
+    section: "specials",
     playlistItem: item
   };
 }
@@ -119,6 +159,7 @@ function formatEpisodeMeta(
   task: DownloadTask | undefined
 ): string {
   return [
+    item?.fileName,
     session?.durationSeconds ? formatPlaybackTime(session.durationSeconds) : undefined,
     task?.resolution?.toUpperCase(),
     task?.normalizedVideoCodec?.replace("H.265/", "").replace("H.264/", ""),
