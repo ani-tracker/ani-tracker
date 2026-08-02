@@ -20,6 +20,17 @@ const ACCESS_PERSIST_INTERVAL_MILLIS: u64 = 60 * 1_000;
 const MAX_PAIRING_ATTEMPTS: u8 = 5;
 const PAIRING_CODE_RANGE: u32 = 1_000_000;
 
+const LEGACY_REMOTE_SCOPES: &[&str] = &[
+    "dashboard.read",
+    "notifications.read",
+    "notifications.write",
+    "library.read",
+    "library.write",
+    "catalog.read",
+    "downloads.read",
+    "downloads.control",
+];
+
 pub(crate) const ALL_REMOTE_SCOPES: &[&str] = &[
     "dashboard.read",
     "notifications.read",
@@ -29,6 +40,11 @@ pub(crate) const ALL_REMOTE_SCOPES: &[&str] = &[
     "catalog.read",
     "downloads.read",
     "downloads.control",
+    "sources.read",
+    "sources.write",
+    "settings.read",
+    "settings.write",
+    "host.control",
 ];
 
 /// 平台安全存储端口；实现负责使用 DPAPI、Keychain 或 Secret Service。
@@ -340,7 +356,20 @@ impl RemoteDeviceAuth {
 }
 
 /// 严格校验从安全存储解码的设备记录。
-fn parse_stored_device(item: StoredDevice) -> Result<DeviceRecord, RemoteDeviceAuthError> {
+fn parse_stored_device(mut item: StoredDevice) -> Result<DeviceRecord, RemoteDeviceAuthError> {
+    // 旧版本配对设备已拥有当时全部权限，升级时补齐新增的等价业务 scope。
+    if LEGACY_REMOTE_SCOPES
+        .iter()
+        .all(|scope| item.scopes.iter().any(|current| current == scope))
+    {
+        item.scopes.extend(
+            ALL_REMOTE_SCOPES
+                .iter()
+                .filter(|scope| !item.scopes.iter().any(|current| current == **scope))
+                .map(|scope| (*scope).to_owned())
+                .collect::<Vec<_>>(),
+        );
+    }
     if item.id.len() != 32
         || !item.id.bytes().all(|value| value.is_ascii_hexdigit())
         || item.name.trim().is_empty()

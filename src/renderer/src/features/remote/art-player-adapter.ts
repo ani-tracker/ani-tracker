@@ -2,6 +2,7 @@ import Artplayer from "artplayer";
 import Hls from "hls.js";
 import {
   createInitialPlayerSnapshot,
+  PLAYER_SUBTITLE_SCALES,
   rejectUnsupportedPlayerCommand,
   type PlayerAspectRatio,
   type PlayerCapabilities,
@@ -10,6 +11,7 @@ import {
   type PlayerError,
   type PlayerMediaSource,
   type PlayerSnapshot,
+  type PlayerSubtitleScale,
   type UnifiedPlayerAdapter
 } from "@shared/player-contract";
 
@@ -23,6 +25,7 @@ const ART_PLAYER_CAPABILITIES: PlayerCapabilities = {
   playbackRates: [0.5, 0.75, 1, 1.25, 1.5, 2],
   supportsAudioTracks: false,
   supportsSubtitleTracks: true,
+  supportsSubtitleScale: true,
   supportsAspectRatio: true,
   supportsFullscreen: true,
   supportsPictureInPicture: true,
@@ -36,6 +39,7 @@ export interface ArtPlayerAdapterOptions {
   container: HTMLDivElement;
   sessionId: string;
   baseUrl?: string;
+  subtitleScale?: PlayerSubtitleScale;
 }
 
 /** 将 ArtPlayer/HLS 映射为跨平台统一播放器契约。 */
@@ -49,10 +53,13 @@ export class ArtPlayerAdapter implements UnifiedPlayerAdapter {
   private disposed = false;
 
   constructor(private readonly options: ArtPlayerAdapterOptions) {
-    this.snapshot = createInitialPlayerSnapshot({
-      sessionId: options.sessionId,
-      capabilities: ART_PLAYER_CAPABILITIES
-    });
+    this.snapshot = {
+      ...createInitialPlayerSnapshot({
+        sessionId: options.sessionId,
+        capabilities: ART_PLAYER_CAPABILITIES
+      }),
+      subtitleScale: options.subtitleScale ?? 100
+    };
   }
 
   /** 返回远程网页后端稳定支持的能力。 */
@@ -121,6 +128,12 @@ export class ArtPlayerAdapter implements UnifiedPlayerAdapter {
           if (!this.player) return rejectNotReady(command);
           await this.selectSubtitle(command.trackId);
           break;
+        case "set-subtitle-scale":
+          if (!this.player || !PLAYER_SUBTITLE_SCALES.includes(command.subtitleScale)) {
+            return reject(command, createPlayerError("unknown", "字幕缩放比例无效", false, []));
+          }
+          this.setSubtitleScale(command.subtitleScale);
+          break;
         case "set-aspect-ratio":
           if (!this.player || !isValidAspectRatio(command.aspectRatio, command.value)) {
             return reject(command, createPlayerError("unknown", "画面比例无效", false, []));
@@ -188,6 +201,7 @@ export class ArtPlayerAdapter implements UnifiedPlayerAdapter {
       durationSeconds: source.durationSeconds ?? 0,
       volume: this.snapshot.volume,
       muted: this.snapshot.muted,
+      subtitleScale: this.snapshot.subtitleScale,
       subtitleTracks: source.subtitles.map((subtitle) => ({
         id: subtitle.id,
         kind: "subtitle",
@@ -235,6 +249,7 @@ export class ArtPlayerAdapter implements UnifiedPlayerAdapter {
       });
     });
     this.player = player;
+    this.applySubtitleScale(player, this.snapshot.subtitleScale);
     this.bindPlayerEvents(player);
 
     const defaultSubtitle = source.subtitles.find((subtitle) => subtitle.default) ?? source.subtitles[0];
@@ -344,6 +359,21 @@ export class ArtPlayerAdapter implements UnifiedPlayerAdapter {
         selected: track.id === subtitleId
       }))
     });
+  }
+
+  /** 即时调整 ArtPlayer 字幕 CSS 变量并更新统一快照。 */
+  private setSubtitleScale(subtitleScale: PlayerSubtitleScale): void {
+    this.applySubtitleScale(this.player!, subtitleScale);
+    this.patch({ subtitleScale });
+    console.info("[remote] ArtPlayer 字幕大小已更新", { subtitleScale });
+  }
+
+  /** 将百分比映射到 ArtPlayer 默认 20px 字幕基准。 */
+  private applySubtitleScale(player: Artplayer, subtitleScale: PlayerSubtitleScale): void {
+    player.template.$player.style.setProperty(
+      "--art-subtitle-font-size",
+      `${20 * subtitleScale / 100}px`
+    );
   }
 
   private setAspectRatio(aspectRatio: PlayerAspectRatio, customValue?: string): void {

@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+ani-domain = { path = "../ani-domain" }
 serde.workspace = true
 
 [dev-dependencies]

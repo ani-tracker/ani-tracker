@@ -9,7 +9,7 @@ use ani_contracts::{
     QbittorrentManagedStatus,
 };
 use ani_domain::{
-    AppSettings, DownloadTask, Episode, Release, SubtitleLanguage, SubtitlePreference,
+    AppSettings, DownloadTask, Episode, MyAnime, Release, SubtitleLanguage, SubtitlePreference,
     TorrentEngineKind, TorrentFile,
 };
 use ani_downloads::{
@@ -212,17 +212,17 @@ fn associate_torrent_files(
 
 /// 从发布式文件名或纯数字文件名读取单集编号。
 fn parse_file_episode_no(file_name: &str) -> Option<f64> {
-    parse_release_title(file_name, &[])
+    let base_name = file_name
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(file_name)
+        .rsplit_once('.')
+        .map(|(stem, _)| stem)
+        .unwrap_or(file_name)
+        .trim();
+    parse_release_title(base_name, &[])
         .episode_no
         .or_else(|| {
-            let base_name = file_name
-                .rsplit(['/', '\\'])
-                .next()
-                .unwrap_or(file_name)
-                .rsplit_once('.')
-                .map(|(stem, _)| stem)
-                .unwrap_or(file_name)
-                .trim();
             let digit_end = base_name
                 .char_indices()
                 .take_while(|(_, character)| character.is_ascii_digit() || *character == '.')
@@ -365,6 +365,19 @@ impl AppDownloadState {
             .repository()
             .get_settings(&self.platform_defaults)
             .map_err(|error| format!("读取下载设置失败：{error}"))
+    }
+
+    /// 按番剧目录 ID 读取追番配置，供下载路径规则解析使用。
+    pub(crate) fn find_my_anime(&self, anime_id: &str) -> Result<Option<MyAnime>, String> {
+        let storage = self
+            .storage
+            .lock()
+            .map_err(|error| format!("读取追番下载目录失败：{error}"))?;
+        storage
+            .repository()
+            .list_my_anime()
+            .map_err(|error| format!("读取追番下载目录失败：{error}"))
+            .map(|items| items.into_iter().find(|item| item.anime.id == anime_id))
     }
 
     /// 读取当前设置选择的默认下载引擎。
@@ -1384,6 +1397,37 @@ mod tests {
             associate_torrent_files(&mut files, None, None, &episodes),
             0
         );
+    }
+
+    /// 验证父目录合集范围不会覆盖乱序视频文件自身的集数。
+    #[test]
+    fn associates_out_of_order_collection_files_by_basename_episode() {
+        let episodes = (1..=12)
+            .map(|episode_no| test_episode(&format!("episode-{episode_no}"), f64::from(episode_no)))
+            .collect::<Vec<_>>();
+        let episode_order = [12, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 1];
+        let mut files = episode_order
+            .iter()
+            .enumerate()
+            .map(|(file_index, episode_no)| {
+                test_torrent_file(
+                    file_index as i64,
+                    &format!(
+                        "[CheeseAni] KimiSen Season Ⅱ [1-12][CR-WebRip 1080p HEVC AAC][简繁内封]/[CheeseAni] KimiSen Season Ⅱ [{episode_no:02}][CR-WebRip 1080p HEVC AAC][简繁内封].mkv"
+                    ),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            associate_torrent_files(&mut files, None, None, &episodes),
+            12
+        );
+        for (file, episode_no) in files.iter().zip(episode_order) {
+            let episode_id = format!("episode-{episode_no}");
+            assert_eq!(file.episode_id.as_deref(), Some(episode_id.as_str()));
+            assert_eq!(file.episode_no, Some(f64::from(episode_no)));
+        }
     }
 
     fn test_episode(id: &str, episode_no: f64) -> Episode {

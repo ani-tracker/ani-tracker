@@ -67,6 +67,7 @@ data class PlayerUiState(
     val playbackRate: Float = 1f,
     val audioTracks: List<PlayerTrack> = emptyList(),
     val subtitleTracks: List<PlayerTrack> = emptyList(),
+    val subtitleScale: Int = 100,
     val aspectRatio: String? = null,
     val watchedEpisodeIds: Set<String> = emptySet(),
     val autoNextSecondsRemaining: Int? = null,

@@ -1,5 +1,5 @@
 /** 桌面与 Android 共用的 SQLite 结构版本。 */
-export const SQLITE_SCHEMA_VERSION = 20;
+export const SQLITE_SCHEMA_VERSION = 21;
 
 export const SQLITE_SCHEMA = `
 PRAGMA foreign_keys = ON;
@@ -340,7 +340,14 @@ CREATE TABLE IF NOT EXISTS media_file (
   subtitle_tracks_json TEXT NOT NULL DEFAULT '[]',
   duration_seconds INTEGER,
   downloaded_at TEXT,
-  probed_at TEXT
+  probed_at TEXT,
+  origin TEXT NOT NULL DEFAULT 'download',
+  source_root TEXT,
+  fingerprint TEXT,
+  file_modified_at TEXT,
+  availability TEXT NOT NULL DEFAULT 'available',
+  last_verified_at TEXT,
+  availability_error TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_media_file_anime_episode ON media_file (anime_id, episode_id);

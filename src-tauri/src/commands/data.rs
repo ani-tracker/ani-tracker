@@ -161,6 +161,12 @@ pub(crate) async fn get_settings(
     .await
 }
 
+/// 判断设置补丁是否需要重配远程监听或图片缓存目录。
+#[cfg(any(desktop, test))]
+fn should_refresh_remote_gateway(patch: &Value) -> bool {
+    patch.pointer("/network/remoteAccess").is_some() || patch.pointer("/storage/cacheDir").is_some()
+}
+
 /// 递归合并应用设置，并保护宿主路径字段。
 #[tauri::command]
 pub(crate) async fn update_settings(
@@ -172,6 +178,8 @@ pub(crate) async fn update_settings(
     download_state: State<'_, AppDownloadState>,
 ) -> Result<AppSettings, AppCommandError> {
     let defaults = state.platform_defaults().clone();
+    #[cfg(desktop)]
+    let refresh_remote_gateway = should_refresh_remote_gateway(&patch);
     crate::storage::constrain_settings_patch(&mut patch, &defaults);
     #[cfg(mobile)]
     validate_mobile_download_directories(&patch).await?;
@@ -188,7 +196,11 @@ pub(crate) async fn update_settings(
     #[cfg(mobile)]
     crate::image_cache::apply_settings(&app, &settings).await;
     #[cfg(desktop)]
-    crate::remote::apply_settings(&app, &settings).await;
+    if refresh_remote_gateway {
+        crate::remote::apply_settings(&app, &settings).await;
+    } else {
+        log::debug!("Tauri 设置更新未涉及远程网关，跳过监听重配");
+    }
     crate::commands::downloads::emit_download_service_status_changed(&app);
     Ok(settings)
 }
@@ -888,8 +900,11 @@ pub(crate) async fn upsert_source(
 #[cfg(test)]
 mod tests {
     use ani_domain::{DashboardData, MediaFile};
+    use serde_json::json;
 
-    use super::{filter_missing_dashboard_media, validate_writable_directory};
+    use super::{
+        filter_missing_dashboard_media, should_refresh_remote_gateway, validate_writable_directory,
+    };
 
     /** 构造首页最近完成媒体测试数据。 */
     fn media_file(id: &str, file_path: &std::path::Path) -> MediaFile {
@@ -916,6 +931,13 @@ mod tests {
             duration_seconds: None,
             downloaded_at: None,
             probed_at: None,
+            origin: Default::default(),
+            source_root: None,
+            fingerprint: None,
+            file_modified_at: None,
+            availability: Default::default(),
+            last_verified_at: None,
+            availability_error: None,
         }
     }
 
@@ -972,5 +994,20 @@ mod tests {
         .expect_err("reject relative directory");
 
         assert!(error.contains("必须是绝对路径"));
+    }
+
+    /// 下载和自动化补丁不重启网关，远程访问或缓存目录补丁需要重配。
+    #[test]
+    fn refreshes_remote_gateway_only_for_owned_fields() {
+        assert!(!should_refresh_remote_gateway(&json!({
+            "download": { "defaultTorrentEngine": "embedded" },
+            "automation": { "scheduledCheckEnabled": true }
+        })));
+        assert!(should_refresh_remote_gateway(&json!({
+            "network": { "remoteAccess": { "lanEnabled": true } }
+        })));
+        assert!(should_refresh_remote_gateway(&json!({
+            "storage": { "cacheDir": "/tmp/cache" }
+        })));
     }
 }

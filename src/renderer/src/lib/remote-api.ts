@@ -82,10 +82,11 @@ export function resolveCachedImageUrl(sourceUrl: string): Promise<string> {
   const existing = imageResolveRequests.get(normalizedSourceUrl);
   if (existing) return existing;
 
-  const request = resolveCachedImageUrlOnce(normalizedSourceUrl).finally(() => {
+  const request = resolveCachedImageUrlOnce(normalizedSourceUrl).catch((error) => {
     if (imageResolveRequests.get(normalizedSourceUrl) === request) {
       imageResolveRequests.delete(normalizedSourceUrl);
     }
+    throw error;
   });
   imageResolveRequests.set(normalizedSourceUrl, request);
   return request;

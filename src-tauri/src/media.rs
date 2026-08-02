@@ -6,9 +6,9 @@ use std::time::Duration;
 
 use ani_contracts::{DesktopMediaToolsStatus, MediaToolStatus};
 use ani_domain::{AppSettings, DownloadTask, MediaFile, ReportPlaybackProgressInput};
-#[cfg(desktop)]
-use ani_media::FfprobeMediaProbe;
 use ani_media::{DownloadMediaScanner, MediaScanResult};
+#[cfg(desktop)]
+use ani_media::{FfprobeMediaProbe, MediaProbe, MediaProbeContext};
 #[cfg(desktop)]
 use ani_remote::RemoteMediaTools;
 use ani_repository::{
@@ -21,6 +21,10 @@ use tauri::{AppHandle, Manager};
 #[cfg(desktop)]
 use tokio::process::Command;
 use tokio::sync::Mutex as AsyncMutex;
+
+use crate::sources::AppSourceState;
+
+mod local_import;
 
 /// 将应用 SQLite 单写者适配为媒体 Repository 端口。
 struct SharedMediaRepository {
@@ -57,11 +61,14 @@ impl MediaRepository for SharedMediaRepository {
 /// Tauri 生命周期内共享的媒体扫描、工具解析和自动关联状态。
 #[derive(Clone)]
 pub(crate) struct AppMediaState {
+    app: AppHandle,
     storage: Arc<Mutex<Storage>>,
     repository: Arc<SharedMediaRepository>,
     platform_defaults: AppSettings,
     resource_roots: Arc<Vec<PathBuf>>,
     in_flight_task_ids: Arc<AsyncMutex<HashSet<String>>>,
+    source_state: AppSourceState,
+    local_import: Arc<local_import::LocalMediaRuntime>,
 }
 
 impl AppMediaState {
@@ -70,6 +77,7 @@ impl AppMediaState {
         app: &AppHandle,
         storage: Arc<Mutex<Storage>>,
         platform_defaults: AppSettings,
+        source_state: AppSourceState,
     ) -> Self {
         let current = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let mut roots = Vec::new();
@@ -79,6 +87,7 @@ impl AppMediaState {
         roots.extend([current.join("out/ffmpeg"), current.join("resources/ffmpeg")]);
         roots.dedup();
         Self {
+            app: app.clone(),
             repository: Arc::new(SharedMediaRepository {
                 storage: Arc::clone(&storage),
             }),
@@ -86,7 +95,29 @@ impl AppMediaState {
             platform_defaults,
             resource_roots: Arc::new(roots),
             in_flight_task_ids: Arc::new(AsyncMutex::new(HashSet::new())),
+            source_state,
+            local_import: Arc::new(local_import::LocalMediaRuntime::new()),
         }
+    }
+
+    /// 探测一个已授权的本地媒体文件，供原地导入流程复用。
+    #[cfg(desktop)]
+    pub(super) async fn probe_local_file(
+        &self,
+        file_path: &Path,
+        context: &MediaProbeContext,
+    ) -> Result<MediaFile, String> {
+        let settings = self.settings()?;
+        let timeout = setting_u64(&settings, "/media/ffprobeTimeoutSeconds", 20).clamp(1, 60);
+        let probe = FfprobeMediaProbe::new(
+            self.ffprobe_commands(&settings),
+            Duration::from_secs(timeout),
+        )
+        .map_err(|error| error.to_string())?;
+        probe
+            .probe(file_path, context)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     /// 读取全部已登记媒体文件。

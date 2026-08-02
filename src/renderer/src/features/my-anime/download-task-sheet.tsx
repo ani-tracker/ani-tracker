@@ -141,6 +141,7 @@ function DownloadTaskCard({
   const runtime = getAppRuntime();
   const mobileRuntime = runtime === "android" || runtime === "ios";
   const androidRuntime = runtime === "android";
+  const supportsReveal = runtime === "desktop" || androidRuntime;
   const fansubName = (task.fansubGroupId ? fansubNames.get(task.fansubGroupId) : undefined) ?? task.fansubName ?? "未识别字幕组";
   const playableFile = resolveTaskFile(task, true);
   const revealFile = resolveTaskFile(task, false);
@@ -246,7 +247,7 @@ function DownloadTaskCard({
                         <Play />
                       </Button>
                     )}
-                    {(runtime === "desktop" || androidRuntime) && (
+                    {supportsReveal && (
                       <Button
                         aria-label={`定位${file.episodeNo !== undefined ? `第 ${file.episodeNo} 集` : file.name}`}
                         disabled={activeFileAction !== null}
@@ -270,7 +271,7 @@ function DownloadTaskCard({
         <div className="mt-4 flex flex-col gap-3 border-t pt-3 sm:flex-row sm:items-center sm:justify-between">
           <div className={cn(
             "grid w-full gap-2 sm:ml-auto sm:flex sm:w-auto",
-            runtime === "ios" ? "grid-cols-1" : "grid-cols-2"
+            supportsReveal ? "grid-cols-2" : "grid-cols-1"
           )}>
             <Button
               aria-label="播放已完成视频"
@@ -283,7 +284,7 @@ function DownloadTaskCard({
               <Play data-icon="inline-start" />
               播放
             </Button>
-            {runtime !== "ios" && (
+            {supportsReveal && (
               <Button
                 aria-label={androidRuntime ? "打开系统目录" : "打开文件目录"}
                 className="h-11 px-2 text-xs sm:h-8"

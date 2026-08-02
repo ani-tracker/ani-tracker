@@ -181,7 +181,11 @@ mod tests {
     /// 验证 Host 和 Origin 均要求精确协议、主机与端口。
     #[test]
     fn validates_host_and_origin() {
-        let local = vec!["127.0.0.1".to_owned(), "localhost".to_owned()];
+        let local = vec![
+            "127.0.0.1".to_owned(),
+            "localhost".to_owned(),
+            "192.168.1.23".to_owned(),
+        ];
         let trusted = parse_trusted_origins(Some("https://remote.example.com"));
         assert!(is_trusted_host(
             Some("127.0.0.1:18083"),
@@ -198,6 +202,19 @@ mod tests {
         assert!(is_trusted_origin(
             Some("http://localhost:18083"),
             "http",
+            18083,
+            &local,
+            &trusted
+        ));
+        assert!(is_trusted_origin(
+            Some("https://192.168.1.23:18083"),
+            "https",
+            18083,
+            &local,
+            &trusted
+        ));
+        assert!(!is_trusted_host(
+            Some("192.168.1.24:18083"),
             18083,
             &local,
             &trusted

@@ -62,7 +62,8 @@ interface SourceDraftErrors {
   url?: string;
 }
 
-export function SourcesPage() {
+/** 渲染下载源配置；远程端可关闭会立即触发采集的操作。 */
+export function SourcesPage({ allowImmediateSync = true }: { allowImmediateSync?: boolean } = {}) {
   const { data, error: sourcesError, loading } = useAsyncData(appApi.listSources, []);
   const { data: settingsData, error: settingsError, loading: settingsLoading } = useAsyncData(appApi.getSettings, []);
   const { data: syncStatusData, error: syncStatusError, loading: syncStatusLoading } = useAsyncData(appApi.getSourceSyncStatus, []);
@@ -417,10 +418,12 @@ export function SourcesPage() {
       <section className="min-w-0">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <SectionHeading description="当天未成功时，会在应用启动后自动补跑。" title="每日增量同步" />
-          <Button variant="outline" disabled={syncing || syncStatus?.inFlight} onClick={() => void syncSourcesNow()}>
-            <RefreshCw data-icon="inline-start" className={cn((syncing || syncStatus?.inFlight) && "animate-spin")} />
-            {syncing || syncStatus?.inFlight ? "同步中" : "立即同步"}
-          </Button>
+          {allowImmediateSync && (
+            <Button variant="outline" disabled={syncing || syncStatus?.inFlight} onClick={() => void syncSourcesNow()}>
+              <RefreshCw data-icon="inline-start" className={cn((syncing || syncStatus?.inFlight) && "animate-spin")} />
+              {syncing || syncStatus?.inFlight ? "同步中" : "立即同步"}
+            </Button>
+          )}
         </div>
         <div className="mt-4 overflow-hidden rounded-md border bg-card">
           <div className="bg-muted/30 p-4">

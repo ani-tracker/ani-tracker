@@ -28,6 +28,9 @@ import type {
   ExportThemePackageInput,
   EpisodeReleasePreview,
   ImageCacheResolveResult,
+  LocalMediaImportJobStatus,
+  LocalMediaImportSelection,
+  LocalMediaSourceSummary,
   MediaScanResult,
   MobileNavigationIntent,
   MobileNotificationPermission,
@@ -80,6 +83,7 @@ import { emitManualDownloadAdded } from "@/lib/mobile-download-notification";
 const WINDOW_STATE_CHANGED_EVENT = "window-state-changed";
 const DOWNLOAD_SERVICE_STATUS_CHANGED_EVENT = "download-service-status-changed";
 const PLAYER_SNAPSHOT_EVENT = "player-snapshot";
+const LOCAL_MEDIA_IMPORT_STATUS_CHANGED_EVENT = "local-media-import-status-changed";
 
 interface TauriCommandError {
   code?: string;
@@ -679,6 +683,70 @@ class TauriClientCore implements AppClient {
     return invoke<DesktopMediaToolsStatus>("get_desktop_media_tools_status").catch((error) => {
       throw normalizeTauriError("get_desktop_media_tools_status", error);
     });
+  }
+
+  /** 选择本机目录并启动后台媒体扫描。 */
+  async startLocalMediaImport(): Promise<LocalMediaImportJobStatus | undefined> {
+    const status = await invoke<LocalMediaImportJobStatus | null>("start_local_media_import").catch((error) => {
+      throw normalizeTauriError("start_local_media_import", error);
+    });
+    return status ?? undefined;
+  }
+
+  /** 读取当前本地媒体后台任务状态。 */
+  async getLocalMediaImportStatus(): Promise<LocalMediaImportJobStatus> {
+    return invoke<LocalMediaImportJobStatus>("get_local_media_import_status").catch((error) => {
+      throw normalizeTauriError("get_local_media_import_status", error);
+    });
+  }
+
+  /** 按用户确认结果继续后台导入。 */
+  async confirmLocalMediaImport(
+    jobId: string,
+    selections: LocalMediaImportSelection[]
+  ): Promise<LocalMediaImportJobStatus> {
+    return invoke<LocalMediaImportJobStatus>("confirm_local_media_import", { jobId, selections }).catch((error) => {
+      throw normalizeTauriError("confirm_local_media_import", error);
+    });
+  }
+
+  /** 请求取消当前本地媒体后台任务。 */
+  async cancelLocalMediaImport(): Promise<LocalMediaImportJobStatus> {
+    return invoke<LocalMediaImportJobStatus>("cancel_local_media_import").catch((error) => {
+      throw normalizeTauriError("cancel_local_media_import", error);
+    });
+  }
+
+  /** 启动全部已登记媒体的后台可用性校验。 */
+  async startMediaAvailabilityCheck(): Promise<LocalMediaImportJobStatus> {
+    return invoke<LocalMediaImportJobStatus>("start_media_availability_check").catch((error) => {
+      throw normalizeTauriError("start_media_availability_check", error);
+    });
+  }
+
+  /** 汇总原地导入目录及可用性状态。 */
+  async listLocalMediaSources(): Promise<LocalMediaSourceSummary[]> {
+    return invoke<LocalMediaSourceSummary[]>("list_local_media_sources").catch((error) => {
+      throw normalizeTauriError("list_local_media_sources", error);
+    });
+  }
+
+  /** 订阅本地媒体扫描、导入和校验状态。 */
+  onLocalMediaImportStatusChanged(listener: (status: LocalMediaImportJobStatus) => void): () => void {
+    let disposed = false;
+    let unlisten: UnlistenFn | undefined;
+    void listen<LocalMediaImportJobStatus>(LOCAL_MEDIA_IMPORT_STATUS_CHANGED_EVENT, (event) => listener(event.payload))
+      .then((dispose) => {
+        if (disposed) {
+          dispose();
+        } else {
+          unlisten = dispose;
+        }
+      });
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
   }
 
   /** 探测 Tauri 桌面可用外部播放器。 */

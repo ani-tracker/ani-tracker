@@ -275,7 +275,7 @@ fn build_default_settings(directories: &AppDirectories) -> AppSettings {
                 "timeoutMs": 30000
             },
             "remoteAccess": {
-                "lanEnabled": false,
+                "lanEnabled": !mobile,
                 "port": 18083
             }
         }
@@ -610,6 +610,10 @@ mod tests {
         assert_eq!(settings["appearance"]["themeMode"], "system");
         assert_eq!(settings["appearance"]["themePackId"], "default");
         assert_eq!(settings["download"]["defaultTorrentEngine"], "embedded");
+        assert_eq!(
+            settings["network"]["remoteAccess"]["lanEnabled"],
+            !cfg!(any(target_os = "android", target_os = "ios"))
+        );
         assert_eq!(settings["download"]["embedded"]["enabled"], true);
         assert_eq!(
             settings["download"]["defaultDownloadDir"],

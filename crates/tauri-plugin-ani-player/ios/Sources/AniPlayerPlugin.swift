@@ -143,6 +143,8 @@ final class AniPlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
         case "select-subtitle-track":
             let trackID = (command["trackId"] as? String).flatMap { Int32($0) }
             controller.selectSubtitleTrack(trackID)
+        case "set-subtitle-scale":
+            controller.setSubtitleScale((command["subtitleScale"] as? Int) ?? 100)
         case "set-aspect-ratio":
             guard let ratio = Self.aspectRatio(command) else {
                 return Self.rejected(commandID, code: "unsupported", message: "iOS 不支持该画面比例")
@@ -292,6 +294,7 @@ final class AniPlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
             "playbackRate": Double(snapshot.playbackRate),
             "audioTracks": Self.trackPayload(snapshot.audioTracks, kind: "audio"),
             "subtitleTracks": Self.trackPayload(snapshot.subtitleTracks, kind: "subtitle"),
+            "subtitleScale": snapshot.subtitleScale,
             "aspectRatio": Self.aspectRatioValue(snapshot.aspectRatio),
             "fullscreen": Self.isLandscape,
             "pictureInPicture": false
@@ -391,6 +394,7 @@ final class AniPlayerPlugin: Plugin, UIAdaptivePresentationControllerDelegate {
             "playbackRates": [0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
             "supportsAudioTracks": true,
             "supportsSubtitleTracks": true,
+            "supportsSubtitleScale": true,
             "supportsAspectRatio": true,
             "supportsFullscreen": true,
             "supportsPictureInPicture": false,

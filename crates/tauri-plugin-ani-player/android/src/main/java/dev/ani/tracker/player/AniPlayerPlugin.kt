@@ -215,6 +215,7 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
             put("playbackRate", raw.optDouble("playbackRate", 1.0))
             put("audioTracks", normalizeTracks(raw.optJSONArray("audioTracks"), "audio"))
             put("subtitleTracks", normalizeTracks(raw.optJSONArray("subtitleTracks"), "subtitle"))
+            put("subtitleScale", raw.optInt("subtitleScale", 100))
             val aspectRatio = raw.opt("aspectRatio")
                 ?.takeUnless { it == JSONObject.NULL }
                 ?.toString()
@@ -245,6 +246,7 @@ class AniPlayerPlugin(private val activity: Activity) : Plugin(activity) {
         put("playbackRates", JSONArray(listOf(0.5, 0.75, 1.0, 1.25, 1.5, 2.0)))
         put("supportsAudioTracks", true)
         put("supportsSubtitleTracks", true)
+        put("supportsSubtitleScale", true)
         put("supportsAspectRatio", true)
         put("supportsFullscreen", true)
         put("supportsPictureInPicture", false)

@@ -338,6 +338,13 @@ export interface MediaFile {
   durationSeconds?: number;
   downloadedAt?: string;
   probedAt?: string;
+  origin?: "download" | "imported";
+  sourceRoot?: string;
+  fingerprint?: string;
+  fileModifiedAt?: string;
+  availability?: "available" | "changed" | "missing" | "unavailable";
+  lastVerifiedAt?: string;
+  availabilityError?: string;
 }
 
 export interface PlayerProfile {

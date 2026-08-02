@@ -365,9 +365,9 @@ export function HomePage({
                           {file.bitDepth && <Badge>{file.bitDepth}bit</Badge>}
                         </div>
                       </div>
-                      {(capabilities.nativePlayer || capabilities.runtime === "desktop") && (
+                      {(onPlayMedia || capabilities.nativePlayer || capabilities.runtime === "desktop") && (
                         <div className="flex shrink-0 self-end gap-2 sm:self-auto">
-                        {capabilities.nativePlayer && <Button
+                        {(onPlayMedia || capabilities.nativePlayer) && <Button
                           className="size-11 p-0 sm:size-9"
                           variant="outline"
                           aria-label="播放"

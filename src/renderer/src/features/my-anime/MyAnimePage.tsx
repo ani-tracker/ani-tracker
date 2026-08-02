@@ -142,6 +142,7 @@ export interface MyAnimePageIntent {
 
 interface MyAnimePageProps {
   actionOnly?: boolean;
+  allowLocalPathRules?: boolean;
   intent?: MyAnimePageIntent | null;
   onDataChanged?: () => void;
   onIntentHandled?: () => void;
@@ -152,6 +153,7 @@ interface MyAnimePageProps {
 /** 渲染追番列表并协调规则、资源下载和任务明细抽屉。 */
 export function MyAnimePage({
   actionOnly = false,
+  allowLocalPathRules = true,
   intent,
   onDataChanged,
   onIntentHandled,
@@ -1093,6 +1095,7 @@ export function MyAnimePage({
 
       {draft && (
         <RulesDrawer
+          allowLocalPathRules={allowLocalPathRules}
           addingReleaseId={addingReleaseId}
           draft={draft}
           downloadTasks={downloadTasks}
@@ -1324,6 +1327,7 @@ function MyAnimePageSkeleton() {
 
 /** 渲染追番规则和单集规则的右侧抽屉。 */
 function RulesDrawer({
+  allowLocalPathRules,
   draft,
   fansubs,
   saving,
@@ -1345,6 +1349,7 @@ function RulesDrawer({
   onPreviewReleases,
   onAddRelease
 }: {
+  allowLocalPathRules: boolean;
   draft: MyAnime;
   fansubs: FansubGroup[];
   saving: boolean;
@@ -1398,6 +1403,7 @@ function RulesDrawer({
         {activeTab !== "episodes" && (
         <RulesPanel
           activeTab={activeTab}
+          allowLocalPathRules={allowLocalPathRules}
           draft={draft}
           fansubs={fansubs}
           onChange={onChange}
@@ -1430,11 +1436,13 @@ function RulesDrawer({
 
 function RulesPanel({
   activeTab,
+  allowLocalPathRules,
   draft,
   fansubs,
   onChange
 }: {
   activeTab: Exclude<RulesTab, "episodes">;
+  allowLocalPathRules: boolean;
   draft: MyAnime | null;
   fansubs: FansubGroup[];
   onChange: (item: MyAnime | null) => void;
@@ -1661,16 +1669,18 @@ function RulesPanel({
               }
             />
           </div>
-          <TextField
-            label="下载目录覆盖"
-            value={draft.downloadDir ?? ""}
-            onChange={(value) =>
-              onChange({
-                ...draft,
-                downloadDir: value || undefined
-              })
-            }
-          />
+          {allowLocalPathRules && (
+            <TextField
+              label="下载目录覆盖"
+              value={draft.downloadDir ?? ""}
+              onChange={(value) =>
+                onChange({
+                  ...draft,
+                  downloadDir: value || undefined
+                })
+              }
+            />
+          )}
             </>
           )}
         </FieldGroup>

@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+mod download_path;
+
+pub use download_path::resolve_anime_download_path;
+
 /// 追番状态，与 TypeScript `AnimeStatus` 契约保持一致。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -1172,6 +1176,26 @@ impl DownloadTask {
     }
 }
 
+/// 媒体文件的登记来源。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaOrigin {
+    #[default]
+    Download,
+    Imported,
+}
+
+/// 已登记媒体文件当前可访问状态。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MediaAvailability {
+    #[default]
+    Available,
+    Changed,
+    Missing,
+    Unavailable,
+}
+
 /// 首页最近完成区域使用的媒体文件。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -1204,6 +1228,20 @@ pub struct MediaFile {
     pub downloaded_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probed_at: Option<String>,
+    #[serde(default)]
+    pub origin: MediaOrigin,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_modified_at: Option<String>,
+    #[serde(default)]
+    pub availability: MediaAvailability,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_verified_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub availability_error: Option<String>,
 }
 
 /// 应用内通知类别。

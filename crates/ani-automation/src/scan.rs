@@ -1,13 +1,12 @@
 use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use ani_domain::{
-    AnimeReleaseQuery, AnimeSourceBinding, AnimeStatus, AppSettings, AutomationDownloadedItem,
-    AutomationRunError, AutomationRunResult, AutomationSkippedItem, Episode, EpisodePreference,
-    EpisodeStatus, FansubGroup, MyAnime, NotificationKind, NotificationRecord,
-    NotificationSeverity, Release, ReleaseMatchContext, ReleaseMatchResult, ReleaseSourceConfig,
-    RssSubscriptionReleaseQuery,
+    resolve_anime_download_path, AnimeReleaseQuery, AnimeSourceBinding, AnimeStatus, AppSettings,
+    AutomationDownloadedItem, AutomationRunError, AutomationRunResult, AutomationSkippedItem,
+    Episode, EpisodePreference, EpisodeStatus, FansubGroup, MyAnime, NotificationKind,
+    NotificationRecord, NotificationSeverity, Release, ReleaseMatchContext, ReleaseMatchResult,
+    ReleaseSourceConfig, RssSubscriptionReleaseQuery,
 };
 use ani_repository::RepositoryResult;
 use ani_sources::{
@@ -475,7 +474,7 @@ impl AutomationRunService {
                 anime: anime.clone(),
                 episode: episode.clone(),
                 release: release.clone(),
-                save_path: resolve_download_path(&options.settings, anime),
+                save_path: resolve_anime_download_path(&options.settings, Some(anime)),
             })
             .await?;
         save_episode_status(store, episode, EpisodeStatus::Downloading)?;
@@ -742,51 +741,6 @@ fn filter_automatic_releases_by_subtitle(
         .collect::<Vec<_>>();
     let rejected = total.saturating_sub(eligible.len());
     (eligible, rejected)
-}
-
-fn resolve_download_path(settings: &AppSettings, anime: &MyAnime) -> String {
-    if let Some(path) = anime
-        .download_dir
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        return path.to_owned();
-    }
-    let root = settings
-        .pointer("/download/defaultDownloadDir")
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default();
-    let create_folder = settings
-        .pointer("/download/createAnimeFolder")
-        .and_then(serde_json::Value::as_bool)
-        .unwrap_or(true);
-    if !create_folder {
-        return root.to_owned();
-    }
-    PathBuf::from(root)
-        .join(sanitize_path_segment(&anime.anime.title))
-        .to_string_lossy()
-        .into_owned()
-}
-
-fn sanitize_path_segment(value: &str) -> String {
-    let value = value
-        .chars()
-        .map(|character| {
-            if character.is_control() || "<>:\"/\\|?*".contains(character) {
-                '_'
-            } else {
-                character
-            }
-        })
-        .collect::<String>();
-    let value = value.trim().trim_end_matches(['.', ' ']);
-    if value.is_empty() {
-        "未命名番剧".to_owned()
-    } else {
-        value.to_owned()
-    }
 }
 
 fn empty_result(now: DateTime<Utc>) -> AutomationRunResult {
@@ -1105,7 +1059,8 @@ mod tests {
             },
             "download": {
                 "defaultDownloadDir": "C:/Downloads",
-                "createAnimeFolder": true
+                "createAnimeFolder": true,
+                "animeFolderPattern": "{year}-{month}/{title}"
             }
         });
         let result = service
@@ -1127,7 +1082,15 @@ mod tests {
         assert_eq!(result.checked_episodes, 1);
         assert_eq!(result.downloaded.len(), 1);
         assert_eq!(result.downloaded[0].download_task_id, "task-auto-1");
-        assert_eq!(executor.requests.lock().expect("lock requests").len(), 1);
+        let requests = executor.requests.lock().expect("lock requests");
+        assert_eq!(requests.len(), 1);
+        assert_eq!(
+            requests[0].save_path,
+            std::path::PathBuf::from("C:/Downloads")
+                .join("2026-07")
+                .join("P3 契约番剧")
+                .to_string_lossy()
+        );
         assert!(store
             .episodes
             .lock()

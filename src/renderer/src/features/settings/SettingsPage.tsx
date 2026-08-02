@@ -12,7 +12,10 @@ import {
   FileSearch,
   FolderCog,
   FolderOpen,
+  Github,
+  GitFork,
   HardDrive,
+  Info,
   KeyRound,
   Languages,
   Minus,
@@ -63,6 +66,8 @@ import { useTheme } from "@/components/theme-provider";
 import { ConfirmActionDialog } from "@/components/confirm-action-dialog";
 import { StickyActionBar } from "@/components/page-layout";
 import { AppearanceSettingsSection } from "./AppearanceSettingsSection";
+import { LocalMediaLibrarySettingsSection } from "./LocalMediaLibrarySettingsSection";
+import { RemotePlaybackSettingsSection } from "./RemotePlaybackSettingsSection";
 import type {
   AutomationSchedulerStatus,
   EmbeddedTorrentCoreStatus,
@@ -73,7 +78,11 @@ import type {
   RemotePairingChallenge
 } from "@shared/contracts";
 import type { AppSettings } from "@shared/domain";
-import { listAvailableThemePacks, type AppearanceSettings } from "@shared/theme";
+import {
+  createDefaultAppearanceSettings,
+  listAvailableThemePacks,
+  type AppearanceSettings
+} from "@shared/theme";
 import { normalizeCandidateFansubNames, normalizeFansubMatchName } from "@shared/fansub-name-matcher";
 import { BUILTIN_PLAYER_PROFILE_ID } from "@shared/player-selection";
 
@@ -84,7 +93,8 @@ type SettingsCategoryId =
   | "remote"
   | "media"
   | "download"
-  | "automation";
+  | "automation"
+  | "about";
 
 const settingsCategories: Array<{
   id: SettingsCategoryId;
@@ -97,19 +107,25 @@ const settingsCategories: Array<{
   { id: "remote", label: "远程设备", icon: Smartphone },
   { id: "media", label: "播放器与媒体", icon: PlayCircle },
   { id: "download", label: "下载核心", icon: Download },
-  { id: "automation", label: "自动化", icon: RefreshCw }
+  { id: "automation", label: "自动化", icon: RefreshCw },
+  { id: "about", label: "关于", icon: Info }
 ];
 
 export function SettingsPage() {
   const capabilities = getAppCapabilities();
   const runtime = getAppRuntime();
   const mobileRuntime = runtime === "android" || runtime === "ios";
+  const remoteRuntime = runtime === "remote";
+  const hostExternalQbittorrent = capabilities.externalQbittorrent || remoteRuntime;
+  const hostManagedQbittorrent = capabilities.managedQbittorrent || remoteRuntime;
   const visibleSettingsCategories = settingsCategories
-    .filter((category) => capabilities.remoteGateway || category.id !== "remote")
-    .map((category) => category.id === "interface" && mobileRuntime
+    .filter((category) => category.id !== "remote" || (capabilities.remoteGateway && !remoteRuntime))
+    .map((category) => category.id === "interface" && (mobileRuntime || remoteRuntime)
       ? { ...category, label: "语言" }
+      : category.id === "media" && remoteRuntime
+        ? { ...category, label: "远程播放" }
       : category);
-  const { commitAppearance } = useTheme();
+  const { appearance, commitAppearance } = useTheme();
   const { data, loading } = useAsyncData(appApi.getSettings, []);
   const [draft, setDraft] = useState<AppSettings | null>(null);
   const [persistedSettings, setPersistedSettings] = useState<AppSettings | null>(null);
@@ -143,9 +159,10 @@ export function SettingsPage() {
 
   useEffect(() => {
     if (data) {
-      setDraft(data);
-      setPersistedSettings(data);
-      void refreshPlayerDetection(data.players);
+      const next = remoteRuntime ? { ...data, appearance } : data;
+      setDraft(next);
+      setPersistedSettings(next);
+      if (!remoteRuntime) void refreshPlayerDetection(data.players);
     }
   }, [data]);
 
@@ -158,6 +175,29 @@ export function SettingsPage() {
       .filter((section): section is HTMLElement => Boolean(section));
     if (sections.length === 0) {
       return;
+    }
+    const scrollContainer = sections[0].closest<HTMLElement>("main");
+
+    /** 按吸顶定位线校准当前分区，处理页面末尾无法完整进入观察区的情况。 */
+    function syncActiveCategory() {
+      const containerTop = scrollContainer?.getBoundingClientRect().top ?? 0;
+      const remainingScroll = scrollContainer
+        ? scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop
+        : Number.POSITIVE_INFINITY;
+      const activeSection = remainingScroll <= 2
+        ? sections[sections.length - 1]
+        : [...sections].reverse().find((section) => {
+            const scrollMarginTop = Number.parseFloat(window.getComputedStyle(section).scrollMarginTop) || 0;
+            return section.getBoundingClientRect().top <= containerTop + scrollMarginTop + 2;
+          }) ?? sections[0];
+      setActiveCategory(activeSection.id.replace("settings-", "") as SettingsCategoryId);
+    }
+
+    let scrollSettleTimer: number | undefined;
+    /** 滚动停止后执行一次最终校准，避免平滑滚动途中状态停留在前一分区。 */
+    function scheduleActiveCategorySync() {
+      window.clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = window.setTimeout(syncActiveCategory, 80);
     }
 
     const observer = new IntersectionObserver(
@@ -172,8 +212,13 @@ export function SettingsPage() {
       { rootMargin: "-24% 0px -62% 0px", threshold: [0.1, 0.35, 0.65] }
     );
     sections.forEach((section) => observer.observe(section));
-    return () => observer.disconnect();
-  }, [settingsReady, capabilities.remoteGateway]);
+    scrollContainer?.addEventListener("scroll", scheduleActiveCategorySync, { passive: true });
+    return () => {
+      observer.disconnect();
+      scrollContainer?.removeEventListener("scroll", scheduleActiveCategorySync);
+      window.clearTimeout(scrollSettleTimer);
+    };
+  }, [settingsReady, capabilities.remoteGateway, remoteRuntime]);
 
   useEffect(() => {
     void refreshSchedulerStatus();
@@ -212,7 +257,7 @@ export function SettingsPage() {
   }
 
   async function refreshQbittorrentManagedStatus() {
-    if (!capabilities.managedQbittorrent) {
+    if (!hostManagedQbittorrent) {
       setQbManagedStatus(null);
       return;
     }
@@ -300,6 +345,18 @@ export function SettingsPage() {
     }
   }
 
+  /** 使用当前平台的外链能力打开项目代码仓库。 */
+  async function openProjectUrl(projectName: string, url: string) {
+    console.info("[settings] 正在打开项目地址", { projectName, url, runtime });
+    try {
+      await appApi.openExternal(url);
+      console.info("[settings] 项目地址已打开", { projectName, url, runtime });
+    } catch (error) {
+      console.error("[settings] 项目地址打开失败", { projectName, url, runtime, error });
+      toast.error(`${projectName} 地址打开失败`);
+    }
+  }
+
   if (loading) {
     return (
       <div className="flex flex-col gap-4" aria-label="正在加载设置">
@@ -319,6 +376,37 @@ export function SettingsPage() {
     );
   }
 
+  /** 保存当前草稿；远程端仅提交允许管理的 PC 设置字段。 */
+  async function persistDraftSettings(current: AppSettings): Promise<AppSettings> {
+    const saved = await appApi.updateSettings(remoteRuntime
+      ? {
+          download: current.download,
+          automation: current.automation
+        }
+      : current);
+    const next = remoteRuntime
+      ? {
+          ...current,
+          download: saved.download,
+          automation: saved.automation,
+          sourceSync: saved.sourceSync,
+          network: {
+            ...current.network,
+            metadataProxy: saved.network.metadataProxy
+          }
+        }
+      : saved;
+    setDraft(next);
+    setPersistedSettings(next);
+    commitAppearance(next.appearance);
+    console.info("[settings] 设置草稿已持久化", {
+      runtime,
+      torrentEngine: next.download.defaultTorrentEngine,
+      automationEnabled: next.automation.scheduledCheckEnabled
+    });
+    return next;
+  }
+
   async function saveSettings() {
     if (!draft) {
       return;
@@ -326,20 +414,17 @@ export function SettingsPage() {
 
     setSaveState("saving");
     try {
-      const saved = await appApi.updateSettings(draft);
-      setDraft(saved);
-      setPersistedSettings(saved);
-      commitAppearance(saved.appearance);
+      const saved = await persistDraftSettings(draft);
       const [, , , remote] = await Promise.all([
         refreshSchedulerStatus(),
         refreshQbittorrentManagedStatus(),
         refreshEmbeddedTorrentStatus(),
         capabilities.remoteGateway ? refreshRemoteStatus() : Promise.resolve(null),
-        refreshPlayerDetection(saved.players),
+        remoteRuntime ? Promise.resolve() : refreshPlayerDetection(saved.players),
         pruneUnusedThemeBackgrounds(saved.appearance)
       ]);
       setSaveState("saved");
-      if (saved.network.remoteAccess.lanEnabled && (!remote?.lanEnabled || remote.lastError)) {
+      if (!remoteRuntime && saved.network.remoteAccess.lanEnabled && (!remote?.lanEnabled || remote.lastError)) {
         toast.warning("设置已保存，但局域网 HTTPS 启动失败，已恢复本机访问");
       } else {
         toast.success("设置已保存");
@@ -352,8 +437,20 @@ export function SettingsPage() {
   }
 
   async function resetSettingsToDefaults() {
+    if (!draft) return;
     setResetState("resetting");
     try {
+      if (remoteRuntime) {
+        const next = { ...draft, appearance: createDefaultAppearanceSettings() };
+        setDraft(next);
+        setPersistedSettings(next);
+        commitAppearance(next.appearance);
+        await pruneUnusedThemeBackgrounds(next.appearance);
+        setResetState("reset");
+        toast.success("当前设备外观已恢复默认");
+        window.setTimeout(() => setResetState("idle"), 1200);
+        return;
+      }
       const saved = await appApi.resetSettingsToDefaults();
       setDraft(saved);
       setPersistedSettings(saved);
@@ -449,7 +546,7 @@ export function SettingsPage() {
     if (!draft) {
       return;
     }
-    if (!capabilities.externalQbittorrent && mode !== "embedded") {
+    if (!hostExternalQbittorrent && mode !== "embedded") {
       return;
     }
     const managed = mode === "managed";
@@ -482,9 +579,7 @@ export function SettingsPage() {
     if (!draft) return;
     setEmbeddedAction("starting");
     try {
-      const saved = await appApi.updateSettings(draft);
-      setDraft(saved);
-      setPersistedSettings(saved);
+      await persistDraftSettings(draft);
       const status = await appApi.startEmbeddedTorrent();
       setEmbeddedStatus(status);
       setEmbeddedError(status.lastError ?? null);
@@ -514,9 +609,7 @@ export function SettingsPage() {
     if (!draft) return;
     setEmbeddedAction("restarting");
     try {
-      const saved = await appApi.updateSettings(draft);
-      setDraft(saved);
-      setPersistedSettings(saved);
+      await persistDraftSettings(draft);
       const status = await appApi.restartEmbeddedTorrent();
       setEmbeddedStatus(status);
       setEmbeddedError(status.lastError ?? null);
@@ -535,10 +628,7 @@ export function SettingsPage() {
 
     setQbTest({ state: "testing", message: "正在测试 qBittorrent 连接..." });
     try {
-      const saved = await appApi.updateSettings(draft);
-      setDraft(saved);
-      setPersistedSettings(saved);
-      commitAppearance(saved.appearance);
+      await persistDraftSettings(draft);
       const result = await appApi.testQbittorrent();
       setQbTest({
         state: result.ok ? "success" : "error",
@@ -560,10 +650,7 @@ export function SettingsPage() {
 
     setQbManagedAction("starting");
     try {
-      const saved = await appApi.updateSettings(draft);
-      setDraft(saved);
-      setPersistedSettings(saved);
-      commitAppearance(saved.appearance);
+      await persistDraftSettings(draft);
       const status = await appApi.startQbittorrentManaged();
       setQbManagedStatus(status);
       setQbTest({
@@ -604,10 +691,7 @@ export function SettingsPage() {
 
     setQbManagedAction("restarting");
     try {
-      const saved = await appApi.updateSettings(draft);
-      setDraft(saved);
-      setPersistedSettings(saved);
-      commitAppearance(saved.appearance);
+      await persistDraftSettings(draft);
       if (qbManagedStatus?.running) {
         await appApi.stopQbittorrentManaged();
       }
@@ -733,16 +817,18 @@ export function SettingsPage() {
     console.info("[settings] 已定位设置分区", { categoryId, scrollTop: nextScrollTop });
   }
 
-  const playerOptions = draft.players.filter((player) =>
+  const playerOptions = remoteRuntime ? [] : draft.players.filter((player) =>
     !playerDetection || playerDetection.candidates.some((candidate) => candidate.profileId === player.id)
   );
   const selectedPlayerId = draft.defaultPlayerProfileId ?? "auto";
-  const selectedPlayer = draft.players.find((player) => player.id === selectedPlayerId);
+  const selectedPlayer = remoteRuntime
+    ? undefined
+    : draft.players.find((player) => player.id === selectedPlayerId);
   const selectedCandidate = playerDetection?.candidates.find((candidate) => candidate.profileId === selectedPlayerId);
   const autoCandidate = playerDetection?.candidates.find((candidate) => candidate.profileId === playerDetection.detectedProfileId);
-  const torrentEngineMode = !capabilities.externalQbittorrent || draft.download.defaultTorrentEngine === "embedded"
+  const torrentEngineMode = !hostExternalQbittorrent || draft.download.defaultTorrentEngine === "embedded"
     ? "embedded"
-    : capabilities.managedQbittorrent && draft.download.qbittorrent.managed.enabled ? "managed" : "external";
+    : hostManagedQbittorrent && draft.download.qbittorrent.managed.enabled ? "managed" : "external";
   const embeddedSeedingLimits = draft.download.embedded.seedingLimits
     ?? draft.download.qbittorrent.seedingLimits;
   const hasUnsavedChanges = persistedSettings ? !areSettingsEqual(draft, persistedSettings) : false;
@@ -761,7 +847,11 @@ export function SettingsPage() {
                 </Badge>
               )}
             </div>
-            <p className="mt-1 text-sm text-muted-foreground">目录、下载引擎、播放器和自动化规则集中管理。</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {remoteRuntime
+                ? "远程播放偏好与 PC 宿主配置集中管理。"
+                : "目录、下载引擎、播放器和自动化规则集中管理。"}
+            </p>
           </div>
         </header>
         <div className="pb-3 lg:hidden">
@@ -790,7 +880,11 @@ export function SettingsPage() {
                 disabled={resetState === "resetting" || saveState === "saving"}
               >
                 <RotateCcw data-icon="inline-start" />
-                {resetState === "resetting" ? "恢复中" : resetState === "reset" ? "已恢复" : "恢复默认"}
+                {resetState === "resetting"
+                  ? "恢复中"
+                  : resetState === "reset"
+                    ? "已恢复"
+                    : remoteRuntime ? "恢复外观默认" : "恢复默认"}
               </Button>
             )}
             description="明暗模式、主题预设与导入的用户主题包。"
@@ -804,7 +898,9 @@ export function SettingsPage() {
           </SettingsCategory>
 
           <SettingsCategory
-            description="默认下载目录、未完成目录和应用用户数据位置。"
+            description={remoteRuntime
+              ? "管理 PC 宿主的默认下载目录和未完成目录。"
+              : "默认下载目录、未完成目录和应用用户数据位置。"}
             id="storage"
             title="存储与目录"
           >
@@ -866,6 +962,16 @@ export function SettingsPage() {
           </div>
         </SettingsSection>
 
+        {!mobileRuntime && !remoteRuntime && (
+          <SettingsSection
+            title="本地媒体库"
+            description="扫描本机番剧目录、确认匹配结果并维护媒体可用状态。"
+          >
+            <LocalMediaLibrarySettingsSection />
+          </SettingsSection>
+        )}
+
+        {!remoteRuntime && (
         <SettingsSection title="用户数据" description="数据库、缓存、日志和备份都应随用户数据目录迁移。">
           <div className="flex flex-col gap-4">
             <TextSetting
@@ -925,14 +1031,17 @@ export function SettingsPage() {
             )}
           </div>
         </SettingsSection>
+        )}
       </div>
 
           </SettingsCategory>
 
           <SettingsCategory
-            description={mobileRuntime ? "界面语言和番剧标题显示规则。" : "语言、标题显示规则和桌面端后台行为。"}
+            description={mobileRuntime || remoteRuntime
+              ? "界面语言和番剧标题显示规则。"
+              : "语言、标题显示规则和桌面端后台行为。"}
             id="interface"
-            title={mobileRuntime ? "语言" : "语言与桌面集成"}
+            title={mobileRuntime || remoteRuntime ? "语言" : "语言与桌面集成"}
           >
             <div className="flex flex-col gap-5">
 
@@ -944,7 +1053,7 @@ export function SettingsPage() {
         </div>
       </SettingsSection>
 
-      {!mobileRuntime && (
+      {!mobileRuntime && !remoteRuntime && (
       <SettingsSection title="桌面集成" description="控制后台运行、系统登录启动等本地桌面行为。">
         <div className="grid gap-4 lg:grid-cols-2">
           <ToggleSetting
@@ -983,7 +1092,7 @@ export function SettingsPage() {
             </div>
           </SettingsCategory>
 
-          {capabilities.remoteGateway && (
+          {capabilities.remoteGateway && !remoteRuntime && (
           <SettingsCategory
             description="局域网 HTTPS、一次性配对码和已配对设备的访问范围。"
             id="remote"
@@ -995,7 +1104,7 @@ export function SettingsPage() {
             <ToggleSetting
               icon={<Smartphone />}
               label="局域网 HTTPS"
-              description="显式开启后允许同一私有网络中的设备访问；不会开放裸 HTTP 或公网映射。"
+              description="桌面新安装默认开启，仅允许本机回环和当前网卡内网地址；不会开放裸 HTTP 或公网映射。"
               checked={draft.network.remoteAccess.lanEnabled}
               onChange={(value) =>
                 setDraft({
@@ -1160,13 +1269,21 @@ export function SettingsPage() {
           )}
 
           <SettingsCategory
-            description={mobileRuntime ? "移动端统一使用应用内置 libVLC。" : "默认播放器、可执行文件路径与媒体文件扫描参数。"}
+            description={remoteRuntime
+              ? "当前设备的播放模式和字幕显示偏好。"
+              : mobileRuntime
+                ? "移动端统一使用应用内置 libVLC。"
+                : "默认播放器、可执行文件路径与媒体文件扫描参数。"}
             id="media"
-            title="播放器与媒体"
+            title={remoteRuntime ? "远程播放" : "播放器与媒体"}
           >
             <div className="flex flex-col gap-5">
 
-      {capabilities.externalPlayerConfiguration ? (
+      {remoteRuntime ? (
+      <SettingsSection title="远程播放配置" description="配置只保存在当前浏览器，不修改 PC 播放器实现。">
+        <RemotePlaybackSettingsSection />
+      </SettingsSection>
+      ) : capabilities.externalPlayerConfiguration ? (
       <SettingsSection title="播放器配置" description="按当前操作系统提供播放器选项。">
         <div className="flex flex-col gap-4">
           <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
@@ -1256,7 +1373,7 @@ export function SettingsPage() {
       </SettingsSection>
       )}
 
-      {capabilities.mediaScan && (
+      {capabilities.mediaScan && !remoteRuntime && (
       <SettingsSection title="媒体探测" description="用于读取已下载视频的编码、分辨率、音轨和字幕轨。">
         <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
           <TextSetting
@@ -1328,9 +1445,9 @@ export function SettingsPage() {
                   : "连接外部 qBittorrent WebUI。"}
             </CardDescription>
           </div>
-          {capabilities.externalQbittorrent && <ToggleGroup
+          {hostExternalQbittorrent && <ToggleGroup
             aria-label="下载引擎"
-            className={cn("grid w-full shrink-0 sm:w-auto", capabilities.managedQbittorrent ? "grid-cols-3" : "grid-cols-2")}
+            className={cn("grid w-full shrink-0 sm:w-auto", hostManagedQbittorrent ? "grid-cols-3" : "grid-cols-2")}
             onValueChange={(value) => value && updateTorrentEngineMode(value as "embedded" | "managed" | "external")}
             type="single"
             value={torrentEngineMode}
@@ -1339,7 +1456,7 @@ export function SettingsPage() {
             <ToggleGroupItem className="h-auto min-h-9 whitespace-normal px-2" value="embedded">
               内置引擎
             </ToggleGroupItem>
-            {capabilities.managedQbittorrent && (
+            {hostManagedQbittorrent && (
               <ToggleGroupItem className="h-auto min-h-9 whitespace-normal px-2" value="managed">
                 内置 qBittorrent-nox
               </ToggleGroupItem>
@@ -1469,7 +1586,7 @@ export function SettingsPage() {
                       {torrentEngineMode === "managed" ? "内置 qBittorrent-nox" : "外部 WebUI"}
                     </span>
                   </Field>
-                  {capabilities.managedQbittorrent && (
+                  {hostManagedQbittorrent && (
                   <Field data-disabled={torrentEngineMode !== "managed"} orientation="horizontal">
                     <FieldLabel htmlFor="qbittorrent-auto-start">随应用启动</FieldLabel>
                     <Switch
@@ -1953,15 +2070,48 @@ export function SettingsPage() {
         </CardFooter>
       </Card>
           </SettingsCategory>
+
+          <SettingsCategory
+            description="应用版本、项目仓库、版权与许可信息。"
+            id="about"
+            title="关于"
+          >
+            <Card className="overflow-hidden shadow-none">
+              <CardHeader>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle>Ani Tracker</CardTitle>
+                  <Badge tone="neutral">版本 {__ANI_TRACKER_VERSION__}</Badge>
+                </div>
+                <CardDescription>本地追番、资源管理与播放工具。</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                <Button
+                  onClick={() => void openProjectUrl("GitHub", "https://github.com/momoc-ani/ani-tracker.git")}
+                  type="button"
+                  variant="outline"
+                >
+                  <Github data-icon="inline-start" />
+                  GitHub
+                </Button>
+                <Button
+                  onClick={() => void openProjectUrl("Gitee", "https://gitee.com/aurora-momoc/ani")}
+                  type="button"
+                  variant="outline"
+                >
+                  <GitFork data-icon="inline-start" />
+                  Gitee
+                </Button>
+              </CardContent>
+              <CardFooter className="flex-col items-start gap-2 border-t bg-muted/50 pt-4 text-sm text-muted-foreground sm:pt-5">
+                <p>Copyright (c) 2026 Ani Tracker contributors.</p>
+                <p>原创源码采用 PolyForm Noncommercial License 1.0.0。</p>
+                <p>允许个人及其他非商业用途；商业使用须获得版权所有者书面许可。</p>
+                <p>第三方组件遵循各自许可证。</p>
+              </CardFooter>
+            </Card>
+          </SettingsCategory>
         </div>
       </div>
-
-      <footer className="flex min-w-0 flex-col gap-2 pb-4 text-center text-xs text-muted-foreground">
-        <Separator />
-        <p>Copyright (c) 2026 Ani Tracker contributors.</p>
-        <p>源码免费公开，仅限个人及非商业用途；商业使用须获得版权所有者书面许可。</p>
-        <p>第三方组件遵循各自许可证。</p>
-      </footer>
 
       {hasUnsavedChanges && (
         <StickyActionBar className="justify-center bg-background/95">
@@ -1974,13 +2124,16 @@ export function SettingsPage() {
       )}
 
       <ConfirmActionDialog
-        confirmLabel="恢复默认"
-        description="当前未保存的设置将被平台默认配置覆盖，主题与运行参数也会立即更新。"
+        confirmLabel={remoteRuntime ? "恢复外观默认" : "恢复默认"}
+        description={remoteRuntime
+          ? "仅恢复当前远程设备的主题，不修改 PC 宿主设置。"
+          : "当前未保存的设置将被平台默认配置覆盖，主题与运行参数也会立即更新。"}
         onConfirm={resetSettingsToDefaults}
         onOpenChange={setResetDialogOpen}
         open={resetDialogOpen}
-        title="确认恢复默认设置？"
+        title={remoteRuntime ? "确认恢复当前设备外观？" : "确认恢复默认设置？"}
       />
+      {!remoteRuntime && (
       <ConfirmActionDialog
         confirmLabel="选择备份并恢复"
         description="播放器与下载引擎会安全停止，所选备份通过完整性检查后覆盖当前数据；操作前会自动保留回滚快照。"
@@ -1989,6 +2142,7 @@ export function SettingsPage() {
         open={restoreDialogOpen}
         title="确认恢复数据备份？"
       />
+      )}
     </div>
   );
 }

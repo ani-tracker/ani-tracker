@@ -64,6 +64,7 @@ import { buildAnimeDetailViewModel } from "./anime-detail-view-model";
 export type AnimeDetailLibraryAction = "rules" | "resources" | "tasks";
 
 interface AnimeDetailPageProps {
+  allowLibraryManagement?: boolean;
   animeId: string;
   refreshKey?: number;
   sourceLabel: string;
@@ -98,6 +99,7 @@ function resolveActiveSectionId(
 
 /** 渲染未追番与已追番共用的番剧详情长页。 */
 export function AnimeDetailPage({
+  allowLibraryManagement,
   animeId,
   refreshKey = 0,
   sourceLabel,
@@ -119,6 +121,7 @@ export function AnimeDetailPage({
   const summaryRef = useRef<HTMLParagraphElement>(null);
   const programmaticSectionIdRef = useRef<string | null>(null);
   const localClient = isLocalClient();
+  const libraryManagement = allowLibraryManagement ?? localClient;
 
   useEffect(() => {
     void loadDetail();
@@ -395,7 +398,7 @@ export function AnimeDetailPage({
           )}
           <DetailMoreMenu
             externalLinks={viewModel.externalLinks}
-            followed={viewModel.followed && localClient}
+            followed={viewModel.followed && libraryManagement}
             onOpenExternal={openExternal}
             onRemove={() => setRemoveDialogOpen(true)}
           />
@@ -470,7 +473,7 @@ export function AnimeDetailPage({
 
           <Card className="col-span-2 min-w-0 bg-primary/5 shadow-none xl:col-span-1 xl:self-start">
             <CardContent className="flex flex-col gap-2 p-4 sm:p-4">
-              {!localClient ? (
+              {!libraryManagement ? (
                 result.myAnime ? (
                   <Button onClick={() => onOpenLibraryAction(animeId, "tasks")} variant="outline">
                     <ListTodo data-icon="inline-start" />查看追番
@@ -620,7 +623,7 @@ export function AnimeDetailPage({
               viewModel={viewModel}
               onOpenAction={(action) => onOpenLibraryAction(animeId, action)}
               onRemove={() => setRemoveDialogOpen(true)}
-              readOnly={!localClient}
+              readOnly={!libraryManagement}
             />
           )}
 

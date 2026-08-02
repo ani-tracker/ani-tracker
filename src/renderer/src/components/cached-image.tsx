@@ -1,7 +1,7 @@
 import { ImageOff } from "lucide-react";
 import { useEffect, useRef, useState, type ImgHTMLAttributes, type ReactNode } from "react";
 import { Skeleton } from "@/components/ui/skeleton";
-import { resolveCachedImageUrl } from "@/lib/api";
+import { invalidateCachedImageUrl, resolveCachedImageUrl } from "@/lib/api";
 import { cn } from "@/lib/cn";
 
 interface CachedImageProps extends Omit<ImgHTMLAttributes<HTMLImageElement>, "alt" | "src"> {
@@ -58,6 +58,7 @@ export function CachedImage({
     const requestId = requestIdRef.current;
     setResolvedUrl(undefined);
     try {
+      await invalidateCachedImageUrl(sourceUrl);
       const nextUrl = await resolveCachedImageUrl(sourceUrl);
       if (requestIdRef.current !== requestId) return;
       const separator = nextUrl.includes("?") ? "&" : "?";

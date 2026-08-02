@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { appVersion } from "./vite.app-metadata";
 import { rendererBoundaryPlugin } from "./vite.renderer-boundaries";
 
 const tauriDevHost = process.env.TAURI_DEV_HOST;
@@ -11,6 +12,9 @@ export default defineConfig({
   publicDir: resolve("src/renderer/public"),
   base: "./",
   clearScreen: false,
+  define: {
+    __ANI_TRACKER_VERSION__: JSON.stringify(appVersion)
+  },
   envPrefix: ["VITE_", "TAURI_ENV_"],
   resolve: {
     alias: [

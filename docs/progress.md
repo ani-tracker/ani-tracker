@@ -1,6 +1,6 @@
 # Ani Tracker 实现状态
 
-最近核对：2026-07-27
+最近核对：2026-07-31
 
 ## 总体状态
 
@@ -48,6 +48,12 @@ Tauri 2 迁移 P0-P8 的代码实施已完成。Tauri 是 Windows、macOS、Linu
 - Windows/Android/macOS 长期自签、iOS 未签名可重签包的发布工作流，以及 SHA-256、JSON 产物清单和独立 actionlint 门禁；Android Gradle Release 缺少长期 JKS 时会直接失败。
 - Android/iOS 持续门禁会在相关推送和 Pull Request 上真实编译移动产物、编译原生策略测试，并执行 Renderer 与安装包内容边界检查。
 - 本地主 Renderer 与远程 PWA 已拆分入口和 API Adapter；移动构建的模块图会拒绝远程页面、ArtPlayer、HLS.js 与远程转码客户端。
+- 远程 PWA 已复用首页、我的追番、新番发现、资源搜索、下载队列、提醒中心和下载源页面；共享桌面 SQLite 业务数据，不复制页面业务逻辑。
+- 远程端通过内部平台能力与页面参数排除季度采集、媒体扫描、本地媒体文件、系统集成和真实文件删除，不向页面暴露平台能力开关。
+- 远程播放继续使用独立的 ArtPlayer/HLS 会话，播放模式、字幕大小和主题保存在当前远程设备；PC 端继续使用现有 libVLC 与播放器配置。
+- 远程设置直接复用 PC 设置页，仅隐藏远程服务与设备、媒体探测、桌面集成和用户数据；下载目录、下载核心与自动化写入共享 SQLite，远程主题和播放配置独立保存在当前设备。
+- 设置 RPC 使用方法白名单、scope、嵌套字段校验与返回值脱敏；qBittorrent 密码使用占位符回传并在保存时保留宿主原值，托管进程路径继续隐藏。
+- 远程 PWA 已加入页面壳 Service Worker；导航和静态资源可缓存，RPC、媒体流及业务接口始终直连桌面网关。
 - 全平台 Logo 已替换，Tauri 与生成的 Android/iOS 工程使用统一品牌资源。
 - 已增加旧宿主防回流门禁，持续拒绝 Electron/Capacitor 依赖、脚本、活跃路径和 Renderer bridge 重新进入正式构建链。
 

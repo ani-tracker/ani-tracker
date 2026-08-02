@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use tokio::sync::Mutex;
 
 const PLAYBACK_RATES: &[f64] = &[0.5, 0.75, 1.0, 1.25, 1.5, 2.0];
+const SUBTITLE_SCALES: &[u16] = &[100, 125, 150, 175, 200];
 
 /// 平台播放器 transport 的稳定失败，不泄漏 SDK 或 FFI 类型。
 #[derive(Debug, Clone, thiserror::Error)]
@@ -171,6 +172,11 @@ pub fn validate_command(command: &PlayerCommand) -> Option<PlayerError> {
                 return Some(invalid_command("字幕轨标识无效"));
             }
         }
+        PlayerCommandAction::SetSubtitleScale { subtitle_scale } => {
+            if !SUBTITLE_SCALES.contains(subtitle_scale) {
+                return Some(invalid_command("字幕缩放比例无效"));
+            }
+        }
         PlayerCommandAction::SetAspectRatio {
             aspect_ratio: ani_contracts::PlayerAspectRatio::Custom,
             value,
@@ -303,7 +309,7 @@ mod tests {
         assert!(result.error.is_some());
     }
 
-    /// 验证播放器拒绝非有限跳转位置和未声明倍速。
+    /// 验证播放器拒绝非有限跳转位置、未声明倍速和非法字幕大小。
     #[test]
     fn validates_numeric_player_commands() {
         let invalid_seek = PlayerCommand {
@@ -318,9 +324,17 @@ mod tests {
             session_id: "session-1".to_owned(),
             action: PlayerCommandAction::SetRate { rate: 3.0 },
         };
+        let invalid_subtitle_scale = PlayerCommand {
+            command_id: "command-subtitle-scale".to_owned(),
+            session_id: "session-1".to_owned(),
+            action: PlayerCommandAction::SetSubtitleScale {
+                subtitle_scale: 130,
+            },
+        };
 
         assert!(validate_command(&invalid_seek).is_some());
         assert!(validate_command(&invalid_rate).is_some());
+        assert!(validate_command(&invalid_subtitle_scale).is_some());
     }
 
     fn load_command(session_id: &str) -> PlayerCommand {
@@ -356,6 +370,7 @@ mod tests {
             playback_rates: PLAYBACK_RATES.to_vec(),
             supports_audio_tracks: true,
             supports_subtitle_tracks: true,
+            supports_subtitle_scale: true,
             supports_aspect_ratio: true,
             supports_fullscreen: true,
             supports_picture_in_picture: false,

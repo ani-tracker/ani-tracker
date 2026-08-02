@@ -115,6 +115,7 @@ test("Tauri 播放器快照契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.status, "playing");
   assert.equal(fixture.payload.audioTracks.length, 2);
   assert.equal(fixture.payload.subtitleTracks.length, 1);
+  assert.equal(fixture.payload.subtitleScale, 150);
   assert.equal(
     acceptPlayerSnapshot(fixture.payload.sessionId, undefined, fixture.payload),
     fixture.payload
@@ -162,6 +163,8 @@ test("Tauri P3 追番写模型契约金样可被 TypeScript 接受", () => {
   assert.equal(fixture.payload.preference.episodeId, fixture.payload.episode.id);
   assert.equal(fixture.payload.reportPlaybackProgressInput.percent, 92);
   assert.equal(fixture.payload.savePlaybackCheckpointInput.fileIndex, 0);
+  assert.equal(fixture.payload.savePlaybackCheckpointInput.completed, true);
+  assert.equal(fixture.payload.checkpoint.completed, true);
   assert.equal(fixture.payload.checkpoint.watchedReported, true);
   assert.equal(progress.totalEpisodeCount, 12);
 });
@@ -328,6 +331,7 @@ test("Tauri P5 播放器命令契约金样可被 TypeScript 接受", () => {
   const fixture = JSON.parse(readFileSync(fixturePath, "utf8")) as ContractFixture<{
     loadCommand: PlayerCommand;
     rejectedResult: PlayerCommandResult;
+    subtitleScaleCommand: PlayerCommand;
     androidCapabilities: PlayerCapabilities;
     iosCapabilities: PlayerCapabilities;
     playbackSession: RemotePlaybackSession;
@@ -341,6 +345,7 @@ test("Tauri P5 播放器命令契约金样可被 TypeScript 接受", () => {
   }
   assert.equal(fixture.payload.loadCommand.source.subtitles[0].type, "ass");
   assert.equal(fixture.payload.rejectedResult.accepted, false);
+  assert.equal(fixture.payload.subtitleScaleCommand.type, "set-subtitle-scale");
   assert.equal(fixture.payload.androidCapabilities.platform, "android");
   assert.equal(fixture.payload.iosCapabilities.platform, "ios");
   assert.equal(fixture.payload.iosCapabilities.supportsTranscodingFallback, false);

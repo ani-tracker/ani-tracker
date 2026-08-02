@@ -122,6 +122,7 @@ pub fn run() {
                 app.handle(),
                 Arc::clone(storage_state.storage()),
                 storage_state.platform_defaults().clone(),
+                source_state.clone(),
             );
             let player_state =
                 player::AppPlayerState::new(app.handle(), Arc::clone(storage_state.storage()));
@@ -278,6 +279,12 @@ pub fn run() {
             commands::media::list_media_files,
             commands::media::scan_download_media,
             commands::media::get_desktop_media_tools_status,
+            commands::media::start_local_media_import,
+            commands::media::get_local_media_import_status,
+            commands::media::confirm_local_media_import,
+            commands::media::cancel_local_media_import,
+            commands::media::start_media_availability_check,
+            commands::media::list_local_media_sources,
             commands::mobile::get_mobile_platform_status,
             commands::mobile::consume_mobile_navigation,
             commands::mobile::consume_mobile_background_refresh,

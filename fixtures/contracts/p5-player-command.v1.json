@@ -36,6 +36,12 @@
         "recoveryActions": []
       }
     },
+    "subtitleScaleCommand": {
+      "type": "set-subtitle-scale",
+      "commandId": "command-contract-3",
+      "sessionId": "session-contract-1",
+      "subtitleScale": 150
+    },
     "androidCapabilities": {
       "backend": "libvlc",
       "platform": "android",
@@ -46,6 +52,7 @@
       "playbackRates": [0.5, 0.75, 1, 1.25, 1.5, 2],
       "supportsAudioTracks": true,
       "supportsSubtitleTracks": true,
+      "supportsSubtitleScale": true,
       "supportsAspectRatio": true,
       "supportsFullscreen": true,
       "supportsPictureInPicture": false,
@@ -64,6 +71,7 @@
       "playbackRates": [0.5, 0.75, 1, 1.25, 1.5, 2],
       "supportsAudioTracks": true,
       "supportsSubtitleTracks": true,
+      "supportsSubtitleScale": true,
       "supportsAspectRatio": true,
       "supportsFullscreen": true,
       "supportsPictureInPicture": false,

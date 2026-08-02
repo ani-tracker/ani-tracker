@@ -279,7 +279,7 @@ export function AppShell({
 
                     return (
                       <SidebarMenuItem className="relative" key={item.id}>
-                        <Tooltip open={expandedDesktopSidebar ? false : undefined}>
+                        <Tooltip>
                           <TooltipTrigger asChild>
                             <SidebarMenuButton
                               aria-current={selected ? "page" : undefined}
@@ -302,7 +302,9 @@ export function AppShell({
                               )}
                             </SidebarMenuButton>
                           </TooltipTrigger>
-                          <TooltipContent side="right">{item.label}</TooltipContent>
+                          {!expandedDesktopSidebar && (
+                            <TooltipContent side="right">{item.label}</TooltipContent>
+                          )}
                         </Tooltip>
                       </SidebarMenuItem>
                     );
@@ -326,7 +328,7 @@ export function AppShell({
               />
               <span className="text-xs font-medium group-data-[state=collapsed]/sidebar:hidden">{status.label}</span>
             </div>
-            <Tooltip open={expandedDesktopSidebar ? false : undefined}>
+            <Tooltip>
               <TooltipTrigger asChild>
                 <div
                   aria-label={`${status.label}，${status.detail}`}
@@ -337,7 +339,9 @@ export function AppShell({
                   <span className="truncate text-[11px] group-data-[state=collapsed]/sidebar:hidden">{status.detail}</span>
                 </div>
               </TooltipTrigger>
-              <TooltipContent side="right">{status.label} · {status.detail}</TooltipContent>
+              {!expandedDesktopSidebar && (
+                <TooltipContent side="right">{status.label} · {status.detail}</TooltipContent>
+              )}
             </Tooltip>
           </SidebarFooter>
         </Sidebar>

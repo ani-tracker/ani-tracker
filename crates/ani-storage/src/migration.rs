@@ -8,7 +8,7 @@ use crate::{
     now_iso, ReleaseSourceSeed, StorageError, StorageSeed, APP_DATA_VERSION, SQLITE_SCHEMA_VERSION,
 };
 
-const CURRENT_SCHEMA: &str = include_str!("schema_v20.sql");
+const CURRENT_SCHEMA: &str = include_str!("schema_v21.sql");
 const MAX_RELEASE_ID_BYTES: usize = 200;
 
 /// 数据库中记录的结构和应用数据版本。
@@ -47,6 +47,7 @@ pub(crate) fn initialize_database(
     let transaction = connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
     transaction.execute_batch(CURRENT_SCHEMA)?;
     ensure_legacy_columns(&transaction)?;
+    ensure_current_indexes(&transaction)?;
     migrate_schema_data(&transaction, versions.schema_version.unwrap_or(0))?;
 
     match versions.app_data_version {
@@ -174,9 +175,37 @@ fn ensure_legacy_columns(transaction: &Transaction<'_>) -> Result<(), StorageErr
         ),
         ("torrent_file", "episode_id", "episode_id TEXT"),
         ("torrent_file", "episode_no", "episode_no REAL"),
+        (
+            "media_file",
+            "origin",
+            "origin TEXT NOT NULL DEFAULT 'download'",
+        ),
+        ("media_file", "source_root", "source_root TEXT"),
+        ("media_file", "fingerprint", "fingerprint TEXT"),
+        ("media_file", "file_modified_at", "file_modified_at TEXT"),
+        (
+            "media_file",
+            "availability",
+            "availability TEXT NOT NULL DEFAULT 'available'",
+        ),
+        ("media_file", "last_verified_at", "last_verified_at TEXT"),
+        (
+            "media_file",
+            "availability_error",
+            "availability_error TEXT",
+        ),
     ] {
         ensure_column(transaction, table, column, definition)?;
     }
+    Ok(())
+}
+
+/// 在依赖列补齐后创建当前版本索引，兼容历史表结构。
+fn ensure_current_indexes(transaction: &Transaction<'_>) -> Result<(), StorageError> {
+    transaction.execute_batch(
+        "CREATE INDEX IF NOT EXISTS idx_media_file_source_root \
+         ON media_file (source_root, availability);",
+    )?;
     Ok(())
 }
 

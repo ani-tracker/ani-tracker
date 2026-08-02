@@ -34,6 +34,32 @@ test("优先返回合集文件关联及文件进度", () => {
   assert.equal(link?.progress, 0.75);
 });
 
+test("乱序合集按单集关联返回对应文件进度", () => {
+  const task = collectionTask([
+    torrentFile(0, 12, 0.223),
+    torrentFile(11, 1, 0.239),
+  ]);
+  const episode1: Episode = {
+    id: "episode-1",
+    animeId: "anime-1",
+    episodeNo: 1,
+    status: "downloading",
+  };
+  const episode12: Episode = {
+    id: "episode-12",
+    animeId: "anime-1",
+    episodeNo: 12,
+    status: "downloading",
+  };
+
+  const episode1Link = findEpisodeDownloadLink([task], episode1);
+  const episode12Link = findEpisodeDownloadLink([task], episode12);
+  assert.equal(episode1Link?.file?.index, 11);
+  assert.equal(episode1Link?.progress, 0.239);
+  assert.equal(episode12Link?.file?.index, 0);
+  assert.equal(episode12Link?.progress, 0.223);
+});
+
 function collectionTask(files: TorrentFile[]): DownloadTask {
   return {
     id: "task-collection",

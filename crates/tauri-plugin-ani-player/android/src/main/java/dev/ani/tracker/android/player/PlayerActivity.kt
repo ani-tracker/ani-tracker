@@ -125,6 +125,9 @@ class PlayerActivity : ComponentActivity() {
                 playerViewModel.selectSubtitleTrack(trackId)
                 true
             }
+            "set-subtitle-scale" -> true.also {
+                playerViewModel.setSubtitleScale(command.optInt("subtitleScale", 100))
+            }
             "set-aspect-ratio" -> true.also {
                 val ratio = command.optString("aspectRatio", "default")
                 val value = command.optString("value").takeIf(String::isNotBlank)
@@ -151,6 +154,7 @@ class PlayerActivity : ComponentActivity() {
             put("volume", state.volume / 100.0)
             put("muted", state.muted)
             put("playbackRate", state.playbackRate.toDouble())
+            put("subtitleScale", state.subtitleScale)
             put("aspectRatio", state.aspectRatio ?: JSONObject.NULL)
             put("fullscreen", resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE)
             put("activeItemId", state.activeEpisode?.id ?: JSONObject.NULL)

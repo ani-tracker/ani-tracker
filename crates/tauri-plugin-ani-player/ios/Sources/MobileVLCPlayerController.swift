@@ -8,12 +8,14 @@ import UIKit
 /** 将 MobileVLCKit 映射为 Tauri 原生页可观察的单一播放器状态。 */
 final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlayerDelegate {
     static let supportedRates: [Float] = [0.5, 0.75, 1, 1.25, 1.5, 2]
+    static let supportedSubtitleScales = [100, 125, 150, 175, 200]
 
     @Published private(set) var snapshot = PlayerSnapshot()
 
     private let mediaPlayer: VLCMediaPlayer
     private let audioSession = AVAudioSession.sharedInstance()
     private let checkpointStore = PlaybackCheckpointStore()
+    private let preferences = UserDefaults.standard
     private let logger = Logger(subsystem: "dev.ani.tracker", category: "MobileVLCKit")
     private weak var attachedView: UIView?
     private var pendingStartPosition: Int64 = 0
@@ -34,6 +36,9 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
             "--file-caching=500"
         ])
         super.init()
+        snapshot.subtitleScale = Self.normalizeSubtitleScale(
+            preferences.integer(forKey: Self.subtitleScaleKey)
+        )
         mediaPlayer.delegate = self
         applyAudioSnapshot(reason: "initialize")
         NotificationCenter.default.addObserver(
@@ -181,6 +186,18 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
         refreshTracks()
     }
 
+    /** 保存字幕缩放比例，并按原位置和播放状态重建 VLC Media。 */
+    func setSubtitleScale(_ scale: Int) {
+        let normalized = Self.normalizeSubtitleScale(scale)
+        guard normalized != snapshot.subtitleScale else { return }
+        let shouldResume = mediaPlayer.isPlaying || snapshot.status == .playing || snapshot.status == .buffering
+        let position = snapshot.positionMilliseconds
+        snapshot.subtitleScale = normalized
+        preferences.set(normalized, forKey: Self.subtitleScaleKey)
+        logger.info("iOS 字幕大小已保存: scale=\(normalized, privacy: .public)")
+        loadEpisode(at: snapshot.activeIndex, startPosition: position, playWhenReady: shouldResume)
+    }
+
     /** 切换默认、16:9 和 4:3 画面比例。 */
     func selectAspectRatio(_ aspectRatio: PlayerAspectRatio) {
         mediaPlayer.scaleFactor = 0
@@ -292,6 +309,7 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
             activeIndex: min(max(request.activeIndex, 0), request.episodes.count - 1),
             status: .idle,
             volume: snapshot.volume,
+            subtitleScale: snapshot.subtitleScale,
             watchedEpisodeIDs: Set(request.episodes.filter(checkpointStore.isWatched).map(\.id))
         )
         let activeEpisode = snapshot.activeEpisode
@@ -302,7 +320,7 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
     }
 
     /** 创建 VLCMedia 并开始当前单集的原生播放。 */
-    private func loadEpisode(at index: Int, startPosition: Int64?) {
+    private func loadEpisode(at index: Int, startPosition: Int64?, playWhenReady: Bool? = nil) {
         guard snapshot.episodes.indices.contains(index) else { return }
         let episode = snapshot.episodes[index]
         persistCheckpoint(completed: snapshot.status == .ended, reason: "switch-item")
@@ -323,14 +341,15 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
 
         let media = VLCMedia(url: episode.mediaURL)
         media.addOption(":network-caching=1500")
+        media.addOption(":freetype-rel-fontsize=\(Self.subtitleRelativeFontSize(snapshot.subtitleScale))")
         mediaPlayer.stop()
         mediaPlayer.media = media
-        if autoplay {
+        if playWhenReady ?? autoplay {
             play()
         } else {
             snapshot.status = .ready
         }
-        logger.info("iOS MobileVLCKit 已加载媒体: session=\(self.snapshot.sessionID, privacy: .public), index=\(index)")
+        logger.info("iOS MobileVLCKit 已加载媒体: session=\(self.snapshot.sessionID, privacy: .public), index=\(index, privacy: .public), subtitleScale=\(self.snapshot.subtitleScale, privacy: .public)")
     }
 
     /** 把 MobileVLCKit 状态枚举归一为跨平台播放阶段。 */
@@ -544,6 +563,18 @@ final class MobileVLCPlayerController: NSObject, ObservableObject, VLCMediaPlaye
         snapshot.status = .error
         snapshot.errorMessage = message
     }
+
+    /** 将未知值收敛到支持的字幕缩放档位。 */
+    private static func normalizeSubtitleScale(_ scale: Int) -> Int {
+        supportedSubtitleScales.min(by: { abs($0 - scale) < abs($1 - scale) }) ?? 100
+    }
+
+    /** 将百分比换算为 VLC 使用的视频高度相对字号。 */
+    private static func subtitleRelativeFontSize(_ scale: Int) -> Int {
+        (1_600 + scale / 2) / scale
+    }
+
+    private static let subtitleScaleKey = "ani.player.subtitleScale"
 }
 
 private extension PlayerSnapshot {

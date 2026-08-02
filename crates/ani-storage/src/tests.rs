@@ -30,6 +30,60 @@ use crate::{
 
 static TEST_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+/// 验证 90% 完成边界以及完成状态不可被后续低进度覆盖。
+#[test]
+fn playback_checkpoint_completion_is_threshold_based_and_monotonic() {
+    let directory = TestDirectory::new("checkpoint-completion");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("checkpoint database must initialize");
+    let task_id = "checkpoint-threshold-task";
+    storage
+        .connection
+        .execute(
+            "INSERT INTO download_task (
+               id, engine, name, status, progress, download_speed, upload_speed,
+               save_path, created_at, updated_at
+             ) VALUES (?1, 'embedded', 'checkpoint threshold', 'completed', 1, 0, 0,
+               'C:/video', '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z')",
+            [task_id],
+        )
+        .expect("insert checkpoint download task");
+    let repository = storage.repository();
+
+    let below_threshold = repository
+        .save_playback_checkpoint(&SavePlaybackCheckpointInput {
+            task_id: task_id.to_owned(),
+            file_index: Some(0),
+            position_seconds: 89.99,
+            duration_seconds: 100.0,
+            completed: Some(false),
+        })
+        .expect("save checkpoint below threshold");
+    assert!(!below_threshold.completed);
+
+    let at_threshold = repository
+        .save_playback_checkpoint(&SavePlaybackCheckpointInput {
+            task_id: task_id.to_owned(),
+            file_index: Some(0),
+            position_seconds: 90.0,
+            duration_seconds: 100.0,
+            completed: Some(false),
+        })
+        .expect("save checkpoint at threshold");
+    assert!(at_threshold.completed);
+
+    let rewound = repository
+        .save_playback_checkpoint(&SavePlaybackCheckpointInput {
+            task_id: task_id.to_owned(),
+            file_index: Some(0),
+            position_seconds: 10.0,
+            duration_seconds: 100.0,
+            completed: Some(false),
+        })
+        .expect("save rewound checkpoint");
+    assert!(rewound.completed);
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ContractFixture<T> {
@@ -81,7 +135,10 @@ fn initializes_new_database_with_seed() {
     assert!(storage.report().created);
     assert_eq!(storage.report().schema_version, SQLITE_SCHEMA_VERSION);
     assert_eq!(storage.report().app_data_version, APP_DATA_VERSION);
-    assert_eq!(read_meta(&storage.connection, "schema_version"), "20");
+    assert_eq!(
+        read_meta(&storage.connection, "schema_version"),
+        SQLITE_SCHEMA_VERSION.to_string()
+    );
     assert_eq!(read_meta(&storage.connection, "app_data_version"), "25");
     assert_eq!(
         storage
@@ -232,7 +289,10 @@ fn backs_up_and_migrates_legacy_versions() {
         "anime_catalog",
         "detail_json"
     ));
-    assert_eq!(read_meta(&storage.connection, "schema_version"), "20");
+    assert_eq!(
+        read_meta(&storage.connection, "schema_version"),
+        SQLITE_SCHEMA_VERSION.to_string()
+    );
     assert_eq!(read_meta(&storage.connection, "app_data_version"), "25");
     assert_eq!(source_count(&storage.connection, "prowlarr"), 0);
     assert_eq!(source_proxy(&storage.connection, "anibt"), 0);
@@ -243,6 +303,87 @@ fn backs_up_and_migrates_legacy_versions() {
     assert_eq!(read_meta(&backup, "app_data_version"), "21");
     assert!(!column_exists(&backup, "anime_catalog", "detail_json"));
     assert_eq!(source_count(&backup, "prowlarr"), 1);
+}
+
+/// 验证版本 20 的媒体表会先补齐可用性字段，再创建目录索引。
+#[test]
+fn migrates_v20_media_availability_schema() {
+    let directory = TestDirectory::new("media-availability-migration");
+    let options = test_options(&directory, "active.sqlite");
+    let database_path = options.database_path.clone();
+    drop(Storage::open(options.clone()).expect("create current database"));
+
+    let legacy = Connection::open(&database_path).expect("open media migration fixture");
+    legacy
+        .execute_batch(
+            "ALTER TABLE media_file RENAME TO media_file_v21;
+             CREATE TABLE media_file (
+               id TEXT PRIMARY KEY,
+               anime_id TEXT NOT NULL,
+               episode_id TEXT,
+               download_task_id TEXT,
+               file_path TEXT NOT NULL,
+               file_name TEXT NOT NULL,
+               size INTEGER NOT NULL,
+               container TEXT,
+               declared_video_codec TEXT,
+               detected_video_codec TEXT,
+               normalized_video_codec TEXT NOT NULL,
+               resolution TEXT,
+               bit_depth INTEGER,
+               audio_codecs_json TEXT NOT NULL DEFAULT '[]',
+               subtitle_tracks_json TEXT NOT NULL DEFAULT '[]',
+               duration_seconds INTEGER,
+               downloaded_at TEXT,
+               probed_at TEXT
+             );
+             INSERT INTO media_file (
+               id, anime_id, file_path, file_name, size, normalized_video_codec
+             ) VALUES (
+               'legacy-media', 'legacy-anime', '/media/legacy.mkv', 'legacy.mkv',
+               1024, 'Unknown'
+             );
+             DROP TABLE media_file_v21;
+             UPDATE app_meta SET value = '20' WHERE key = 'schema_version';",
+        )
+        .expect("downgrade media table to v20");
+    drop(legacy);
+
+    let storage = Storage::open(options).expect("v20 media table must migrate");
+    for column in [
+        "origin",
+        "source_root",
+        "fingerprint",
+        "file_modified_at",
+        "availability",
+        "last_verified_at",
+        "availability_error",
+    ] {
+        assert!(column_exists(&storage.connection, "media_file", column));
+    }
+    assert_eq!(
+        storage
+            .connection
+            .query_row(
+                "SELECT origin || ':' || availability FROM media_file WHERE id = 'legacy-media'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .expect("read migrated media defaults"),
+        "download:available"
+    );
+    assert_eq!(
+        storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master \
+                 WHERE type = 'index' AND name = 'idx_media_file_source_root'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("read media source index"),
+        1
+    );
 }
 
 /// 验证版本 23 会修复历史超长资源标识，并保留任务与单集偏好的稳定关联。
@@ -688,7 +829,10 @@ fn rejects_corrupt_manual_restore_without_mutating_active_database() {
 
     assert!(storage.restore_from(&corrupt).is_err());
     storage.verify().expect("active database remains valid");
-    assert_eq!(read_meta(&storage.connection, "schema_version"), "20");
+    assert_eq!(
+        read_meta(&storage.connection, "schema_version"),
+        SQLITE_SCHEMA_VERSION.to_string()
+    );
 }
 
 /// 验证迁移事务失败后恢复原始版本和表结构。
@@ -1077,6 +1221,13 @@ fn removes_download_snapshot_and_rolls_back_invalid_files() {
             duration_seconds: Some(1440),
             downloaded_at: Some("2026-07-25T00:00:00.000Z".to_owned()),
             probed_at: Some("2026-07-25T00:01:00.000Z".to_owned()),
+            origin: Default::default(),
+            source_root: None,
+            fingerprint: None,
+            file_modified_at: None,
+            availability: Default::default(),
+            last_verified_at: None,
+            availability_error: None,
         }],
     )
     .expect("save removable media");
@@ -1151,6 +1302,13 @@ fn upserts_media_files_and_deduplicates_paths() {
         duration_seconds: Some(1440),
         downloaded_at: Some("2026-07-25T00:00:00.000Z".to_owned()),
         probed_at: Some("2026-07-25T00:01:00.000Z".to_owned()),
+        origin: Default::default(),
+        source_root: None,
+        fingerprint: None,
+        file_modified_at: None,
+        availability: Default::default(),
+        last_verified_at: None,
+        availability_error: None,
     };
     let first = MediaRepository::upsert_media_files(&repository, &[media.clone()])
         .expect("write first media");

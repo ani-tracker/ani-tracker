@@ -9,6 +9,7 @@ release
 electron.vite.config.js
 electron.vite.config.d.ts
 src/**/*.js
+!src/renderer/public/sw.js
 src/**/*.d.ts
 !src/renderer/src/vite-env.d.ts
 *.log

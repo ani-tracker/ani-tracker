@@ -4,6 +4,7 @@ import {
   acceptPlayerSnapshot,
   createInitialPlayerSnapshot,
   createUnavailablePlayerCapabilities,
+  isPlaybackCompleted,
   rejectUnsupportedPlayerCommand,
   type PlayerCapabilities
 } from "../player-contract";
@@ -18,6 +19,7 @@ const capabilities: PlayerCapabilities = {
   playbackRates: [0.5, 1, 1.5, 2],
   supportsAudioTracks: true,
   supportsSubtitleTracks: true,
+  supportsSubtitleScale: true,
   supportsAspectRatio: true,
   supportsFullscreen: true,
   supportsPictureInPicture: false,
@@ -34,6 +36,7 @@ test("createInitialPlayerSnapshot 创建稳定的空闲状态", () => {
   assert.equal(snapshot.sequence, 0);
   assert.equal(snapshot.status, "idle");
   assert.equal(snapshot.volume, 1);
+  assert.equal(snapshot.subtitleScale, 100);
   assert.deepEqual(snapshot.playlist.items, []);
 });
 
@@ -43,6 +46,7 @@ test("createUnavailablePlayerCapabilities 默认关闭所有原生能力", () =>
   assert.equal(unavailable.availability, "unavailable");
   assert.equal(unavailable.canSeek, false);
   assert.equal(unavailable.supportsDirectPlayback, false);
+  assert.equal(unavailable.supportsSubtitleScale, false);
   assert.deepEqual(unavailable.playbackRates, [1]);
   assert.equal(unavailable.unavailableReason, "运行时缺失");
 });
@@ -56,6 +60,13 @@ test("acceptPlayerSnapshot 丢弃旧会话和乱序事件", () => {
   assert.equal(acceptPlayerSnapshot("session-a", current, stale), current);
   assert.equal(acceptPlayerSnapshot("session-a", current, oldSession), current);
   assert.equal(acceptPlayerSnapshot("session-a", current, next), next);
+});
+
+test("isPlaybackCompleted 在 90% 边界或自然结束时判定完成", () => {
+  assert.equal(isPlaybackCompleted("playing", 89.99, 100), false);
+  assert.equal(isPlaybackCompleted("playing", 90, 100), true);
+  assert.equal(isPlaybackCompleted("ended", 0, 0), true);
+  assert.equal(isPlaybackCompleted("playing", Number.NaN, 100), false);
 });
 
 test("rejectUnsupportedPlayerCommand 返回可展示的结构化错误", () => {
