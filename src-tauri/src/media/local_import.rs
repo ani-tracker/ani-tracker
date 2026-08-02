@@ -9,12 +9,12 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_contracts::{
-    LocalMediaImportCandidate, LocalMediaImportJobStatus, LocalMediaImportPhase,
-    LocalMediaImportSelection, LocalMediaSourceSummary,
+    LocalMediaImportAssociation, LocalMediaImportCandidate, LocalMediaImportJobStatus,
+    LocalMediaImportPhase, LocalMediaImportSelection, LocalMediaSourceSummary,
 };
 use ani_domain::{
     Anime, AnimeAlias, AnimeAliasLanguage, AnimeStatus, Episode, EpisodeStatus, MediaAvailability,
-    MediaOrigin, MyAnime,
+    MediaFile, MediaOrigin, MyAnime,
 };
 use ani_media::MediaProbeContext;
 use ani_repository::{
@@ -62,7 +62,6 @@ impl LocalMediaRuntime {
 #[derive(Clone)]
 struct ScannedFile {
     path: PathBuf,
-    relative_path: PathBuf,
     episode_no: Option<f64>,
     parsed: ParsedReleaseTitle,
     size: i64,
@@ -74,6 +73,7 @@ struct ScannedFile {
 struct PendingCandidate {
     summary: LocalMediaImportCandidate,
     files: Vec<ScannedFile>,
+    automatic_match: bool,
 }
 
 struct PendingImport {
@@ -302,6 +302,7 @@ impl AppMediaState {
         .await
         .map_err(|error| format!("本地媒体扫描线程失败：{error}"))??;
         self.ensure_not_cancelled(&job_id)?;
+        self.remove_ignored_imported_media(&source_root)?;
         if files.is_empty() {
             self.complete_local_media_job(&job_id, 0, 0);
             self.update_local_media_status(|status| {
@@ -309,7 +310,18 @@ impl AppMediaState {
             });
             return Ok(());
         }
-        let groups = group_scanned_files(&source_root, files);
+        let (catalog, tracked) = self.load_anime_match_context()?;
+        let catalog = merge_anime_metadata_batches(&[
+            AnimeMetadataBatch {
+                source: "tracking".to_owned(),
+                items: tracked.into_iter().map(|item| item.anime).collect(),
+            },
+            AnimeMetadataBatch {
+                source: "catalog".to_owned(),
+                items: catalog,
+            },
+        ]);
+        let groups = group_scanned_files(&source_root, files, &catalog);
         log::info!(
             "Tauri 本地媒体扫描完成枚举 source_root={} candidate_count={} file_count={}",
             source_root.display(),
@@ -328,17 +340,11 @@ impl AppMediaState {
             status.processed_files = 0;
             status.message = Some("正在匹配番剧目录与在线元数据".to_owned());
         });
-        let (catalog, tracked) = self.load_anime_match_context()?;
-        let catalog = merge_anime_metadata_batches(&[
-            AnimeMetadataBatch {
-                source: "tracking".to_owned(),
-                items: tracked.into_iter().map(|item| item.anime).collect(),
-            },
-            AnimeMetadataBatch {
-                source: "catalog".to_owned(),
-                items: catalog,
-            },
-        ]);
+        let existing_media_by_path = self
+            .list_media_files()?
+            .into_iter()
+            .map(|media| (media.file_path.clone(), media))
+            .collect::<HashMap<_, _>>();
         let metadata = match self.source_state.network_service(&settings).await {
             Ok(network) => Some(AnimeMetadataService::new(network)),
             Err(error) => {
@@ -371,10 +377,56 @@ impl AppMediaState {
                     alternatives = merge_alternatives(alternatives, online.items);
                 }
             }
-            let confidence = alternatives
+            let ranked_alternatives =
+                rank_alternatives(&group.title_hint, &group.files, alternatives);
+            let confidence = ranked_alternatives
                 .first()
-                .map(|anime| anime_match_score(&group.title_hint, &group.files, anime))
+                .map(|(score, _)| *score)
                 .unwrap_or(0);
+            let alternatives = ranked_alternatives
+                .iter()
+                .map(|(_, anime)| anime.clone())
+                .collect::<Vec<_>>();
+            let suggested_anime_id = alternatives.first().map(|anime| anime.id.clone());
+            let current_associations =
+                collect_current_associations(&group.files, &existing_media_by_path, &catalog);
+            let changes_existing_association = suggested_anime_id.as_deref().is_some_and(|id| {
+                current_associations
+                    .iter()
+                    .any(|association| association.anime_id != id)
+            });
+            let conflicting_file_match = alternatives
+                .first()
+                .is_some_and(|anime| has_conflicting_file_match(&group.files, anime, &catalog));
+            let unique_exact_match = is_unique_exact_match(&ranked_alternatives);
+            let automatic_match = unique_exact_match
+                && group.file_title_consensus >= 80
+                && !changes_existing_association
+                && !conflicting_file_match;
+            if !automatic_match {
+                let mut reasons = Vec::new();
+                if !unique_exact_match {
+                    reasons.push("候选不唯一");
+                }
+                if group.file_title_consensus < 80 {
+                    reasons.push("文件标题一致率不足");
+                }
+                if changes_existing_association {
+                    reasons.push("需要迁移现有关联");
+                }
+                if conflicting_file_match {
+                    reasons.push("文件名命中其他番剧");
+                }
+                log::info!(
+                    "Tauri 本地媒体候选需要确认 title_hint={} relative_directory={} confidence={} consensus={} suggested_anime_id={} reasons={}",
+                    group.title_hint,
+                    group.relative_directory,
+                    confidence,
+                    group.file_title_consensus,
+                    suggested_anime_id.as_deref().unwrap_or("none"),
+                    reasons.join(",")
+                );
+            }
             let summary = LocalMediaImportCandidate {
                 id: group.id,
                 title_hint: group.title_hint,
@@ -382,12 +434,15 @@ impl AppMediaState {
                 file_count: group.files.len(),
                 episode_numbers: group_episode_numbers(&group.files),
                 confidence,
-                suggested_anime_id: alternatives.first().map(|anime| anime.id.clone()),
+                file_title_consensus: group.file_title_consensus,
+                suggested_anime_id,
                 alternatives,
+                current_associations,
             };
             candidates.push(PendingCandidate {
                 summary,
                 files: group.files,
+                automatic_match,
             });
             self.update_local_media_status(|status| {
                 status.processed_files = index + 1;
@@ -396,7 +451,7 @@ impl AppMediaState {
 
         let (automatic, review): (Vec<_>, Vec<_>) = candidates
             .into_iter()
-            .partition(|candidate| candidate.summary.confidence >= 95);
+            .partition(|candidate| candidate.automatic_match);
         let automatic = automatic
             .into_iter()
             .filter_map(|candidate| {
@@ -463,6 +518,7 @@ impl AppMediaState {
         candidates: Vec<ResolvedCandidate>,
     ) -> Result<(usize, usize), String> {
         let mut prepared = Vec::new();
+        let mut previous_anime_ids = HashSet::new();
         let total_files = candidates
             .iter()
             .map(|candidate| candidate.candidate.files.len())
@@ -473,6 +529,15 @@ impl AppMediaState {
             let mut anime = resolved.anime;
             append_local_title_alias(&mut anime, &resolved.candidate.summary.title_hint);
             let anime_id = anime.id.clone();
+            previous_anime_ids.extend(
+                resolved
+                    .candidate
+                    .summary
+                    .current_associations
+                    .iter()
+                    .filter(|association| association.anime_id != anime_id)
+                    .map(|association| association.anime_id.clone()),
+            );
             for file in &resolved.candidate.files {
                 self.ensure_not_cancelled(job_id)?;
                 let episode_id = file
@@ -512,55 +577,68 @@ impl AppMediaState {
         let work = storage
             .begin_unit_of_work()
             .map_err(|error| format!("创建本地媒体导入事务失败：{error}"))?;
-        let repositories = work.repositories();
-        let tracked = repositories
-            .list_my_anime()
-            .map_err(|error| error.to_string())?;
-        let mut imported_anime_ids = HashSet::new();
-        let mut imported_media_count = 0usize;
-        for (anime, files, media_files) in prepared {
-            let now = now_iso();
-            let existing = tracked
-                .iter()
-                .find(|item| item.anime.id == anime.id)
-                .cloned();
-            let (item, created) = merge_imported_my_anime(existing, anime.clone(), &now);
-            if created {
-                imported_anime_ids.insert(anime.id.clone());
-            }
-            repositories
-                .upsert_my_anime(item)
+        let (imported_anime_ids, imported_media_count) = {
+            let repositories = work.repositories();
+            let tracked = repositories
+                .list_my_anime()
                 .map_err(|error| error.to_string())?;
-            let existing_episodes = repositories
-                .list_episodes(&anime.id)
-                .map_err(|error| error.to_string())?;
-            for episode_no in group_episode_numbers(&files) {
-                let existing = existing_episodes
+            let mut imported_anime_ids = HashSet::new();
+            let mut imported_media_count = 0usize;
+            for (anime, files, media_files) in prepared {
+                let now = now_iso();
+                let existing = tracked
                     .iter()
-                    .find(|episode| (episode.episode_no - episode_no).abs() < f64::EPSILON);
-                let episode = Episode {
-                    id: existing
-                        .map(|episode| episode.id.clone())
-                        .unwrap_or_else(|| create_episode_id(&anime.id, episode_no)),
-                    anime_id: anime.id.clone(),
-                    episode_no,
-                    title: existing.and_then(|episode| episode.title.clone()),
-                    air_time: existing.and_then(|episode| episode.air_time.clone()),
-                    status: existing
-                        .filter(|episode| episode.status == EpisodeStatus::Watched)
-                        .map(|episode| episode.status.clone())
-                        .unwrap_or(EpisodeStatus::Downloaded),
-                };
+                    .find(|item| item.anime.id == anime.id)
+                    .cloned();
+                let (item, created) = merge_imported_my_anime(existing, anime.clone(), &now);
+                if created {
+                    imported_anime_ids.insert(anime.id.clone());
+                }
                 repositories
-                    .upsert_episode(&episode)
+                    .upsert_my_anime(item)
+                    .map_err(|error| error.to_string())?;
+                let existing_episodes = repositories
+                    .list_episodes(&anime.id)
+                    .map_err(|error| error.to_string())?;
+                for episode_no in group_episode_numbers(&files) {
+                    let existing = existing_episodes
+                        .iter()
+                        .find(|episode| (episode.episode_no - episode_no).abs() < f64::EPSILON);
+                    let episode = Episode {
+                        id: existing
+                            .map(|episode| episode.id.clone())
+                            .unwrap_or_else(|| create_episode_id(&anime.id, episode_no)),
+                        anime_id: anime.id.clone(),
+                        episode_no,
+                        title: existing.and_then(|episode| episode.title.clone()),
+                        air_time: existing.and_then(|episode| episode.air_time.clone()),
+                        status: existing
+                            .filter(|episode| episode.status == EpisodeStatus::Watched)
+                            .map(|episode| episode.status.clone())
+                            .unwrap_or(EpisodeStatus::Downloaded),
+                    };
+                    repositories
+                        .upsert_episode(&episode)
+                        .map_err(|error| error.to_string())?;
+                }
+                imported_media_count += media_files.len();
+                repositories
+                    .upsert_media_files(&media_files)
                     .map_err(|error| error.to_string())?;
             }
-            imported_media_count += media_files.len();
-            repositories
-                .upsert_media_files(&media_files)
+            let cleaned_anime_ids = repositories
+                .cleanup_orphaned_imported_anime(
+                    &previous_anime_ids.iter().cloned().collect::<Vec<_>>(),
+                )
                 .map_err(|error| error.to_string())?;
-        }
-        drop(repositories);
+            if !cleaned_anime_ids.is_empty() {
+                log::info!(
+                    "Tauri 本地媒体重绑已清理空番剧 anime_ids={}",
+                    cleaned_anime_ids.join(",")
+                );
+            }
+            (imported_anime_ids, imported_media_count)
+        };
         work.commit()
             .map_err(|error| format!("提交本地媒体导入事务失败：{error}"))?;
         log::info!(
@@ -801,6 +879,35 @@ impl AppMediaState {
                 .map_err(|error| error.to_string())?,
         ))
     }
+
+    /// 删除当前扫描根目录下历史误导入的 macOS 元数据媒体记录。
+    fn remove_ignored_imported_media(&self, source_root: &Path) -> Result<usize, String> {
+        let media_file_ids = self
+            .list_media_files()?
+            .into_iter()
+            .filter(|media| {
+                media.origin == MediaOrigin::Imported
+                    && media
+                        .source_root
+                        .as_deref()
+                        .is_some_and(|root| Path::new(root) == source_root)
+                    && is_macos_metadata_path(Path::new(&media.file_path))
+            })
+            .map(|media| media.id)
+            .collect::<Vec<_>>();
+        if media_file_ids.is_empty() {
+            return Ok(0);
+        }
+        self.repository
+            .remove_media_files(&media_file_ids)
+            .map_err(|error| format!("清理 macOS 元数据媒体索引失败：{error}"))?;
+        log::info!(
+            "Tauri 本地媒体扫描已清理 macOS 元数据索引 source_root={} count={}",
+            source_root.display(),
+            media_file_ids.len()
+        );
+        Ok(media_file_ids.len())
+    }
 }
 
 struct CandidateGroup {
@@ -808,7 +915,18 @@ struct CandidateGroup {
     title_hint: String,
     relative_directory: String,
     files: Vec<ScannedFile>,
+    consensus_scope: Option<String>,
+    file_title_consensus: u8,
 }
+
+#[derive(Clone)]
+struct InferredTitleContext {
+    title_hint: String,
+    identity_directory: PathBuf,
+    requires_file_consensus: bool,
+}
+
+type ExactAnimeTitleIndex = HashMap<String, Option<String>>;
 
 /// 递归枚举普通视频文件，跳过符号链接并限制扫描规模。
 fn discover_video_files(
@@ -819,6 +937,7 @@ fn discover_video_files(
 ) -> Result<Vec<ScannedFile>, String> {
     let mut directories = vec![(root.to_path_buf(), 0usize)];
     let mut files = Vec::new();
+    let mut ignored_metadata_entries = 0usize;
     while let Some((directory, depth)) = directories.pop() {
         if cancel.load(Ordering::Acquire) {
             return Err("后台任务已取消".to_owned());
@@ -862,10 +981,21 @@ fn discover_video_files(
                 continue;
             }
             if metadata.is_dir() {
+                if is_macos_metadata_directory(&path) {
+                    ignored_metadata_entries += 1;
+                    continue;
+                }
                 directories.push((path, depth + 1));
                 continue;
             }
-            if !metadata.is_file() || !is_video_path(&path, extensions) {
+            if !metadata.is_file() {
+                continue;
+            }
+            if is_macos_metadata_path(&path) {
+                ignored_metadata_entries += 1;
+                continue;
+            }
+            if !is_video_path(&path, extensions) {
                 continue;
             }
             if files.len() >= MAX_VIDEO_FILES {
@@ -880,7 +1010,6 @@ fn discover_video_files(
             let parsed = parse_release_title(&file_name, &[]);
             let modified_at = metadata.modified().ok().map(system_time_iso);
             files.push(ScannedFile {
-                relative_path: path.strip_prefix(root).unwrap_or(&path).to_path_buf(),
                 episode_no: parsed.episode_no,
                 parsed,
                 size: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
@@ -891,58 +1020,165 @@ fn discover_video_files(
             progress(files.len());
         }
     }
+    if ignored_metadata_entries > 0 {
+        log::info!(
+            "Tauri 本地媒体扫描已忽略 macOS 元数据 source_root={} count={ignored_metadata_entries}",
+            root.display()
+        );
+    }
     Ok(files)
 }
 
 /// 按推断番剧标题聚合扫描文件。
-fn group_scanned_files(root: &Path, files: Vec<ScannedFile>) -> BTreeMap<String, CandidateGroup> {
+fn group_scanned_files(
+    root: &Path,
+    files: Vec<ScannedFile>,
+    catalog: &[Anime],
+) -> BTreeMap<String, CandidateGroup> {
     let mut groups = BTreeMap::new();
+    let mut consensus_totals = HashMap::<String, usize>::new();
+    let exact_title_index = build_exact_anime_title_index(catalog);
     for file in files {
-        let title_hint = infer_title_hint(root, &file);
-        let key = normalize_release_search_text(&title_hint);
-        let relative_directory = file
-            .relative_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
+        let inferred = infer_title_context(root, &file, &exact_title_index);
+        let relative_directory = inferred
+            .identity_directory
+            .strip_prefix(root)
+            .unwrap_or(&inferred.identity_directory)
             .to_string_lossy()
             .into_owned();
+        let consensus_scope = inferred
+            .requires_file_consensus
+            .then(|| relative_directory.clone());
+        if let Some(scope) = consensus_scope.as_ref() {
+            *consensus_totals.entry(scope.clone()).or_default() += 1;
+        }
+        let normalized_title = normalize_release_search_text(&inferred.title_hint);
+        let key = format!("{relative_directory}\0{normalized_title}");
         let group = groups.entry(key.clone()).or_insert_with(|| CandidateGroup {
             id: stable_id("local-candidate", &key),
-            title_hint,
+            title_hint: inferred.title_hint,
             relative_directory,
             files: Vec::new(),
+            consensus_scope,
+            file_title_consensus: 100,
         });
         group.files.push(file);
+    }
+    for group in groups.values_mut() {
+        let Some(scope) = group.consensus_scope.as_ref() else {
+            continue;
+        };
+        let total = consensus_totals.get(scope).copied().unwrap_or_default();
+        group.file_title_consensus = group
+            .files
+            .len()
+            .saturating_mul(100)
+            .checked_div(total)
+            .and_then(|value| u8::try_from(value).ok())
+            .unwrap_or(100);
     }
     groups
 }
 
-/// 从番剧目录名或直接放在根目录的文件名推断标题。
-fn infer_title_hint(root: &Path, file: &ScannedFile) -> String {
+/// 从目录树中选择最近的有效番剧节点，并保留资源包目录作为回退。
+fn infer_title_context(
+    root: &Path,
+    file: &ScannedFile,
+    exact_title_index: &ExactAnimeTitleIndex,
+) -> InferredTitleContext {
     let parent = file.path.parent().unwrap_or(root);
     let mut directory = parent;
-    let directory_name = directory
-        .file_name()
-        .map(|value| value.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    if is_generic_season_directory(&directory_name) {
-        directory = directory.parent().unwrap_or(directory);
-    }
-    if directory != root {
-        if let Some(name) = directory.file_name().filter(|value| !value.is_empty()) {
-            return name.to_string_lossy().trim().to_owned();
-        }
-    }
-    if parent == root {
-        let root_name = root
+    let mut season_scope = None::<(String, PathBuf)>;
+    let mut release_fallback = None::<InferredTitleContext>;
+    let mut directory_candidates = Vec::new();
+    while directory != root {
+        let directory_name = directory
             .file_name()
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_default();
-        if !root_name.is_empty() && !is_generic_media_root(&root_name) {
-            return root_name;
+        if is_generic_season_directory(&directory_name) {
+            season_scope = Some((directory_name, directory.to_path_buf()));
+            directory = directory.parent().unwrap_or(directory);
+            continue;
+        }
+        if is_generic_media_directory(&directory_name) {
+            directory = directory.parent().unwrap_or(directory);
+            continue;
+        }
+        if let Some(title) = clean_title_hint(&directory_name) {
+            let context = InferredTitleContext {
+                title_hint: append_season_scope(title, season_scope.as_ref()),
+                identity_directory: season_scope
+                    .as_ref()
+                    .map(|(_, path)| path.clone())
+                    .unwrap_or_else(|| directory.to_path_buf()),
+                requires_file_consensus: is_release_package_directory(&directory_name),
+            };
+            if is_release_package_directory(&directory_name) {
+                release_fallback.get_or_insert(context);
+            } else {
+                directory_candidates.push(context);
+            }
+        }
+        directory = directory.parent().unwrap_or(directory);
+    }
+    let root_name = root
+        .file_name()
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    if !is_generic_media_directory(&root_name) {
+        if let Some(title) = clean_title_hint(&root_name) {
+            directory_candidates.push(InferredTitleContext {
+                title_hint: append_season_scope(title, season_scope.as_ref()),
+                identity_directory: season_scope
+                    .as_ref()
+                    .map(|(_, path)| path.clone())
+                    .unwrap_or_else(|| root.to_path_buf()),
+                requires_file_consensus: false,
+            });
         }
     }
-    infer_title_from_file(&file.path)
+    if let Some(exact) = directory_candidates.iter().find(|candidate| {
+        exact_title_index
+            .get(&normalize_release_search_text(&candidate.title_hint))
+            .is_some_and(Option::is_some)
+    }) {
+        return exact.clone();
+    }
+    directory_candidates
+        .into_iter()
+        .next()
+        .or(release_fallback)
+        .unwrap_or_else(|| InferredTitleContext {
+            title_hint: infer_title_from_file(&file.path),
+            identity_directory: parent.to_path_buf(),
+            requires_file_consensus: true,
+        })
+}
+
+/// 建立标题和别名到唯一番剧的索引，重名项标记为歧义。
+fn build_exact_anime_title_index(catalog: &[Anime]) -> ExactAnimeTitleIndex {
+    let mut index = ExactAnimeTitleIndex::new();
+    for anime in catalog {
+        for name in std::iter::once(anime.title.as_str())
+            .chain(anime.original_title.as_deref())
+            .chain(anime.aliases.iter().map(|alias| alias.alias.as_str()))
+        {
+            let normalized = normalize_release_search_text(name);
+            if normalized.is_empty() {
+                continue;
+            }
+            index
+                .entry(normalized)
+                .and_modify(|owner| {
+                    if owner.as_deref() != Some(anime.id.as_str()) {
+                        *owner = None;
+                    }
+                })
+                .or_insert_with(|| Some(anime.id.clone()));
+        }
+    }
+    index
 }
 
 /// 判断目录名是否只表示季度或季号。
@@ -954,11 +1190,27 @@ fn is_generic_season_directory(value: &str) -> bool {
 }
 
 /// 判断目录名是否是缺少番剧语义的通用媒体根目录。
-fn is_generic_media_root(value: &str) -> bool {
+fn is_generic_media_directory(value: &str) -> bool {
+    let normalized = normalize_release_search_text(value);
     matches!(
-        normalize_release_search_text(value).as_str(),
-        "anime" | "animes" | "media" | "video" | "videos" | "downloads" | "动画" | "番剧"
-    )
+        normalized.as_str(),
+        "anime"
+            | "animes"
+            | "media"
+            | "video"
+            | "videos"
+            | "downloads"
+            | "tv"
+            | "series"
+            | "complete"
+            | "completed"
+            | "动画"
+            | "番剧"
+            | "合集"
+            | "新番"
+    ) || Regex::new(r"(?i)^(?:(?:19|20)?\d{2}[._-]?(?:0[1-9]|1[0-2])|(?:19|20)\d{2})$")
+        .expect("media category regex")
+        .is_match(value.trim())
 }
 
 /// 从发布文件名移除字幕组、集数和技术标签得到标题提示。
@@ -967,26 +1219,89 @@ fn infer_title_from_file(path: &Path) -> String {
         .file_stem()
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_else(|| "未命名番剧".to_owned());
-    let without_group = Regex::new(r"^\s*[\[【][^\]】]+[\]】]\s*")
+    clean_title_hint(&stem).unwrap_or_else(|| "未命名番剧".to_owned())
+}
+
+/// 清理目录或文件标题中的分区日期、字幕组、集数和技术标签。
+fn clean_title_hint(value: &str) -> Option<String> {
+    let value =
+        Regex::new(r"(?i)^\s*(?:(?:19|20)\d{2}[._-](?:0?[1-9]|1[0-2])|\d{2}(?:0[1-9]|1[0-2]))\s+")
+            .expect("dated title prefix regex")
+            .replace(value, "");
+    let without_group = Regex::new(r"^(?:\s*[\[【][^\]】]+[\]】])+\s*")
         .expect("fansub prefix regex")
-        .replace(&stem, "");
+        .replace(&value, "");
     let episode = Regex::new(
-        r"(?i)(?:\s+-\s+\d{1,3}(?:\.\d)?|\s+s\d{1,2}e\d{1,3}|\s+ep(?:isode)?\s*\d{1,3}|\s+第\s*\d{1,3}\s*[话話集])",
+        r"(?i)(?:[\s._-]+-?[\s._-]*\d{1,3}(?:\.\d)?|[\s._-]+s\d{1,2}e\d{1,3}|[\s._-]+ep(?:isode)?[\s._-]*\d{1,3}|[\s._-]+第\s*\d{1,3}\s*[话話集])",
     )
     .expect("episode title regex");
     let title = episode
         .find(&without_group)
         .map(|match_| &without_group[..match_.start()])
         .unwrap_or(&without_group);
-    let title = Regex::new(r"[\[【(（].*$")
+    let title = Regex::new(r"[\[【].*$")
         .expect("technical suffix regex")
         .replace(title, "");
     let title = title.replace(['_', '.'], " ");
-    let title = title.split_whitespace().collect::<Vec<_>>().join(" ");
-    if title.is_empty() {
-        "未命名番剧".to_owned()
-    } else {
+    let title = title
+        .trim_matches(|character: char| {
+            character.is_whitespace()
+                || matches!(character, '-' | '–' | '—' | '(' | ')' | '（' | '）')
+        })
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!title.is_empty() && !is_technical_only_title(&title)).then_some(title)
+}
+
+/// 判断目录是否主要由资源范围、分辨率、编码或字幕标签组成。
+fn is_release_package_directory(value: &str) -> bool {
+    let bracket_count = value.matches(['[', '【']).count();
+    let has_release_marker = Regex::new(
+        r"(?i)(?:\b(?:web-?dl|webrip|bdrip|bluray|hevc|x26[45]|av1|aac|flac|1080p|2160p|720p)\b|[\[【(（]\s*\d{1,3}\s*[-~]\s*\d{1,3}|简繁|字幕|合集)",
+    )
+    .expect("release package marker regex")
+    .is_match(value);
+    bracket_count >= 2 || has_release_marker
+}
+
+/// 判断清理后的标题是否仍然只有技术词和数字。
+fn is_technical_only_title(value: &str) -> bool {
+    let without_technical = Regex::new(
+        r"(?i)\b(?:web-?dl|webrip|bdrip|bluray|hevc|h26[45]|x26[45]|av1|aac|flac|srt|ass|1080p|2160p|720p|chs|cht|jpn|fin|10bit)\b",
+    )
+    .expect("technical-only title regex")
+    .replace_all(value, " ");
+    let without_ranges = Regex::new(r"\d{1,3}\s*[-~]\s*\d{1,3}|\d+")
+        .expect("technical range regex")
+        .replace_all(&without_technical, " ");
+    let meaningful = without_ranges
+        .chars()
+        .filter(|character| {
+            character.is_alphanumeric() || ('\u{3400}'..='\u{9fff}').contains(character)
+        })
+        .collect::<String>();
+    meaningful.is_empty()
+}
+
+/// 将季度目录信息附加到父番剧标题，已有相同季号时不重复添加。
+fn append_season_scope(title: String, season_scope: Option<&(String, PathBuf)>) -> String {
+    let Some((season, _)) = season_scope else {
+        return title;
+    };
+    let season_number = Regex::new(r"\d+")
+        .expect("season number regex")
+        .find(season)
+        .map(|value| value.as_str());
+    let title_season_number = Regex::new(r"(?i)(?:season\s*|s|第\s*)(\d+)\s*季?")
+        .expect("title season number regex")
+        .captures(&title)
+        .and_then(|captures| captures.get(1))
+        .map(|value| value.as_str());
+    if season_number.is_some() && season_number == title_season_number {
         title
+    } else {
+        format!("{title} {season}")
     }
 }
 
@@ -1010,6 +1325,83 @@ fn rank_anime_matches(
             .then_with(|| left.1.title.cmp(&right.1.title))
     });
     matches
+}
+
+/// 对本地与在线候选重新计算分数并稳定排序。
+fn rank_alternatives(
+    title_hint: &str,
+    files: &[ScannedFile],
+    alternatives: Vec<Anime>,
+) -> Vec<(u8, Anime)> {
+    let mut ranked = alternatives
+        .into_iter()
+        .map(|anime| (anime_match_score(title_hint, files, &anime), anime))
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .0
+            .cmp(&left.0)
+            .then_with(|| left.1.title.cmp(&right.1.title))
+    });
+    ranked.truncate(5);
+    ranked
+}
+
+/// 判断第一候选是否精确命中且至少领先第二候选二十分。
+fn is_unique_exact_match(ranked: &[(u8, Anime)]) -> bool {
+    let Some((first_score, _)) = ranked.first() else {
+        return false;
+    };
+    *first_score >= 95
+        && ranked
+            .get(1)
+            .is_none_or(|(second_score, _)| first_score.saturating_sub(*second_score) >= 20)
+}
+
+/// 检查单个文件名是否唯一精确指向与目录候选不同的番剧。
+fn has_conflicting_file_match(files: &[ScannedFile], suggested: &Anime, catalog: &[Anime]) -> bool {
+    files.iter().any(|file| {
+        let file_hint = infer_title_from_file(&file.path);
+        let ranked = rank_anime_matches(&file_hint, std::slice::from_ref(file), catalog);
+        is_unique_exact_match(&ranked)
+            && ranked
+                .first()
+                .is_some_and(|(_, anime)| anime.id != suggested.id)
+    })
+}
+
+/// 汇总候选文件在扫描前已经存在的番剧关联。
+fn collect_current_associations(
+    files: &[ScannedFile],
+    existing_media_by_path: &HashMap<String, MediaFile>,
+    catalog: &[Anime],
+) -> Vec<LocalMediaImportAssociation> {
+    let mut counts = HashMap::<String, usize>::new();
+    for file in files {
+        let path = file.path.to_string_lossy();
+        if let Some(media) = existing_media_by_path.get(path.as_ref()) {
+            *counts.entry(media.anime_id.clone()).or_default() += 1;
+        }
+    }
+    let mut associations = counts
+        .into_iter()
+        .map(|(anime_id, file_count)| LocalMediaImportAssociation {
+            anime_title: catalog
+                .iter()
+                .find(|anime| anime.id == anime_id)
+                .map(|anime| anime.title.clone())
+                .unwrap_or_else(|| anime_id.clone()),
+            anime_id,
+            file_count,
+        })
+        .collect::<Vec<_>>();
+    associations.sort_by(|left, right| {
+        right
+            .file_count
+            .cmp(&left.file_count)
+            .then_with(|| left.anime_title.cmp(&right.anime_title))
+    });
+    associations
 }
 
 /// 计算目录提示和文件名对单部番剧的匹配置信度。
@@ -1046,7 +1438,6 @@ fn merge_alternatives(local: Vec<Anime>, online: Vec<Anime>) -> Vec<Anime> {
         .into_iter()
         .chain(online)
         .filter(|anime| seen.insert(anime.id.clone()))
-        .take(5)
         .collect()
 }
 
@@ -1221,6 +1612,31 @@ fn is_video_path(path: &Path, extensions: &HashSet<String>) -> bool {
         .is_some_and(|extension| extensions.contains(&extension))
 }
 
+/// 判断目录是否为 macOS 归档生成的元数据目录。
+fn is_macos_metadata_directory(path: &Path) -> bool {
+    path.file_name()
+        .map(|value| value.to_string_lossy().eq_ignore_ascii_case("__MACOSX"))
+        .unwrap_or(false)
+}
+
+/// 判断路径是否为 AppleDouble、Finder 或归档元数据，而非真实媒体。
+fn is_macos_metadata_path(path: &Path) -> bool {
+    let in_metadata_directory = path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("__MACOSX")
+    });
+    let metadata_file = path
+        .file_name()
+        .map(|value| {
+            let value = value.to_string_lossy();
+            value.starts_with("._") || value.eq_ignore_ascii_case(".DS_Store")
+        })
+        .unwrap_or(false);
+    in_metadata_directory || metadata_file
+}
+
 /// 使用文件大小和修改时间生成快速幂等指纹。
 fn create_file_fingerprint(path: &Path, metadata: &fs::Metadata) -> String {
     let modified = metadata
@@ -1261,12 +1677,146 @@ fn now_iso() -> String {
 mod tests {
     use super::*;
 
+    /// 创建只用于目录推断测试的扫描文件。
+    fn scanned_file(path: &str) -> ScannedFile {
+        let path = PathBuf::from(path);
+        let file_name = path
+            .file_name()
+            .map(|value| value.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let parsed = parse_release_title(&file_name, &[]);
+        ScannedFile {
+            episode_no: parsed.episode_no,
+            parsed,
+            size: 1024,
+            modified_at: None,
+            fingerprint: stable_id("test-media", path.to_string_lossy().as_ref()),
+            path,
+        }
+    }
+
     /// 验证发布文件名可以清理为番剧标题提示。
     #[test]
     fn infers_title_from_release_file_name() {
         assert_eq!(
             infer_title_from_file(Path::new("[LoliHouse] Test Anime - 03 [WebRip 1080p].mkv")),
             "Test Anime"
+        );
+    }
+
+    /// 验证资源包子目录继承最近的有效番剧父节点。
+    #[test]
+    fn inherits_anime_title_above_release_package_directory() {
+        let root = Path::new("/library/2510");
+        let file = scanned_file(
+            "/library/2510/无限扭蛋/[LoliHouse][01-12][1080P][简繁内封字幕]/[LoliHouse] Mugen Gacha - 01 [1080p].mkv",
+        );
+
+        let inferred = infer_title_context(root, &file, &ExactAnimeTitleIndex::new());
+
+        assert_eq!(inferred.title_hint, "无限扭蛋");
+        assert_eq!(inferred.identity_directory, root.join("无限扭蛋"));
+    }
+
+    /// 验证季度节点附加季号并作为独立分组范围。
+    #[test]
+    fn combines_season_node_with_parent_anime_title() {
+        let root = Path::new("/library");
+        let file = scanned_file("/library/Wistoria/Season 2/[Group][1080P]/Wistoria.S02E01.mkv");
+
+        let inferred = infer_title_context(root, &file, &ExactAnimeTitleIndex::new());
+
+        assert_eq!(inferred.title_hint, "Wistoria Season 2");
+        assert_eq!(
+            inferred.identity_directory,
+            root.join("Wistoria").join("Season 2")
+        );
+    }
+
+    /// 验证子目录无匹配时继承唯一识别成功的番剧父节点。
+    #[test]
+    fn inherits_exact_parent_when_child_directory_is_unmatched() {
+        let root = Path::new("/library");
+        let file = scanned_file("/library/Known Show/Extras/Known.Show - 01.mkv");
+        let catalog = vec![create_local_anime("Known Show")];
+        let exact_title_index = build_exact_anime_title_index(&catalog);
+
+        let inferred = infer_title_context(root, &file, &exact_title_index);
+
+        assert_eq!(inferred.title_hint, "Known Show");
+        assert_eq!(inferred.identity_directory, root.join("Known Show"));
+    }
+
+    /// 验证子目录唯一命中另一番剧时覆盖父节点并形成独立候选。
+    #[test]
+    fn selects_exact_child_when_it_identifies_another_anime() {
+        let root = Path::new("/library");
+        let file = scanned_file("/library/Known Show/Spin Off/Spin.Off - 01.mkv");
+        let catalog = vec![
+            create_local_anime("Known Show"),
+            create_local_anime("Spin Off"),
+        ];
+        let exact_title_index = build_exact_anime_title_index(&catalog);
+
+        let inferred = infer_title_context(root, &file, &exact_title_index);
+
+        assert_eq!(inferred.title_hint, "Spin Off");
+        assert_eq!(
+            inferred.identity_directory,
+            root.join("Known Show").join("Spin Off")
+        );
+    }
+
+    /// 验证同名目录位于不同树分支时不会合并为同一候选。
+    #[test]
+    fn keeps_same_named_directories_in_separate_tree_branches() {
+        let root = Path::new("/library");
+        let groups = group_scanned_files(
+            root,
+            vec![
+                scanned_file("/library/A/Same/[Group][1080P]/AnimeA - 01.mkv"),
+                scanned_file("/library/B/Same/[Group][1080P]/AnimeB - 01.mkv"),
+            ],
+            &[],
+        );
+
+        assert_eq!(groups.len(), 2);
+        assert!(groups.values().all(|group| group.title_hint == "Same"));
+    }
+
+    /// 验证无番剧父节点时按同目录文件标题计算一致率。
+    #[test]
+    fn calculates_file_title_consensus_for_generic_root() {
+        let root = Path::new("/library/downloads");
+        let groups = group_scanned_files(
+            root,
+            vec![
+                scanned_file("/library/downloads/Anime A - 01.mkv"),
+                scanned_file("/library/downloads/Anime A - 02.mkv"),
+                scanned_file("/library/downloads/Anime A - 03.mkv"),
+                scanned_file("/library/downloads/Anime A - 04.mkv"),
+                scanned_file("/library/downloads/Anime B - 01.mkv"),
+            ],
+            &[],
+        );
+
+        let consensus = groups
+            .values()
+            .map(|group| (group.title_hint.as_str(), group.file_title_consensus))
+            .collect::<HashMap<_, _>>();
+        assert_eq!(consensus.get("Anime A"), Some(&80));
+        assert_eq!(consensus.get("Anime B"), Some(&20));
+    }
+
+    /// 验证带字幕组和技术后缀的根级资源包仍能提取番剧标题。
+    #[test]
+    fn cleans_release_package_title_when_no_parent_anime_exists() {
+        assert_eq!(
+            clean_title_hint(
+                "[LoliHouse] 气绝勇者与暗杀公主 [01-12 合集][WebRip 1080p][简繁内封字幕]"
+            )
+            .as_deref(),
+            Some("气绝勇者与暗杀公主")
         );
     }
 
@@ -1319,5 +1869,19 @@ mod tests {
         assert_eq!(anime.aliases.len(), 1);
         assert_eq!(anime.aliases[0].alias, "Test Anime");
         assert_eq!(anime.aliases[0].language, AnimeAliasLanguage::Custom);
+    }
+
+    /// 验证扫描只排除 macOS 元数据，不误伤普通隐藏视频。
+    #[test]
+    fn identifies_macos_metadata_without_ignoring_hidden_videos() {
+        let extensions = [".mkv".to_owned()].into_iter().collect();
+
+        assert!(is_macos_metadata_path(Path::new("._episode.mkv")));
+        assert!(is_macos_metadata_path(Path::new(
+            "__MACOSX/show/episode.mkv"
+        )));
+        assert!(is_macos_metadata_directory(Path::new("__MACOSX")));
+        assert!(!is_macos_metadata_path(Path::new(".episode.mkv")));
+        assert!(is_video_path(Path::new(".episode.mkv"), &extensions));
     }
 }

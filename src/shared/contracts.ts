@@ -419,8 +419,16 @@ export interface LocalMediaImportCandidate {
   fileCount: number;
   episodeNumbers: number[];
   confidence: number;
+  fileTitleConsensus: number;
   suggestedAnimeId?: string;
   alternatives: Anime[];
+  currentAssociations: LocalMediaImportAssociation[];
+}
+
+export interface LocalMediaImportAssociation {
+  animeId: string;
+  animeTitle: string;
+  fileCount: number;
 }
 
 export interface LocalMediaImportSelection {

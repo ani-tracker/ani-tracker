@@ -345,6 +345,15 @@ pub trait MediaRepository {
 
     /// 原子新增或更新一批媒体探测记录。
     fn upsert_media_files(&self, media_files: &[MediaFile]) -> RepositoryResult<Vec<MediaFile>>;
+
+    /// 按标识批量删除媒体记录，并恢复失去全部媒体关联的单集状态。
+    fn remove_media_files(&self, media_file_ids: &[String]) -> RepositoryResult<Vec<MediaFile>>;
+
+    /// 清理由扫描导入创建且已无媒体、无用户状态的本地番剧。
+    fn cleanup_orphaned_imported_anime(
+        &self,
+        anime_ids: &[String],
+    ) -> RepositoryResult<Vec<String>>;
 }
 
 /// 首页聚合查询存储端口。

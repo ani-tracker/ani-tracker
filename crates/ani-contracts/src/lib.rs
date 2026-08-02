@@ -52,8 +52,20 @@ pub struct LocalMediaImportCandidate {
     pub file_count: usize,
     pub episode_numbers: Vec<f64>,
     pub confidence: u8,
+    pub file_title_consensus: u8,
     pub suggested_anime_id: Option<String>,
     pub alternatives: Vec<Anime>,
+    #[serde(default)]
+    pub current_associations: Vec<LocalMediaImportAssociation>,
+}
+
+/// 本地媒体候选在扫描前已经存在的番剧关联汇总。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalMediaImportAssociation {
+    pub anime_id: String,
+    pub anime_title: String,
+    pub file_count: usize,
 }
 
 /// Renderer 确认低置信度候选时提交的番剧选择。
