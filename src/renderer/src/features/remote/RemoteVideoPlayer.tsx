@@ -45,8 +45,14 @@ import {
   detectExternalPlayer
 } from "./external-player-launch";
 import type { PlaybackSessionClient } from "./playback-session-client";
-import type { RemotePlaylistItem } from "@/features/player/playback-list-model";
-import { readRemotePlaybackMode, storeRemotePlaybackMode } from "./remote-playback-preferences";
+import {
+  playlistItemLabel,
+  type RemotePlaylistItem
+} from "@/features/player/playback-list-model";
+import {
+  readRemotePlaybackMode,
+  storeRemotePlaybackMode
+} from "@/features/player/remote-playback-preferences";
 
 const TOOLBAR_HIDE_DELAY_MS = 3_000;
 
@@ -139,9 +145,7 @@ export function RemoteVideoPlayer({
     : playerSnapshot?.fullscreen ?? false;
   const pictureInPicture = playerSnapshot?.pictureInPicture ?? false;
   const animeTitle = anime?.title ?? activeItem?.task.animeTitle ?? "Ani Tracker";
-  const episodeLabel = activeItem?.task.episodeNo === undefined
-    ? "当前视频"
-    : `第 ${String(activeItem.task.episodeNo).padStart(2, "0")} 集`;
+  const episodeLabel = activeItem ? playlistItemLabel(activeItem) : "当前视频";
   const episodeItems = useMemo(() => buildPlayerEpisodeItems({
     activeItem,
     currentTimeSeconds,
@@ -653,9 +657,7 @@ export function RemoteVideoPlayer({
         )}
         {autoNextSeconds !== undefined && nextItem && (
           <PlayerAutoNextPrompt
-            episodeLabel={nextItem.task.episodeNo === undefined
-              ? nextItem.fileName
-              : `第 ${String(nextItem.task.episodeNo).padStart(2, "0")} 集`}
+            episodeLabel={playlistItemLabel(nextItem)}
             onCancel={cancelAutoNext}
             onPlayNow={() => selectItemAfterFlush(nextItem)}
             seconds={autoNextSeconds}

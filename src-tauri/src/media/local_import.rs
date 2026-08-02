@@ -5,7 +5,7 @@ use std::hash::{Hash, Hasher};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_contracts::{
@@ -14,7 +14,7 @@ use ani_contracts::{
 };
 use ani_domain::{
     Anime, AnimeAlias, AnimeAliasLanguage, AnimeStatus, Episode, EpisodeStatus, MediaAvailability,
-    MediaFile, MediaOrigin, MyAnime,
+    MediaContentKind, MediaFile, MediaOrigin, MyAnime,
 };
 use ani_media::MediaProbeContext;
 use ani_repository::{
@@ -63,6 +63,8 @@ impl LocalMediaRuntime {
 struct ScannedFile {
     path: PathBuf,
     episode_no: Option<f64>,
+    content_kind: MediaContentKind,
+    special_no: Option<String>,
     parsed: ParsedReleaseTitle,
     size: i64,
     modified_at: Option<String>,
@@ -402,7 +404,8 @@ impl AppMediaState {
             let automatic_match = unique_exact_match
                 && group.file_title_consensus >= 80
                 && !changes_existing_association
-                && !conflicting_file_match;
+                && !conflicting_file_match
+                && !group.requires_manual_confirmation;
             if !automatic_match {
                 let mut reasons = Vec::new();
                 if !unique_exact_match {
@@ -416,6 +419,9 @@ impl AppMediaState {
                 }
                 if conflicting_file_match {
                     reasons.push("文件名命中其他番剧");
+                }
+                if group.requires_manual_confirmation {
+                    reasons.push("子目录覆盖已识别父番剧");
                 }
                 log::info!(
                     "Tauri 本地媒体候选需要确认 title_hint={} relative_directory={} confidence={} consensus={} suggested_anime_id={} reasons={}",
@@ -553,6 +559,8 @@ impl AppMediaState {
                     downloaded_at: file.modified_at.clone(),
                 };
                 let mut media = self.probe_local_file(&file.path, &context).await?;
+                media.content_kind = file.content_kind.clone();
+                media.special_no = file.special_no.clone();
                 media.origin = MediaOrigin::Imported;
                 media.source_root = Some(source_root.to_string_lossy().into_owned());
                 media.fingerprint = Some(file.fingerprint.clone());
@@ -917,6 +925,7 @@ struct CandidateGroup {
     files: Vec<ScannedFile>,
     consensus_scope: Option<String>,
     file_title_consensus: u8,
+    requires_manual_confirmation: bool,
 }
 
 #[derive(Clone)]
@@ -924,6 +933,7 @@ struct InferredTitleContext {
     title_hint: String,
     identity_directory: PathBuf,
     requires_file_consensus: bool,
+    requires_manual_confirmation: bool,
 }
 
 type ExactAnimeTitleIndex = HashMap<String, Option<String>>;
@@ -938,6 +948,7 @@ fn discover_video_files(
     let mut directories = vec![(root.to_path_buf(), 0usize)];
     let mut files = Vec::new();
     let mut ignored_metadata_entries = 0usize;
+    let mut special_content_count = 0usize;
     while let Some((directory, depth)) = directories.pop() {
         if cancel.load(Ordering::Acquire) {
             return Err("后台任务已取消".to_owned());
@@ -1008,9 +1019,17 @@ fn discover_video_files(
                 .map(|value| value.to_string_lossy().into_owned())
                 .unwrap_or_default();
             let parsed = parse_release_title(&file_name, &[]);
+            let identity = classify_scanned_media(root, &path, parsed.episode_no);
+            if identity.content_kind != MediaContentKind::Episode
+                && identity.content_kind != MediaContentKind::Unknown
+            {
+                special_content_count += 1;
+            }
             let modified_at = metadata.modified().ok().map(system_time_iso);
             files.push(ScannedFile {
-                episode_no: parsed.episode_no,
+                episode_no: identity.episode_no,
+                content_kind: identity.content_kind,
+                special_no: identity.special_no,
                 parsed,
                 size: i64::try_from(metadata.len()).unwrap_or(i64::MAX),
                 fingerprint: create_file_fingerprint(&path, &metadata),
@@ -1023,6 +1042,12 @@ fn discover_video_files(
     if ignored_metadata_entries > 0 {
         log::info!(
             "Tauri 本地媒体扫描已忽略 macOS 元数据 source_root={} count={ignored_metadata_entries}",
+            root.display()
+        );
+    }
+    if special_content_count > 0 {
+        log::info!(
+            "Tauri 本地媒体扫描识别特别内容 source_root={} count={special_content_count}",
             root.display()
         );
     }
@@ -1054,6 +1079,7 @@ fn group_scanned_files(
         }
         let normalized_title = normalize_release_search_text(&inferred.title_hint);
         let key = format!("{relative_directory}\0{normalized_title}");
+        let requires_manual_confirmation = inferred.requires_manual_confirmation;
         let group = groups.entry(key.clone()).or_insert_with(|| CandidateGroup {
             id: stable_id("local-candidate", &key),
             title_hint: inferred.title_hint,
@@ -1061,7 +1087,9 @@ fn group_scanned_files(
             files: Vec::new(),
             consensus_scope,
             file_title_consensus: 100,
+            requires_manual_confirmation,
         });
+        group.requires_manual_confirmation |= requires_manual_confirmation;
         group.files.push(file);
     }
     for group in groups.values_mut() {
@@ -1113,6 +1141,7 @@ fn infer_title_context(
                     .map(|(_, path)| path.clone())
                     .unwrap_or_else(|| directory.to_path_buf()),
                 requires_file_consensus: is_release_package_directory(&directory_name),
+                requires_manual_confirmation: false,
             };
             if is_release_package_directory(&directory_name) {
                 release_fallback.get_or_insert(context);
@@ -1135,15 +1164,26 @@ fn infer_title_context(
                     .map(|(_, path)| path.clone())
                     .unwrap_or_else(|| root.to_path_buf()),
                 requires_file_consensus: false,
+                requires_manual_confirmation: false,
             });
         }
     }
-    if let Some(exact) = directory_candidates.iter().find(|candidate| {
-        exact_title_index
-            .get(&normalize_release_search_text(&candidate.title_hint))
-            .is_some_and(Option::is_some)
-    }) {
-        return exact.clone();
+    let exact_candidates = directory_candidates
+        .iter()
+        .filter_map(|candidate| {
+            exact_title_index
+                .get(&normalize_release_search_text(&candidate.title_hint))
+                .and_then(Option::as_deref)
+                .map(|anime_id| (candidate, anime_id))
+        })
+        .collect::<Vec<_>>();
+    if let Some((exact, anime_id)) = exact_candidates.first() {
+        let mut exact = (*exact).clone();
+        exact.requires_manual_confirmation = exact_candidates
+            .iter()
+            .skip(1)
+            .any(|(_, parent_anime_id)| parent_anime_id != anime_id);
+        return exact;
     }
     directory_candidates
         .into_iter()
@@ -1153,6 +1193,7 @@ fn infer_title_context(
             title_hint: infer_title_from_file(&file.path),
             identity_directory: parent.to_path_buf(),
             requires_file_consensus: true,
+            requires_manual_confirmation: false,
         })
 }
 
@@ -1191,6 +1232,9 @@ fn is_generic_season_directory(value: &str) -> bool {
 
 /// 判断目录名是否是缺少番剧语义的通用媒体根目录。
 fn is_generic_media_directory(value: &str) -> bool {
+    if special_directory_marker(value).is_some() {
+        return true;
+    }
     let normalized = normalize_release_search_text(value);
     matches!(
         normalized.as_str(),
@@ -1211,6 +1255,150 @@ fn is_generic_media_directory(value: &str) -> bool {
     ) || Regex::new(r"(?i)^(?:(?:19|20)?\d{2}[._-]?(?:0[1-9]|1[0-2])|(?:19|20)\d{2})$")
         .expect("media category regex")
         .is_match(value.trim())
+}
+
+struct ScannedMediaIdentity {
+    episode_no: Option<f64>,
+    content_kind: MediaContentKind,
+    special_no: Option<String>,
+}
+
+/// 目录标记优先于普通数字集数，避免特别内容污染正片关联。
+fn classify_scanned_media(
+    scan_root: &Path,
+    path: &Path,
+    parsed_episode_no: Option<f64>,
+) -> ScannedMediaIdentity {
+    if let Some((kind, prefix, marker_no)) = file_special_marker(path) {
+        return special_media_identity(kind, prefix, marker_no.or(parsed_episode_no));
+    }
+    for directory in path.ancestors().skip(1) {
+        if !directory.starts_with(scan_root) {
+            break;
+        }
+        let Some(name) = directory.file_name().and_then(|value| value.to_str()) else {
+            continue;
+        };
+        if let Some((kind, prefix)) = special_directory_marker(name) {
+            return special_media_identity(kind, prefix, parsed_episode_no);
+        }
+    }
+    ScannedMediaIdentity {
+        episode_no: parsed_episode_no,
+        content_kind: if parsed_episode_no.is_some() {
+            MediaContentKind::Episode
+        } else {
+            MediaContentKind::Unknown
+        },
+        special_no: None,
+    }
+}
+
+/// 从文件名识别显式特别内容标记及编号。
+fn file_special_marker(path: &Path) -> Option<(MediaContentKind, &'static str, Option<f64>)> {
+    static LATIN_MARKER: OnceLock<Regex> = OnceLock::new();
+    static CHINESE_MARKER: OnceLock<Regex> = OnceLock::new();
+    let stem = path.file_stem()?.to_string_lossy();
+    let latin = LATIN_MARKER.get_or_init(|| {
+        Regex::new(
+            r"(?i)(?:^|[^a-z0-9])(NCOP|NCED|SPECIAL|OVA|OAD|SP|PV|CM)(?:[\s._-]*(\d{1,3}))?(?:[^a-z0-9]|$)",
+        )
+        .expect("special file marker regex")
+    });
+    if let Some(captures) = latin.captures(&stem) {
+        let marker = captures.get(1)?.as_str().to_ascii_uppercase();
+        let number = captures
+            .get(2)
+            .and_then(|value| value.as_str().parse().ok());
+        let (kind, prefix) = marker_kind_and_prefix(&marker)?;
+        return Some((kind, prefix, number));
+    }
+    let chinese = CHINESE_MARKER.get_or_init(|| {
+        Regex::new(r"(?:映像特典|特典|番外篇)(?:[\s._-]*(\d{1,3}))?")
+            .expect("special chinese file marker regex")
+    });
+    chinese.captures(&stem).map(|captures| {
+        let number = captures
+            .get(1)
+            .and_then(|value| value.as_str().parse().ok());
+        let kind = if captures
+            .get(0)
+            .is_some_and(|value| value.as_str().contains("特典"))
+        {
+            MediaContentKind::Extra
+        } else {
+            MediaContentKind::Special
+        };
+        let prefix = if kind == MediaContentKind::Extra {
+            "EXTRA"
+        } else {
+            "SP"
+        };
+        (kind, prefix, number)
+    })
+}
+
+/// 仅将完整通用目录名识别为特别内容节点。
+fn special_directory_marker(value: &str) -> Option<(MediaContentKind, &'static str)> {
+    static DIRECTORY_MARKER: OnceLock<Regex> = OnceLock::new();
+    let normalized = value.trim();
+    let captures = DIRECTORY_MARKER
+        .get_or_init(|| {
+            Regex::new(
+                r"(?i)^(NCOP|NCED|SPECIALS?|OVA|OAD|SP|PV|CM|EXTRAS?|BONUS|映像特典|特典|番外篇)(?:[\s._-]*(?:VOL(?:UME)?[\s._-]*)?\d{1,3})?$",
+            )
+            .expect("special directory marker regex")
+        })
+        .captures(normalized)?;
+    let marker = captures.get(1)?.as_str();
+    if marker.contains("特典") {
+        return Some((MediaContentKind::Extra, "EXTRA"));
+    }
+    if marker == "番外篇" {
+        return Some((MediaContentKind::Special, "SP"));
+    }
+    marker_kind_and_prefix(&marker.to_ascii_uppercase())
+}
+
+/// 将稳定标记映射为媒体内容类型和显示前缀。
+fn marker_kind_and_prefix(marker: &str) -> Option<(MediaContentKind, &'static str)> {
+    match marker {
+        "SP" | "SPECIAL" | "SPECIALS" => Some((MediaContentKind::Special, "SP")),
+        "OVA" => Some((MediaContentKind::Ova, "OVA")),
+        "OAD" => Some((MediaContentKind::Oad, "OAD")),
+        "NCOP" => Some((MediaContentKind::Opening, "NCOP")),
+        "NCED" => Some((MediaContentKind::Ending, "NCED")),
+        "PV" => Some((MediaContentKind::Pv, "PV")),
+        "CM" => Some((MediaContentKind::Cm, "CM")),
+        "EXTRA" | "EXTRAS" | "BONUS" => Some((MediaContentKind::Extra, "EXTRA")),
+        _ => None,
+    }
+}
+
+/// 生成不关联正片的特别内容身份。
+fn special_media_identity(
+    content_kind: MediaContentKind,
+    prefix: &str,
+    number: Option<f64>,
+) -> ScannedMediaIdentity {
+    let special_no = number.map_or_else(
+        || prefix.to_owned(),
+        |number| format!("{prefix}{}", format_special_number(number)),
+    );
+    ScannedMediaIdentity {
+        episode_no: None,
+        content_kind,
+        special_no: Some(special_no),
+    }
+}
+
+/// 将特别内容序号格式化为稳定短标签。
+fn format_special_number(number: f64) -> String {
+    if number.fract().abs() < f64::EPSILON {
+        format!("{:02}", number as i64)
+    } else {
+        number.to_string()
+    }
 }
 
 /// 从发布文件名移除字幕组、集数和技术标签得到标题提示。
@@ -1685,8 +1873,11 @@ mod tests {
             .map(|value| value.to_string_lossy().into_owned())
             .unwrap_or_default();
         let parsed = parse_release_title(&file_name, &[]);
+        let identity = classify_scanned_media(Path::new("/library"), &path, parsed.episode_no);
         ScannedFile {
-            episode_no: parsed.episode_no,
+            episode_no: identity.episode_no,
+            content_kind: identity.content_kind,
+            special_no: identity.special_no,
             parsed,
             size: 1024,
             modified_at: None,
@@ -1765,6 +1956,7 @@ mod tests {
             inferred.identity_directory,
             root.join("Known Show").join("Spin Off")
         );
+        assert!(inferred.requires_manual_confirmation);
     }
 
     /// 验证同名目录位于不同树分支时不会合并为同一候选。
@@ -1883,5 +2075,26 @@ mod tests {
         assert!(is_macos_metadata_directory(Path::new("__MACOSX")));
         assert!(!is_macos_metadata_path(Path::new(".episode.mkv")));
         assert!(is_video_path(Path::new(".episode.mkv"), &extensions));
+    }
+
+    /// 验证 SP 目录中的普通数字文件不会建立正片集数关联。
+    #[test]
+    fn special_directory_overrides_parsed_episode_number() {
+        let file = scanned_file("/library/Known Show/SP/[Group] Known Show [01].mkv");
+
+        assert_eq!(file.content_kind, MediaContentKind::Special);
+        assert_eq!(file.special_no.as_deref(), Some("SP01"));
+        assert_eq!(file.episode_no, None);
+        assert!(group_episode_numbers(&[file]).is_empty());
+    }
+
+    /// 验证无字幕片头按 NCOP 单独编号且不关联正片。
+    #[test]
+    fn explicit_ncop_marker_is_special_content() {
+        let file = scanned_file("/library/Known Show/[Group] Known Show NCOP2.mkv");
+
+        assert_eq!(file.content_kind, MediaContentKind::Opening);
+        assert_eq!(file.special_no.as_deref(), Some("NCOP02"));
+        assert_eq!(file.episode_no, None);
     }
 }

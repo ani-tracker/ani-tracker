@@ -15,7 +15,7 @@ use axum::http::{HeaderMap, HeaderValue, Method, Response, StatusCode};
 use axum::routing::any;
 use axum::Router;
 use axum_server::Handle;
-use percent_encoding::percent_decode_str;
+use percent_encoding::{percent_decode_str, utf8_percent_encode, NON_ALPHANUMERIC};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -34,6 +34,7 @@ use crate::tls::{RemoteTlsBundle, RemoteTlsCertificateStore};
 
 const DEFAULT_PORT: u16 = 18_083;
 const MAX_BODY_BYTES: usize = 64 * 1024;
+const MEDIA_STREAM_BUFFER_BYTES: usize = 1024 * 1024;
 
 /// 设置中的远程网关监听选项。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -719,18 +720,61 @@ async fn stream_media(
         .then(|| parse_byte_range(requested_range, metadata.len()))
         .flatten();
     if asset.direct && requested_range.is_some() && range.is_none() {
+        log::warn!(
+            "Rust 远程媒体 Range 无效 method={} file_name={} requested_range={} total={}",
+            method,
+            asset.file_name.as_deref().unwrap_or("unknown"),
+            requested_range.unwrap_or("none"),
+            metadata.len()
+        );
         return response_with_headers(
             StatusCode::RANGE_NOT_SATISFIABLE,
             Body::empty(),
-            &[(CONTENT_RANGE, &format!("bytes */{}", metadata.len()))],
+            &[
+                (CONTENT_RANGE, &format!("bytes */{}", metadata.len())),
+                (ACCEPT_RANGES, "bytes"),
+            ],
         );
+    }
+    if asset.direct {
+        let (start, end) = range
+            .map(|range| (range.start, range.end))
+            .unwrap_or_else(|| (0, metadata.len().saturating_sub(1)));
+        let length = if metadata.len() == 0 {
+            0
+        } else {
+            end - start + 1
+        };
+        log::info!(
+            "Rust 远程媒体直传 method={} file_name={} requested_range={} start={} end={} length={} total={}",
+            method,
+            asset.file_name.as_deref().unwrap_or("unknown"),
+            requested_range.unwrap_or("none"),
+            start,
+            end,
+            length,
+            metadata.len()
+        );
+    }
+    let content_disposition = asset.file_name.as_deref().map(|file_name| {
+        format!(
+            "inline; filename*=UTF-8''{}",
+            utf8_percent_encode(file_name, NON_ALPHANUMERIC)
+        )
+    });
+    let mut extra_headers = vec![(CACHE_CONTROL, "no-store")];
+    if asset.direct {
+        extra_headers.push((ACCEPT_RANGES, "bytes"));
+    }
+    if let Some(content_disposition) = content_disposition.as_deref() {
+        extra_headers.push((CONTENT_DISPOSITION, content_disposition));
     }
     stream_file(
         method,
         &asset.file_path,
         &asset.content_type,
         range,
-        &[(CACHE_CONTROL, "no-store")],
+        &extra_headers,
     )
     .await
 }
@@ -762,7 +806,7 @@ async fn stream_file(
         .header(CONTENT_LENGTH, length)
         .header("X-Content-Type-Options", "nosniff");
     if range.is_some() {
-        response = response.header(ACCEPT_RANGES, "bytes").header(
+        response = response.header(
             CONTENT_RANGE,
             format!("bytes {start}-{end}/{}", metadata.len()),
         );
@@ -781,7 +825,7 @@ async fn stream_file(
     file.seek(std::io::SeekFrom::Start(start))
         .await
         .map_err(|_| GatewayHttpError::internal())?;
-    let stream = ReaderStream::new(file.take(length));
+    let stream = ReaderStream::with_capacity(file.take(length), MEDIA_STREAM_BUFFER_BYTES);
     response
         .body(Body::from_stream(stream))
         .map_err(|_| GatewayHttpError::internal())
@@ -1050,6 +1094,7 @@ fn parse_external_media_route(path: &str) -> Option<ExternalMediaRoute> {
     let remaining = parts.collect::<Vec<_>>();
     let asset_name = match remaining.as_slice() {
         ["file"] => "file".to_owned(),
+        [name] => decode_direct_asset_name(name)?,
         ["hls", name] if is_hls_name(name) => (*name).to_owned(),
         ["subtitles", name] if is_subtitle_name(name) => (*name).to_owned(),
         _ => return None,
@@ -1059,6 +1104,19 @@ fn parse_external_media_route(path: &str) -> Option<ExternalMediaRoute> {
         session_id,
         asset_name,
     })
+}
+
+/// 解码外部播放器 URL 末段中的真实 UTF-8 文件名。
+fn decode_direct_asset_name(value: &str) -> Option<String> {
+    let decoded = percent_decode_str(value).decode_utf8().ok()?.into_owned();
+    (!decoded.is_empty()
+        && decoded.len() <= 1_024
+        && decoded != "."
+        && decoded != ".."
+        && !decoded
+            .chars()
+            .any(|character| matches!(character, '/' | '\\' | '\0')))
+    .then_some(decoded)
 }
 
 fn valid_token(value: &str, length: usize) -> bool {
@@ -1333,6 +1391,11 @@ mod tests {
             "/api/media/external/{token}/sessions/{session}/file"
         ))
         .is_some());
+        let named = parse_external_media_route(&format!(
+            "/api/media/external/{token}/sessions/{session}/%E6%B5%8B%E8%AF%95%20SP01.mkv"
+        ))
+        .expect("named media route");
+        assert_eq!(named.asset_name, "测试 SP01.mkv");
     }
 
     /// 验证真实 HTTP 监听器上的 PWA、Host 防护、配对、RPC、媒体会话和 Range 闭环。
@@ -1574,8 +1637,56 @@ mod tests {
             Some("bytes 2-5/10")
         );
         assert_eq!(
+            range_response
+                .headers()
+                .get(reqwest::header::ACCEPT_RANGES)
+                .and_then(|value| value.to_str().ok()),
+            Some("bytes")
+        );
+        assert_eq!(
+            range_response
+                .headers()
+                .get(reqwest::header::CONTENT_DISPOSITION)
+                .and_then(|value| value.to_str().ok()),
+            Some("inline; filename*=UTF-8''episode%2D01%2Emkv")
+        );
+        assert_eq!(
             range_response.bytes().await.expect("range body").as_ref(),
             b"2345"
+        );
+
+        let external_session_response = client
+            .post(format!("{base_url}/api/media/external-sessions"))
+            .bearer_auth(token)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(json!({ "taskId": "task-1", "mode": "direct", "fileIndex": 0 }).to_string())
+            .send()
+            .await
+            .expect("external media session request");
+        assert_eq!(external_session_response.status(), reqwest::StatusCode::OK);
+        let external_session: Value = serde_json::from_str(
+            &external_session_response
+                .text()
+                .await
+                .expect("external media session body"),
+        )
+        .expect("external media session response");
+        let external_stream_url = external_session["streamUrl"]
+            .as_str()
+            .expect("external stream url");
+        assert!(external_stream_url.ends_with("/episode-01.mkv"));
+        let external_head = client
+            .head(format!("{base_url}{external_stream_url}"))
+            .send()
+            .await
+            .expect("external media head request");
+        assert_eq!(external_head.status(), reqwest::StatusCode::OK);
+        assert_eq!(
+            external_head
+                .headers()
+                .get(reqwest::header::ACCEPT_RANGES)
+                .and_then(|value| value.to_str().ok()),
+            Some("bytes")
         );
 
         gateway.stop().await;

@@ -24,7 +24,8 @@ export function PlayerPlaylistSheet({
   onSelect,
   open
 }: PlayerPlaylistSheetProps) {
-  const playableCount = items.filter((item) => Boolean(item.playlistItem)).length;
+  const episodeItems = items.filter((item) => item.section === "episodes");
+  const playableCount = episodeItems.filter((item) => Boolean(item.playlistItem)).length;
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -32,7 +33,7 @@ export function PlayerPlaylistSheet({
         <SheetHeader className="border-b px-4 py-4 pr-14 text-left">
           <SheetTitle>播放列表</SheetTitle>
           <SheetDescription className="truncate">
-            {animeTitle} · {playableCount}/{items.length} 个视频
+            {animeTitle} · {playableCount}/{episodeItems.length} 集正片
           </SheetDescription>
         </SheetHeader>
         <div className="min-h-0 flex-1 py-1">

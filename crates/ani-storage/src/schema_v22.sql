@@ -321,6 +321,8 @@ CREATE TABLE IF NOT EXISTS media_file (
   anime_id TEXT NOT NULL,
   episode_id TEXT,
   download_task_id TEXT,
+  content_kind TEXT NOT NULL DEFAULT 'unknown',
+  special_no TEXT,
   file_path TEXT NOT NULL,
   file_name TEXT NOT NULL,
   size INTEGER NOT NULL,

@@ -10,6 +10,7 @@ use async_trait::async_trait;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use chrono::{SecondsFormat, Utc};
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use rand::rngs::OsRng;
 use rand::RngCore;
 use serde::Deserialize;
@@ -20,6 +21,23 @@ use tokio::sync::Mutex;
 const SESSION_TTL: Duration = Duration::from_secs(30 * 60);
 const TRANSCODER_START_TIMEOUT: Duration = Duration::from_secs(20);
 const MAX_SESSIONS: usize = 2;
+const MEDIA_FILE_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'/')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'[')
+    .add(b'\\')
+    .add(b']')
+    .add(b'^')
+    .add(b'`')
+    .add(b'{')
+    .add(b'|')
+    .add(b'}');
 
 /// 远程媒体核心读取下载、媒体、设置和续播状态的公共端口。
 #[async_trait]
@@ -55,6 +73,7 @@ pub struct RemoteMediaAsset {
     pub file_path: PathBuf,
     pub content_type: String,
     pub direct: bool,
+    pub file_name: Option<String>,
 }
 
 /// 远程媒体会话的稳定协议错误。
@@ -231,6 +250,8 @@ impl RemoteMediaSessionService {
             );
         }
         let now = Utc::now();
+        let direct_asset_name =
+            utf8_percent_encode(&media.file_name, MEDIA_FILE_SEGMENT_ENCODE_SET).to_string();
         let public = RemotePlaybackSession {
             id: id.clone(),
             task_id: task.id.clone(),
@@ -239,6 +260,8 @@ impl RemoteMediaSessionService {
             mode: mode.to_owned(),
             stream_url: if mode == "hls" {
                 format!("{asset_base}/hls/index.m3u8")
+            } else if access == SessionAccess::External {
+                format!("{asset_base}/{direct_asset_name}")
             } else {
                 format!("{asset_base}/file")
             },
@@ -349,16 +372,18 @@ impl RemoteMediaSessionService {
                 }
                 .to_owned(),
                 direct: false,
+                file_name: None,
             });
         }
         if public.mode == "direct" {
-            if asset_name != "file" {
+            if asset_name != "file" && asset_name != public.file_name {
                 return Err(asset_not_found());
             }
             return Ok(RemoteMediaAsset {
                 file_path: record.source_path.clone(),
                 content_type: record.content_type.clone(),
                 direct: true,
+                file_name: Some(public.file_name.clone()),
             });
         }
         if !is_hls_asset(asset_name) {
@@ -373,6 +398,7 @@ impl RemoteMediaSessionService {
             }
             .to_owned(),
             direct: false,
+            file_name: None,
         })
     }
 

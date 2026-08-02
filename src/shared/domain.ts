@@ -324,6 +324,8 @@ export interface MediaFile {
   animeId: string;
   episodeId?: string;
   downloadTaskId?: string;
+  contentKind: MediaContentKind;
+  specialNo?: string;
   filePath: string;
   fileName: string;
   size: number;
@@ -346,6 +348,18 @@ export interface MediaFile {
   lastVerifiedAt?: string;
   availabilityError?: string;
 }
+
+export type MediaContentKind =
+  | "episode"
+  | "special"
+  | "ova"
+  | "oad"
+  | "opening"
+  | "ending"
+  | "pv"
+  | "cm"
+  | "extra"
+  | "unknown";
 
 export interface PlayerProfile {
   id: string;

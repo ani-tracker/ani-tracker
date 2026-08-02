@@ -913,6 +913,8 @@ mod tests {
             anime_id: "anime-1".to_owned(),
             episode_id: None,
             download_task_id: None,
+            content_kind: Default::default(),
+            special_no: None,
             file_path: file_path.to_string_lossy().into_owned(),
             file_name: file_path
                 .file_name()

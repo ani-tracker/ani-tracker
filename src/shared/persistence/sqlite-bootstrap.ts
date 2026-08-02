@@ -16,7 +16,7 @@ export async function bootstrapSqliteDatabase(
 ): Promise<SqliteBootstrapResult> {
   await driver.execute("PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;");
   await driver.execute(SQLITE_SCHEMA);
-  await ensureMediaFileAvailabilitySchema(driver);
+  await ensureMediaFileSchema(driver);
 
   const schemaVersion = await readMetaVersion(driver, "schema_version");
   if (schemaVersion > SQLITE_SCHEMA_VERSION) {
@@ -38,6 +38,11 @@ export async function bootstrapSqliteDatabase(
     } else if (appDataVersion < 25) {
       await migrateMetadataProxyTimeoutDefault(driver, now);
     }
+    if (schemaVersion < 22) {
+      await driver.run(
+        "UPDATE media_file SET content_kind = 'episode' WHERE episode_id IS NOT NULL AND content_kind = 'unknown'"
+      );
+    }
     await writeMetaVersion(driver, "schema_version", SQLITE_SCHEMA_VERSION, now);
     await writeMetaVersion(driver, "app_data_version", APP_DATA_VERSION, now);
   });
@@ -49,8 +54,8 @@ export async function bootstrapSqliteDatabase(
   };
 }
 
-/** 补齐本地媒体可用性字段，并在字段存在后创建目录索引。 */
-async function ensureMediaFileAvailabilitySchema(driver: SqliteDriver): Promise<void> {
+/** 补齐本地媒体内容与可用性字段，并在字段存在后创建目录索引。 */
+async function ensureMediaFileSchema(driver: SqliteDriver): Promise<void> {
   const columns = await driver.query<{ name: string }>("PRAGMA table_info(media_file)");
   const existing = new Set(columns.map((column) => column.name));
   for (const [column, definition] of [
@@ -60,7 +65,9 @@ async function ensureMediaFileAvailabilitySchema(driver: SqliteDriver): Promise<
     ["file_modified_at", "file_modified_at TEXT"],
     ["availability", "availability TEXT NOT NULL DEFAULT 'available'"],
     ["last_verified_at", "last_verified_at TEXT"],
-    ["availability_error", "availability_error TEXT"]
+    ["availability_error", "availability_error TEXT"],
+    ["content_kind", "content_kind TEXT NOT NULL DEFAULT 'unknown'"],
+    ["special_no", "special_no TEXT"]
   ] as const) {
     if (!existing.has(column)) {
       await driver.execute(`ALTER TABLE media_file ADD COLUMN ${definition};`);

@@ -10,6 +10,7 @@ import {
   Info,
   ListTodo,
   MoreHorizontal,
+  Play,
   Plus,
   RefreshCw,
   Search,
@@ -51,8 +52,10 @@ import { CachedImage } from "@/components/cached-image";
 import { Page, PageHeader } from "@/components/page-layout";
 import { appApi, isLocalClient } from "@/lib/api";
 import { cn } from "@/lib/cn";
+import { formatBytes } from "@/lib/format";
 import type { AnimeDetailResult } from "@shared/contracts";
-import type { Anime, MyAnime } from "@shared/domain";
+import type { Anime, MediaContentKind, MediaFile, MyAnime } from "@shared/domain";
+import { isSpecialMediaContent } from "@shared/media-content";
 import { createDefaultMyAnimePreferences } from "@shared/my-anime-policy";
 import {
   formatSubtitleLanguages,
@@ -71,6 +74,7 @@ interface AnimeDetailPageProps {
   onBack: () => void;
   onOpenLibraryAction: (animeId: string, action: AnimeDetailLibraryAction) => void;
   onOpenReleaseSearch: (anime: Anime) => void;
+  onPlayMedia?: (filePath: string) => Promise<void>;
 }
 
 interface DetailSectionPosition {
@@ -105,9 +109,11 @@ export function AnimeDetailPage({
   sourceLabel,
   onBack,
   onOpenLibraryAction,
-  onOpenReleaseSearch
+  onOpenReleaseSearch,
+  onPlayMedia
 }: AnimeDetailPageProps) {
   const [result, setResult] = useState<AnimeDetailResult | null>(null);
+  const [mediaFiles, setMediaFiles] = useState<MediaFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [tracking, setTracking] = useState(false);
@@ -158,16 +164,22 @@ export function AnimeDetailPage({
       || detail?.durationMinutes || detail?.sourceMaterial || detail?.contentRating || detail?.demographic
   );
   const hasOverview = Boolean(result?.anime.summary || hasBasicInfo);
+  const specialMedia = useMemo(
+    () => mediaFiles.filter((media) => isSpecialMediaContent(media.contentKind)),
+    [mediaFiles]
+  );
   const sectionLinks = useMemo(() => [
     hasOverview ? { id: "detail-overview", label: "简介" } : null,
     (viewModel?.nextAiring || viewModel?.broadcast) ? { id: "detail-broadcast", label: "放送" } : null,
     hasProduction ? { id: "detail-production", label: "制作" } : null,
+    specialMedia.length ? { id: "detail-specials", label: "特别内容" } : null,
     result?.myAnime ? { id: "detail-tracker", label: "追番" } : null,
     viewModel?.externalLinks.length ? { id: "detail-sources", label: "来源" } : null
   ].filter((item): item is { id: string; label: string } => Boolean(item)), [
     hasOverview,
     hasProduction,
     result?.myAnime,
+    specialMedia.length,
     viewModel?.broadcast,
     viewModel?.externalLinks.length,
     viewModel?.nextAiring
@@ -255,7 +267,17 @@ export function AnimeDetailPage({
     setError(null);
     console.info("[anime-detail] load requested", { animeId });
     try {
-      setResult(await appApi.getAnimeDetail(animeId));
+      const [detailResult, registeredMedia] = await Promise.all([
+        appApi.getAnimeDetail(animeId),
+        localClient
+          ? appApi.listMediaFiles().catch((mediaError) => {
+              console.warn("[anime-detail] 本地媒体读取失败", { animeId, error: mediaError });
+              return [];
+            })
+          : Promise.resolve([])
+      ]);
+      setResult(detailResult);
+      setMediaFiles(registeredMedia.filter((media) => media.animeId === animeId));
       setSummaryExpanded(false);
     } catch (loadError) {
       const message = loadError instanceof Error ? loadError.message : "加载番剧详情失败";
@@ -612,6 +634,39 @@ export function AnimeDetailPage({
               )}
             </DetailSection>
           )}
+
+          {specialMedia.length > 0 && (
+            <DetailSection icon={<ListTodo />} id="detail-specials" title="特别内容">
+              <div className="flex min-w-0 flex-col">
+                {specialMedia.map((media, index) => (
+                  <div className="min-w-0" key={media.id}>
+                    <div className="flex min-w-0 items-center gap-3 py-3">
+                      <Badge>{media.specialNo ?? mediaContentKindLabel(media.contentKind)}</Badge>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-medium" title={media.fileName}>{media.fileName}</div>
+                        <div className="mt-1 truncate text-xs text-muted-foreground">
+                          {formatBytes(media.size)} · {mediaAvailabilityLabel(media)}
+                        </div>
+                      </div>
+                      {onPlayMedia && (
+                        <Button
+                          aria-label={`播放 ${media.fileName}`}
+                          className="size-9 shrink-0 px-0"
+                          disabled={media.availability === "missing" || media.availability === "unavailable"}
+                          onClick={() => void playRegisteredMedia(media, onPlayMedia)}
+                          title="播放"
+                          variant="outline"
+                        >
+                          <Play />
+                        </Button>
+                      )}
+                    </div>
+                    {index < specialMedia.length - 1 && <Separator />}
+                  </div>
+                ))}
+              </div>
+            </DetailSection>
+          )}
         </div>
 
         <aside className="flex min-w-0 flex-col gap-7">
@@ -856,6 +911,51 @@ function createDefaultMyAnime(anime: Anime, timestamp: string): MyAnime {
     addedAt: timestamp,
     updatedAt: timestamp
   };
+}
+
+/** 调用统一播放入口打开已登记的特别内容。 */
+async function playRegisteredMedia(
+  media: MediaFile,
+  onPlayMedia: (filePath: string) => Promise<void>
+): Promise<void> {
+  try {
+    await onPlayMedia(media.filePath);
+    console.info("[anime-detail] 特别内容播放已请求", {
+      mediaId: media.id,
+      contentKind: media.contentKind,
+      specialNo: media.specialNo
+    });
+  } catch (error) {
+    console.error("[anime-detail] 特别内容播放失败", { mediaId: media.id, error });
+    toast.error(error instanceof Error ? error.message : "特别内容播放失败");
+  }
+}
+
+/** 返回特别内容类型的中文标签。 */
+function mediaContentKindLabel(contentKind: MediaContentKind): string {
+  const labels: Record<MediaContentKind, string> = {
+    episode: "正片",
+    special: "SP",
+    ova: "OVA",
+    oad: "OAD",
+    opening: "片头",
+    ending: "片尾",
+    pv: "PV",
+    cm: "CM",
+    extra: "特典",
+    unknown: "其他"
+  };
+  return labels[contentKind];
+}
+
+/** 返回媒体可用状态和最近变更提示。 */
+function mediaAvailabilityLabel(media: MediaFile): string {
+  switch (media.availability) {
+    case "changed": return "文件已变化";
+    case "missing": return "文件缺失";
+    case "unavailable": return "目录不可访问";
+    default: return media.container?.toUpperCase() ?? "可播放";
+  }
 }
 
 function formatMetadataValue(value: string): string {

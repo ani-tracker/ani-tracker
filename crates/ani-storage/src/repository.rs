@@ -7,10 +7,10 @@ use ani_domain::{
     AnimeSeasonSyncState, AnimeSourceBinding, AnimeSourceBindingMatchMethod, AnimeSourceExclusion,
     AnimeSourceExclusionScope, AnimeStatus, AnimeWatchProgress, AppSettings, DailyReminderItem,
     DailyReminderSummary, DashboardData, DownloadStatus, DownloadTask, Episode, EpisodePreference,
-    EpisodeStatus, EpisodeSummary, FansubGroup, MediaAvailability, MediaFile, MediaOrigin, MyAnime,
-    NormalizedVideoCodec, NotificationKind, NotificationRecord, NotificationSeverity,
-    PendingAction, PlaybackCheckpoint, Release, ReleaseResolution, ReleaseSourceConfig,
-    ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
+    EpisodeStatus, EpisodeSummary, FansubGroup, MediaAvailability, MediaContentKind, MediaFile,
+    MediaOrigin, MyAnime, NormalizedVideoCodec, NotificationKind, NotificationRecord,
+    NotificationSeverity, PendingAction, PlaybackCheckpoint, Release, ReleaseResolution,
+    ReleaseSourceConfig, ReleaseSourceSyncState, ReportPlaybackProgressInput, RequestCircuitState,
     SavePlaybackCheckpointInput, SecretReference, SecretValue, SecureStore,
     SetAnimeWatchProgressInput, SourceHealth, SourceKind, SubtitleLanguage, SubtitlePreference,
     TorrentEngineKind, TorrentFile, WeeklyScheduleDay,
@@ -1784,6 +1784,9 @@ impl<'connection> SqliteRepository<'connection> {
                 if media.size < 0 {
                     return invalid_input("mediaFile.size", "媒体文件大小不能为负数");
                 }
+                if media.content_kind != MediaContentKind::Episode && media.episode_id.is_some() {
+                    return invalid_input("mediaFile.episodeId", "非正片媒体不能关联正片单集");
+                }
                 previous_episode_ids.extend(query_all_with_params(
                     connection,
                     "SELECT episode_id FROM media_file
@@ -1811,7 +1814,8 @@ impl<'connection> SqliteRepository<'connection> {
                 )?;
                 connection.execute(
                     "INSERT INTO media_file (
-                       id, anime_id, episode_id, download_task_id, file_path, file_name, size,
+                       id, anime_id, episode_id, download_task_id, content_kind, special_no,
+                       file_path, file_name, size,
                        container, declared_video_codec, detected_video_codec,
                        normalized_video_codec, resolution, bit_depth, audio_codecs_json,
                        subtitle_tracks_json, duration_seconds, downloaded_at, probed_at,
@@ -1819,11 +1823,13 @@ impl<'connection> SqliteRepository<'connection> {
                        last_verified_at, availability_error
                      ) VALUES (
                        ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14,
-                       ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25
+                       ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23, ?24, ?25, ?26, ?27
                      ) ON CONFLICT(id) DO UPDATE SET
                        anime_id = excluded.anime_id,
                        episode_id = excluded.episode_id,
                        download_task_id = excluded.download_task_id,
+                       content_kind = excluded.content_kind,
+                       special_no = excluded.special_no,
                        file_path = excluded.file_path,
                        file_name = excluded.file_name,
                        size = excluded.size,
@@ -1850,6 +1856,8 @@ impl<'connection> SqliteRepository<'connection> {
                         &media.anime_id,
                         media.episode_id.as_deref(),
                         media.download_task_id.as_deref(),
+                        media_content_kind_value(&media.content_kind),
+                        media.special_no.as_deref(),
                         &media.file_path,
                         &media.file_name,
                         media.size,
@@ -5018,6 +5026,8 @@ struct MediaFileRow {
     anime_id: String,
     episode_id: Option<String>,
     download_task_id: Option<String>,
+    content_kind: String,
+    special_no: Option<String>,
     file_path: String,
     file_name: String,
     size: i64,
@@ -5049,6 +5059,8 @@ impl MediaFileRow {
             anime_id: self.anime_id,
             episode_id: self.episode_id,
             download_task_id: self.download_task_id,
+            content_kind: parse_media_content_kind(&self.content_kind)?,
+            special_no: self.special_no,
             file_path: self.file_path,
             file_name: self.file_name,
             size: self.size,
@@ -5377,6 +5389,8 @@ fn map_media_file_row(row: &Row<'_>) -> rusqlite::Result<MediaFileRow> {
         anime_id: row.get("anime_id")?,
         episode_id: row.get("episode_id")?,
         download_task_id: row.get("download_task_id")?,
+        content_kind: row.get("content_kind")?,
+        special_no: row.get("special_no")?,
         file_path: row.get("file_path")?,
         file_name: row.get("file_name")?,
         size: row.get("size")?,
@@ -5496,6 +5510,39 @@ fn media_origin_value(value: &MediaOrigin) -> &'static str {
     match value {
         MediaOrigin::Download => "download",
         MediaOrigin::Imported => "imported",
+    }
+}
+
+/// 解析媒体内容类型。
+fn parse_media_content_kind(value: &str) -> Result<MediaContentKind, StorageError> {
+    match value {
+        "episode" => Ok(MediaContentKind::Episode),
+        "special" => Ok(MediaContentKind::Special),
+        "ova" => Ok(MediaContentKind::Ova),
+        "oad" => Ok(MediaContentKind::Oad),
+        "opening" => Ok(MediaContentKind::Opening),
+        "ending" => Ok(MediaContentKind::Ending),
+        "pv" => Ok(MediaContentKind::Pv),
+        "cm" => Ok(MediaContentKind::Cm),
+        "extra" => Ok(MediaContentKind::Extra),
+        "unknown" => Ok(MediaContentKind::Unknown),
+        _ => invalid_value("media_file.content_kind", value),
+    }
+}
+
+/// 返回媒体内容类型的 SQLite 字面量。
+fn media_content_kind_value(value: &MediaContentKind) -> &'static str {
+    match value {
+        MediaContentKind::Episode => "episode",
+        MediaContentKind::Special => "special",
+        MediaContentKind::Ova => "ova",
+        MediaContentKind::Oad => "oad",
+        MediaContentKind::Opening => "opening",
+        MediaContentKind::Ending => "ending",
+        MediaContentKind::Pv => "pv",
+        MediaContentKind::Cm => "cm",
+        MediaContentKind::Extra => "extra",
+        MediaContentKind::Unknown => "unknown",
     }
 }
 

@@ -32,7 +32,11 @@ export function PlayerEpisodeList({
   scrollable = false,
   showHeader = true
 }: PlayerEpisodeListProps) {
-  const viewedCount = items.filter((item) => item.status === "watched" || item.status === "playing").length;
+  const episodeItems = items.filter((item) => item.section === "episodes");
+  const specialItems = items.filter((item) => item.section === "specials");
+  const viewedCount = episodeItems.filter((item) =>
+    item.status === "watched" || item.status === "playing"
+  ).length;
   const activeItemId = items.find((item) => item.status === "playing")?.id;
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const activeRowRef = useRef<HTMLDivElement>(null);
@@ -66,19 +70,36 @@ export function PlayerEpisodeList({
     };
   }, [activeItemId, scrollable]);
 
+  /** 渲染单个内容分组并保持组内分隔线稳定。 */
+  const renderRows = (groupItems: PlayerEpisodeUiItem[]) => groupItems.map((item, index) => (
+    <div
+      key={item.id}
+      ref={item.id === activeItemId ? activeRowRef : undefined}
+      className="min-w-0 max-w-full overflow-hidden"
+      role="listitem"
+    >
+      <EpisodeRow item={item} onSelect={onSelect} />
+      {index < groupItems.length - 1 && <Separator />}
+    </div>
+  ));
+
   const content = (
     <div className="flex min-w-0 max-w-full flex-col overflow-hidden" role="list" aria-label={`${animeTitle} 播放列表`}>
-      {items.map((item, index) => (
-        <div
-          key={item.id}
-          ref={item.id === activeItemId ? activeRowRef : undefined}
-          className="min-w-0 max-w-full overflow-hidden"
-          role="listitem"
-        >
-          <EpisodeRow item={item} onSelect={onSelect} />
-          {index < items.length - 1 && <Separator />}
+      {specialItems.length > 0 && episodeItems.length > 0 && (
+        <div className="flex items-center justify-between gap-3 px-4 py-2 text-xs font-medium text-muted-foreground" role="presentation">
+          <span>正片</span><Badge>{episodeItems.length}</Badge>
         </div>
-      ))}
+      )}
+      {renderRows(episodeItems)}
+      {specialItems.length > 0 && (
+        <>
+          {episodeItems.length > 0 && <Separator />}
+          <div className="flex items-center justify-between gap-3 px-4 py-2 text-xs font-medium text-muted-foreground" role="presentation">
+            <span>特别内容</span><Badge>{specialItems.length}</Badge>
+          </div>
+          {renderRows(specialItems)}
+        </>
+      )}
     </div>
   );
 
@@ -94,7 +115,7 @@ export function PlayerEpisodeList({
             <div className="min-w-0">
               <h2 id="player-playlist-title" className="text-base font-semibold">播放列表</h2>
             </div>
-            <Badge>{viewedCount}/{items.length}</Badge>
+            <Badge>{episodeItems.length > 0 ? `${viewedCount}/${episodeItems.length}` : `${specialItems.length} 项`}</Badge>
           </div>
         )}
         {items.length === 0 ? (
@@ -139,7 +160,7 @@ function EpisodeRow({
       onClick={() => onSelect(item)}
       variant="ghost"
     >
-      <span className="w-7 shrink-0 text-center font-mono text-xs font-semibold tabular-nums">
+      <span className="w-14 shrink-0 text-center font-mono text-xs font-semibold tabular-nums">
         {item.numberLabel}
       </span>
       <span className="min-w-0 flex-1">
