@@ -1771,6 +1771,7 @@ impl<'connection> SqliteRepository<'connection> {
         media_files: &[MediaFile],
     ) -> Result<Vec<MediaFile>, StorageError> {
         self.with_transaction(|connection| {
+            let mut previous_episode_ids = HashSet::new();
             for media in media_files {
                 validate_identifier("mediaFile.id", &media.id)?;
                 validate_identifier("mediaFile.animeId", &media.anime_id)?;
@@ -1783,6 +1784,13 @@ impl<'connection> SqliteRepository<'connection> {
                 if media.size < 0 {
                     return invalid_input("mediaFile.size", "媒体文件大小不能为负数");
                 }
+                previous_episode_ids.extend(query_all_with_params(
+                    connection,
+                    "SELECT episode_id FROM media_file
+                     WHERE (id = ?1 OR file_path = ?2) AND episode_id IS NOT NULL",
+                    params![&media.id, &media.file_path],
+                    |row| row.get::<_, String>(0),
+                )?);
                 let audio_codecs_json =
                     serde_json::to_string(&media.audio_codecs).map_err(|source| {
                         StorageError::JsonData {
@@ -1866,6 +1874,10 @@ impl<'connection> SqliteRepository<'connection> {
                     ],
                 )?;
             }
+            sync_episode_statuses_from_downloads(
+                connection,
+                orphaned_media_episode_ids(connection, previous_episode_ids)?,
+            )?;
             Ok(())
         })?;
         info!("Rust 媒体文件批量写入完成：count={}", media_files.len());
@@ -1899,22 +1911,46 @@ impl<'connection> SqliteRepository<'connection> {
                 removed_count +=
                     connection.execute("DELETE FROM media_file WHERE id = ?1", [media_file_id])?;
             }
-            let mut orphaned_episode_ids = Vec::new();
-            for episode_id in linked_episode_ids {
-                let has_media = connection.query_row(
-                    "SELECT EXISTS(SELECT 1 FROM media_file WHERE episode_id = ?1)",
-                    [&episode_id],
-                    |row| row.get::<_, bool>(0),
-                )?;
-                if !has_media {
-                    orphaned_episode_ids.push(episode_id);
-                }
-            }
-            sync_episode_statuses_from_downloads(connection, orphaned_episode_ids)?;
+            sync_episode_statuses_from_downloads(
+                connection,
+                orphaned_media_episode_ids(connection, linked_episode_ids)?,
+            )?;
             Ok(removed_count)
         })?;
         info!("Rust 媒体文件批量删除完成：count={removed_count}");
         self.list_media_files()
+    }
+
+    /// 清理由扫描导入创建且已无媒体、无用户状态的本地番剧。
+    pub(crate) fn cleanup_orphaned_imported_anime(
+        &self,
+        anime_ids: &[String],
+    ) -> Result<Vec<String>, StorageError> {
+        if anime_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let removed = self.with_transaction(|connection| {
+            let mut removed = Vec::new();
+            for anime_id in anime_ids {
+                validate_identifier("animeId", anime_id)?;
+                if !is_disposable_imported_anime(connection, anime_id)? {
+                    continue;
+                }
+                connection.execute("DELETE FROM my_anime WHERE anime_id = ?1", [anime_id])?;
+                connection.execute("DELETE FROM episode WHERE anime_id = ?1", [anime_id])?;
+                connection.execute("DELETE FROM anime_catalog WHERE id = ?1", [anime_id])?;
+                removed.push(anime_id.clone());
+            }
+            Ok(removed)
+        })?;
+        if !removed.is_empty() {
+            info!(
+                "Rust 无引用导入番剧清理完成：count={}, anime_ids={}",
+                removed.len(),
+                removed.join(",")
+            );
+        }
+        Ok(removed)
     }
 
     /// 读取字幕组名称映射。
@@ -2637,6 +2673,15 @@ impl MediaRepository for SqliteRepository<'_> {
     fn remove_media_files(&self, media_file_ids: &[String]) -> RepositoryResult<Vec<MediaFile>> {
         SqliteRepository::remove_media_files(self, media_file_ids).map_err(RepositoryError::from)
     }
+
+    /// 通过 SQLite 适配器清理无引用的导入番剧。
+    fn cleanup_orphaned_imported_anime(
+        &self,
+        anime_ids: &[String],
+    ) -> RepositoryResult<Vec<String>> {
+        SqliteRepository::cleanup_orphaned_imported_anime(self, anime_ids)
+            .map_err(RepositoryError::from)
+    }
 }
 
 impl DashboardRepository for SqliteRepository<'_> {
@@ -3234,6 +3279,120 @@ fn sync_episode_statuses_from_downloads(
         );
     }
     Ok(())
+}
+
+/// 筛出媒体变更后已经失去全部媒体关联的单集。
+fn orphaned_media_episode_ids(
+    connection: &Connection,
+    episode_ids: impl IntoIterator<Item = String>,
+) -> Result<Vec<String>, StorageError> {
+    let mut orphaned = Vec::new();
+    for episode_id in episode_ids {
+        let has_media = connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM media_file WHERE episode_id = ?1)",
+            [&episode_id],
+            |row| row.get::<_, bool>(0),
+        )?;
+        if !has_media {
+            orphaned.push(episode_id);
+        }
+    }
+    Ok(orphaned)
+}
+
+/// 判断本地导入番剧是否没有剩余媒体和任何用户维护状态。
+fn is_disposable_imported_anime(
+    connection: &Connection,
+    anime_id: &str,
+) -> Result<bool, StorageError> {
+    let external_ids_json = connection
+        .query_row(
+            "SELECT external_ids_json FROM anime_catalog WHERE id = ?1",
+            [anime_id],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?;
+    let Some(external_ids_json) = external_ids_json else {
+        return Ok(false);
+    };
+    let external_ids: Value = parse_json(&external_ids_json, "导入番剧外部标识")?;
+    if external_ids
+        .pointer("/localImport")
+        .and_then(Value::as_bool)
+        != Some(true)
+    {
+        return Ok(false);
+    }
+
+    let has_protected_state = connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM media_file WHERE anime_id = ?1
+           UNION ALL SELECT 1 FROM download_task WHERE anime_id = ?1
+           UNION ALL SELECT 1 FROM episode WHERE anime_id = ?1 AND status = 'watched'
+           UNION ALL SELECT 1 FROM anime_source_binding WHERE anime_id = ?1
+           UNION ALL SELECT 1 FROM anime_source_exclusion WHERE anime_id = ?1
+           UNION ALL SELECT 1 FROM episode_preference WHERE anime_id = ?1
+           UNION ALL
+             SELECT 1 FROM my_anime_rss_subscription subscription
+             JOIN my_anime tracking ON tracking.id = subscription.my_anime_id
+             WHERE tracking.anime_id = ?1
+         )",
+        [anime_id],
+        |row| row.get::<_, bool>(0),
+    )?;
+    if has_protected_state {
+        return Ok(false);
+    }
+
+    let tracking_rows = query_all_with_params(
+        connection,
+        "SELECT status, default_fansub_group_id, auto_download, download_dir,
+                preferred_resolution, preferred_codec, preferred_subtitle,
+                preferred_subtitle_languages_json, preferred_bit_depth
+         FROM my_anime WHERE anime_id = ?1",
+        [anime_id],
+        |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, bool>(2)?,
+                row.get::<_, Option<String>>(3)?,
+                row.get::<_, Option<String>>(4)?,
+                row.get::<_, Option<String>>(5)?,
+                row.get::<_, Option<String>>(6)?,
+                row.get::<_, String>(7)?,
+                row.get::<_, Option<i64>>(8)?,
+            ))
+        },
+    )?;
+    for (
+        status,
+        default_fansub_group_id,
+        auto_download,
+        download_dir,
+        preferred_resolution,
+        preferred_codec,
+        preferred_subtitle,
+        preferred_subtitle_languages_json,
+        preferred_bit_depth,
+    ) in tracking_rows
+    {
+        let preferred_subtitle_languages: Vec<String> =
+            parse_json(&preferred_subtitle_languages_json, "导入番剧字幕语言")?;
+        let untouched = status == "planned"
+            && default_fansub_group_id.is_none()
+            && !auto_download
+            && download_dir.as_deref().is_none_or(str::is_empty)
+            && preferred_resolution.as_deref() == Some("1080p")
+            && preferred_codec.as_deref() == Some("H.265/HEVC")
+            && preferred_subtitle.as_deref() == Some("chs")
+            && preferred_subtitle_languages == ["chs"]
+            && preferred_bit_depth == Some(10);
+        if !untouched {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// 根据剩余下载、资源缓存和放送时间解析单集生命周期状态。

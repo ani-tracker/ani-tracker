@@ -280,21 +280,23 @@ export function LocalMediaLibrarySettingsSection() {
         <SheetContent className="flex w-full flex-col overflow-hidden p-0 sm:max-w-3xl lg:max-w-5xl">
           <SheetHeader className="border-b px-5 py-4 pr-14">
             <SheetTitle>确认番剧匹配</SheetTitle>
-            <SheetDescription>选择媒体所属番剧；未选中的目录不会导入。</SheetDescription>
+            <SheetDescription>选择媒体所属番剧；已有索引的关联变化将在此确认。</SheetDescription>
           </SheetHeader>
           <div className="min-h-0 flex-1 overflow-y-auto px-3 py-3 sm:px-5">
-            <Table className="min-w-[40rem] table-fixed">
+            <Table className="min-w-[54rem] table-fixed">
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-14 whitespace-nowrap">导入</TableHead>
                   <TableHead>扫描目录</TableHead>
                   <TableHead className="w-24">文件</TableHead>
-                  <TableHead className="w-52">匹配番剧</TableHead>
+                  <TableHead className="w-52">当前关联</TableHead>
+                  <TableHead className="w-60">匹配番剧</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {status?.candidates.map((candidate) => {
                   const choice = choices[candidate.id] ?? defaultCandidateChoice(candidate);
+                  const migrationFileCount = countMigrationFiles(candidate, choice);
                   return (
                     <TableRow data-state={choice.included ? "selected" : undefined} key={candidate.id}>
                       <TableCell>
@@ -311,6 +313,7 @@ export function LocalMediaLibrarySettingsSection() {
                         <p className="max-w-72 truncate font-medium" title={candidate.titleHint}>{candidate.titleHint}</p>
                         <p className="mt-1 max-w-72 truncate text-xs text-muted-foreground" title={candidate.relativeDirectory}>
                           {candidate.relativeDirectory || "."} · 置信度 {candidate.confidence}%
+                          {candidate.fileTitleConsensus < 100 && ` · 文件一致率 ${candidate.fileTitleConsensus}%`}
                         </p>
                       </TableCell>
                       <TableCell>
@@ -322,26 +325,45 @@ export function LocalMediaLibrarySettingsSection() {
                         )}
                       </TableCell>
                       <TableCell>
-                        <Select
-                          disabled={!choice.included}
-                          onValueChange={(value) => setChoices((current) => ({
-                            ...current,
-                            [candidate.id]: { ...choice, value }
-                          }))}
-                          value={choice.value}
-                        >
-                          <SelectTrigger aria-label={`${candidate.titleHint} 匹配番剧`}>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectGroup>
-                              {candidate.alternatives.map((anime) => (
-                                <SelectItem key={anime.id} value={anime.id}>{anime.title}</SelectItem>
-                              ))}
-                              <SelectItem value={CREATE_LOCAL_VALUE}>建立本地番剧记录</SelectItem>
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
+                        {candidate.currentAssociations.length > 0 ? (
+                          <div className="flex flex-col items-start gap-1">
+                            {candidate.currentAssociations.map((association) => (
+                              <Badge key={association.animeId} title={association.animeTitle}>
+                                <span className="max-w-36 truncate">{association.animeTitle}</span>
+                                {association.fileCount}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-sm text-muted-foreground">未建立索引</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <div className="flex flex-col items-start gap-2">
+                          <Select
+                            disabled={!choice.included}
+                            onValueChange={(value) => setChoices((current) => ({
+                              ...current,
+                              [candidate.id]: { ...choice, value }
+                            }))}
+                            value={choice.value}
+                          >
+                            <SelectTrigger aria-label={`${candidate.titleHint} 匹配番剧`}>
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectGroup>
+                                {candidate.alternatives.map((anime) => (
+                                  <SelectItem key={anime.id} value={anime.id}>{anime.title}</SelectItem>
+                                ))}
+                                <SelectItem value={CREATE_LOCAL_VALUE}>建立本地番剧记录</SelectItem>
+                              </SelectGroup>
+                            </SelectContent>
+                          </Select>
+                          {migrationFileCount > 0 && (
+                            <Badge tone="amber">迁移 {migrationFileCount} 个文件</Badge>
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -370,9 +392,20 @@ function createCandidateChoices(candidates: LocalMediaImportCandidate[]): Record
 /** 返回单个候选的默认审核选择。 */
 function defaultCandidateChoice(candidate: LocalMediaImportCandidate): CandidateChoice {
   return {
-    included: true,
+    included: false,
     value: candidate.suggestedAnimeId ?? CREATE_LOCAL_VALUE
   };
+}
+
+/** 计算当前选择会改绑的已有媒体数量。 */
+function countMigrationFiles(candidate: LocalMediaImportCandidate, choice: CandidateChoice): number {
+  if (!choice.included) return 0;
+  if (choice.value === CREATE_LOCAL_VALUE) {
+    return candidate.currentAssociations.reduce((total, association) => total + association.fileCount, 0);
+  }
+  return candidate.currentAssociations
+    .filter((association) => association.animeId !== choice.value)
+    .reduce((total, association) => total + association.fileCount, 0);
 }
 
 /** 将识别集数压缩为适合表格展示的文本。 */

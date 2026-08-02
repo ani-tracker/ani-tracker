@@ -1405,6 +1405,141 @@ fn removing_media_restores_only_orphaned_episode_status() {
     );
 }
 
+/// 验证媒体重绑恢复旧单集，并只清理未被用户维护的空导入番剧。
+#[test]
+fn rebinds_media_and_cleans_only_untouched_imported_anime() {
+    let directory = TestDirectory::new("p4-media-rebind");
+    let storage =
+        Storage::open(test_options(&directory, "active.sqlite")).expect("create media database");
+    let timestamp = "2026-08-02T00:00:00.000Z";
+    for (anime_id, title) in [
+        ("local-old", "错误导入番剧"),
+        ("local-protected", "用户维护番剧"),
+        ("anime-target", "正确番剧"),
+    ] {
+        storage
+            .connection
+            .execute(
+                "INSERT INTO anime_catalog (
+                   id, title, premiere_year, premiere_month, external_ids_json,
+                   detail_json, created_at, updated_at
+                 ) VALUES (?1, ?2, 2026, 8, ?3, '{}', ?4, ?4)",
+                params![
+                    anime_id,
+                    title,
+                    if anime_id.starts_with("local-") {
+                        r#"{"localImport":true}"#
+                    } else {
+                        "{}"
+                    },
+                    timestamp
+                ],
+            )
+            .expect("insert rebind anime");
+    }
+    for (item_id, anime_id, status) in [
+        ("my-local-old", "local-old", "planned"),
+        ("my-local-protected", "local-protected", "watching"),
+    ] {
+        storage
+            .connection
+            .execute(
+                "INSERT INTO my_anime (
+                   id, anime_id, status, auto_download, preferred_resolution,
+                   preferred_codec, preferred_subtitle,
+                   preferred_subtitle_languages_json, preferred_bit_depth,
+                   added_at, updated_at
+                 ) VALUES (?1, ?2, ?3, 0, '1080p', 'H.265/HEVC', 'chs',
+                   '[\"chs\"]', 10, ?4, ?4)",
+                params![item_id, anime_id, status, timestamp],
+            )
+            .expect("insert rebind tracking");
+    }
+    for (episode_id, anime_id) in [
+        ("episode-old-1", "local-old"),
+        ("episode-target-1", "anime-target"),
+    ] {
+        storage
+            .connection
+            .execute(
+                "INSERT INTO episode (
+                   id, anime_id, episode_no, status, created_at, updated_at
+                 ) VALUES (?1, ?2, 1, 'downloaded', ?3, ?3)",
+                params![episode_id, anime_id, timestamp],
+            )
+            .expect("insert rebind episode");
+    }
+    let repository = storage.repository();
+    let mut media = MediaFile {
+        id: "media-rebind".to_owned(),
+        anime_id: "local-old".to_owned(),
+        episode_id: Some("episode-old-1".to_owned()),
+        download_task_id: None,
+        file_path: "/media/episode-1.mkv".to_owned(),
+        file_name: "episode-1.mkv".to_owned(),
+        size: 1024,
+        container: Some("mkv".to_owned()),
+        declared_video_codec: None,
+        detected_video_codec: None,
+        normalized_video_codec: "unknown".to_owned(),
+        resolution: None,
+        bit_depth: None,
+        audio_codecs: Vec::new(),
+        subtitle_tracks: Vec::new(),
+        duration_seconds: None,
+        downloaded_at: None,
+        probed_at: None,
+        origin: ani_domain::MediaOrigin::Imported,
+        source_root: Some("/media".to_owned()),
+        fingerprint: None,
+        file_modified_at: None,
+        availability: Default::default(),
+        last_verified_at: None,
+        availability_error: None,
+    };
+    MediaRepository::upsert_media_files(&repository, &[media.clone()])
+        .expect("save old media association");
+    media.anime_id = "anime-target".to_owned();
+    media.episode_id = Some("episode-target-1".to_owned());
+    MediaRepository::upsert_media_files(&repository, &[media]).expect("rebind media association");
+
+    assert_eq!(
+        repository
+            .list_episodes("local-old")
+            .expect("list restored old episode")[0]
+            .status,
+        EpisodeStatus::Aired
+    );
+    let removed = MediaRepository::cleanup_orphaned_imported_anime(
+        &repository,
+        &["local-old".to_owned(), "local-protected".to_owned()],
+    )
+    .expect("cleanup orphaned imported anime");
+    assert_eq!(removed, ["local-old"]);
+    assert_eq!(
+        storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM anime_catalog WHERE id = 'local-old'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count removed local anime"),
+        0
+    );
+    assert_eq!(
+        storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM anime_catalog WHERE id = 'local-protected'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count protected local anime"),
+        1
+    );
+}
+
 /// 验证番剧目录合并、搜索、月份替换和详情聚合保持业务引用。
 #[test]
 fn reads_and_replaces_p3_anime_catalog() {

@@ -61,6 +61,14 @@ impl MediaRepository for SharedMediaRepository {
     fn remove_media_files(&self, media_file_ids: &[String]) -> RepositoryResult<Vec<MediaFile>> {
         self.with_repository(|repository| repository.remove_media_files(media_file_ids))
     }
+
+    /// 在共享 SQLite 临界区内清理无引用的导入番剧。
+    fn cleanup_orphaned_imported_anime(
+        &self,
+        anime_ids: &[String],
+    ) -> RepositoryResult<Vec<String>> {
+        self.with_repository(|repository| repository.cleanup_orphaned_imported_anime(anime_ids))
+    }
 }
 
 /// Tauri 生命周期内共享的媒体扫描、工具解析和自动关联状态。
