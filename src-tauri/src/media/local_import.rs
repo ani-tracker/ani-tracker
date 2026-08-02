@@ -512,55 +512,57 @@ impl AppMediaState {
         let work = storage
             .begin_unit_of_work()
             .map_err(|error| format!("创建本地媒体导入事务失败：{error}"))?;
-        let repositories = work.repositories();
-        let tracked = repositories
-            .list_my_anime()
-            .map_err(|error| error.to_string())?;
-        let mut imported_anime_ids = HashSet::new();
-        let mut imported_media_count = 0usize;
-        for (anime, files, media_files) in prepared {
-            let now = now_iso();
-            let existing = tracked
-                .iter()
-                .find(|item| item.anime.id == anime.id)
-                .cloned();
-            let (item, created) = merge_imported_my_anime(existing, anime.clone(), &now);
-            if created {
-                imported_anime_ids.insert(anime.id.clone());
-            }
-            repositories
-                .upsert_my_anime(item)
+        let (imported_anime_ids, imported_media_count) = {
+            let repositories = work.repositories();
+            let tracked = repositories
+                .list_my_anime()
                 .map_err(|error| error.to_string())?;
-            let existing_episodes = repositories
-                .list_episodes(&anime.id)
-                .map_err(|error| error.to_string())?;
-            for episode_no in group_episode_numbers(&files) {
-                let existing = existing_episodes
+            let mut imported_anime_ids = HashSet::new();
+            let mut imported_media_count = 0usize;
+            for (anime, files, media_files) in prepared {
+                let now = now_iso();
+                let existing = tracked
                     .iter()
-                    .find(|episode| (episode.episode_no - episode_no).abs() < f64::EPSILON);
-                let episode = Episode {
-                    id: existing
-                        .map(|episode| episode.id.clone())
-                        .unwrap_or_else(|| create_episode_id(&anime.id, episode_no)),
-                    anime_id: anime.id.clone(),
-                    episode_no,
-                    title: existing.and_then(|episode| episode.title.clone()),
-                    air_time: existing.and_then(|episode| episode.air_time.clone()),
-                    status: existing
-                        .filter(|episode| episode.status == EpisodeStatus::Watched)
-                        .map(|episode| episode.status.clone())
-                        .unwrap_or(EpisodeStatus::Downloaded),
-                };
+                    .find(|item| item.anime.id == anime.id)
+                    .cloned();
+                let (item, created) = merge_imported_my_anime(existing, anime.clone(), &now);
+                if created {
+                    imported_anime_ids.insert(anime.id.clone());
+                }
                 repositories
-                    .upsert_episode(&episode)
+                    .upsert_my_anime(item)
+                    .map_err(|error| error.to_string())?;
+                let existing_episodes = repositories
+                    .list_episodes(&anime.id)
+                    .map_err(|error| error.to_string())?;
+                for episode_no in group_episode_numbers(&files) {
+                    let existing = existing_episodes
+                        .iter()
+                        .find(|episode| (episode.episode_no - episode_no).abs() < f64::EPSILON);
+                    let episode = Episode {
+                        id: existing
+                            .map(|episode| episode.id.clone())
+                            .unwrap_or_else(|| create_episode_id(&anime.id, episode_no)),
+                        anime_id: anime.id.clone(),
+                        episode_no,
+                        title: existing.and_then(|episode| episode.title.clone()),
+                        air_time: existing.and_then(|episode| episode.air_time.clone()),
+                        status: existing
+                            .filter(|episode| episode.status == EpisodeStatus::Watched)
+                            .map(|episode| episode.status.clone())
+                            .unwrap_or(EpisodeStatus::Downloaded),
+                    };
+                    repositories
+                        .upsert_episode(&episode)
+                        .map_err(|error| error.to_string())?;
+                }
+                imported_media_count += media_files.len();
+                repositories
+                    .upsert_media_files(&media_files)
                     .map_err(|error| error.to_string())?;
             }
-            imported_media_count += media_files.len();
-            repositories
-                .upsert_media_files(&media_files)
-                .map_err(|error| error.to_string())?;
-        }
-        drop(repositories);
+            (imported_anime_ids, imported_media_count)
+        };
         work.commit()
             .map_err(|error| format!("提交本地媒体导入事务失败：{error}"))?;
         log::info!(
