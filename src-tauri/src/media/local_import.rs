@@ -302,6 +302,7 @@ impl AppMediaState {
         .await
         .map_err(|error| format!("本地媒体扫描线程失败：{error}"))??;
         self.ensure_not_cancelled(&job_id)?;
+        self.remove_ignored_imported_media(&source_root)?;
         if files.is_empty() {
             self.complete_local_media_job(&job_id, 0, 0);
             self.update_local_media_status(|status| {
@@ -803,6 +804,35 @@ impl AppMediaState {
                 .map_err(|error| error.to_string())?,
         ))
     }
+
+    /// 删除当前扫描根目录下历史误导入的 macOS 元数据媒体记录。
+    fn remove_ignored_imported_media(&self, source_root: &Path) -> Result<usize, String> {
+        let media_file_ids = self
+            .list_media_files()?
+            .into_iter()
+            .filter(|media| {
+                media.origin == MediaOrigin::Imported
+                    && media
+                        .source_root
+                        .as_deref()
+                        .is_some_and(|root| Path::new(root) == source_root)
+                    && is_macos_metadata_path(Path::new(&media.file_path))
+            })
+            .map(|media| media.id)
+            .collect::<Vec<_>>();
+        if media_file_ids.is_empty() {
+            return Ok(0);
+        }
+        self.repository
+            .remove_media_files(&media_file_ids)
+            .map_err(|error| format!("清理 macOS 元数据媒体索引失败：{error}"))?;
+        log::info!(
+            "Tauri 本地媒体扫描已清理 macOS 元数据索引 source_root={} count={}",
+            source_root.display(),
+            media_file_ids.len()
+        );
+        Ok(media_file_ids.len())
+    }
 }
 
 struct CandidateGroup {
@@ -821,6 +851,7 @@ fn discover_video_files(
 ) -> Result<Vec<ScannedFile>, String> {
     let mut directories = vec![(root.to_path_buf(), 0usize)];
     let mut files = Vec::new();
+    let mut ignored_metadata_entries = 0usize;
     while let Some((directory, depth)) = directories.pop() {
         if cancel.load(Ordering::Acquire) {
             return Err("后台任务已取消".to_owned());
@@ -864,10 +895,21 @@ fn discover_video_files(
                 continue;
             }
             if metadata.is_dir() {
+                if is_macos_metadata_directory(&path) {
+                    ignored_metadata_entries += 1;
+                    continue;
+                }
                 directories.push((path, depth + 1));
                 continue;
             }
-            if !metadata.is_file() || !is_video_path(&path, extensions) {
+            if !metadata.is_file() {
+                continue;
+            }
+            if is_macos_metadata_path(&path) {
+                ignored_metadata_entries += 1;
+                continue;
+            }
+            if !is_video_path(&path, extensions) {
                 continue;
             }
             if files.len() >= MAX_VIDEO_FILES {
@@ -892,6 +934,12 @@ fn discover_video_files(
             });
             progress(files.len());
         }
+    }
+    if ignored_metadata_entries > 0 {
+        log::info!(
+            "Tauri 本地媒体扫描已忽略 macOS 元数据 source_root={} count={ignored_metadata_entries}",
+            root.display()
+        );
     }
     Ok(files)
 }
@@ -1223,6 +1271,31 @@ fn is_video_path(path: &Path, extensions: &HashSet<String>) -> bool {
         .is_some_and(|extension| extensions.contains(&extension))
 }
 
+/// 判断目录是否为 macOS 归档生成的元数据目录。
+fn is_macos_metadata_directory(path: &Path) -> bool {
+    path.file_name()
+        .map(|value| value.to_string_lossy().eq_ignore_ascii_case("__MACOSX"))
+        .unwrap_or(false)
+}
+
+/// 判断路径是否为 AppleDouble、Finder 或归档元数据，而非真实媒体。
+fn is_macos_metadata_path(path: &Path) -> bool {
+    let in_metadata_directory = path.components().any(|component| {
+        component
+            .as_os_str()
+            .to_string_lossy()
+            .eq_ignore_ascii_case("__MACOSX")
+    });
+    let metadata_file = path
+        .file_name()
+        .map(|value| {
+            let value = value.to_string_lossy();
+            value.starts_with("._") || value.eq_ignore_ascii_case(".DS_Store")
+        })
+        .unwrap_or(false);
+    in_metadata_directory || metadata_file
+}
+
 /// 使用文件大小和修改时间生成快速幂等指纹。
 fn create_file_fingerprint(path: &Path, metadata: &fs::Metadata) -> String {
     let modified = metadata
@@ -1321,5 +1394,19 @@ mod tests {
         assert_eq!(anime.aliases.len(), 1);
         assert_eq!(anime.aliases[0].alias, "Test Anime");
         assert_eq!(anime.aliases[0].language, AnimeAliasLanguage::Custom);
+    }
+
+    /// 验证扫描只排除 macOS 元数据，不误伤普通隐藏视频。
+    #[test]
+    fn identifies_macos_metadata_without_ignoring_hidden_videos() {
+        let extensions = [".mkv".to_owned()].into_iter().collect();
+
+        assert!(is_macos_metadata_path(Path::new("._episode.mkv")));
+        assert!(is_macos_metadata_path(Path::new(
+            "__MACOSX/show/episode.mkv"
+        )));
+        assert!(is_macos_metadata_directory(Path::new("__MACOSX")));
+        assert!(!is_macos_metadata_path(Path::new(".episode.mkv")));
+        assert!(is_video_path(Path::new(".episode.mkv"), &extensions));
     }
 }

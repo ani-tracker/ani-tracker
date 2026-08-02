@@ -56,6 +56,11 @@ impl MediaRepository for SharedMediaRepository {
     fn upsert_media_files(&self, media_files: &[MediaFile]) -> RepositoryResult<Vec<MediaFile>> {
         self.with_repository(|repository| repository.upsert_media_files(media_files))
     }
+
+    /// 在共享 SQLite 临界区内批量删除媒体记录。
+    fn remove_media_files(&self, media_file_ids: &[String]) -> RepositoryResult<Vec<MediaFile>> {
+        self.with_repository(|repository| repository.remove_media_files(media_file_ids))
+    }
 }
 
 /// Tauri 生命周期内共享的媒体扫描、工具解析和自动关联状态。

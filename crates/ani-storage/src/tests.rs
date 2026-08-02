@@ -1323,6 +1323,86 @@ fn upserts_media_files_and_deduplicates_paths() {
     assert_eq!(replaced.len(), 1);
     assert_eq!(replaced[0].id, "media-new");
     assert_eq!(replaced[0].duration_seconds, Some(1500));
+
+    let remaining = MediaRepository::remove_media_files(&repository, &["media-new".to_owned()])
+        .expect("remove media by id");
+    assert!(remaining.is_empty());
+}
+
+/// 验证删除旁车媒体后，仅在单集失去全部媒体时恢复其状态。
+#[test]
+fn removing_media_restores_only_orphaned_episode_status() {
+    let directory = TestDirectory::new("p4-media-remove");
+    let storage =
+        Storage::open(test_options(&directory, "active.sqlite")).expect("create media database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode p3 following fixture");
+    let repository = storage.repository();
+    repository
+        .upsert_my_anime(fixture.payload.my_anime)
+        .expect("save media anime");
+    let mut episode = fixture.payload.episode;
+    episode.status = EpisodeStatus::Downloaded;
+    repository
+        .upsert_episode(&episode)
+        .expect("save downloaded episode");
+    let media = MediaFile {
+        id: "media-apple-double".to_owned(),
+        anime_id: episode.anime_id.clone(),
+        episode_id: Some(episode.id.clone()),
+        download_task_id: None,
+        file_path: "/media/._episode.mkv".to_owned(),
+        file_name: "._episode.mkv".to_owned(),
+        size: 1024,
+        container: Some("mkv".to_owned()),
+        declared_video_codec: None,
+        detected_video_codec: None,
+        normalized_video_codec: "unknown".to_owned(),
+        resolution: None,
+        bit_depth: None,
+        audio_codecs: Vec::new(),
+        subtitle_tracks: Vec::new(),
+        duration_seconds: None,
+        downloaded_at: None,
+        probed_at: None,
+        origin: Default::default(),
+        source_root: Some("/media".to_owned()),
+        fingerprint: None,
+        file_modified_at: None,
+        availability: Default::default(),
+        last_verified_at: None,
+        availability_error: None,
+    };
+    let mut real_media = media.clone();
+    real_media.id = "media-real".to_owned();
+    real_media.file_path = "/media/episode.mkv".to_owned();
+    real_media.file_name = "episode.mkv".to_owned();
+    MediaRepository::upsert_media_files(&repository, &[media, real_media])
+        .expect("save paired media");
+
+    MediaRepository::remove_media_files(&repository, &["media-apple-double".to_owned()])
+        .expect("remove AppleDouble media");
+    assert_eq!(
+        repository
+            .list_episodes(&episode.anime_id)
+            .expect("list episode with real media")[0]
+            .status,
+        EpisodeStatus::Downloaded
+    );
+
+    MediaRepository::remove_media_files(&repository, &["media-real".to_owned()])
+        .expect("remove final media");
+    assert_eq!(
+        repository
+            .list_episodes(&episode.anime_id)
+            .expect("list orphaned episode")[0]
+            .status,
+        EpisodeStatus::Aired
+    );
 }
 
 /// 验证番剧目录合并、搜索、月份替换和详情聚合保持业务引用。

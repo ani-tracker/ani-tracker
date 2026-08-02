@@ -1872,6 +1872,51 @@ impl<'connection> SqliteRepository<'connection> {
         self.list_media_files()
     }
 
+    /// 按标识批量删除媒体文件，并恢复不再拥有媒体的单集状态。
+    pub(crate) fn remove_media_files(
+        &self,
+        media_file_ids: &[String],
+    ) -> Result<Vec<MediaFile>, StorageError> {
+        if media_file_ids.is_empty() {
+            return self.list_media_files();
+        }
+        let removed_count = self.with_transaction(|connection| {
+            let mut linked_episode_ids = HashSet::new();
+            let mut removed_count = 0usize;
+            for media_file_id in media_file_ids {
+                validate_identifier("mediaFile.id", media_file_id)?;
+                let episode_id = connection
+                    .query_row(
+                        "SELECT episode_id FROM media_file WHERE id = ?1",
+                        [media_file_id],
+                        |row| row.get::<_, Option<String>>(0),
+                    )
+                    .optional()?
+                    .flatten();
+                if let Some(episode_id) = episode_id {
+                    linked_episode_ids.insert(episode_id);
+                }
+                removed_count +=
+                    connection.execute("DELETE FROM media_file WHERE id = ?1", [media_file_id])?;
+            }
+            let mut orphaned_episode_ids = Vec::new();
+            for episode_id in linked_episode_ids {
+                let has_media = connection.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM media_file WHERE episode_id = ?1)",
+                    [&episode_id],
+                    |row| row.get::<_, bool>(0),
+                )?;
+                if !has_media {
+                    orphaned_episode_ids.push(episode_id);
+                }
+            }
+            sync_episode_statuses_from_downloads(connection, orphaned_episode_ids)?;
+            Ok(removed_count)
+        })?;
+        info!("Rust 媒体文件批量删除完成：count={removed_count}");
+        self.list_media_files()
+    }
+
     /// 读取字幕组名称映射。
     fn list_fansub_names(&self) -> Result<HashMap<String, String>, StorageError> {
         let rows = query_all(
@@ -2586,6 +2631,11 @@ impl MediaRepository for SqliteRepository<'_> {
     /// 通过 SQLite 适配器原子写入媒体文件。
     fn upsert_media_files(&self, media_files: &[MediaFile]) -> RepositoryResult<Vec<MediaFile>> {
         SqliteRepository::upsert_media_files(self, media_files).map_err(RepositoryError::from)
+    }
+
+    /// 通过 SQLite 适配器批量删除媒体文件。
+    fn remove_media_files(&self, media_file_ids: &[String]) -> RepositoryResult<Vec<MediaFile>> {
+        SqliteRepository::remove_media_files(self, media_file_ids).map_err(RepositoryError::from)
     }
 }
 
