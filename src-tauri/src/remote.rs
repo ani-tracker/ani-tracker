@@ -456,8 +456,14 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
             }
             "searchAnimeCatalog" => {
                 let keyword = string_arg(&args, 0)?;
-                self.query(move |repository| repository.search_anime_catalog(&keyword))
-                    .await
+                command_value(
+                    crate::commands::data::search_anime_catalog(
+                        keyword,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
             }
             "listFansubs" => {
                 let anime_id = args.first().and_then(Value::as_str).map(str::to_owned);
