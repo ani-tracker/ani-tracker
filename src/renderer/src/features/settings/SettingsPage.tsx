@@ -12,7 +12,10 @@ import {
   FileSearch,
   FolderCog,
   FolderOpen,
+  Github,
+  GitFork,
   HardDrive,
+  Info,
   KeyRound,
   Languages,
   Minus,
@@ -90,7 +93,8 @@ type SettingsCategoryId =
   | "remote"
   | "media"
   | "download"
-  | "automation";
+  | "automation"
+  | "about";
 
 const settingsCategories: Array<{
   id: SettingsCategoryId;
@@ -103,7 +107,8 @@ const settingsCategories: Array<{
   { id: "remote", label: "远程设备", icon: Smartphone },
   { id: "media", label: "播放器与媒体", icon: PlayCircle },
   { id: "download", label: "下载核心", icon: Download },
-  { id: "automation", label: "自动化", icon: RefreshCw }
+  { id: "automation", label: "自动化", icon: RefreshCw },
+  { id: "about", label: "关于", icon: Info }
 ];
 
 export function SettingsPage() {
@@ -171,6 +176,29 @@ export function SettingsPage() {
     if (sections.length === 0) {
       return;
     }
+    const scrollContainer = sections[0].closest<HTMLElement>("main");
+
+    /** 按吸顶定位线校准当前分区，处理页面末尾无法完整进入观察区的情况。 */
+    function syncActiveCategory() {
+      const containerTop = scrollContainer?.getBoundingClientRect().top ?? 0;
+      const remainingScroll = scrollContainer
+        ? scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop
+        : Number.POSITIVE_INFINITY;
+      const activeSection = remainingScroll <= 2
+        ? sections[sections.length - 1]
+        : [...sections].reverse().find((section) => {
+            const scrollMarginTop = Number.parseFloat(window.getComputedStyle(section).scrollMarginTop) || 0;
+            return section.getBoundingClientRect().top <= containerTop + scrollMarginTop + 2;
+          }) ?? sections[0];
+      setActiveCategory(activeSection.id.replace("settings-", "") as SettingsCategoryId);
+    }
+
+    let scrollSettleTimer: number | undefined;
+    /** 滚动停止后执行一次最终校准，避免平滑滚动途中状态停留在前一分区。 */
+    function scheduleActiveCategorySync() {
+      window.clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = window.setTimeout(syncActiveCategory, 80);
+    }
 
     const observer = new IntersectionObserver(
       (entries) => {
@@ -184,7 +212,12 @@ export function SettingsPage() {
       { rootMargin: "-24% 0px -62% 0px", threshold: [0.1, 0.35, 0.65] }
     );
     sections.forEach((section) => observer.observe(section));
-    return () => observer.disconnect();
+    scrollContainer?.addEventListener("scroll", scheduleActiveCategorySync, { passive: true });
+    return () => {
+      observer.disconnect();
+      scrollContainer?.removeEventListener("scroll", scheduleActiveCategorySync);
+      window.clearTimeout(scrollSettleTimer);
+    };
   }, [settingsReady, capabilities.remoteGateway, remoteRuntime]);
 
   useEffect(() => {
@@ -309,6 +342,18 @@ export function SettingsPage() {
       toast.success("CA 下载地址已复制");
     } catch {
       toast.error("复制失败，请手动复制 CA 下载地址");
+    }
+  }
+
+  /** 使用当前平台的外链能力打开项目代码仓库。 */
+  async function openProjectUrl(projectName: string, url: string) {
+    console.info("[settings] 正在打开项目地址", { projectName, url, runtime });
+    try {
+      await appApi.openExternal(url);
+      console.info("[settings] 项目地址已打开", { projectName, url, runtime });
+    } catch (error) {
+      console.error("[settings] 项目地址打开失败", { projectName, url, runtime, error });
+      toast.error(`${projectName} 地址打开失败`);
     }
   }
 
@@ -2025,15 +2070,48 @@ export function SettingsPage() {
         </CardFooter>
       </Card>
           </SettingsCategory>
+
+          <SettingsCategory
+            description="应用版本、项目仓库、版权与许可信息。"
+            id="about"
+            title="关于"
+          >
+            <Card className="overflow-hidden shadow-none">
+              <CardHeader>
+                <div className="flex flex-wrap items-center gap-2">
+                  <CardTitle>Ani Tracker</CardTitle>
+                  <Badge tone="neutral">版本 {__ANI_TRACKER_VERSION__}</Badge>
+                </div>
+                <CardDescription>本地追番、资源管理与播放工具。</CardDescription>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-3 sm:flex-row sm:flex-wrap">
+                <Button
+                  onClick={() => void openProjectUrl("GitHub", "https://github.com/momoc-ani/ani-tracker.git")}
+                  type="button"
+                  variant="outline"
+                >
+                  <Github data-icon="inline-start" />
+                  GitHub
+                </Button>
+                <Button
+                  onClick={() => void openProjectUrl("Gitee", "https://gitee.com/aurora-momoc/ani")}
+                  type="button"
+                  variant="outline"
+                >
+                  <GitFork data-icon="inline-start" />
+                  Gitee
+                </Button>
+              </CardContent>
+              <CardFooter className="flex-col items-start gap-2 border-t bg-muted/50 pt-4 text-sm text-muted-foreground sm:pt-5">
+                <p>Copyright (c) 2026 Ani Tracker contributors.</p>
+                <p>原创源码采用 PolyForm Noncommercial License 1.0.0。</p>
+                <p>允许个人及其他非商业用途；商业使用须获得版权所有者书面许可。</p>
+                <p>第三方组件遵循各自许可证。</p>
+              </CardFooter>
+            </Card>
+          </SettingsCategory>
         </div>
       </div>
-
-      <footer className="flex min-w-0 flex-col gap-2 pb-4 text-center text-xs text-muted-foreground">
-        <Separator />
-        <p>Copyright (c) 2026 Ani Tracker contributors.</p>
-        <p>源码免费公开，仅限个人及非商业用途；商业使用须获得版权所有者书面许可。</p>
-        <p>第三方组件遵循各自许可证。</p>
-      </footer>
 
       {hasUnsavedChanges && (
         <StickyActionBar className="justify-center bg-background/95">
