@@ -18,9 +18,9 @@ use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::parsers::{
-    extract_info_hash, normalize_info_hash, parse_acgnx_api_response, parse_acgnx_html,
-    parse_anibt_rss, parse_dmhy_list, parse_mikan_release_list, parse_rss_releases,
-    parse_torznab_releases,
+    extract_info_hash, extract_torrent_url_info_hash, normalize_info_hash,
+    parse_acgnx_api_response, parse_acgnx_html, parse_anibt_rss, parse_dmhy_list,
+    parse_mikan_release_list, parse_rss_releases, parse_torznab_releases,
 };
 use crate::release::{
     build_anime_release_search_terms, classify_anime_release, enrich_release_from_title,
@@ -35,7 +35,7 @@ use crate::{
 pub const MAX_RELEASE_SOURCE_FETCH_LIMIT: usize = 50;
 pub const MAX_RELEASE_SOURCE_RESULT_LIMIT: usize = 200;
 pub const COMPLETED_ANIME_RELEASE_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
-const RELEASE_SEARCH_CACHE_VERSION: u32 = 4;
+const RELEASE_SEARCH_CACHE_VERSION: u32 = 5;
 const MAX_ANIBT_BGM_FEEDS_PER_SEARCH: usize = 3;
 const DESKTOP_BROWSER_USER_AGENT: &str =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/138.0 Safari/537.36";
@@ -1623,6 +1623,7 @@ fn release_episode_content_key(release: &Release) -> String {
     };
     let content = normalize_info_hash(release.info_hash.as_deref())
         .or_else(|| extract_info_hash(release.magnet_url.as_deref()))
+        .or_else(|| extract_torrent_url_info_hash(release.torrent_url.as_deref()))
         .map(|hash| format!("btih:{hash}"))
         .or_else(|| {
             release
@@ -1895,6 +1896,10 @@ mod tests {
             0x5b, 0x99, 0x88, 0x84, 0x1e, 0x68,
         ];
         let hex_hash = "5448ae0ed36912eb0dfba53c3e495b9988841e68";
+        let mut mikan_release = test_release("mikan", 8.0, None, None);
+        mikan_release.torrent_url = Some(format!(
+            "https://mikanani.me/Download/20260730/{hex_hash}.torrent"
+        ));
         let releases = dedupe_releases(vec![
             test_release("source-a", 8.0, Some(&hex_hash.to_ascii_uppercase()), None),
             test_release(
@@ -1906,6 +1911,7 @@ mod tests {
                     BASE32_NOPAD.encode(&bytes)
                 )),
             ),
+            mikan_release,
             test_release("source-c", 9.0, Some(hex_hash), None),
         ]);
 

@@ -50,6 +50,20 @@ export function extractMagnetInfoHash(magnetUrl?: string): string | undefined {
   return undefined;
 }
 
+/** 从严格的 40 位十六进制 torrent 文件名提取 BTIH。 */
+export function extractTorrentUrlInfoHash(torrentUrl?: string): string | undefined {
+  if (!torrentUrl) return undefined;
+  try {
+    const url = new URL(torrentUrl.trim());
+    if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    const fileName = url.pathname.split("/").at(-1) ?? "";
+    const match = /^([a-f0-9]{40})\.torrent$/i.exec(fileName);
+    return match?.[1].toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
 /** 生成单集、连集和合集均稳定的集数身份。 */
 function getReleaseEpisodeIdentity(release: Release): string {
   if (release.episodeRange) {
@@ -66,7 +80,9 @@ function getReleaseEpisodeIdentity(release: Release): string {
 
 /** 优先按 BTIH 标识内容，缺失时退回原始下载地址或资源 ID。 */
 function getReleaseContentIdentity(release: Release): string {
-  const infoHash = normalizeTorrentInfoHash(release.infoHash) ?? extractMagnetInfoHash(release.magnetUrl);
+  const infoHash = normalizeTorrentInfoHash(release.infoHash)
+    ?? extractMagnetInfoHash(release.magnetUrl)
+    ?? extractTorrentUrlInfoHash(release.torrentUrl);
   if (infoHash) return `btih:${infoHash}`;
   if (release.magnetUrl?.trim()) return `magnet:${release.magnetUrl.trim()}`;
   if (release.torrentUrl?.trim()) return `torrent:${release.torrentUrl.trim()}`;

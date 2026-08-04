@@ -5,6 +5,7 @@ import {
   compareReleaseEpisodeDescending,
   dedupeReleasesByEpisodeContent,
   extractMagnetInfoHash,
+  extractTorrentUrlInfoHash,
   normalizeTorrentInfoHash
 } from "../release-identity";
 
@@ -20,10 +21,20 @@ test("十六进制与 Base32 磁链规范为同一 BTIH", () => {
   );
 });
 
+test("仅从严格的 torrent 文件名提取 BTIH", () => {
+  assert.equal(
+    extractTorrentUrlInfoHash(`https://mikanani.me/Download/20260730/${hexInfoHash}.torrent`),
+    hexInfoHash
+  );
+  assert.equal(extractTorrentUrlInfoHash("https://mikanani.me/Download/123.torrent"), undefined);
+  assert.equal(extractTorrentUrlInfoHash(`https://example.test/file.torrent?hash=${hexInfoHash}`), undefined);
+});
+
 test("同集同 BTIH 跨来源合并但不同集保留", () => {
   const releases = dedupeReleasesByEpisodeContent([
     release("source-a", 8, { infoHash: hexInfoHash.toUpperCase() }),
     release("source-b", 8, { magnetUrl: `magnet:?xt=urn:btih:${base32InfoHash}&tr=udp%3A%2F%2Ftracker` }),
+    release("mikan", 8, { torrentUrl: `https://mikanani.me/Download/20260730/${hexInfoHash}.torrent` }),
     release("source-c", 9, { infoHash: hexInfoHash })
   ]);
 
