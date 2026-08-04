@@ -899,10 +899,11 @@ impl<'connection> SqliteRepository<'connection> {
             ],
         )?;
         info!(
-            "Rust 下载源保存完成：source_id={}, kind={}, enabled={}",
+            "Rust 下载源保存完成：source_id={}, kind={}, enabled={}, request_interval_ms={}",
             source.id,
             source_kind_value(&source.kind),
-            source.enabled
+            source.enabled,
+            normalize_source_request_interval(source.request_interval_ms)
         );
         self.list_sources()
     }

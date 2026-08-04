@@ -257,6 +257,38 @@ fn stores_sensitive_fields_through_secure_store() {
     );
 }
 
+/// 验证下载源采集间隔保存后重新打开数据库仍保持新值。
+#[test]
+fn persists_source_request_interval_across_restart() {
+    let directory = TestDirectory::new("source-request-interval");
+    {
+        let storage = Storage::open(test_options(&directory, "active.sqlite"))
+            .expect("open source interval database");
+        let mut source = storage
+            .repository()
+            .list_sources()
+            .expect("list seeded sources")
+            .remove(0);
+        source.request_interval_ms = 800;
+        let saved = storage
+            .repository()
+            .upsert_source(&source)
+            .expect("save source request interval");
+        assert_eq!(saved[0].request_interval_ms, 800);
+    }
+
+    let reopened = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("reopen source interval database");
+    assert_eq!(
+        reopened
+            .repository()
+            .list_sources()
+            .expect("list reopened sources")[0]
+            .request_interval_ms,
+        800
+    );
+}
+
 /// 验证旧库升级前保留一致性备份，并执行结构与应用数据迁移。
 #[test]
 fn backs_up_and_migrates_legacy_versions() {

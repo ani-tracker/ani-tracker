@@ -45,9 +45,13 @@ pub use search::{
     MAX_RELEASE_SOURCE_FETCH_LIMIT, MAX_RELEASE_SOURCE_RESULT_LIMIT,
 };
 
-pub const DEFAULT_SOURCE_REQUEST_INTERVAL_MS: u64 = 1_500;
+/// 用户来源缺少有效配置时使用的默认采集间隔。
+pub const DEFAULT_SOURCE_REQUEST_INTERVAL_MS: u64 = 600;
+/// 普通下载源允许执行的最小采集间隔。
 pub const MIN_SOURCE_REQUEST_INTERVAL_MS: u64 = 250;
+/// 所有下载源允许执行的最大采集间隔。
 pub const MAX_SOURCE_REQUEST_INTERVAL_MS: u64 = 60_000;
+/// AniBT 固定执行的最小采集间隔。
 pub const ANIBT_MIN_REQUEST_INTERVAL_MS: u64 = 500;
 const RELEASE_SOURCE_CIRCUIT_GROUP: &str = "release-source";
 const FORBIDDEN_BACKOFF_SECONDS: &[u64] = &[10 * 60, 20 * 60, 30 * 60];

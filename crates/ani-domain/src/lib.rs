@@ -180,7 +180,7 @@ pub struct ReleaseSourceConfig {
 
 /// 返回下载源默认请求间隔。
 fn default_source_request_interval_ms() -> i64 {
-    1_500
+    600
 }
 
 /// 单个下载源的请求和同步游标。
