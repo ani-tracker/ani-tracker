@@ -68,7 +68,7 @@ import type {
   VideoBitDepth
 } from "@shared/domain";
 import { findEpisodeDownloadLink, summarizeAnimeDownloads } from "@shared/download-episode-links";
-import { compareReleaseEpisodeDescending } from "@shared/release-identity";
+import { compareReleaseEpisodeDescending, findReleaseDownloadTask } from "@shared/release-identity";
 import type { MediaPlaybackTarget } from "@shared/player-selection";
 import { formatSubtitleLanguages, formatVideoBitDepth, resolveSubtitleLanguages, subtitleLanguageText } from "@shared/release-metadata";
 
@@ -3343,22 +3343,6 @@ function buildMikanGroupRssSubscription(group: ReleaseFansubGroup, target: MyAni
       release.sourceMeta?.rssUrl ??
       `https://mikanani.me/RSS/Bangumi?bangumiId=${encodeURIComponent(mikanBangumiId)}&subgroupid=${encodeURIComponent(mikanSubgroupId)}`
   };
-}
-
-function findReleaseDownloadTask(tasks: DownloadTask[], release: Release): DownloadTask | undefined {
-  return tasks.find((task) => {
-    if (task.releaseId === release.id) {
-      return true;
-    }
-
-    const releaseFansubKey = release.fansubGroupId ?? release.fansubName;
-    return Boolean(
-      releaseFansubKey &&
-      task.episodeNo !== undefined &&
-      task.episodeNo === release.episodeNo &&
-      (task.fansubGroupId ?? task.fansubName) === releaseFansubKey
-    );
-  });
 }
 
 function getReleaseFansubName(release: Release, fansubNames: Map<string, string>): string {
