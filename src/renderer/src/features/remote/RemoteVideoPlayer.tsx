@@ -38,6 +38,7 @@ import type {
   PlayerSnapshot,
   PlayerSubtitleScale
 } from "@shared/player-contract";
+import { resolvePlayerShortcut } from "@shared/player-shortcuts";
 import { readStoredSubtitleScale, storeSubtitleScale } from "@/features/player/subtitle-scale";
 import { ArtPlayerAdapter } from "./art-player-adapter";
 import {
@@ -562,12 +563,12 @@ export function RemoteVideoPlayer({
     if (command) void dispatchPlayerCommand(command);
   };
 
-  /** 处理播放器获得焦点后的快捷键。 */
+  /** 在播放器非编辑态处理空格和既有播放快捷键。 */
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>): void => {
-    if (event.target !== event.currentTarget) return;
-    const key = event.key.toLowerCase();
-    if ([" ", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) event.preventDefault();
-    if (key === " ") togglePlayback();
+    const key = resolvePlayerShortcut(event);
+    if (!key) return;
+    if (["space", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) event.preventDefault();
+    if (key === "space") togglePlayback();
     if (key === "arrowleft") seekTo(currentTimeSeconds - 10);
     if (key === "arrowright") seekTo(currentTimeSeconds + 10);
     if (key === "arrowup") setPlayerVolume(Math.min(1, volume + 0.05));
@@ -613,6 +614,7 @@ export function RemoteVideoPlayer({
 
   return (
     <main
+      autoFocus
       className={cn("player-page", environment === "desktop" ? "player-page-desktop" : "player-page-remote")}
       data-player-environment={environment}
       data-remote-fullscreen={environment === "remote" ? remoteFullscreenMode ?? undefined : undefined}

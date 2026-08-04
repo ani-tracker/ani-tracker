@@ -4,6 +4,7 @@ use ani_domain::{
     Release, ReleaseResolution, ReleaseSourceConfig, ReleaseSourceMeta, SubtitlePreference,
 };
 use chrono::{Local, SecondsFormat, TimeZone, Utc};
+use data_encoding::BASE32_NOPAD;
 use quick_xml::events::Event;
 use quick_xml::{Reader, XmlVersion};
 use regex::Regex;
@@ -978,22 +979,48 @@ fn parse_seeders(text: &str) -> Option<i64> {
         .and_then(|value| parse_i64(value.as_str()))
 }
 
-fn normalize_info_hash(value: Option<&str>) -> Option<String> {
-    let normalized = value?.trim().to_lowercase();
+pub(crate) fn normalize_info_hash(value: Option<&str>) -> Option<String> {
+    let normalized = value?.trim();
+    let normalized = normalized
+        .get(..9)
+        .filter(|prefix| prefix.eq_ignore_ascii_case("urn:btih:"))
+        .and_then(|_| normalized.get(9..))
+        .unwrap_or(normalized);
+    if normalized.len() == 40 && normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Some(normalized.to_ascii_lowercase());
+    }
+    if normalized.len() == 32 {
+        if let Ok(bytes) = BASE32_NOPAD.decode(normalized.to_ascii_uppercase().as_bytes()) {
+            if bytes.len() == 20 {
+                return Some(bytes_to_hex(&bytes));
+            }
+        }
+    }
     (normalized.len() >= 8
         && normalized.len() <= 64
         && normalized
             .chars()
             .all(|character| character.is_ascii_alphanumeric()))
-    .then_some(normalized)
+    .then(|| normalized.to_ascii_lowercase())
 }
 
-fn extract_info_hash(magnet_url: Option<&str>) -> Option<String> {
+pub(crate) fn extract_info_hash(magnet_url: Option<&str>) -> Option<String> {
     Regex::new(r"(?i)(?:^|[?&])xt=urn:btih:([a-z0-9]+)")
         .expect("info hash regex")
         .captures(magnet_url?)
         .and_then(|captures| captures.get(1))
-        .map(|value| value.as_str().to_lowercase())
+        .and_then(|value| normalize_info_hash(Some(value.as_str())))
+}
+
+/// 将种子摘要字节编码为稳定的小写十六进制。
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let mut result = String::with_capacity(bytes.len() * 2);
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for byte in bytes {
+        result.push(HEX[(byte >> 4) as usize] as char);
+        result.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    result
 }
 
 fn build_magnet_url(info_hash: Option<&str>, title: &str) -> Option<String> {

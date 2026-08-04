@@ -23,6 +23,7 @@ import {
   type PlayerSnapshot,
   type PlayerSubtitleScale
 } from "@shared/player-contract";
+import { resolvePlayerShortcut } from "@shared/player-shortcuts";
 import {
   buildRemotePlaylist,
   playlistItemLabel,
@@ -431,12 +432,12 @@ function DesktopVlcControls({
     if (command) void dispatchCommand(command);
   };
 
-  /** 快捷键只在播放器表面自身获得焦点时生效。 */
+  /** 在播放器非编辑态处理空格和既有播放快捷键。 */
   const handleKeyDown = (event: ReactKeyboardEvent<HTMLElement>): void => {
-    if (event.target !== event.currentTarget) return;
-    const key = event.key.toLowerCase();
-    if ([" ", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) event.preventDefault();
-    if (key === " ") togglePlayback();
+    const key = resolvePlayerShortcut(event);
+    if (!key) return;
+    if (["space", "arrowleft", "arrowright", "arrowup", "arrowdown"].includes(key)) event.preventDefault();
+    if (key === "space") togglePlayback();
     if (key === "arrowleft") seekTo((snapshot?.positionSeconds ?? 0) - 10);
     if (key === "arrowright") seekTo((snapshot?.positionSeconds ?? 0) + 10);
     if (key === "arrowup") setVolume(Math.min(1, (snapshot?.volume ?? 0.7) + 0.05));
@@ -481,6 +482,7 @@ function DesktopVlcControls({
 
   return (
     <main
+      autoFocus
       className="player-page player-page-desktop"
       data-player-environment="desktop"
       onClick={handleSurfaceClick}

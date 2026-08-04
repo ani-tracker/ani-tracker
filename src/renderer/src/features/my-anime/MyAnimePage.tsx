@@ -68,6 +68,7 @@ import type {
   VideoBitDepth
 } from "@shared/domain";
 import { findEpisodeDownloadLink, summarizeAnimeDownloads } from "@shared/download-episode-links";
+import { compareReleaseEpisodeDescending } from "@shared/release-identity";
 import type { MediaPlaybackTarget } from "@shared/player-selection";
 import { formatSubtitleLanguages, formatVideoBitDepth, resolveSubtitleLanguages, subtitleLanguageText } from "@shared/release-metadata";
 
@@ -652,7 +653,7 @@ export function MyAnimePage({
         cacheTtlMs: releaseSearchCacheTtlMs,
         forceRefresh: options.forceRefresh
       });
-      const releases = dedupeReleases(result.releases).map((release) => ({
+      const releases = sortReleases(dedupeReleases(result.releases)).map((release) => ({
         ...release,
         animeId: target.anime.id
       }));
@@ -1944,7 +1945,6 @@ function AnimeDownloadPanel({
   const activeRssGroup = rssGroups.find((group) => group.subscription.id === selectedRssSubscriptionId) ?? rssGroups[0];
   const rssReleases = activeRssGroup?.releases ?? [];
   const tabReleases = activeTab === "rss" ? rssReleases : releases;
-  const releaseGroupingOptions = activeTab === "search" ? { preserveInputOrder: true } : undefined;
   const currentTabReleases = tabReleases.filter((release) => classifyAnimeRelease(release, target.anime) === "current");
   const otherTabReleases = tabReleases.filter((release) => classifyAnimeRelease(release, target.anime) === "other");
   const visibleReleases = activeTab === "rss"
@@ -1969,21 +1969,19 @@ function AnimeDownloadPanel({
   const sourceFailed = currentTabReleases.length === 0 && otherTabReleases.length === 0 && visibleErrors.length > 0;
   const linkedTasks = downloadTasks.filter((task) => task.animeId === target.anime.id);
   const releaseSignature = tabReleases.map(releaseKey).join("|");
-  const tabFamilies = groupReleaseVersions(currentTabReleases, target, releaseVersionSelections, releaseGroupingOptions);
-  const visibleFamilies = groupReleaseVersions(visibleReleases, target, releaseVersionSelections, releaseGroupingOptions);
+  const tabFamilies = groupReleaseVersions(currentTabReleases, target, releaseVersionSelections);
+  const visibleFamilies = groupReleaseVersions(visibleReleases, target, releaseVersionSelections);
   const visibleCollectionFamilies = groupReleaseVersions(
     visibleCollectionReleases,
     target,
-    releaseVersionSelections,
-    releaseGroupingOptions
+    releaseVersionSelections
   );
   const visibleEpisodeFamilies = groupReleaseVersions(
     visibleEpisodeReleases,
     target,
-    releaseVersionSelections,
-    releaseGroupingOptions
+    releaseVersionSelections
   );
-  const visibleOtherFamilies = groupReleaseVersions(visibleOtherEpisodeReleases, target, releaseVersionSelections, releaseGroupingOptions);
+  const visibleOtherFamilies = groupReleaseVersions(visibleOtherEpisodeReleases, target, releaseVersionSelections);
   const selectedReleases = visibleFamilies
     .filter((family) => selectedFamilyKeys.has(family.key))
     .map((family) => family.selectedRelease);
@@ -2091,7 +2089,7 @@ function AnimeDownloadPanel({
 
   /** 按集数渲染资源族，并保留批量选择能力。 */
   function renderEpisodeGroups(groupReleases: Release[], batchSelectable = true) {
-    const families = groupReleaseVersions(groupReleases, target, releaseVersionSelections, releaseGroupingOptions);
+    const families = groupReleaseVersions(groupReleases, target, releaseVersionSelections);
     return groupReleaseFamilyEpisodes(families).map((episodeGroup) => (
       <section key={episodeGroup.key}>
         <div className="flex min-h-9 items-center justify-between bg-primary/5 px-3 py-2 text-[11px] uppercase tracking-[0.04em]">
@@ -2323,7 +2321,7 @@ function AnimeDownloadPanel({
                   </section>
                 )
               : releaseGroups.map((group, groupIndex) => {
-                  const groupFamilies = groupReleaseVersions(group.releases, target, releaseVersionSelections, releaseGroupingOptions);
+                  const groupFamilies = groupReleaseVersions(group.releases, target, releaseVersionSelections);
                   const selection = getGroupSelectionState(groupFamilies);
                   const rssCandidate = buildMikanGroupRssSubscription(group, target);
                   const rssSubscribed = Boolean(rssCandidate && existingRssUrls.has(rssCandidate.url));
@@ -3287,13 +3285,8 @@ function dedupeReleaseErrors(errors: ReleaseSearchResult["errors"]): ReleaseSear
 
 function sortReleases(releases: Release[]): Release[] {
   return [...releases].sort((left, right) => {
-    const leftEpisode = left.episodeNo ?? -1;
-    const rightEpisode = right.episodeNo ?? -1;
-    if (leftEpisode !== rightEpisode) {
-      return rightEpisode - leftEpisode;
-    }
-
-    return (right.publishedAt ?? "").localeCompare(left.publishedAt ?? "");
+    return compareReleaseEpisodeDescending(left, right)
+      || (right.publishedAt ?? "").localeCompare(left.publishedAt ?? "");
   });
 }
 

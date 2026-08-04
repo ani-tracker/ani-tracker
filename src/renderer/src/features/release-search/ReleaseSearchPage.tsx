@@ -42,6 +42,10 @@ import { formatBytes, formatDateTime } from "@/lib/format";
 import { classifyAnimeRelease, isAnimeSearchTerm, matchesAnimeSearchKeyword } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import { parseReleaseSearchInput } from "@shared/release-search-input";
+import {
+  compareReleaseEpisodeDescending,
+  dedupeReleasesByEpisodeContent
+} from "@shared/release-identity";
 import type { ReleaseSearchResult } from "@shared/contracts";
 import type { MyAnime, Release } from "@shared/domain";
 
@@ -646,14 +650,15 @@ function ReleaseSearchSkeleton() {
   );
 }
 
-/** 按用户选择的规则排列资源，同时保留匹配排序的原始顺序。 */
+/** 先按集数倒序，再按用户选择的规则排列同集资源。 */
 function sortReleases(releases: Release[], sortKey: ReleaseSortKey): Release[] {
-  if (sortKey === "match") return [...releases];
-  if (sortKey === "seeders") {
-    return [...releases].sort((left, right) => (right.seeders ?? -1) - (left.seeders ?? -1));
-  }
-
-  return [...releases].sort((left, right) => comparePublishedAt(right.publishedAt, left.publishedAt));
+  return dedupeReleasesByEpisodeContent(releases).sort((left, right) => {
+    const episodeDelta = compareReleaseEpisodeDescending(left, right);
+    if (episodeDelta) return episodeDelta;
+    if (sortKey === "match") return 0;
+    if (sortKey === "seeders") return (right.seeders ?? -1) - (left.seeders ?? -1);
+    return comparePublishedAt(right.publishedAt, left.publishedAt);
+  });
 }
 
 /** 比较两个来源发布时间，并在日期无效时退回字符串排序。 */

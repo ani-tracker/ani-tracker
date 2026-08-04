@@ -246,6 +246,7 @@ dependencies = [
  "ani-domain",
  "ani-repository",
  "chrono",
+ "data-encoding",
  "futures-util",
  "log",
  "quick-xml",
