@@ -2605,6 +2605,7 @@ function ReleaseDownloadRow({
   const release = family.selectedRelease;
   const canDownload = Boolean(release.magnetUrl ?? release.torrentUrl);
   const selectable = canDownload && !linkedTask && batchSelectable;
+  const actionLabel = !batchSelectable ? "季度待确认" : linkedTask ? "已加入下载" : "添加下载";
 
   return (
     <div className={cn("px-3 py-2.5 [@media(max-height:760px)]:py-2", (linkedTask || !batchSelectable) && "bg-muted/20")}>
@@ -2668,9 +2669,9 @@ function ReleaseDownloadRow({
           className="min-h-9 shrink-0 border-primary/20 bg-primary/10 px-2 text-primary hover:bg-primary/20 sm:px-3"
           variant="outline"
           onClick={() => onAddRelease(release)}
-          disabled={!canDownload || Boolean(linkedTask) || addingReleaseId === release.id || addingReleaseId === batchAddingReleaseId}
-          aria-label={linkedTask ? "已加入下载" : "添加下载"}
-          title={linkedTask ? "已加入下载" : "添加下载"}
+          disabled={!selectable || addingReleaseId === release.id || addingReleaseId === batchAddingReleaseId}
+          aria-label={actionLabel}
+          title={actionLabel}
         >
           <Download data-icon="inline-start" />
           <span className="hidden sm:inline">

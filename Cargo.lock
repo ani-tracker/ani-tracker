@@ -146,6 +146,7 @@ dependencies = [
  "ani-repository",
  "async-trait",
  "chrono",
+ "data-encoding",
  "futures-util",
  "log",
  "reqwest 0.13.4",

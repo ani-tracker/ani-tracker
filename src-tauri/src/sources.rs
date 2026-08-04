@@ -306,6 +306,7 @@ impl AutomationScanStore for SharedReleaseSearchStore {
                         task_id: task.id,
                         anime_id: task.anime_id,
                         episode_id: task.episode_id,
+                        episode_no: task.episode_no,
                     })
                     .collect()
             })

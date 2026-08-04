@@ -402,6 +402,25 @@ impl AutomaticDownloadExecutor for TauriAutomaticDownloadExecutor {
         &self,
         request: AutomaticDownloadRequest,
     ) -> Result<AutomaticDownloadReceipt, String> {
+        if let Some(task) = self
+            .downloads
+            .service()
+            .find_episode_download(
+                &request.anime.anime.id,
+                &request.episode.id,
+                request.episode.episode_no,
+            )
+            .map_err(|error| error.to_string())?
+        {
+            log::info!(
+                "Tauri 自动下载提交前命中已有任务：anime_id={}, episode_id={}, episode_no={}, task_id={}",
+                request.anime.anime.id,
+                request.episode.id,
+                request.episode.episode_no,
+                task.id
+            );
+            return Ok(AutomaticDownloadReceipt { task_id: task.id });
+        }
         let settings = self.downloads.settings()?;
         let engine = self
             .downloads

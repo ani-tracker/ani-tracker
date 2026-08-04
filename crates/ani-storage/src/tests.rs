@@ -1216,6 +1216,61 @@ fn writes_download_snapshot_and_syncs_episode_statuses() {
         .all(|episode| episode.status == EpisodeStatus::Downloaded));
 }
 
+/// 验证下载任务早于单集创建时会回填关联并同步完成状态。
+#[test]
+fn backfills_download_link_when_episode_is_created_later() {
+    let directory = TestDirectory::new("p4-download-late-episode-link");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create late episode link database");
+    let fixture: ContractFixture<P3FollowingWriteModelFixture> =
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode p3 following fixture");
+    let repository = storage.repository();
+    repository
+        .upsert_my_anime(fixture.payload.my_anime.clone())
+        .expect("save late-link anime");
+
+    let mut task = p4_download_task();
+    task.episode_id = None;
+    task.episode_no = Some(fixture.payload.episode.episode_no);
+    task.status = DownloadStatus::Completed;
+    task.progress = 1.0;
+    task.completed_at = Some("2026-07-25T01:00:00.000Z".to_owned());
+    task.files.truncate(1);
+    task.files[0].episode_id = None;
+    task.files[0].episode_no = Some(fixture.payload.episode.episode_no);
+    task.files[0].progress = 1.0;
+    DownloadRepository::upsert_download_task(&repository, &task).expect("save task before episode");
+
+    repository
+        .upsert_episode(&fixture.payload.episode)
+        .expect("save episode after task");
+
+    let saved_task = DownloadRepository::list_downloads(&repository)
+        .expect("list backfilled task")
+        .into_iter()
+        .find(|item| item.id == task.id)
+        .expect("find backfilled task");
+    assert_eq!(
+        saved_task.episode_id.as_deref(),
+        Some(fixture.payload.episode.id.as_str())
+    );
+    assert_eq!(
+        saved_task.files[0].episode_id.as_deref(),
+        Some(fixture.payload.episode.id.as_str())
+    );
+    assert_eq!(
+        repository
+            .list_episodes(&fixture.payload.episode.anime_id)
+            .expect("list linked episode")[0]
+            .status,
+        EpisodeStatus::Downloaded
+    );
+}
+
 /// 验证删除下载任务会恢复单集状态，且外键失败不会留下半条任务。
 #[test]
 fn removes_download_snapshot_and_rolls_back_invalid_files() {

@@ -23,11 +23,12 @@ const RELEASE_SEARCH_LIMIT: usize = 80;
 const COMPLETED_CACHE_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
 
 /// 自动扫描用于判重的下载任务最小快照。
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct AutomationDownloadReference {
     pub task_id: String,
     pub anime_id: Option<String>,
     pub episode_id: Option<String>,
+    pub episode_no: Option<f64>,
 }
 
 /// 自动下载执行器接收的完整业务上下文。
@@ -145,11 +146,7 @@ impl AutomationRunService {
             return Ok(result);
         }
 
-        let downloads = store.list_automation_downloads()?;
-        let mut download_keys = downloads
-            .into_iter()
-            .filter_map(|task| Some((task.anime_id?, task.episode_id?)))
-            .collect::<HashSet<_>>();
+        let mut downloads = store.list_automation_downloads()?;
         log::info!(
             "Rust 自动扫描开始：anime_count={}, fallback={}, candidate_count={}",
             anime_items.len(),
@@ -225,7 +222,10 @@ impl AutomationRunService {
 
             for episode in actionable {
                 result.checked_episodes += 1;
-                if download_keys.contains(&(anime.anime.id.clone(), episode.id.clone())) {
+                if downloads
+                    .iter()
+                    .any(|task| automation_download_matches(task, &anime.anime.id, &episode))
+                {
                     push_episode_skip(&mut result, &anime, &episode, "已有下载任务");
                     continue;
                 }
@@ -243,7 +243,12 @@ impl AutomationRunService {
                     .await
                 {
                     Ok(EpisodeScanOutcome::Downloaded(item)) => {
-                        download_keys.insert((anime.anime.id.clone(), episode.id.clone()));
+                        downloads.push(AutomationDownloadReference {
+                            task_id: item.download_task_id.clone(),
+                            anime_id: Some(anime.anime.id.clone()),
+                            episode_id: Some(episode.id.clone()),
+                            episode_no: Some(episode.episode_no),
+                        });
                         result.downloaded.push(item);
                     }
                     Ok(EpisodeScanOutcome::Skipped(reason)) => {
@@ -488,6 +493,19 @@ impl AutomationRunService {
             download_task_id: receipt.task_id,
         }))
     }
+}
+
+/// 同时按稳定单集标识和番剧集数识别已有下载任务。
+fn automation_download_matches(
+    task: &AutomationDownloadReference,
+    anime_id: &str,
+    episode: &Episode,
+) -> bool {
+    task.anime_id.as_deref() == Some(anime_id)
+        && (task.episode_id.as_deref() == Some(episode.id.as_str())
+            || task
+                .episode_no
+                .is_some_and(|number| (number - episode.episode_no).abs() < 1e-9))
 }
 
 enum EpisodeScanOutcome {
@@ -1099,6 +1117,82 @@ mod tests {
             .any(|item| item.id == "episode-auto-3" && item.status == EpisodeStatus::Downloading));
     }
 
+    /// 验证续作不会自动下载未标季数的同名旧季度资源。
+    #[tokio::test]
+    async fn skips_unmarked_sequel_release_before_download() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-following-write-model.v1.json"
+        )))
+        .expect("decode following fixture");
+        let mut anime: MyAnime =
+            serde_json::from_value(fixture["payload"]["myAnime"].clone()).expect("decode my anime");
+        anime.auto_download = true;
+        anime.anime.title = "地狱模式 第二季".to_owned();
+        anime.anime.original_title = Some("Hell Mode 2nd Season".to_owned());
+        anime.anime.detail = Some(serde_json::json!({ "episodeCount": 8 }));
+
+        let release_fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-release-search-model.v1.json"
+        )))
+        .expect("decode release fixture");
+        let mut release: Release = serde_json::from_value(
+            release_fixture["payload"]["searchResult"]["releases"][0].clone(),
+        )
+        .expect("decode release");
+        release.title = "[LoliHouse] 地狱模式～喜欢速通游戏的玩家在废设定异世界无双～ / Hell Mode - 08 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]".to_owned();
+        release.anime_id = Some(anime.anime.id.clone());
+        release.episode_no = Some(8.0);
+        release.series_season_no = None;
+        release.fansub_group_id = None;
+        release.subtitle_languages = vec![SubtitleLanguage::Chs, SubtitleLanguage::Cht];
+
+        let store = MemoryStore {
+            anime: vec![anime.clone()],
+            episodes: Mutex::new(vec![Episode {
+                id: "episode-hell-mode-8".to_owned(),
+                anime_id: anime.anime.id.clone(),
+                episode_no: 8.0,
+                title: None,
+                air_time: None,
+                status: EpisodeStatus::Aired,
+            }]),
+            preferences: Vec::new(),
+            bindings: Vec::new(),
+            releases: vec![release],
+            downloads: Vec::new(),
+            notifications: Mutex::new(Vec::new()),
+        };
+        let executor = Arc::new(RecordingExecutor {
+            requests: Mutex::new(Vec::new()),
+        });
+        let result = AutomationRunService::new(test_network(), executor.clone())
+            .run(
+                &store,
+                AutomationRunOptions {
+                    now: Some(
+                        Utc.with_ymd_and_hms(2026, 8, 3, 12, 0, 0)
+                            .single()
+                            .expect("fixed time"),
+                    ),
+                    settings: automation_settings(),
+                    sources: Vec::new(),
+                    fansubs: Vec::new(),
+                },
+            )
+            .await
+            .expect("run automation");
+
+        assert_eq!(result.checked_episodes, 1);
+        assert!(result.downloaded.is_empty());
+        assert!(result.skipped.iter().any(|item| {
+            item.episode_id.as_deref() == Some("episode-hell-mode-8")
+                && item.reason == "未找到匹配资源"
+        }));
+        assert!(executor.requests.lock().expect("lock requests").is_empty());
+    }
+
     /// 验证已存在任务时不调用下载执行器。
     #[tokio::test]
     async fn skips_duplicate_download_task() {
@@ -1109,6 +1203,7 @@ mod tests {
                 task_id: "existing".to_owned(),
                 anime_id: Some(store.anime[0].anime.id.clone()),
                 episode_id: Some(episode.id),
+                episode_no: None,
             }],
             ..store
         };
@@ -1128,6 +1223,43 @@ mod tests {
             .await
             .expect("run automation");
         assert_eq!(result.checked_episodes, 1);
+        assert!(result
+            .skipped
+            .iter()
+            .any(|item| item.reason == "已有下载任务"));
+        assert!(executor.requests.lock().expect("lock requests").is_empty());
+    }
+
+    /// 验证历史任务缺少单集标识时仍可按番剧和集数阻止重复下载。
+    #[tokio::test]
+    async fn skips_duplicate_download_task_by_episode_number() {
+        let store = memory_store_with_episode();
+        let episode = store.episodes.lock().expect("lock episodes")[0].clone();
+        let store = MemoryStore {
+            downloads: vec![AutomationDownloadReference {
+                task_id: "existing-without-episode-id".to_owned(),
+                anime_id: Some(store.anime[0].anime.id.clone()),
+                episode_id: None,
+                episode_no: Some(episode.episode_no),
+            }],
+            ..store
+        };
+        let executor = Arc::new(RecordingExecutor {
+            requests: Mutex::new(Vec::new()),
+        });
+        let result = AutomationRunService::new(test_network(), executor.clone())
+            .run(
+                &store,
+                AutomationRunOptions {
+                    now: None,
+                    settings: automation_settings(),
+                    sources: Vec::new(),
+                    fansubs: Vec::new(),
+                },
+            )
+            .await
+            .expect("run automation");
+
         assert!(result
             .skipped
             .iter()

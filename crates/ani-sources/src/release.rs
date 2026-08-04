@@ -340,6 +340,9 @@ pub fn classify_anime_release(release: &Release, anime: &Anime) -> AnimeReleaseC
     if target.is_some() && actual.is_some() && target != actual {
         return AnimeReleaseCompatibility::Mismatch;
     }
+    if target.is_some_and(|value| value > 1) && actual.is_none() {
+        return AnimeReleaseCompatibility::Other;
+    }
     if release.content_kind == Some(ReleaseContentKind::Batch)
         && (target.is_none() || actual.is_none())
     {
@@ -1299,6 +1302,49 @@ mod tests {
             end: 12.0,
         });
         assert!(release_matches_episode(&release, Some(8.0)));
+    }
+
+    /// 验证续作不会把未标季数的同名资源当作当前季自动下载候选。
+    #[test]
+    fn keeps_unmarked_sequel_episode_out_of_current_season() {
+        let anime = Anime {
+            title: "地狱模式 第二季".to_owned(),
+            original_title: Some("Hell Mode 2nd Season".to_owned()),
+            ..test_anime()
+        };
+        let release = enrich_release_from_title(
+            Release {
+                title: "[LoliHouse] 地狱模式～喜欢速通游戏的玩家在废设定异世界无双～ / Hell Mode - 08 [WebRip 1080p HEVC-10bit AAC][简繁内封字幕]".to_owned(),
+                ..empty_release()
+            },
+            &[],
+        );
+
+        assert_eq!(release.episode_no, Some(8.0));
+        assert_eq!(release.series_season_no, None);
+        assert_eq!(
+            classify_anime_release(&release, &anime),
+            AnimeReleaseCompatibility::Other
+        );
+
+        let current_release = Release {
+            title: "[LoliHouse] Hell Mode S02E08 [1080p][HEVC-10bit][简繁]".to_owned(),
+            ..release.clone()
+        };
+        assert_eq!(
+            classify_anime_release(&current_release, &anime),
+            AnimeReleaseCompatibility::Current
+        );
+
+        let first_season = Anime {
+            title: "地狱模式 第一季".to_owned(),
+            original_title: Some("Hell Mode 1st Season".to_owned()),
+            ..anime
+        };
+        assert_eq!(
+            classify_anime_release(&release, &first_season),
+            AnimeReleaseCompatibility::Current
+        );
     }
 
     /// 验证自动下载必须完整覆盖字幕语言要求，未知多语组成不能绕过门禁。

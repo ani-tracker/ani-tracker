@@ -102,6 +102,22 @@ impl DownloadTaskService {
         Ok(filter_tasks_by_engine(self.store.list_downloads()?, engine))
     }
 
+    /// 按单集标识或番剧集数读取当前持久化任务，供提交前幂等复查。
+    pub fn find_episode_download(
+        &self,
+        anime_id: &str,
+        episode_id: &str,
+        episode_no: f64,
+    ) -> Result<Option<DownloadTask>, DownloadServiceError> {
+        Ok(self.store.list_downloads()?.into_iter().find(|task| {
+            task.anime_id.as_deref() == Some(anime_id)
+                && (task.episode_id.as_deref() == Some(episode_id)
+                    || task
+                        .episode_no
+                        .is_some_and(|number| (number - episode_no).abs() < 1e-9))
+        }))
+    }
+
     /// 通过指定引擎添加任务，附加业务元数据后原子持久化。
     pub async fn add(
         &self,

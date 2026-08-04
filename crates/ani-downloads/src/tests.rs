@@ -297,6 +297,31 @@ async fn adds_associated_task_through_selected_engine() {
     assert_eq!(embedded.recorded(), vec!["addMagnet"]);
 }
 
+/// 验证提交前复查可识别缺少单集标识的历史任务。
+#[test]
+fn finds_existing_episode_download_by_episode_number() {
+    let mut existing = stored_task(
+        "existing-episode",
+        TorrentEngineKind::Qbittorrent,
+        Some("existing-hash"),
+    );
+    existing.anime_id = Some("anime-1".to_owned());
+    existing.episode_id = None;
+    existing.episode_no = Some(1.0);
+    let store = Arc::new(MemoryStore::with_tasks(vec![existing.clone()]));
+    let service = DownloadTaskService::new(Arc::new(DownloadEngineRegistry::new()), store);
+
+    let matched = service
+        .find_episode_download("anime-1", "episode-late-1", 1.0)
+        .expect("find episode download")
+        .expect("existing episode task");
+    assert_eq!(matched.id, existing.id);
+    assert!(service
+        .find_episode_download("anime-1", "episode-late-2", 2.0)
+        .expect("find different episode")
+        .is_none());
+}
+
 /// 验证暂停、恢复、优先级和删除始终路由到任务创建时的引擎。
 #[tokio::test]
 async fn routes_task_controls_to_original_engine() {

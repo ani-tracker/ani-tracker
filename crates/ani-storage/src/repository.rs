@@ -1269,7 +1269,20 @@ impl<'connection> SqliteRepository<'connection> {
     /// 新增或更新一条单集记录。
     pub(crate) fn upsert_episode(&self, episode: &Episode) -> Result<Vec<Episode>, StorageError> {
         validate_episode(episode)?;
-        upsert_episode_row(self.connection, episode, &now_iso())?;
+        let timestamp = now_iso();
+        let (linked_tasks, linked_files) = self.with_transaction(|connection| {
+            let (linked_tasks, linked_files) = upsert_episode_row(connection, episode, &timestamp)?;
+            if linked_tasks > 0 || linked_files > 0 {
+                sync_episode_statuses_from_downloads(connection, [episode.id.clone()])?;
+            }
+            Ok((linked_tasks, linked_files))
+        })?;
+        if linked_tasks > 0 || linked_files > 0 {
+            info!(
+                "Rust 单集写入后回填历史下载关联：episode_id={}, linked_tasks={}, linked_files={}",
+                episode.id, linked_tasks, linked_files
+            );
+        }
         self.list_episodes(&episode.anime_id)
     }
 
@@ -3443,12 +3456,12 @@ fn find_episode_id(
         .map_err(StorageError::from)
 }
 
-/// 写入一条单集记录并保留首次创建时间。
+/// 写入单集并回填同番剧同集数的历史下载关联。
 fn upsert_episode_row(
     connection: &Connection,
     episode: &Episode,
     timestamp: &str,
-) -> Result<(), StorageError> {
+) -> Result<(usize, usize), StorageError> {
     validate_episode(episode)?;
     connection.execute(
         "INSERT INTO episode (
@@ -3468,7 +3481,30 @@ fn upsert_episode_row(
             timestamp,
         ],
     )?;
-    Ok(())
+    let linked_tasks = connection.execute(
+        "UPDATE download_task
+            SET episode_id = ?1, updated_at = ?2
+          WHERE episode_id IS NULL
+            AND anime_id = ?3
+            AND episode_no = ?4",
+        params![
+            &episode.id,
+            timestamp,
+            &episode.anime_id,
+            episode.episode_no
+        ],
+    )?;
+    let linked_files = connection.execute(
+        "UPDATE torrent_file
+            SET episode_id = ?1
+          WHERE episode_id IS NULL
+            AND episode_no = ?2
+            AND download_task_id IN (
+              SELECT id FROM download_task WHERE anime_id = ?3
+            )",
+        params![&episode.id, episode.episode_no, &episode.anime_id],
+    )?;
+    Ok((linked_tasks, linked_files))
 }
 
 /// 写入单集偏好并维护番剧与字幕组的发现关联。

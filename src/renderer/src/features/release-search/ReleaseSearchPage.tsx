@@ -39,7 +39,7 @@ import { Page, PageBreadcrumb, PageHeader } from "@/components/page-layout";
 import { ReleaseMetadataBadges } from "@/components/release-metadata-badges";
 import { appApi } from "@/lib/api";
 import { formatBytes, formatDateTime } from "@/lib/format";
-import { isAnimeSearchTerm, matchesAnimeSearchKeyword } from "@shared/anime-release-search";
+import { classifyAnimeRelease, isAnimeSearchTerm, matchesAnimeSearchKeyword } from "@shared/anime-release-search";
 import { resolveAnimeTitleDisplay } from "@shared/anime-title";
 import { parseReleaseSearchInput } from "@shared/release-search-input";
 import type { ReleaseSearchResult } from "@shared/contracts";
@@ -481,6 +481,8 @@ export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}
                       <div className="min-w-0 divide-y bg-card">
                         {visibleReleases.map((release) => {
                           const added = addedReleaseIds.has(release.id);
+                          const seasonCompatible = !searchedContext?.myAnime
+                            || classifyAnimeRelease(release, searchedContext.myAnime.anime) === "current";
                           return (
                             <article
                               className="flex min-w-0 flex-col gap-3 p-4 transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between"
@@ -498,6 +500,7 @@ export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}
                                     </Badge>
                                   )}
                                   {release.episodeNo !== undefined && <Badge>第 {release.episodeNo} 集</Badge>}
+                                  {!seasonCompatible && <Badge tone="amber">季度待确认</Badge>}
                                   <ReleaseMetadataBadges metadata={release} />
                                   {release.size && <Badge>{formatBytes(release.size)}</Badge>}
                                   {typeof release.seeders === "number" && (
@@ -518,12 +521,12 @@ export function ReleaseSearchPage({ initialIntent }: ReleaseSearchPageProps = {}
                               </div>
                               <Button
                                 className="w-full shrink-0 sm:w-auto"
-                                variant={added ? "secondary" : "primary"}
+                                variant={added || !seasonCompatible ? "secondary" : "primary"}
                                 onClick={() => void addDownload(release.id)}
-                                disabled={addingId === release.id || added}
+                                disabled={addingId === release.id || added || !seasonCompatible}
                               >
                                 <Download data-icon="inline-start" />
-                                {addingId === release.id ? "添加中" : added ? "已加入" : "添加下载"}
+                                {!seasonCompatible ? "季度待确认" : addingId === release.id ? "添加中" : added ? "已加入" : "添加下载"}
                               </Button>
                             </article>
                           );
