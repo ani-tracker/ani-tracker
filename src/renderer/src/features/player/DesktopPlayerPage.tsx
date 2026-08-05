@@ -27,6 +27,7 @@ import { resolvePlayerShortcut } from "@shared/player-shortcuts";
 import {
   buildRemotePlaylist,
   playlistItemLabel,
+  resolveAdjacentPlaylistItem,
   resolveInitialPlaylistItem,
   type RemotePlaylistItem
 } from "@/features/player/playback-list-model";
@@ -181,14 +182,14 @@ function DesktopVlcControls({
   const [panelOpen, setPanelOpen] = useState(false);
   const windowDrag = useDesktopWindowDrag();
 
-  const activeIndex = useMemo(
-    () => activeItem ? playlist.findIndex((item) => item.id === activeItem.id) : -1,
+  const previousItem = useMemo(
+    () => resolveAdjacentPlaylistItem(playlist, activeItem, "previous"),
     [activeItem, playlist]
   );
-  const previousItem = activeIndex > 0 ? playlist[activeIndex - 1] : undefined;
-  const nextItem = activeIndex >= 0 && activeIndex < playlist.length - 1
-    ? playlist[activeIndex + 1]
-    : undefined;
+  const nextItem = useMemo(
+    () => resolveAdjacentPlaylistItem(playlist, activeItem, "next"),
+    [activeItem, playlist]
+  );
   const playing = snapshot?.status === "playing";
   const buffering = !snapshot || snapshot.status === "loading" || snapshot.status === "buffering";
   const animeTitle = anime?.title ?? activeItem?.task.animeTitle ?? "Ani Tracker";

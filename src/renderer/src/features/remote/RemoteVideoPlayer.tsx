@@ -48,6 +48,7 @@ import {
 import type { PlaybackSessionClient } from "./playback-session-client";
 import {
   playlistItemLabel,
+  resolveAdjacentPlaylistItem,
   type RemotePlaylistItem
 } from "@/features/player/playback-list-model";
 import {
@@ -122,14 +123,14 @@ export function RemoteVideoPlayer({
       : undefined,
     [allowExternalPlayback]
   );
-  const activeIndex = useMemo(
-    () => activeItem ? playlist.findIndex((item) => item.id === activeItem.id) : -1,
+  const previousItem = useMemo(
+    () => resolveAdjacentPlaylistItem(playlist, activeItem, "previous"),
     [activeItem, playlist]
   );
-  const previousItem = activeIndex > 0 ? playlist[activeIndex - 1] : undefined;
-  const nextItem = activeIndex >= 0 && activeIndex < playlist.length - 1
-    ? playlist[activeIndex + 1]
-    : undefined;
+  const nextItem = useMemo(
+    () => resolveAdjacentPlaylistItem(playlist, activeItem, "next"),
+    [activeItem, playlist]
+  );
   const playing = playerSnapshot?.status === "playing";
   const buffering = !playerSnapshot
     || playerSnapshot.status === "loading"
