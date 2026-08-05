@@ -695,8 +695,7 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                     .map_err(|error| error.to_string())?;
                 serde_json::to_value(
                     self.downloads
-                        .service()
-                        .remove(&id, false, &engine)
+                        .remove_task(&id, false, &engine)
                         .await
                         .map_err(|error| error.to_string())?,
                 )

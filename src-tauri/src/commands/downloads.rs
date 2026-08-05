@@ -303,8 +303,7 @@ pub(crate) async fn remove_download(
 ) -> Result<Vec<DownloadTask>, AppCommandError> {
     let engine = current_engine(&state, "删除下载任务")?;
     state
-        .service()
-        .remove(&task_id, delete_files, &engine)
+        .remove_task(&task_id, delete_files, &engine)
         .await
         .map_err(|error| map_download_error("删除下载任务", error))
 }
