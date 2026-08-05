@@ -485,7 +485,7 @@ export function DiscoveryPage({
       )}
 
       <FilterToolbar className="items-stretch py-2 sm:flex-col sm:items-stretch">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 sm:flex-nowrap">
           <SeasonTargetPicker
             id="discovery-season"
             value={target}
@@ -495,7 +495,7 @@ export function DiscoveryPage({
             }}
           />
 
-          <Field className="order-last min-w-0 basis-full sm:order-none sm:basis-auto">
+          <Field className="order-last min-w-0 basis-full sm:order-none sm:w-auto sm:basis-auto sm:shrink-0">
             <FieldLabel className="sr-only">选择月份</FieldLabel>
             <Tabs
               value={selectedMonth === null ? "all" : String(selectedMonth)}
@@ -680,7 +680,7 @@ export function DiscoveryPage({
   if (workspaceTabs) {
     return (
       <Page className="gap-0">
-        <header className="border-b">
+        <header>
           <Breadcrumb className="pt-1">
             <BreadcrumbList className="gap-1.5 text-sm">
               <BreadcrumbItem><span>发现</span></BreadcrumbItem>
@@ -1117,7 +1117,7 @@ function SeasonTargetPicker({
   }
 
   return (
-    <Field className="min-w-0">
+    <Field className="w-auto min-w-0 shrink-0">
       <FieldLabel className="sr-only" htmlFor={`${id}-trigger`}>选择年份和季度</FieldLabel>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
