@@ -317,6 +317,7 @@ export interface AddReleaseDownloadInput {
   fansubGroupId?: string;
   savePath?: string;
   paused?: boolean;
+  confirmUnknownSeason?: boolean;
 }
 
 export interface AddTorrentOptions {

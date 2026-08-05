@@ -208,6 +208,8 @@ pub(crate) struct AddReleaseDownloadInput {
     save_path: Option<String>,
     #[serde(default)]
     paused: bool,
+    #[serde(default)]
+    confirm_unknown_season: bool,
 }
 
 /// 读取全部本地下载任务快照。
@@ -443,7 +445,11 @@ pub(crate) async fn add_release_download(
             .map_err(|error| runtime_error("读取追番下载目录", error))?,
         None => None,
     };
-    ensure_release_matches_tracked_anime(&input.release, tracked_anime.as_ref())?;
+    ensure_release_matches_tracked_anime(
+        &input.release,
+        tracked_anime.as_ref(),
+        input.confirm_unknown_season,
+    )?;
     let source_url =
         release_download_source_url(&input.release).map_err(|message| AppCommandError {
             code: "invalid_input".to_owned(),
@@ -648,17 +654,27 @@ fn build_correlation_tag(
     )
 }
 
-/// 阻止季度不兼容或无法确认的资源关联到当前追番。
+/// 阻止季度不兼容资源，并仅允许人工确认一条未知季度资源。
 fn ensure_release_matches_tracked_anime(
     release: &Release,
     tracked_anime: Option<&MyAnime>,
+    confirm_unknown_season: bool,
 ) -> Result<(), AppCommandError> {
     let Some(tracked_anime) = tracked_anime else {
         return Ok(());
     };
     let compatibility = classify_anime_release(release, &tracked_anime.anime);
-    if compatibility == AnimeReleaseCompatibility::Current {
-        return Ok(());
+    match compatibility {
+        AnimeReleaseCompatibility::Current => return Ok(()),
+        AnimeReleaseCompatibility::Other if confirm_unknown_season => {
+            log::info!(
+                "Tauri 单条未知季度资源已人工确认 anime_id={} release_id={}",
+                tracked_anime.anime.id,
+                release.id
+            );
+            return Ok(());
+        }
+        AnimeReleaseCompatibility::Other | AnimeReleaseCompatibility::Mismatch => {}
     }
 
     log::warn!(
@@ -735,7 +751,7 @@ mod tests {
         let tracked_anime = tracked_anime("地狱模式 第二季", "Hell Mode 2nd Season");
         let release = release_with_season(None);
 
-        let error = ensure_release_matches_tracked_anime(&release, Some(&tracked_anime))
+        let error = ensure_release_matches_tracked_anime(&release, Some(&tracked_anime), false)
             .expect_err("unmarked sequel release must be rejected");
 
         assert_eq!(error.code, "invalid_input");
@@ -748,7 +764,31 @@ mod tests {
         let tracked_anime = tracked_anime("地狱模式 第二季", "Hell Mode 2nd Season");
         let release = release_with_season(Some(2));
 
-        assert!(ensure_release_matches_tracked_anime(&release, Some(&tracked_anime)).is_ok());
+        assert!(
+            ensure_release_matches_tracked_anime(&release, Some(&tracked_anime), false).is_ok()
+        );
+    }
+
+    /// 验证人工确认只放行当前这一条未知季度资源。
+    #[test]
+    fn accepts_confirmed_unknown_season_release() {
+        let tracked_anime = tracked_anime("地狱模式 第二季", "Hell Mode 2nd Season");
+        let release = release_with_season(None);
+
+        assert!(ensure_release_matches_tracked_anime(&release, Some(&tracked_anime), true).is_ok());
+    }
+
+    /// 验证明确季度不匹配的资源即使携带确认标志也会被拒绝。
+    #[test]
+    fn rejects_mismatched_release_even_when_confirmed() {
+        let tracked_anime = tracked_anime("地狱模式 第二季", "Hell Mode 2nd Season");
+        let release = release_with_season(Some(1));
+
+        let error = ensure_release_matches_tracked_anime(&release, Some(&tracked_anime), true)
+            .expect_err("explicit season mismatch must stay blocked");
+
+        assert_eq!(error.code, "invalid_input");
+        assert!(error.message.contains("资源季度与当前追番不一致"));
     }
 
     /// 创建下载季度门禁测试所需的追番记录。

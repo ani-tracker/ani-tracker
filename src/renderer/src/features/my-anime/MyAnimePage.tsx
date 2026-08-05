@@ -188,6 +188,7 @@ export function MyAnimePage({
   const [sourceBindingState, setSourceBindingState] = useState<AnimeSourceBindingState | null>(null);
   const [sourceBindingLoading, setSourceBindingLoading] = useState(false);
   const [sourceBindingActionKey, setSourceBindingActionKey] = useState<string | null>(null);
+  const [unknownSeasonDownloadTarget, setUnknownSeasonDownloadTarget] = useState<Release | null>(null);
   const [loading, setLoading] = useState(true);
   const [episodeLoading, setEpisodeLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -571,10 +572,11 @@ export function MyAnimePage({
     setAnimeRssReleaseGroups([]);
     setAnimeReleaseResolved(false);
     setAnimeRssReleaseResolved(false);
-    void refreshAnimeSourceBindings(target.anime.id);
     if (nextTab === "rss") {
+      void refreshAnimeSourceBindings(target.anime.id);
       await searchAnimeRssReleases(target);
     } else {
+      await refreshAnimeSourceBindings(target.anime.id);
       await searchAnimeReleases(target);
     }
   }
@@ -589,6 +591,7 @@ export function MyAnimePage({
     setAnimeRssReleaseResolved(false);
     setSourceBindingState(null);
     setSourceBindingActionKey(null);
+    setUnknownSeasonDownloadTarget(null);
   }
 
   /** 打开某部追番的下载任务明细抽屉。 */
@@ -943,7 +946,24 @@ export function MyAnimePage({
     }
   }
 
-  async function addAnimeReleaseDownload(release: Release) {
+  /** 未知季度资源先要求单条确认，明确不匹配资源始终拒绝。 */
+  function requestAnimeReleaseDownload(release: Release) {
+    if (!downloadTarget) {
+      return;
+    }
+    const compatibility = classifyAnimeRelease(release, downloadTarget.anime);
+    if (compatibility === "other") {
+      setUnknownSeasonDownloadTarget(release);
+      return;
+    }
+    if (compatibility === "mismatch") {
+      setMessage({ tone: "error", text: "该资源季度与当前追番不一致，无法添加下载" });
+      return;
+    }
+    void addAnimeReleaseDownload(release);
+  }
+
+  async function addAnimeReleaseDownload(release: Release, confirmUnknownSeason = false) {
     if (!downloadTarget) {
       return;
     }
@@ -951,7 +971,7 @@ export function MyAnimePage({
     setAddingReleaseId(release.id);
     try {
       const updatedDownloads = await appApi.addReleaseDownload(
-        buildAnimeReleaseDownloadInput(release, downloadTarget)
+        buildAnimeReleaseDownloadInput(release, downloadTarget, confirmUnknownSeason)
       );
       setDownloadTasks(updatedDownloads);
       setMessage({ tone: "success", text: "已添加到下载队列" });
@@ -1157,7 +1177,7 @@ export function MyAnimePage({
             sourceBindingState={sourceBindingState}
             target={downloadTarget}
             onCancel={closeAnimeDownloads}
-            onAddRelease={(release) => void addAnimeReleaseDownload(release)}
+            onAddRelease={requestAnimeReleaseDownload}
             onAddRssSubscription={(subscription) => void addAnimeRssSubscription(subscription)}
             onAddSelected={(releases) => void addAnimeReleaseDownloads(releases)}
             onFansubChange={setAnimeReleaseFansubId}
@@ -1194,6 +1214,22 @@ export function MyAnimePage({
           onPlayMedia={onPlayMedia}
         />
       )}
+
+      <ConfirmActionDialog
+        confirmLabel="仅下载此条"
+        content={unknownSeasonDownloadTarget ? (
+          <div className="border-l-2 border-amber-500/70 pl-3 text-sm text-foreground">
+            {unknownSeasonDownloadTarget.title}
+          </div>
+        ) : undefined}
+        description="该资源没有足够的季度标记，系统无法确认它属于当前追番。确认后仅添加这一条资源，不会影响自动下载或批量下载规则。"
+        onConfirm={() => unknownSeasonDownloadTarget
+          ? addAnimeReleaseDownload(unknownSeasonDownloadTarget, true)
+          : undefined}
+        onOpenChange={(open) => !open && setUnknownSeasonDownloadTarget(null)}
+        open={Boolean(unknownSeasonDownloadTarget)}
+        title="确认下载季度待确认资源？"
+      />
 
       <ConfirmActionDialog
         confirmLabel="移除追番"
@@ -2603,7 +2639,12 @@ function ReleaseDownloadRow({
   const release = family.selectedRelease;
   const canDownload = Boolean(release.magnetUrl ?? release.torrentUrl);
   const selectable = canDownload && !linkedTask && batchSelectable;
-  const actionLabel = !batchSelectable ? "季度待确认" : linkedTask ? "已加入下载" : "添加下载";
+  const canAddIndividually = canDownload && !linkedTask;
+  const actionLabel = !batchSelectable
+    ? "确认本条季度待确认资源并添加下载"
+    : linkedTask
+      ? "已加入下载"
+      : "添加下载";
 
   return (
     <div className={cn("px-3 py-2.5 [@media(max-height:760px)]:py-2", (linkedTask || !batchSelectable) && "bg-muted/20")}>
@@ -2667,13 +2708,19 @@ function ReleaseDownloadRow({
           className="min-h-9 shrink-0 border-primary/20 bg-primary/10 px-2 text-primary hover:bg-primary/20 sm:px-3"
           variant="outline"
           onClick={() => onAddRelease(release)}
-          disabled={!selectable || addingReleaseId === release.id || addingReleaseId === batchAddingReleaseId}
+          disabled={!canAddIndividually || addingReleaseId === release.id || addingReleaseId === batchAddingReleaseId}
           aria-label={actionLabel}
           title={actionLabel}
         >
           <Download data-icon="inline-start" />
           <span className="hidden sm:inline">
-            {linkedTask ? "已加入" : addingReleaseId === release.id ? "添加中" : "添加下载"}
+            {linkedTask
+              ? "已加入"
+              : addingReleaseId === release.id
+                ? "添加中"
+                : batchSelectable
+                  ? "添加下载"
+                  : "确认下载"}
           </span>
         </Button>
       </div>
@@ -3232,7 +3279,8 @@ function buildMikanRssUrl(item: MyAnime): string | undefined {
 /** 构造追番资源添加下载时需要的关联参数。 */
 function buildAnimeReleaseDownloadInput(
   release: Release,
-  target: MyAnime
+  target: MyAnime,
+  confirmUnknownSeason = false
 ): AddReleaseDownloadInput {
   return {
     release: {
@@ -3242,7 +3290,8 @@ function buildAnimeReleaseDownloadInput(
     animeId: target.anime.id,
     episodeNo: release.episodeNo,
     fansubGroupId: release.fansubGroupId,
-    savePath: target.downloadDir
+    savePath: target.downloadDir,
+    confirmUnknownSeason
   };
 }
 

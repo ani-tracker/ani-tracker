@@ -9,6 +9,7 @@ use ani_repository::{ReleaseSourceRepository, RepositoryError, RepositoryResult}
 use chrono::{DateTime, SecondsFormat, Utc};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, Method, Proxy};
+use serde_json::Value;
 
 mod bindings;
 mod metadata;
@@ -59,6 +60,7 @@ const RATE_LIMIT_BACKOFF_SECONDS: &[u64] = &[60, 5 * 60, 15 * 60, 30 * 60];
 const TRANSIENT_BACKOFF_SECONDS: &[u64] = &[30, 2 * 60, 30 * 60];
 const BACKGROUND_TRANSPORT_RETRY_DELAYS_MS: &[u64] = &[300, 900];
 const BACKGROUND_TRANSPORT_RETRY_JITTER_MS: u64 = 250;
+const MAX_HTTP_STATUS_DETAIL_CHARS: usize = 240;
 
 /// 元数据请求使用的代理模式。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -163,8 +165,8 @@ pub enum SourceError {
     InvalidHeader(String),
     #[error("HTTP 请求失败：{0}")]
     Transport(#[from] reqwest::Error),
-    #[error("HTTP 响应状态异常：{status}")]
-    HttpStatus { status: u16 },
+    #[error("HTTP 响应状态异常：{status}{}", http_status_detail_suffix(.detail.as_deref()))]
+    HttpStatus { status: u16, detail: Option<String> },
     #[error("HTTP 响应超过 {limit} 字节限制")]
     ResponseTooLarge { limit: usize },
     #[error("来源响应解析失败：{0}")]
@@ -433,6 +435,57 @@ fn classify_transport_failure_detail(detail: &str) -> Option<&'static str> {
     None
 }
 
+/// 仅从 AniList GraphQL 错误数组提取有限长度的脱敏详情。
+fn http_status_detail(source_id: &str, body: &[u8]) -> Option<String> {
+    if source_id != "metadata-anilist" {
+        return None;
+    }
+    let payload: Value = serde_json::from_slice(body).ok()?;
+    let messages = payload
+        .get("errors")?
+        .as_array()?
+        .iter()
+        .filter_map(|error| error.get("message").and_then(Value::as_str))
+        .filter_map(sanitize_http_status_detail)
+        .collect::<Vec<_>>();
+    let detail = messages.join("; ");
+    (!detail.is_empty()).then_some(detail)
+}
+
+/// 移除控制字符并限制外部错误详情长度。
+fn sanitize_http_status_detail(value: &str) -> Option<String> {
+    let normalized = value
+        .chars()
+        .map(|character| {
+            if character.is_control() {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if normalized.is_empty() {
+        return None;
+    }
+    let mut characters = normalized.chars();
+    let mut detail = characters
+        .by_ref()
+        .take(MAX_HTTP_STATUS_DETAIL_CHARS)
+        .collect::<String>();
+    if characters.next().is_some() {
+        detail.push_str("...");
+    }
+    Some(detail)
+}
+
+/// 将可选详情转换为稳定错误后缀。
+fn http_status_detail_suffix(detail: Option<&str>) -> String {
+    detail.map_or_else(String::new, |detail| format!("：{detail}"))
+}
+
 /// 组合直连/代理传输、持久化限流和熔断的来源网络服务。
 pub struct SourceNetworkService {
     direct_client: NativeHttpClient,
@@ -557,6 +610,7 @@ impl SourceNetworkService {
                 }
                 Err(SourceError::HttpStatus {
                     status: response.status,
+                    detail: http_status_detail(&source.id, &response.body),
                 })
             }
             Err(error) => {
@@ -907,7 +961,7 @@ mod tests {
     use tokio::net::TcpListener;
 
     use super::{
-        classify_transport_failure_detail, normalize_source_request_interval,
+        classify_transport_failure_detail, http_status_detail, normalize_source_request_interval,
         should_use_source_proxy, CircuitBreaker, CircuitStateStore, HostRateLimiter, HttpMethod,
         NativeHttpClient, NativeHttpConfig, NativeHttpRequest, NetworkRequestChannel, ProxyMode,
         SourceError, SourceNetworkService, ANIBT_MIN_REQUEST_INTERVAL_MS,
@@ -988,6 +1042,25 @@ mod tests {
         assert_eq!(
             classify_transport_failure_detail("tcp connect error: Connection refused"),
             Some("connection_refused")
+        );
+    }
+
+    /// 验证仅 AniList GraphQL 错误消息会进入状态详情且控制字符被移除。
+    #[test]
+    fn extracts_sanitized_anilist_http_error_detail() {
+        let body =
+            br#"{"errors":[{"message":"Syntax Error:\nExpected Name\u0000"}],"token":"secret"}"#;
+        let detail = http_status_detail("metadata-anilist", body);
+
+        assert_eq!(detail.as_deref(), Some("Syntax Error: Expected Name"));
+        assert!(http_status_detail("metadata-bangumi", body).is_none());
+        assert_eq!(
+            SourceError::HttpStatus {
+                status: 400,
+                detail,
+            }
+            .to_string(),
+            "HTTP 响应状态异常：400：Syntax Error: Expected Name"
         );
     }
 
@@ -1172,7 +1245,7 @@ mod tests {
             .await
             .expect_err("503 request must fail");
 
-        assert!(matches!(error, SourceError::HttpStatus { status: 503 }));
+        assert!(matches!(error, SourceError::HttpStatus { status: 503, .. }));
         let state = store
             .state
             .lock()

@@ -1009,7 +1009,9 @@ impl ReleaseSearchService {
                             break;
                         }
                     }
-                    Err(SourceError::HttpStatus { status: 404 | 405 }) => continue,
+                    Err(SourceError::HttpStatus {
+                        status: 404 | 405, ..
+                    }) => continue,
                     Err(error) => last_error = Some(error),
                 }
             }

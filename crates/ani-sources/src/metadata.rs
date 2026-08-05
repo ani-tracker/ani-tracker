@@ -1448,8 +1448,8 @@ fn preserve_catalog_cover(local: &Anime, enriched: &mut Anime) {
 fn detail_retry_after_ms(error: &SourceError) -> Option<u64> {
     match error {
         SourceError::Transport(_) => Some(DETAIL_TRANSIENT_RETRY_DELAY_MS),
-        SourceError::HttpStatus { status: 429 } => Some(DETAIL_RATE_LIMIT_RETRY_DELAY_MS),
-        SourceError::HttpStatus { status } if *status >= 500 => {
+        SourceError::HttpStatus { status: 429, .. } => Some(DETAIL_RATE_LIMIT_RETRY_DELAY_MS),
+        SourceError::HttpStatus { status, .. } if *status >= 500 => {
             Some(DETAIL_TRANSIENT_RETRY_DELAY_MS)
         }
         SourceError::CircuitOpen { backoff_until } => {
@@ -2666,7 +2666,7 @@ struct AniListRanking {
 }
 
 fn anilist_fields() -> &'static str {
-    "id idMal averageScore bannerImage format episodes status title { native romaji english } startDate { year month day } endDate { year month day } nextAiringEpisode { airingAt episode } season description(asHtml: false) synonyms coverImage { large extraLarge } genres duration source countryOfOrigin isAdult studios(isMain: true) { nodes { name isAnimationStudio } } staff(perPage: 12, sort: RELEVANCE) { edges { role node { name { full } } } rankings { rank type context allTime }"
+    "id idMal averageScore bannerImage format episodes status title { native romaji english } startDate { year month day } endDate { year month day } nextAiringEpisode { airingAt episode } season description(asHtml: false) synonyms coverImage { large extraLarge } genres duration source countryOfOrigin isAdult studios(isMain: true) { nodes { name isAnimationStudio } } staff(perPage: 12, sort: RELEVANCE) { edges { role node { name { full } } } } rankings { rank type context allTime }"
 }
 
 fn map_anilist(item: AniListMedia) -> Anime {
@@ -3353,12 +3353,12 @@ mod tests {
     };
 
     use super::{
-        detail_providers_for_item, detail_retry_after_ms, find, map_bangumi, map_bangumi_catalog,
-        merge_anime, merge_anime_metadata_batches, parse_mikan_candidates, parse_mikan_detail,
-        preserve_catalog_cover, shared_title, should_merge, union, unique_by_normalized_title,
-        AnimeMetadataBatch, AnimeMetadataDetailProvider, AnimeMetadataDetailRequest,
-        AnimeMetadataService, BangumiImages, BangumiInfoboxItem, BangumiRating, BangumiSubject,
-        BangumiTag, MetadataEndpoints,
+        anilist_fields, detail_providers_for_item, detail_retry_after_ms, find, map_bangumi,
+        map_bangumi_catalog, merge_anime, merge_anime_metadata_batches, parse_mikan_candidates,
+        parse_mikan_detail, preserve_catalog_cover, shared_title, should_merge, union,
+        unique_by_normalized_title, AnimeMetadataBatch, AnimeMetadataDetailProvider,
+        AnimeMetadataDetailRequest, AnimeMetadataService, BangumiImages, BangumiInfoboxItem,
+        BangumiRating, BangumiSubject, BangumiTag, MetadataEndpoints,
     };
 
     #[derive(Default)]
@@ -3591,14 +3591,39 @@ mod tests {
     /// 验证仅瞬时网络与熔断错误进入详情补偿队列。
     #[test]
     fn classifies_retryable_detail_failures() {
-        assert!(detail_retry_after_ms(&SourceError::HttpStatus { status: 503 }).is_some());
-        assert!(detail_retry_after_ms(&SourceError::HttpStatus { status: 429 }).is_some());
+        assert!(detail_retry_after_ms(&SourceError::HttpStatus {
+            status: 503,
+            detail: None,
+        })
+        .is_some());
+        assert!(detail_retry_after_ms(&SourceError::HttpStatus {
+            status: 429,
+            detail: None,
+        })
+        .is_some());
         assert!(detail_retry_after_ms(&SourceError::CircuitOpen {
             backoff_until: (Utc::now() + chrono::Duration::seconds(30)).to_rfc3339(),
         })
         .is_some());
-        assert!(detail_retry_after_ms(&SourceError::HttpStatus { status: 404 }).is_none());
+        assert!(detail_retry_after_ms(&SourceError::HttpStatus {
+            status: 404,
+            detail: None,
+        })
+        .is_none());
         assert!(detail_retry_after_ms(&SourceError::Parse("invalid payload".to_owned())).is_none());
+    }
+
+    /// 验证 AniList 公共字段选择集的大括号完整闭合。
+    #[test]
+    fn keeps_anilist_field_selection_balanced() {
+        let fields = anilist_fields();
+
+        assert_eq!(
+            fields.chars().filter(|character| *character == '{').count(),
+            fields.chars().filter(|character| *character == '}').count()
+        );
+        assert!(fields.contains("staff(perPage: 12, sort: RELEVANCE)"));
+        assert!(fields.contains("} } rankings"));
     }
 
     /// 验证 Mikan 季度页解析去重并优先保留更完整标题。
