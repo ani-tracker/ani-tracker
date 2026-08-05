@@ -1,14 +1,13 @@
 import {
   AlertCircle,
   ArrowLeft,
+  CloudDownload,
   CalendarDays,
   CalendarRange,
   CalendarPlus,
   Check,
   CheckCircle2,
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   Download,
   ExternalLink,
   ImageOff,
@@ -40,6 +39,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Empty, EmptyContent, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { Field, FieldLabel } from "@/components/ui/field";
 import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput } from "@/components/ui/input-group";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
   SelectContent,
@@ -59,6 +59,7 @@ import {
   PaginationPrevious
 } from "@/components/ui/pagination";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 import {
   Sheet,
   SheetContent,
@@ -70,6 +71,7 @@ import {
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { CachedImage } from "@/components/cached-image";
 import { FilterToolbar, Page, PageActions, PageHeader, PageHeading } from "@/components/page-layout";
 import { YearPicker } from "@/components/year-picker";
@@ -100,7 +102,6 @@ export interface SeasonTarget {
 interface SeasonOption {
   value: Season;
   label: string;
-  shortLabel: string;
   months: readonly [number, number, number];
 }
 
@@ -110,16 +111,16 @@ type ScheduleView = "grid" | "list";
 type DiscoveryWorkspaceTab = "season" | "schedule" | "browse";
 interface DiscoveryPageProps {
   allowCollection?: boolean;
-  onOpenAnimeDetail?: (animeId: string) => void;
+  onOpenAnimeDetail?: (animeId: string, previewAnime?: Anime) => void;
   onOpenSchedule?: (target: SeasonTarget) => void;
   workspaceTabs?: boolean;
 }
 
 const seasonOptions: readonly SeasonOption[] = [
-  { value: "winter", label: "冬季", shortLabel: "冬", months: [1, 2, 3] },
-  { value: "spring", label: "春季", shortLabel: "春", months: [4, 5, 6] },
-  { value: "summer", label: "夏季", shortLabel: "夏", months: [7, 8, 9] },
-  { value: "fall", label: "秋季", shortLabel: "秋", months: [10, 11, 12] }
+  { value: "winter", label: "冬季", months: [1, 2, 3] },
+  { value: "spring", label: "春季", months: [4, 5, 6] },
+  { value: "summer", label: "夏季", months: [7, 8, 9] },
+  { value: "fall", label: "秋季", months: [10, 11, 12] }
 ];
 
 const seasonText: Record<Season, string> = {
@@ -128,15 +129,6 @@ const seasonText: Record<Season, string> = {
   summer: "夏季",
   fall: "秋季"
 };
-
-/** 按自然季度前后移动，并在跨年时同步调整年份。 */
-function shiftSeasonTarget(target: SeasonTarget, direction: -1 | 1): SeasonTarget {
-  const currentIndex = seasonOptions.findIndex((option) => option.value === target.season);
-  const nextIndex = currentIndex + direction;
-  if (nextIndex < 0) return { year: target.year - 1, season: seasonOptions[seasonOptions.length - 1].value };
-  if (nextIndex >= seasonOptions.length) return { year: target.year + 1, season: seasonOptions[0].value };
-  return { year: target.year, season: seasonOptions[nextIndex].value };
-}
 
 /** 去除稳定来源前缀，返回可直接展示的 AniList 错误。 */
 function normalizeAnilistError(error?: string): string | null {
@@ -479,9 +471,7 @@ export function DiscoveryPage({
     : "采集当前季度";
   const resultLabel = visibleLoading
     ? appliedKeyword ? "正在搜索" : "正在加载"
-    : appliedKeyword
-      ? `“${appliedKeyword}” · ${visibleItems.length} 部`
-      : `${target.year} ${activeSeason.label} · ${visibleItems.length} 部`;
+    : `共 ${visibleItems.length} 部`;
   const emptyCatalog = !appliedKeyword && items.length === 0;
 
   const seasonCatalogPanel = (
@@ -494,57 +484,59 @@ export function DiscoveryPage({
         </Alert>
       )}
 
-      <FilterToolbar className="items-stretch sm:flex-col sm:items-stretch">
-        <div className={cn(
-          "grid min-w-0 gap-3 md:items-end",
-          workspaceTabs
-            ? "md:grid-cols-[minmax(14rem,1fr)_150px]"
-            : "md:grid-cols-[8rem_minmax(14rem,1fr)] min-[1440px]:grid-cols-[8rem_minmax(14rem,1fr)_150px]"
-        )}>
-          {!workspaceTabs && (
-            <SeasonTargetPicker
-              id="discovery-season"
-              value={target}
-              onValueChange={(nextTarget) => {
-                if (nextTarget.season !== target.season) setSelectedMonth(null);
-                setTarget(nextTarget);
-              }}
-            />
-          )}
+      <FilterToolbar className="items-stretch py-2 sm:flex-col sm:items-stretch">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <SeasonTargetPicker
+            id="discovery-season"
+            value={target}
+            onValueChange={(nextTarget) => {
+              if (nextTarget.season !== target.season) setSelectedMonth(null);
+              setTarget(nextTarget);
+            }}
+          />
 
-          <Field className="min-w-0">
+          <Field className="order-last min-w-0 basis-full sm:order-none sm:basis-auto">
             <FieldLabel className="sr-only">选择月份</FieldLabel>
             <Tabs
               value={selectedMonth === null ? "all" : String(selectedMonth)}
               onValueChange={(value) => setSelectedMonth(value === "all" ? null : Number(value))}
             >
-              <TabsList className="grid h-auto w-full grid-cols-4" aria-label="选择月份">
+              <TabsList className="grid h-9 w-full grid-cols-4 sm:w-52" aria-label="选择月份">
                 <TabsTrigger value="all">全部</TabsTrigger>
                 {activeSeason.months.map((month) => (
-                  <TabsTrigger key={month} value={String(month)}>{month} 月</TabsTrigger>
+                  <TabsTrigger key={month} value={String(month)}>{month}月</TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
           </Field>
 
-          <Field className="min-w-0">
-            <FieldLabel className="sr-only" htmlFor="discovery-sort">排序方式</FieldLabel>
-            <Select value={sortKey} onValueChange={(value) => setSortKey(value as DiscoverySortKey)}>
-              <SelectTrigger id="discovery-sort">
-                <SelectValue placeholder="排序方式" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectGroup>
-                  <SelectItem value="premiereAsc">发布时间升序</SelectItem>
-                  <SelectItem value="premiereDesc">发布时间降序</SelectItem>
-                  <SelectItem value="ratingDesc">评分降序</SelectItem>
-                </SelectGroup>
-              </SelectContent>
-            </Select>
-          </Field>
+          <div aria-live="polite" className="shrink-0 text-sm tabular-nums text-muted-foreground">
+            {resultLabel}
+          </div>
 
+          {workspaceTabs && allowCollection && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  aria-label="采集本季新番"
+                  className="ml-auto size-9"
+                  disabled={collecting}
+                  onClick={() => void collectSeason(false)}
+                  size="icon"
+                >
+                  {collecting
+                    ? <LoaderCircle className="animate-spin" />
+                    : <CloudDownload />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent align="end" side="bottom" sideOffset={8}>
+                {collecting ? collectingLabel : "采集本季新番"}
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
 
+        <div className="grid min-w-0 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
           <form
             className="min-w-0"
             onSubmit={(event) => {
@@ -581,17 +573,37 @@ export function DiscoveryPage({
               </InputGroup>
             </Field>
           </form>
-      </FilterToolbar>
 
-      <div className="flex min-w-0 items-center justify-between gap-3 border-b pb-3">
-        <div className="text-sm font-semibold tabular-nums text-primary">{resultLabel}</div>
-        {(selectedMonth !== null || appliedKeyword || sortKey !== DEFAULT_DISCOVERY_SORT) && (
-          <Button className="h-auto min-h-0 p-0 text-xs" onClick={resetFilters} variant="ghost">
-            <RotateCcw data-icon="inline-start" />
-            重置所有筛选
-          </Button>
-        )}
-      </div>
+          <div className="flex min-w-0 gap-2 sm:w-auto">
+            <Field className="min-w-0 flex-1 sm:w-[9.375rem] sm:flex-none">
+              <FieldLabel className="sr-only" htmlFor="discovery-sort">排序方式</FieldLabel>
+              <Select value={sortKey} onValueChange={(value) => setSortKey(value as DiscoverySortKey)}>
+                <SelectTrigger id="discovery-sort">
+                  <SelectValue placeholder="排序方式" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectGroup>
+                    <SelectItem value="premiereAsc">发布时间升序</SelectItem>
+                    <SelectItem value="premiereDesc">发布时间降序</SelectItem>
+                    <SelectItem value="ratingDesc">评分降序</SelectItem>
+                  </SelectGroup>
+                </SelectContent>
+              </Select>
+            </Field>
+
+            {(selectedMonth !== null || appliedKeyword || sortKey !== DEFAULT_DISCOVERY_SORT) && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button aria-label="重置所有筛选" onClick={resetFilters} size="icon" variant="ghost">
+                    <RotateCcw />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">重置所有筛选</TooltipContent>
+              </Tooltip>
+            )}
+          </div>
+        </div>
+      </FilterToolbar>
 
       {visibleLoading ? (
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5" aria-label="正在加载季度新番目录">
@@ -695,52 +707,6 @@ export function DiscoveryPage({
           hidden={activeWorkspaceTab !== "season"}
         >
           <span className="sr-only" id="discovery-tab-season">季度新番</span>
-          <FilterToolbar className="py-2">
-            <div className="flex min-w-0 items-center gap-2">
-              <Button
-                aria-label="上一季度"
-                onClick={() => {
-                  setSelectedMonth(null);
-                  setTarget((current) => shiftSeasonTarget(current, -1));
-                }}
-                size="icon"
-                title="上一季度"
-                variant="ghost"
-              >
-                <ChevronLeft />
-              </Button>
-              <div className="w-32">
-                <SeasonTargetPicker
-                  id="workspace-season"
-                  value={target}
-                  onValueChange={(nextTarget) => {
-                    if (nextTarget.season !== target.season) setSelectedMonth(null);
-                    setTarget(nextTarget);
-                  }}
-                />
-              </div>
-              <Button
-                aria-label="下一季度"
-                onClick={() => {
-                  setSelectedMonth(null);
-                  setTarget((current) => shiftSeasonTarget(current, 1));
-                }}
-                size="icon"
-                title="下一季度"
-                variant="ghost"
-              >
-                <ChevronRight />
-              </Button>
-            </div>
-            {allowCollection && (
-              <Button onClick={() => void collectSeason(false)} disabled={collecting}>
-                {collecting
-                  ? <LoaderCircle className="animate-spin" data-icon="inline-start" />
-                  : <CalendarPlus data-icon="inline-start" />}
-                {collecting ? collectingLabel : "采集本季新番"}
-              </Button>
-            )}
-          </FilterToolbar>
           {seasonCatalogPanel}
         </section>
 
@@ -950,17 +916,7 @@ function DiscoveryScheduleWorkspacePanel({
       )}
 
       <FilterToolbar className="py-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <Button aria-label="上一季度" onClick={() => setTarget((current) => shiftSeasonTarget(current, -1))} size="icon" title="上一季度" variant="ghost">
-            <ChevronLeft />
-          </Button>
-          <div className="w-32">
-            <SeasonTargetPicker id="workspace-schedule-season" value={target} onValueChange={setTarget} />
-          </div>
-          <Button aria-label="下一季度" onClick={() => setTarget((current) => shiftSeasonTarget(current, 1))} size="icon" title="下一季度" variant="ghost">
-            <ChevronRight />
-          </Button>
-        </div>
+        <SeasonTargetPicker id="workspace-schedule-season" value={target} onValueChange={setTarget} />
         <ToggleGroup
           aria-label="选择时间表视图"
           className="grid grid-cols-2"
@@ -1093,7 +1049,7 @@ export function DiscoverySchedulePage({ initialTarget, onBack, onOpenAnimeDetail
       )}
 
       <FilterToolbar className="items-stretch sm:items-center">
-        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-[8rem_auto] sm:items-center sm:justify-between">
+        <div className="grid min-w-0 flex-1 gap-3 sm:grid-cols-[9.25rem_auto] sm:items-center sm:justify-between">
           <SeasonTargetPicker
             id="schedule-season"
             value={target}
@@ -1149,6 +1105,7 @@ function SeasonTargetPicker({
   value: SeasonTarget;
   onValueChange: (target: SeasonTarget) => void;
 }) {
+  const [open, setOpen] = useState(false);
   const activeSeason = getSeasonOption(value.season);
 
   /** 选择季度，并保留当前年份。 */
@@ -1156,44 +1113,68 @@ function SeasonTargetPicker({
     if (!season) return;
     console.info("[season-target-picker] 季度已选择", { year: value.year, season });
     onValueChange({ ...value, season: season as Season });
+    setOpen(false);
   }
 
   return (
     <Field className="min-w-0">
-      <FieldLabel className="sr-only" htmlFor={`${id}-year`}>选择年份和季度</FieldLabel>
-      <YearPicker
-        closeOnValueChange={false}
-        id={`${id}-year`}
-        triggerLabel={`${value.year} ${activeSeason.shortLabel}`}
-        value={value.year}
-        onValueChange={(year) => onValueChange({ ...value, year })}
-        renderAside={({ close }) => (
+      <FieldLabel className="sr-only" htmlFor={`${id}-trigger`}>选择年份和季度</FieldLabel>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            className="h-9 min-h-9 w-[9.25rem] justify-start gap-2 px-2.5 tabular-nums"
+            id={`${id}-trigger`}
+            type="button"
+            variant="outline"
+          >
+            <CalendarDays aria-hidden="true" />
+            <span>{value.year}</span>
+            <Separator className="h-4" orientation="vertical" />
+            <span className="text-primary">{activeSeason.label}</span>
+            <ChevronDown aria-hidden="true" className="ml-auto" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="start" className="w-72 p-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-sm font-semibold">选择季度</div>
+            <div className="w-28">
+              <YearPicker
+                id={`${id}-year`}
+                triggerLabel={value.year}
+                value={value.year}
+                onValueChange={(year) => onValueChange({ ...value, year })}
+              />
+            </div>
+          </div>
           <ToggleGroup
             aria-label="在选择器中选择季度"
-            className="grid h-full grid-rows-4 items-stretch gap-2 rounded-2xl bg-muted/50 p-1.5"
-            orientation="vertical"
+            className="mt-3 grid grid-cols-2 gap-2"
             type="single"
             value={value.season}
             variant="outline"
-            onValueChange={(season) => {
-              if (!season) return;
-              selectSeason(season);
-              close();
-            }}
+            onValueChange={selectSeason}
           >
             {seasonOptions.map((season) => (
               <ToggleGroupItem
                 aria-label={`选择${season.label}`}
-                className="h-auto min-h-9 whitespace-nowrap rounded-xl px-3"
+                className="h-auto min-h-14 justify-between px-3 py-2 text-left data-[state=on]:border-primary data-[state=on]:bg-primary/10 data-[state=on]:text-primary"
                 key={season.value}
                 value={season.value}
               >
-                {season.shortLabel}
+                <span className="flex min-w-0 flex-col items-start gap-0.5">
+                  <span>{season.label}</span>
+                  <span className="text-xs font-normal text-muted-foreground">
+                    {season.months[0]}–{season.months[2]}月
+                  </span>
+                </span>
+                {season.value === value.season && <Check aria-hidden="true" />}
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
-        )}
-      />
+        </PopoverContent>
+      </Popover>
     </Field>
   );
 }
@@ -1313,12 +1294,30 @@ const browseSourceOptions: readonly BrowseFilterOption<DiscoverySourceMaterial>[
   { value: "other", label: "其他" }
 ];
 const browseGenreOptions: readonly BrowseFilterOption<DiscoveryGenre>[] = [
-  { value: "action", label: "热血" },
-  { value: "fantasy", label: "奇幻" },
+  { value: "reasoning", label: "推理" },
+  { value: "harem", label: "后宫" },
   { value: "sciFi", label: "科幻" },
+  { value: "girlsLove", label: "百合" },
+  { value: "horror", label: "恐怖" },
+  { value: "romance", label: "恋爱" },
+  { value: "music", label: "音乐" },
+  { value: "school", label: "校园" },
+  { value: "timeTravel", label: "穿越" },
+  { value: "action", label: "战斗" },
+  { value: "sports", label: "运动" },
+  { value: "martialArts", label: "武侠" },
+  { value: "fantasy", label: "奇幻" },
+  { value: "thriller", label: "惊悚" },
+  { value: "comedy", label: "搞笑" },
   { value: "sliceOfLife", label: "日常" },
   { value: "mystery", label: "悬疑" },
-  { value: "comedy", label: "搞笑" }
+  { value: "adventure", label: "冒险" },
+  { value: "history", label: "历史" },
+  { value: "otome", label: "乙女" },
+  { value: "food", label: "美食" },
+  { value: "workplace", label: "职场" },
+  { value: "xuanhuan", label: "玄幻" },
+  { value: "mecha", label: "机战" }
 ];
 const browseDemographicOptions: readonly BrowseFilterOption<DiscoveryDemographic>[] = [
   { value: "shounen", label: "少年" },
@@ -1345,6 +1344,7 @@ function toBangumiBrowseFilters(filters: DiscoveryBrowseFilters): BangumiBrowseQ
     demographics: filters.demographics,
     regions: filters.regions,
     years: filters.years,
+    yearRange: filters.yearRange,
     minRating: filters.minRating
   };
 }
@@ -1361,7 +1361,7 @@ function DiscoveryBrowsePanel({
   followedIds: Set<string>;
   hidden: boolean;
   onAdd: (anime: Anime) => Promise<void>;
-  onOpenAnimeDetail?: (animeId: string) => void;
+  onOpenAnimeDetail?: (animeId: string, previewAnime?: Anime) => void;
 }) {
   const [items, setItems] = useState<Anime[]>([]);
   const [total, setTotal] = useState(0);
@@ -1416,10 +1416,17 @@ function DiscoveryBrowsePanel({
   const totalPages = Math.max(1, Math.ceil(total / BROWSE_PAGE_SIZE));
   const selectedCount = countDiscoveryBrowseFilters(filters);
   const draftSelectedCount = countDiscoveryBrowseFilters(draftFilters);
+  const currentYear = useMemo(() => new Date().getFullYear(), []);
   const yearOptions = useMemo(
-    () => Array.from({ length: 12 }, (_, index) => new Date().getFullYear() - index),
-    []
+    () => Array.from({ length: 10 }, (_, index) => currentYear - index),
+    [currentYear]
   );
+  const timeOptions = useMemo<readonly BrowseFilterOption<BrowseTimeValue>[]>(() => [
+    { value: "future", label: "未来年份" },
+    ...yearOptions.map((year) => ({ value: `year:${year}` as const, label: `${year}年` })),
+    { value: "earlier", label: "更早年份" }
+  ], [yearOptions]);
+  const selectedDraftTime = getSelectedBrowseTimeValue(draftFilters);
 
   useEffect(() => {
     if (page <= totalPages) return;
@@ -1442,12 +1449,14 @@ function DiscoveryBrowsePanel({
 
   /** 移除紧凑工具栏中的一个已应用条件。 */
   function removeAppliedFilter(field: BrowseFilterKey, value: string | number) {
-    setFilters((current) => field === "minRating"
-      ? { ...current, minRating: 0 }
-      : ({
+    setFilters((current) => {
+      if (field === "minRating") return { ...current, minRating: 0 };
+      if (field === "yearRange") return { ...current, yearRange: null };
+      return ({
         ...current,
         [field]: (current[field] as Array<string | number>).filter((item) => item !== value)
-      }) as DiscoveryBrowseFilters);
+      }) as DiscoveryBrowseFilters;
+    });
     setPage(1);
   }
 
@@ -1663,12 +1672,12 @@ function DiscoveryBrowsePanel({
                 onToggle={(value) => setDraftFilters((current) => ({ ...current, regions: toggleBrowseSingleValue(current.regions, value) }))}
               />
               <BrowseChoiceFilterSection
-                options={yearOptions.map((year) => ({ value: year, label: String(year) }))}
-                selected={draftFilters.years}
+                options={timeOptions}
+                selected={selectedDraftTime ? [selectedDraftTime] : []}
                 title="时间"
                 onToggle={(value) => setDraftFilters((current) => ({
                   ...current,
-                  years: current.years.includes(value) ? [] : [value]
+                  ...toggleBrowseTime(current, value, currentYear)
                 }))}
               />
               <BrowseFilterSection title="最低评分">
@@ -1721,7 +1730,7 @@ function DiscoveryBrowseAnimeCard({
   anime: Anime;
   followed: boolean;
   onAdd: (anime: Anime) => Promise<void>;
-  onOpenDetail?: (animeId: string) => void;
+  onOpenDetail?: (animeId: string, previewAnime?: Anime) => void;
 }) {
   const titleDisplay = resolveAnimeTitleDisplay(anime);
   const genres = anime.detail?.genres?.slice(0, 2) ?? [];
@@ -1738,7 +1747,7 @@ function DiscoveryBrowseAnimeCard({
         <button
           aria-label={`查看${titleDisplay.title}详情`}
           className="block size-full text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-          onClick={() => onOpenDetail?.(anime.id)}
+          onClick={() => onOpenDetail?.(anime.id, anime)}
           type="button"
         >
           {anime.coverUrl ? (
@@ -1774,7 +1783,7 @@ function DiscoveryBrowseAnimeCard({
           {adding ? <LoaderCircle className="animate-spin" /> : followed ? <Check className="text-emerald-600" /> : <Plus />}
         </Button>
       </div>
-      <button className="block w-full min-w-0 p-3 text-left" onClick={() => onOpenDetail?.(anime.id)} type="button">
+      <button className="block w-full min-w-0 p-3 text-left" onClick={() => onOpenDetail?.(anime.id, anime)} type="button">
         <h3 className="truncate text-sm font-semibold" title={titleDisplay.title}>{titleDisplay.title}</h3>
         <p className="mt-1 truncate text-[11px] text-muted-foreground" title={`${studio} · ${anime.premiereYear}`}>
           {studio} · {anime.premiereYear}
@@ -1870,7 +1879,7 @@ function BrowseChoiceFilterSection<T extends string | number>({
   );
 }
 
-type BrowseArrayFilterKey = Exclude<keyof DiscoveryBrowseFilters, "minRating">;
+type BrowseArrayFilterKey = Exclude<keyof DiscoveryBrowseFilters, "minRating" | "yearRange">;
 type BrowseFilterKey = keyof DiscoveryBrowseFilters;
 
 interface BrowseAppliedBadge {
@@ -1887,7 +1896,15 @@ function buildBrowseFilterBadges(filters: DiscoveryBrowseFilters): BrowseApplied
   appendBrowseBadges(badges, "genres", filters.genres, browseGenreOptions);
   appendBrowseBadges(badges, "demographics", filters.demographics, browseDemographicOptions);
   appendBrowseBadges(badges, "regions", filters.regions, browseRegionOptions);
-  for (const year of filters.years) badges.push({ field: "years", key: `year-${year}`, label: String(year), value: year });
+  for (const year of filters.years) badges.push({ field: "years", key: `year-${year}`, label: `${year}年`, value: year });
+  if (filters.yearRange) {
+    badges.push({
+      field: "yearRange",
+      key: `year-range-${filters.yearRange.kind}`,
+      label: filters.yearRange.kind === "future" ? "未来年份" : "更早年份",
+      value: filters.yearRange.kind
+    });
+  }
   if (filters.minRating > 0) badges.push({ field: "minRating", key: "rating", label: `评分 ≥ ${filters.minRating.toFixed(1)}`, value: filters.minRating });
   return badges;
 }
@@ -1914,8 +1931,34 @@ function cloneBrowseFilters(filters: DiscoveryBrowseFilters): DiscoveryBrowseFil
     regions: [...filters.regions],
     airingStatuses: [...filters.airingStatuses],
     years: [...filters.years],
+    yearRange: filters.yearRange ? { ...filters.yearRange } : null,
     minRating: filters.minRating
   };
+}
+
+type BrowseTimeValue = "future" | "earlier" | `year:${number}`;
+
+/** 将已保存的年份条件转换为筛选按钮使用的稳定值。 */
+function getSelectedBrowseTimeValue(filters: DiscoveryBrowseFilters): BrowseTimeValue | undefined {
+  const year = filters.years[0];
+  if (year !== undefined) return `year:${year}`;
+  return filters.yearRange?.kind;
+}
+
+/** 切换单一时间条件，并保证具体年份与范围不会同时生效。 */
+function toggleBrowseTime(
+  filters: DiscoveryBrowseFilters,
+  value: BrowseTimeValue,
+  currentYear: number
+): Pick<DiscoveryBrowseFilters, "years" | "yearRange"> {
+  if (getSelectedBrowseTimeValue(filters) === value) return { years: [], yearRange: null };
+  if (value === "future") {
+    return { years: [], yearRange: { kind: "future", startYear: currentYear + 1 } };
+  }
+  if (value === "earlier") {
+    return { years: [], yearRange: { kind: "earlier", endYear: currentYear - 9 } };
+  }
+  return { years: [Number(value.slice("year:".length))], yearRange: null };
 }
 
 function toggleBrowseValue<T extends string | number>(values: T[], value: T): T[] {

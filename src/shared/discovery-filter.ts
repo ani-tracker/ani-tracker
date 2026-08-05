@@ -2,9 +2,36 @@ import type { Anime, AnimeAiringStatus, AnimeFormat } from "./domain";
 
 export type DiscoveryBrowseSortKey = "bangumiRank" | "recent" | "rating";
 export type DiscoverySourceMaterial = "original" | "manga" | "lightNovel" | "game" | "other";
-export type DiscoveryGenre = "action" | "fantasy" | "sciFi" | "sliceOfLife" | "mystery" | "comedy";
+export type DiscoveryGenre =
+  | "reasoning"
+  | "harem"
+  | "sciFi"
+  | "girlsLove"
+  | "horror"
+  | "romance"
+  | "music"
+  | "school"
+  | "timeTravel"
+  | "action"
+  | "sports"
+  | "martialArts"
+  | "fantasy"
+  | "thriller"
+  | "comedy"
+  | "sliceOfLife"
+  | "mystery"
+  | "adventure"
+  | "history"
+  | "otome"
+  | "food"
+  | "workplace"
+  | "xuanhuan"
+  | "mecha";
 export type DiscoveryDemographic = "shounen" | "shoujo" | "seinen" | "josei" | "kids";
 export type DiscoveryRegion = "japan" | "china" | "korea" | "western" | "other";
+export type DiscoveryYearRange =
+  | { kind: "future"; startYear: number }
+  | { kind: "earlier"; endYear: number };
 
 export interface DiscoveryBrowseFilters {
   formats: AnimeFormat[];
@@ -14,6 +41,7 @@ export interface DiscoveryBrowseFilters {
   regions: DiscoveryRegion[];
   airingStatuses: AnimeAiringStatus[];
   years: number[];
+  yearRange: DiscoveryYearRange | null;
   minRating: number;
 }
 
@@ -27,6 +55,7 @@ export function createEmptyDiscoveryBrowseFilters(): DiscoveryBrowseFilters {
     regions: [],
     airingStatuses: [],
     years: [],
+    yearRange: null,
     minRating: 0
   };
 }
@@ -40,6 +69,7 @@ export function countDiscoveryBrowseFilters(filters: DiscoveryBrowseFilters): nu
     + filters.regions.length
     + filters.airingStatuses.length
     + filters.years.length
+    + (filters.yearRange ? 1 : 0)
     + (filters.minRating > 0 ? 1 : 0);
 }
 
@@ -83,8 +113,14 @@ function matchesFilters(anime: Anime, filters: DiscoveryBrowseFilters): boolean 
   if (filters.regions.length > 0 && !matchesRegion(detail?.countryOfOrigin, filters.regions)) return false;
   if (filters.airingStatuses.length > 0 && (!detail?.airingStatus || !filters.airingStatuses.includes(detail.airingStatus))) return false;
   if (filters.years.length > 0 && !filters.years.includes(anime.premiereYear)) return false;
+  if (filters.yearRange && !matchesYearRange(anime.premiereYear, filters.yearRange)) return false;
   if (filters.minRating > 0 && (!anime.rating || anime.rating.score < filters.minRating)) return false;
   return true;
+}
+
+/** 判断首播年份是否命中未来或更早年份区间。 */
+function matchesYearRange(year: number, range: DiscoveryYearRange): boolean {
+  return range.kind === "future" ? year >= range.startYear : year < range.endYear;
 }
 
 function compareBrowseItems(left: Anime, right: Anime, sortKey: DiscoveryBrowseSortKey): number {
@@ -148,12 +184,30 @@ const sourceMaterialPatterns: Record<DiscoverySourceMaterial, readonly string[]>
 };
 
 const genrePatterns: Record<DiscoveryGenre, readonly string[]> = {
-  action: ["action", "动作", "热血"],
-  fantasy: ["fantasy", "奇幻", "魔法"],
+  reasoning: ["reasoning", "detective", "推理"],
+  harem: ["harem", "后宫"],
   sciFi: ["sci-fi", "science fiction", "科幻"],
+  girlsLove: ["girls love", "yuri", "百合"],
+  horror: ["horror", "恐怖"],
+  romance: ["romance", "恋爱"],
+  music: ["music", "音乐"],
+  school: ["school", "校园"],
+  timeTravel: ["time travel", "穿越"],
+  action: ["action", "battle", "动作", "战斗", "热血"],
+  sports: ["sports", "运动"],
+  martialArts: ["martial arts", "武侠"],
+  fantasy: ["fantasy", "奇幻", "魔法"],
+  thriller: ["thriller", "惊悚"],
+  comedy: ["comedy", "搞笑", "喜剧"],
   sliceOfLife: ["slice of life", "日常"],
-  mystery: ["mystery", "悬疑", "推理"],
-  comedy: ["comedy", "搞笑", "喜剧"]
+  mystery: ["mystery", "suspense", "悬疑"],
+  adventure: ["adventure", "冒险"],
+  history: ["history", "historical", "历史"],
+  otome: ["otome", "乙女"],
+  food: ["food", "gourmet", "美食"],
+  workplace: ["workplace", "职场"],
+  xuanhuan: ["xuanhuan", "玄幻"],
+  mecha: ["mecha", "机战"]
 };
 
 const demographicPatterns: Record<DiscoveryDemographic, readonly string[]> = {

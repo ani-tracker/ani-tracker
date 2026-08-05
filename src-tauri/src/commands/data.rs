@@ -15,9 +15,10 @@ use ani_domain::{
     Anime, AnimeDetailResult, AnimeDiscoveryQuery, AnimeDiscoveryResult,
     AnimeDiscoverySearchResult, AnimeDiscoverySeasonQuery, AnimeDiscoverySeasonResult,
     AnimeDiscoverySyncTaskStatus, AnimeSeasonSyncState, AnimeWatchProgress, AppSettings,
-    BangumiBrowseQuery, BangumiBrowseResult, DashboardData, Episode, EpisodePreference,
-    FansubGroup, MyAnime, NotificationRecord, PlaybackCheckpoint, ReleaseSourceConfig,
-    ReportPlaybackProgressInput, SavePlaybackCheckpointInput, SetAnimeWatchProgressInput,
+    BangumiBrowseQuery, BangumiBrowseResult, BangumiBrowseYearRange, DashboardData, Episode,
+    EpisodePreference, FansubGroup, MyAnime, NotificationRecord, PlaybackCheckpoint,
+    ReleaseSourceConfig, ReportPlaybackProgressInput, SavePlaybackCheckpointInput,
+    SetAnimeWatchProgressInput,
 };
 use ani_repository::{prelude::*, RepositoryError};
 use ani_sources::{
@@ -761,12 +762,21 @@ pub(crate) async fn browse_bangumi_anime(
             message: "Bangumi 搜索关键词长度或格式无效".to_owned(),
         });
     }
+    let invalid_year_range = query.filters.year_range.as_ref().is_some_and(|range| {
+        let boundary = match range {
+            BangumiBrowseYearRange::Future { start_year } => start_year,
+            BangumiBrowseYearRange::Earlier { end_year } => end_year,
+        };
+        !(1900..=2200).contains(boundary)
+    });
     if query.filters.years.len() > 1
+        || (!query.filters.years.is_empty() && query.filters.year_range.is_some())
         || query
             .filters
             .years
             .iter()
             .any(|year| !(1900..=2200).contains(year))
+        || invalid_year_range
         || !query.filters.min_rating.is_finite()
         || !(0.0..=10.0).contains(&query.filters.min_rating)
     {

@@ -85,3 +85,49 @@ test("地区筛选兼容 ISO 国家码并排除缺失地区的目录", () => {
     ["anilist-2"]
   );
 });
+
+test("题材筛选区分推理和悬疑，并覆盖 Bangumi 长尾题材", () => {
+  const reasoningAnime: Anime = {
+    ...anime[0],
+    id: "reasoning-4",
+    title: "推理番",
+    detail: { ...anime[0].detail, genres: ["推理"] }
+  };
+  const mysteryAnime: Anime = {
+    ...anime[0],
+    id: "mystery-5",
+    title: "悬疑番",
+    detail: { ...anime[0].detail, genres: ["悬疑"] }
+  };
+
+  const reasoningFilters = createEmptyDiscoveryBrowseFilters();
+  reasoningFilters.genres = ["reasoning"];
+  assert.deepEqual(
+    filterDiscoveryBrowseItems([reasoningAnime, mysteryAnime], "", reasoningFilters, "rating").map((item) => item.id),
+    ["reasoning-4"]
+  );
+
+  const mechaFilters = createEmptyDiscoveryBrowseFilters();
+  mechaFilters.genres = ["mecha"];
+  const mechaAnime = { ...reasoningAnime, id: "mecha-6", detail: { ...reasoningAnime.detail, genres: ["机战"] } };
+  assert.deepEqual(
+    filterDiscoveryBrowseItems([reasoningAnime, mechaAnime], "", mechaFilters, "rating").map((item) => item.id),
+    ["mecha-6"]
+  );
+});
+
+test("时间筛选支持未来年份和更早年份区间", () => {
+  const futureFilters = createEmptyDiscoveryBrowseFilters();
+  futureFilters.yearRange = { kind: "future", startYear: 2026 };
+  assert.deepEqual(
+    filterDiscoveryBrowseItems(anime, "", futureFilters, "recent").map((item) => item.id),
+    ["anilist-2"]
+  );
+
+  const earlierFilters = createEmptyDiscoveryBrowseFilters();
+  earlierFilters.yearRange = { kind: "earlier", endYear: 2025 };
+  assert.deepEqual(
+    filterDiscoveryBrowseItems(anime, "", earlierFilters, "recent").map((item) => item.id),
+    ["sparse-3"]
+  );
+});

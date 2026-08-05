@@ -869,6 +869,20 @@ pub enum BangumiBrowseSort {
     Rating,
 }
 
+/// Bangumi 在线浏览的未来或更早年份区间。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum BangumiBrowseYearRange {
+    Future {
+        #[serde(rename = "startYear")]
+        start_year: i64,
+    },
+    Earlier {
+        #[serde(rename = "endYear")]
+        end_year: i64,
+    },
+}
+
 /// Bangumi 在线浏览筛选条件，不依赖本地季度目录。
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -885,6 +899,8 @@ pub struct BangumiBrowseFilters {
     pub regions: Vec<String>,
     #[serde(default)]
     pub years: Vec<i64>,
+    #[serde(default)]
+    pub year_range: Option<BangumiBrowseYearRange>,
     #[serde(default)]
     pub min_rating: f64,
 }

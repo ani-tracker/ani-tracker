@@ -5,7 +5,7 @@ use std::time::Instant;
 use ani_domain::{
     Anime, AnimeAlias, AnimeAliasLanguage, AnimeDetailPartialError, AnimeRating,
     BangumiBrowseFilters, BangumiBrowseQuery, BangumiBrowseResult, BangumiBrowseSort,
-    ReleaseSourceConfig, SourceKind,
+    BangumiBrowseYearRange, ReleaseSourceConfig, SourceKind,
 };
 use chrono::{Datelike, NaiveDate, SecondsFormat, TimeZone, Utc};
 use futures_util::stream::{self, StreamExt};
@@ -270,11 +270,8 @@ impl AnimeMetadataService {
         if !tags.is_empty() {
             filter.insert("tag".to_owned(), json!(tags));
         }
-        if let Some(year) = query.filters.years.first() {
-            filter.insert(
-                "air_date".to_owned(),
-                json!([format!(">={year}-01-01"), format!("<{}-01-01", year + 1)]),
-            );
+        if let Some(air_date) = bangumi_browse_air_date(&query.filters) {
+            filter.insert("air_date".to_owned(), json!(air_date));
         }
         if query.filters.min_rating > 0.0 {
             filter.insert(
@@ -2112,12 +2109,30 @@ fn bangumi_browse_tags(filters: &BangumiBrowseFilters) -> Vec<String> {
     }
     for value in &filters.genres {
         if let Some(tag) = match value.as_str() {
-            "action" => Some("动作"),
-            "fantasy" => Some("奇幻"),
+            "reasoning" => Some("推理"),
+            "harem" => Some("后宫"),
             "sciFi" => Some("科幻"),
+            "girlsLove" => Some("百合"),
+            "horror" => Some("恐怖"),
+            "romance" => Some("恋爱"),
+            "music" => Some("音乐"),
+            "school" => Some("校园"),
+            "timeTravel" => Some("穿越"),
+            "action" => Some("战斗"),
+            "sports" => Some("运动"),
+            "martialArts" => Some("武侠"),
+            "fantasy" => Some("奇幻"),
+            "thriller" => Some("惊悚"),
+            "comedy" => Some("搞笑"),
             "sliceOfLife" => Some("日常"),
             "mystery" => Some("悬疑"),
-            "comedy" => Some("搞笑"),
+            "adventure" => Some("冒险"),
+            "history" => Some("历史"),
+            "otome" => Some("乙女"),
+            "food" => Some("美食"),
+            "workplace" => Some("职场"),
+            "xuanhuan" => Some("玄幻"),
+            "mecha" => Some("机战"),
             _ => None,
         } {
             tags.insert(tag.to_owned());
@@ -2147,6 +2162,24 @@ fn bangumi_browse_tags(filters: &BangumiBrowseFilters) -> Vec<String> {
         }
     }
     tags.into_iter().collect()
+}
+
+/// 将单年、未来年份和更早年份转换为 Bangumi air_date 条件。
+fn bangumi_browse_air_date(filters: &BangumiBrowseFilters) -> Option<Vec<String>> {
+    if let Some(year) = filters.years.first() {
+        return Some(vec![
+            format!(">={year}-01-01"),
+            format!("<{}-01-01", year + 1),
+        ]);
+    }
+    filters.year_range.map(|range| match range {
+        BangumiBrowseYearRange::Future { start_year } => {
+            vec![format!(">={start_year}-01-01")]
+        }
+        BangumiBrowseYearRange::Earlier { end_year } => {
+            vec![format!("<{end_year}-01-01")]
+        }
+    })
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -3300,13 +3333,13 @@ fn remove_nulls(value: &mut Value) {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::sync::{Arc, Mutex};
 
     use ani_domain::RequestCircuitState;
     use ani_domain::{
         Anime, AnimeAlias, AnimeAliasLanguage, BangumiBrowseFilters, BangumiBrowseQuery,
-        BangumiBrowseSort,
+        BangumiBrowseSort, BangumiBrowseYearRange,
     };
     use ani_repository::{RepositoryError, RepositoryResult};
     use chrono::Utc;
@@ -3980,6 +4013,83 @@ mod tests {
         assert!(browse_request.contains("\"sort\":\"score\""));
         assert!(browse_request.contains("\"tag\":[\"奇幻\"]"));
         assert!(browse_request.contains("\"air_date\":[\">=2026-01-01\",\"<2027-01-01\"]"));
+    }
+
+    /// 验证截图中的完整题材均映射为独立 Bangumi 标签。
+    #[test]
+    fn maps_complete_bangumi_browse_genres() {
+        let genres = vec![
+            "reasoning",
+            "harem",
+            "sciFi",
+            "girlsLove",
+            "horror",
+            "romance",
+            "music",
+            "school",
+            "timeTravel",
+            "action",
+            "sports",
+            "martialArts",
+            "fantasy",
+            "thriller",
+            "comedy",
+            "sliceOfLife",
+            "mystery",
+            "adventure",
+            "history",
+            "otome",
+            "food",
+            "workplace",
+            "xuanhuan",
+            "mecha",
+        ];
+        let filters = BangumiBrowseFilters {
+            genres: genres.into_iter().map(str::to_owned).collect(),
+            ..BangumiBrowseFilters::default()
+        };
+        let actual = super::bangumi_browse_tags(&filters)
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        let expected = [
+            "推理", "后宫", "科幻", "百合", "恐怖", "恋爱", "音乐", "校园", "穿越", "战斗", "运动",
+            "武侠", "奇幻", "惊悚", "搞笑", "日常", "悬疑", "冒险", "历史", "乙女", "美食", "职场",
+            "玄幻", "机战",
+        ]
+        .into_iter()
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected);
+    }
+
+    /// 验证未来、单年和更早年份使用互不重叠的日期边界。
+    #[test]
+    fn maps_bangumi_browse_year_ranges() {
+        let exact = BangumiBrowseFilters {
+            years: vec![2026],
+            ..BangumiBrowseFilters::default()
+        };
+        let future = BangumiBrowseFilters {
+            year_range: Some(BangumiBrowseYearRange::Future { start_year: 2027 }),
+            ..BangumiBrowseFilters::default()
+        };
+        let earlier = BangumiBrowseFilters {
+            year_range: Some(BangumiBrowseYearRange::Earlier { end_year: 2017 }),
+            ..BangumiBrowseFilters::default()
+        };
+
+        assert_eq!(
+            super::bangumi_browse_air_date(&exact),
+            Some(vec![">=2026-01-01".to_owned(), "<2027-01-01".to_owned()])
+        );
+        assert_eq!(
+            super::bangumi_browse_air_date(&future),
+            Some(vec![">=2027-01-01".to_owned()])
+        );
+        assert_eq!(
+            super::bangumi_browse_air_date(&earlier),
+            Some(vec!["<2017-01-01".to_owned()])
+        );
     }
 
     /// 验证在线搜索聚合 Bangumi/AniList，并隔离 Mikan 单来源失败。
