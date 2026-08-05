@@ -37,6 +37,7 @@ const METHODS: &[MethodDefinition] = &[
     ),
     method("listMyAnime", "library.read", RpcEffect::Read),
     method("upsertMyAnime", "library.write", RpcEffect::Write),
+    method("followBangumiAnime", "library.write", RpcEffect::Write),
     method("removeMyAnime", "library.write", RpcEffect::Write),
     method("listMyAnimeWatchProgress", "library.read", RpcEffect::Read),
     method("setAnimeWatchProgress", "library.write", RpcEffect::Write),
@@ -45,6 +46,7 @@ const METHODS: &[MethodDefinition] = &[
     method("listAnimeCatalog", "catalog.read", RpcEffect::Read),
     method("getAnimeDetail", "catalog.read", RpcEffect::Read),
     method("searchAnimeCatalog", "catalog.read", RpcEffect::Read),
+    method("browseBangumiAnime", "catalog.read", RpcEffect::Read),
     method("listFansubs", "library.read", RpcEffect::Read),
     method("listEpisodes", "library.read", RpcEffect::Read),
     method("upsertEpisode", "library.write", RpcEffect::Write),
@@ -291,8 +293,18 @@ fn validate_args(method: &str, args: Vec<Value>) -> Result<Vec<Value>, RemoteRpc
                 .ok_or_else(|| invalid_args("搜索关键词长度必须为 1-120 个字符"))?;
             Ok(vec![Value::String(keyword.to_owned())])
         }
+        "browseBangumiAnime" => validate_domain_object::<ani_domain::BangumiBrowseQuery>(
+            args,
+            &["keyword", "sort", "filters", "page", "pageSize"],
+            |object| {
+                validate_optional_text(object.get("keyword"), "Bangumi 搜索关键词", 120)?;
+                validate_number(object.get("page"), "Bangumi 页码", 1.0, 100_000.0)?;
+                validate_number(object.get("pageSize"), "Bangumi 每页数量", 1.0, 50.0)?;
+                Ok(())
+            },
+        ),
         "listAnimeCatalog" => validate_year_month(args),
-        "upsertMyAnime" => validate_domain_object::<ani_domain::MyAnime>(
+        "upsertMyAnime" | "followBangumiAnime" => validate_domain_object::<ani_domain::MyAnime>(
             args,
             &[
                 "id",
@@ -1135,7 +1147,7 @@ fn invalid_args(message: impl Into<String>) -> RemoteRpcError {
 
 fn sanitize_result(method: &str, mut value: Value) -> Result<Value, RemoteRpcError> {
     match method {
-        "listMyAnime" | "upsertMyAnime" | "removeMyAnime" => {
+        "listMyAnime" | "upsertMyAnime" | "followBangumiAnime" | "removeMyAnime" => {
             sanitize_array(&mut value, sanitize_my_anime)?
         }
         "listDownloads"
@@ -1197,6 +1209,13 @@ fn sanitize_result(method: &str, mut value: Value) -> Result<Value, RemoteRpcErr
                 for error in errors {
                     redact_string(Some(error));
                 }
+            }
+        }
+        "browseBangumiAnime" => {
+            let object = require_result_object(&mut value, "Bangumi 浏览结果")?;
+            redact_string(object.get_mut("source"));
+            if let Some(Value::Object(query)) = object.get_mut("query") {
+                redact_string(query.get_mut("keyword"));
             }
         }
         "searchReleases" | "searchAnimeReleases" | "searchRssSubscriptionReleases" => {

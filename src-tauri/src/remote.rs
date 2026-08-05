@@ -419,6 +419,17 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                 })
                 .await
             }
+            "followBangumiAnime" => {
+                let item: MyAnime = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::data::follow_bangumi_anime(
+                        item,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
             "removeMyAnime" => {
                 let id = string_arg(&args, 0)?;
                 self.query(move |repository| repository.remove_my_anime(&id))
@@ -459,6 +470,17 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                 command_value(
                     crate::commands::data::search_anime_catalog(
                         keyword,
+                        self.app.state(),
+                        self.app.state(),
+                    )
+                    .await,
+                )
+            }
+            "browseBangumiAnime" => {
+                let query = value_arg(&args, 0)?;
+                command_value(
+                    crate::commands::data::browse_bangumi_anime(
+                        query,
                         self.app.state(),
                         self.app.state(),
                     )

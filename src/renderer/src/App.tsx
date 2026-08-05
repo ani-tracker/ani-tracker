@@ -94,6 +94,7 @@ interface ReleaseSearchIntent {
 }
 
 interface RenderPageOptions {
+  discoveryWorkspaceTabs: boolean;
   onOpenAnimeDetail: (animeId: string) => void;
   onOpenDownloads: () => void;
   onOpenLibraryAction: (animeId: string, action: AnimeDetailLibraryAction) => void;
@@ -181,6 +182,7 @@ function renderPage(page: PageId, options: RenderPageOptions) {
         <DiscoveryPage
           onOpenAnimeDetail={options.onOpenAnimeDetail}
           onOpenSchedule={options.onOpenDiscoverySchedule}
+          workspaceTabs={options.discoveryWorkspaceTabs}
         />
       );
     case "releaseSearch":
@@ -607,6 +609,7 @@ function MainApplication() {
       >
         <div className={detailView || discoverySchedule ? "hidden" : undefined}>
           {renderPage(activePage, {
+            discoveryWorkspaceTabs: runtime !== "android" && runtime !== "ios",
             onOpenAnimeDetail: openAnimeDetail,
             onOpenDownloads: () => navigatePage("downloads"),
             onOpenLibraryAction: openLibraryAction,

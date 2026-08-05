@@ -860,6 +860,59 @@ pub struct AnimeDiscoverySeasonQuery {
     pub force_refresh: bool,
 }
 
+/// Bangumi 在线浏览使用的排序方式。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum BangumiBrowseSort {
+    BangumiRank,
+    Recent,
+    Rating,
+}
+
+/// Bangumi 在线浏览筛选条件，不依赖本地季度目录。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangumiBrowseFilters {
+    #[serde(default)]
+    pub formats: Vec<String>,
+    #[serde(default)]
+    pub source_materials: Vec<String>,
+    #[serde(default)]
+    pub genres: Vec<String>,
+    #[serde(default)]
+    pub demographics: Vec<String>,
+    #[serde(default)]
+    pub regions: Vec<String>,
+    #[serde(default)]
+    pub years: Vec<i64>,
+    #[serde(default)]
+    pub min_rating: f64,
+}
+
+/// Bangumi 在线浏览的分页输入。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangumiBrowseQuery {
+    #[serde(default)]
+    pub keyword: String,
+    pub sort: BangumiBrowseSort,
+    #[serde(default)]
+    pub filters: BangumiBrowseFilters,
+    pub page: usize,
+    pub page_size: usize,
+}
+
+/// Bangumi 在线浏览的分页响应。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BangumiBrowseResult {
+    pub query: BangumiBrowseQuery,
+    pub items: Vec<Anime>,
+    pub total: usize,
+    pub has_more: bool,
+    pub source: String,
+}
+
 /// 月度新番采集及持久化结果。
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

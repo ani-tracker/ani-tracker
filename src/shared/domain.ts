@@ -64,6 +64,7 @@ export interface AnimeDetailMetadata {
   durationMinutes?: number;
   contentRating?: string;
   demographic?: string;
+  countryOfOrigin?: string;
   ranking?: AnimeRanking;
   metadataSources?: string[];
   refreshedAt?: string;
