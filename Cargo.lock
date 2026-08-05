@@ -298,6 +298,7 @@ dependencies = [
  "chrono",
  "dotenvy",
  "dunce",
+ "hyper-util",
  "keyring",
  "log",
  "objc2-app-kit",

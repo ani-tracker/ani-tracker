@@ -1,3 +1,5 @@
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex};
 
 use ani_automation::{
@@ -18,6 +20,7 @@ use ani_sources::{
     SourceError, SourceNetworkService,
 };
 use ani_storage::Storage;
+use hyper_util::client::proxy::matcher::Matcher;
 use serde_json::Value;
 use tokio::sync::Mutex as AsyncMutex;
 
@@ -338,7 +341,52 @@ impl AutomationScanStore for SharedReleaseSearchStore {
 
 struct NetworkRuntime {
     config: NativeHttpConfig,
+    system_proxy_state: Option<SystemProxyState>,
     service: Arc<SourceNetworkService>,
+}
+
+/// 标识 Native HTTP 客户端创建时读取到的系统代理状态。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SystemProxyState {
+    fingerprint: u64,
+    detected: bool,
+}
+
+impl SystemProxyState {
+    /// 读取与 reqwest 相同的系统代理来源并生成不泄露凭据的进程内指纹。
+    fn capture() -> Self {
+        const PROXY_ENV_KEYS: &[&str] = &[
+            "ALL_PROXY",
+            "all_proxy",
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "NO_PROXY",
+            "no_proxy",
+        ];
+
+        let matcher = Matcher::from_system();
+        let http_uri = "http://ani-tracker.invalid/"
+            .parse()
+            .expect("固定 HTTP 代理探测地址必须合法");
+        let https_uri = "https://ani-tracker.invalid/"
+            .parse()
+            .expect("固定 HTTPS 代理探测地址必须合法");
+        let detected =
+            matcher.intercept(&http_uri).is_some() || matcher.intercept(&https_uri).is_some();
+
+        let mut hasher = DefaultHasher::new();
+        format!("{matcher:?}").hash(&mut hasher);
+        for key in PROXY_ENV_KEYS {
+            key.hash(&mut hasher);
+            std::env::var_os(key).hash(&mut hasher);
+        }
+        Self {
+            fingerprint: hasher.finish(),
+            detected,
+        }
+    }
 }
 
 /// 根据当前代理设置复用或重建 Rust 来源网络服务。
@@ -361,19 +409,46 @@ impl AppSourceState {
         settings: &Value,
     ) -> Result<Arc<SourceNetworkService>, SourceError> {
         let config = native_http_config(settings);
+        let system_proxy_state =
+            (config.proxy_mode == ProxyMode::System).then(SystemProxyState::capture);
+        self.network_service_for_config(config, system_proxy_state)
+            .await
+    }
+
+    /// 按配置和系统代理快照复用连接池，供正式调用与缓存行为测试共用。
+    async fn network_service_for_config(
+        &self,
+        config: NativeHttpConfig,
+        observed_system_proxy_state: Option<SystemProxyState>,
+    ) -> Result<Arc<SourceNetworkService>, SourceError> {
+        let system_proxy_state = (config.proxy_mode == ProxyMode::System)
+            .then_some(observed_system_proxy_state)
+            .flatten();
         let mut runtime = self.runtime.lock().await;
-        if let Some(current) = runtime.as_ref().filter(|current| current.config == config) {
+        if let Some(current) = runtime.as_ref().filter(|current| {
+            current.config == config && current.system_proxy_state == system_proxy_state
+        }) {
             return Ok(Arc::clone(&current.service));
         }
+        let rebuild_reason = match runtime.as_ref() {
+            None => "initial",
+            Some(current) if current.config != config => "config_changed",
+            Some(_) => "system_proxy_changed",
+        };
         let service = Arc::new(SourceNetworkService::new(config.clone())?);
         log::info!(
-            "Tauri 来源网络连接池已装配 proxy_mode={:?} timeout_ms={} response_limit={}",
+            "Tauri 来源网络连接池已装配 reason={} proxy_mode={:?} system_proxy_detected={} timeout_ms={} response_limit={}",
+            rebuild_reason,
             config.proxy_mode,
+            system_proxy_state
+                .as_ref()
+                .is_some_and(|state| state.detected),
             config.timeout_ms,
             config.max_response_bytes
         );
         *runtime = Some(NetworkRuntime {
             config,
+            system_proxy_state,
             service: Arc::clone(&service),
         });
         Ok(service)
@@ -412,8 +487,17 @@ pub(crate) fn native_http_config(settings: &Value) -> NativeHttpConfig {
 mod tests {
     use ani_sources::ProxyMode;
     use serde_json::json;
+    use std::sync::Arc;
 
-    use super::native_http_config;
+    use super::{native_http_config, AppSourceState, SystemProxyState};
+
+    /// 构造不依赖主机代理设置的缓存测试快照。
+    fn proxy_state(fingerprint: u64, detected: bool) -> SystemProxyState {
+        SystemProxyState {
+            fingerprint,
+            detected,
+        }
+    }
 
     /// 验证设置中的代理模式、地址和超时映射到 Native HTTP 配置。
     #[test]
@@ -437,5 +521,56 @@ mod tests {
     fn defaults_native_http_timeout_to_thirty_seconds() {
         let config = native_http_config(&json!({}));
         assert_eq!(config.timeout_ms, 30_000);
+    }
+
+    /// 验证相同系统代理指纹复用连接池，指纹变化后立即重建。
+    #[tokio::test]
+    async fn refreshes_network_service_when_system_proxy_changes() {
+        let state = AppSourceState::new();
+        let config = native_http_config(&json!({}));
+        let first = state
+            .network_service_for_config(config.clone(), Some(proxy_state(1, true)))
+            .await
+            .expect("create initial system proxy service");
+        let reused = state
+            .network_service_for_config(config.clone(), Some(proxy_state(1, true)))
+            .await
+            .expect("reuse unchanged system proxy service");
+        let refreshed = state
+            .network_service_for_config(config, Some(proxy_state(2, false)))
+            .await
+            .expect("refresh changed system proxy service");
+
+        assert!(Arc::ptr_eq(&first, &reused));
+        assert!(!Arc::ptr_eq(&first, &refreshed));
+    }
+
+    /// 验证关闭和手动代理模式不会因系统代理指纹变化而重建连接池。
+    #[tokio::test]
+    async fn ignores_system_proxy_changes_outside_system_mode() {
+        for settings in [
+            json!({"network": {"metadataProxy": {"mode": "off"}}}),
+            json!({
+                "network": {
+                    "metadataProxy": {
+                        "mode": "manual",
+                        "url": "http://127.0.0.1:7890"
+                    }
+                }
+            }),
+        ] {
+            let state = AppSourceState::new();
+            let config = native_http_config(&settings);
+            let first = state
+                .network_service_for_config(config.clone(), Some(proxy_state(1, true)))
+                .await
+                .expect("create non-system proxy service");
+            let reused = state
+                .network_service_for_config(config, Some(proxy_state(2, false)))
+                .await
+                .expect("reuse non-system proxy service");
+
+            assert!(Arc::ptr_eq(&first, &reused));
+        }
     }
 }
