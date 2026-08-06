@@ -1,6 +1,8 @@
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::net::{IpAddr, UdpSocket};
 use std::sync::{Arc, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_automation::{
     AnimeDiscoverySyncStore, AutomationDownloadReference, AutomationScanStore, EpisodeSyncStore,
@@ -342,6 +344,8 @@ impl AutomationScanStore for SharedReleaseSearchStore {
 struct NetworkRuntime {
     config: NativeHttpConfig,
     system_proxy_state: Option<SystemProxyState>,
+    physical_network_state: PhysicalNetworkState,
+    generation: u64,
     service: Arc<SourceNetworkService>,
 }
 
@@ -389,10 +393,53 @@ impl SystemProxyState {
     }
 }
 
+/// 标识操作系统为 IPv4/IPv6 默认路由选择的本地出口地址。
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PhysicalNetworkState {
+    ipv4: Option<IpAddr>,
+    ipv6: Option<IpAddr>,
+}
+
+impl PhysicalNetworkState {
+    /// 只执行本地路由选择，不发送探测数据包。
+    fn capture() -> Self {
+        Self {
+            ipv4: outbound_local_ip("0.0.0.0:0", "192.0.2.1:9"),
+            ipv6: outbound_local_ip("[::]:0", "[2001:db8::1]:9"),
+        }
+    }
+
+    /// 判断当前至少存在一种可选择的默认出口。
+    fn is_detected(&self) -> bool {
+        self.ipv4.is_some() || self.ipv6.is_some()
+    }
+}
+
+/// 通过 UDP connect 查询默认路由选择的本地地址，不产生远端流量。
+fn outbound_local_ip(bind_address: &str, route_target: &str) -> Option<IpAddr> {
+    let socket = UdpSocket::bind(bind_address).ok()?;
+    socket.connect(route_target).ok()?;
+    let address = socket.local_addr().ok()?.ip();
+    (!address.is_unspecified()).then_some(address)
+}
+
+/// 创建只用于本进程熔断隔离的匿名标识。
+fn process_network_context() -> String {
+    let started_at = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mut hasher = DefaultHasher::new();
+    std::process::id().hash(&mut hasher);
+    started_at.hash(&mut hasher);
+    format!("{:016x}", hasher.finish())
+}
+
 /// 根据当前代理设置复用或重建 Rust 来源网络服务。
 #[derive(Clone)]
 pub(crate) struct AppSourceState {
     runtime: Arc<AsyncMutex<Option<NetworkRuntime>>>,
+    process_network_context: Arc<str>,
 }
 
 impl AppSourceState {
@@ -400,6 +447,7 @@ impl AppSourceState {
     pub(crate) fn new() -> Self {
         Self {
             runtime: Arc::new(AsyncMutex::new(None)),
+            process_network_context: Arc::from(process_network_context()),
         }
     }
 
@@ -411,7 +459,7 @@ impl AppSourceState {
         let config = native_http_config(settings);
         let system_proxy_state =
             (config.proxy_mode == ProxyMode::System).then(SystemProxyState::capture);
-        self.network_service_for_config(config, system_proxy_state)
+        self.network_service_for_config(config, system_proxy_state, PhysicalNetworkState::capture())
             .await
     }
 
@@ -420,35 +468,52 @@ impl AppSourceState {
         &self,
         config: NativeHttpConfig,
         observed_system_proxy_state: Option<SystemProxyState>,
+        physical_network_state: PhysicalNetworkState,
     ) -> Result<Arc<SourceNetworkService>, SourceError> {
         let system_proxy_state = (config.proxy_mode == ProxyMode::System)
             .then_some(observed_system_proxy_state)
             .flatten();
         let mut runtime = self.runtime.lock().await;
         if let Some(current) = runtime.as_ref().filter(|current| {
-            current.config == config && current.system_proxy_state == system_proxy_state
+            current.config == config
+                && current.system_proxy_state == system_proxy_state
+                && current.physical_network_state == physical_network_state
         }) {
             return Ok(Arc::clone(&current.service));
         }
         let rebuild_reason = match runtime.as_ref() {
             None => "initial",
             Some(current) if current.config != config => "config_changed",
-            Some(_) => "system_proxy_changed",
+            Some(current) if current.system_proxy_state != system_proxy_state => {
+                "system_proxy_changed"
+            }
+            Some(_) => "physical_network_changed",
         };
-        let service = Arc::new(SourceNetworkService::new(config.clone())?);
+        let generation = runtime
+            .as_ref()
+            .map_or(1, |current| current.generation.checked_add(1).unwrap_or(1));
+        let network_context = format!("{}-{generation}", self.process_network_context);
+        let service = Arc::new(SourceNetworkService::new_with_network_context(
+            config.clone(),
+            network_context,
+        )?);
         log::info!(
-            "Tauri 来源网络连接池已装配 reason={} proxy_mode={:?} system_proxy_detected={} timeout_ms={} response_limit={}",
+            "Tauri 来源网络连接池已装配 reason={} proxy_mode={:?} system_proxy_detected={} physical_route_detected={} network_generation={} timeout_ms={} response_limit={}",
             rebuild_reason,
             config.proxy_mode,
             system_proxy_state
                 .as_ref()
                 .is_some_and(|state| state.detected),
+            physical_network_state.is_detected(),
+            generation,
             config.timeout_ms,
             config.max_response_bytes
         );
         *runtime = Some(NetworkRuntime {
             config,
             system_proxy_state,
+            physical_network_state,
+            generation,
             service: Arc::clone(&service),
         });
         Ok(service)
@@ -489,13 +554,21 @@ mod tests {
     use serde_json::json;
     use std::sync::Arc;
 
-    use super::{native_http_config, AppSourceState, SystemProxyState};
+    use super::{native_http_config, AppSourceState, PhysicalNetworkState, SystemProxyState};
 
     /// 构造不依赖主机代理设置的缓存测试快照。
     fn proxy_state(fingerprint: u64, detected: bool) -> SystemProxyState {
         SystemProxyState {
             fingerprint,
             detected,
+        }
+    }
+
+    /// 构造不依赖主机路由的网络测试快照。
+    fn physical_state(ipv4: [u8; 4]) -> PhysicalNetworkState {
+        PhysicalNetworkState {
+            ipv4: Some(ipv4.into()),
+            ipv6: None,
         }
     }
 
@@ -529,15 +602,27 @@ mod tests {
         let state = AppSourceState::new();
         let config = native_http_config(&json!({}));
         let first = state
-            .network_service_for_config(config.clone(), Some(proxy_state(1, true)))
+            .network_service_for_config(
+                config.clone(),
+                Some(proxy_state(1, true)),
+                physical_state([192, 0, 2, 10]),
+            )
             .await
             .expect("create initial system proxy service");
         let reused = state
-            .network_service_for_config(config.clone(), Some(proxy_state(1, true)))
+            .network_service_for_config(
+                config.clone(),
+                Some(proxy_state(1, true)),
+                physical_state([192, 0, 2, 10]),
+            )
             .await
             .expect("reuse unchanged system proxy service");
         let refreshed = state
-            .network_service_for_config(config, Some(proxy_state(2, false)))
+            .network_service_for_config(
+                config,
+                Some(proxy_state(2, false)),
+                physical_state([192, 0, 2, 10]),
+            )
             .await
             .expect("refresh changed system proxy service");
 
@@ -562,15 +647,40 @@ mod tests {
             let state = AppSourceState::new();
             let config = native_http_config(&settings);
             let first = state
-                .network_service_for_config(config.clone(), Some(proxy_state(1, true)))
+                .network_service_for_config(
+                    config.clone(),
+                    Some(proxy_state(1, true)),
+                    physical_state([192, 0, 2, 10]),
+                )
                 .await
                 .expect("create non-system proxy service");
             let reused = state
-                .network_service_for_config(config, Some(proxy_state(2, false)))
+                .network_service_for_config(
+                    config,
+                    Some(proxy_state(2, false)),
+                    physical_state([192, 0, 2, 10]),
+                )
                 .await
                 .expect("reuse non-system proxy service");
 
             assert!(Arc::ptr_eq(&first, &reused));
         }
+    }
+
+    /// 验证默认物理出口变化后立即重建来源连接池。
+    #[tokio::test]
+    async fn refreshes_network_service_when_physical_route_changes() {
+        let state = AppSourceState::new();
+        let config = native_http_config(&json!({"network": {"metadataProxy": {"mode": "off"}}}));
+        let first = state
+            .network_service_for_config(config.clone(), None, physical_state([192, 0, 2, 10]))
+            .await
+            .expect("create first physical network service");
+        let refreshed = state
+            .network_service_for_config(config, None, physical_state([198, 51, 100, 20]))
+            .await
+            .expect("refresh changed physical network service");
+
+        assert!(!Arc::ptr_eq(&first, &refreshed));
     }
 }

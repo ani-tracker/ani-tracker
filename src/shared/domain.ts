@@ -236,6 +236,8 @@ export interface RequestCircuitState {
   lastRequestAt?: string;
   failureCount: number;
   backoffUntil?: string;
+  /** 网络级失败所属的运行时上下文；provider 级失败为空。 */
+  networkContext?: string;
 }
 
 export interface ReleaseSourceMeta {

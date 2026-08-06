@@ -2144,14 +2144,12 @@ fn persists_p3_source_network_state() {
     repository
         .upsert_request_circuit_state(&fixture.payload.circuit_state)
         .expect("save request circuit state");
-    assert_eq!(
-        repository
-            .get_request_circuit_state(&fixture.payload.circuit_state.key)
-            .expect("read request circuit state")
-            .expect("saved request circuit state")
-            .failure_count,
-        2
-    );
+    let circuit = repository
+        .get_request_circuit_state(&fixture.payload.circuit_state.key)
+        .expect("read request circuit state")
+        .expect("saved request circuit state");
+    assert_eq!(circuit.failure_count, 2);
+    assert_eq!(circuit.network_context.as_deref(), Some("fixture-network"));
     repository
         .clear_request_circuit_state(&fixture.payload.circuit_state.key)
         .expect("clear request circuit state");
@@ -2159,6 +2157,53 @@ fn persists_p3_source_network_state() {
         .get_request_circuit_state(&fixture.payload.circuit_state.key)
         .expect("read cleared request circuit state")
         .is_none());
+}
+
+/// 验证 v22 升级会补齐网络上下文列并清除范围未知的旧熔断状态。
+#[test]
+fn migrates_v22_request_circuit_context() {
+    let directory = TestDirectory::new("request-circuit-context-migration");
+    let options = test_options(&directory, "active.sqlite");
+    let database_path = options.database_path.clone();
+    drop(Storage::open(options.clone()).expect("create current database"));
+
+    let legacy = Connection::open(&database_path).expect("open legacy circuit database");
+    legacy
+        .execute_batch(
+            "ALTER TABLE request_circuit_state DROP COLUMN network_context;
+             UPDATE app_meta SET value = '22' WHERE key = 'schema_version';
+             INSERT INTO request_circuit_state (
+               circuit_key, circuit_group, request_host, last_request_at,
+               failure_count, backoff_until, updated_at
+             ) VALUES (
+               'release-source:metadata-bangumi', 'release-source', 'api.bgm.tv',
+               '2026-08-06T05:46:30.000Z', 3, '2099-01-01T00:00:00.000Z',
+               '2026-08-06T05:46:30.000Z'
+             );",
+        )
+        .expect("prepare v22 circuit database");
+    drop(legacy);
+
+    let storage = Storage::open(options).expect("migrate v22 circuit database");
+
+    assert!(column_exists(
+        &storage.connection,
+        "request_circuit_state",
+        "network_context"
+    ));
+    assert_eq!(
+        storage
+            .connection
+            .query_row("SELECT COUNT(*) FROM request_circuit_state", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .expect("count migrated circuit states"),
+        0
+    );
+    assert_eq!(
+        read_meta(&storage.connection, "schema_version"),
+        SQLITE_SCHEMA_VERSION.to_string()
+    );
 }
 
 /// 验证来源绑定和排除记录通过公共 Repository 端口完整持久化并校验输入。

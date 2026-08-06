@@ -333,6 +333,9 @@ pub struct RequestCircuitState {
     pub failure_count: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub backoff_until: Option<String>,
+    /// 网络级失败所属的运行时上下文；provider 级失败为空。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_context: Option<String>,
 }
 
 /// 番剧来源绑定的建立方式。
@@ -1723,6 +1726,10 @@ mod tests {
         assert_eq!(
             decoded.payload.circuit_state.key,
             "release-source:torznab-contract"
+        );
+        assert_eq!(
+            decoded.payload.circuit_state.network_context.as_deref(),
+            Some("fixture-network")
         );
     }
 

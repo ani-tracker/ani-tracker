@@ -981,12 +981,13 @@ impl<'connection> SqliteRepository<'connection> {
         self.connection.execute(
             "INSERT INTO request_circuit_state (
                circuit_key, circuit_group, request_host, last_request_at,
-               failure_count, backoff_until, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+               failure_count, backoff_until, network_context, updated_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
              ON CONFLICT(circuit_key) DO UPDATE SET
                circuit_group = excluded.circuit_group, request_host = excluded.request_host,
                last_request_at = excluded.last_request_at, failure_count = excluded.failure_count,
-               backoff_until = excluded.backoff_until, updated_at = excluded.updated_at",
+               backoff_until = excluded.backoff_until,
+               network_context = excluded.network_context, updated_at = excluded.updated_at",
             params![
                 &state.key,
                 &state.group,
@@ -994,6 +995,7 @@ impl<'connection> SqliteRepository<'connection> {
                 state.last_request_at.as_deref(),
                 state.failure_count.max(0),
                 state.backoff_until.as_deref(),
+                state.network_context.as_deref(),
                 now_iso(),
             ],
         )?;
@@ -5293,6 +5295,7 @@ fn map_request_circuit_state_row(row: &Row<'_>) -> rusqlite::Result<RequestCircu
         last_request_at: row.get("last_request_at")?,
         failure_count: row.get("failure_count")?,
         backoff_until: row.get("backoff_until")?,
+        network_context: row.get("network_context")?,
     })
 }
 
