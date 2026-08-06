@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use ani_domain::{
-    AnimeDetailRefreshState, AnimeSeasonSyncState, AnimeSourceBinding,
+    AnimeAliasLanguage, AnimeDetailRefreshState, AnimeSeasonSyncState, AnimeSourceBinding,
     AnimeSourceBindingMatchMethod, AnimeSourceExclusion, AnimeSourceExclusionScope, AnimeStatus,
     DownloadStatus, DownloadTask, Episode, EpisodePreference, EpisodeStatus, MediaFile, MyAnime,
     NotificationKind, NotificationRecord, NotificationSeverity, PlaybackCheckpoint,
@@ -1042,6 +1042,85 @@ fn reads_p2_business_views_from_sqlite() {
     assert_eq!(dashboard.recent_completed.len(), 1);
     assert_eq!(dashboard.weekly_schedule[0].day, "周一");
     assert_eq!(dashboard.source_health[0].status, "warning");
+}
+
+/// 验证首页追番视图会使用已确认来源绑定的中文标题，但不写回目录别名。
+#[test]
+fn uses_confirmed_binding_chinese_title_for_followed_anime() {
+    let directory = TestDirectory::new("confirmed-binding-title");
+    let storage = Storage::open(test_options(&directory, "active.sqlite"))
+        .expect("create confirmed binding title database");
+    let anime_id = "bangumi-565701";
+    let now = "2026-08-06T05:46:30.000Z";
+    let japanese_title = "片田舎の剣聖、剣士になる 第二季";
+    let chinese_title = "乡下大叔成为剑圣 第二季";
+    storage
+        .connection
+        .execute(
+            "INSERT INTO anime_catalog (
+               id, title, original_title, premiere_year, premiere_month,
+               external_ids_json, detail_json, created_at, updated_at
+             ) VALUES (?1, ?2, ?3, 2026, 7, '{\"bangumi\":\"565701\"}', '{}', ?4, ?4)",
+            params![anime_id, japanese_title, japanese_title, now],
+        )
+        .expect("insert japanese anime");
+    storage
+        .connection
+        .execute(
+            "INSERT INTO my_anime (
+               id, anime_id, status, auto_download, preferred_subtitle_languages_json,
+               added_at, updated_at
+             ) VALUES ('my-anime-confirmed-binding-title', ?1, 'watching', 0, '[]', ?2, ?2)",
+            params![anime_id, now],
+        )
+        .expect("insert followed anime");
+
+    let repository = storage.repository();
+    let binding = AnimeSourceBinding {
+        id: "source-binding:bangumi-565701:anibt".to_owned(),
+        anime_id: anime_id.to_owned(),
+        source_id: "anibt".to_owned(),
+        source_anime_id: "565701".to_owned(),
+        source_anime_title: Some(chinese_title.to_owned()),
+        source_url: Some("https://anibt.example/subject/565701".to_owned()),
+        match_method: AnimeSourceBindingMatchMethod::ExternalId,
+        confidence: 1.0,
+        confirmed: true,
+        created_at: now.to_owned(),
+        updated_at: now.to_owned(),
+    };
+    AnimeSourceBindingRepository::upsert_anime_source_binding(&repository, &binding)
+        .expect("save confirmed source binding");
+
+    let followed = repository.list_my_anime().expect("list followed anime");
+    assert_eq!(followed.len(), 1);
+    assert_eq!(followed[0].anime.title, japanese_title);
+    assert_eq!(followed[0].anime.aliases.len(), 1);
+    assert_eq!(followed[0].anime.aliases[0].alias, chinese_title);
+    assert_eq!(
+        followed[0].anime.aliases[0].language,
+        AnimeAliasLanguage::Zh
+    );
+    assert_eq!(followed[0].anime.aliases[0].priority, 80);
+    assert_eq!(
+        storage
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM anime_alias WHERE anime_id = ?1",
+                [anime_id],
+                |row| row.get::<_, i64>(0),
+            )
+            .expect("count persisted aliases"),
+        0
+    );
+
+    let mut unconfirmed = binding;
+    unconfirmed.confirmed = false;
+    unconfirmed.updated_at = "2026-08-06T05:47:30.000Z".to_owned();
+    AnimeSourceBindingRepository::upsert_anime_source_binding(&repository, &unconfirmed)
+        .expect("cancel source binding confirmation");
+    let followed = repository.list_my_anime().expect("list after cancellation");
+    assert!(followed[0].anime.aliases.is_empty());
 }
 
 /// 验证 P3 追番、单集、偏好、观看进度和续播写入形成完整事务闭环。

@@ -1,4 +1,4 @@
-use std::cmp::Ordering;
+use std::cmp::{Ordering, Reverse};
 use std::collections::{HashMap, HashSet};
 
 use ani_domain::{
@@ -1190,12 +1190,17 @@ impl<'connection> SqliteRepository<'connection> {
             .into_iter()
             .map(|item| (item.id.clone(), item))
             .collect::<HashMap<_, _>>();
+        let binding_aliases = self.list_confirmed_binding_title_aliases_by_anime()?;
         let subscriptions = self.list_rss_subscriptions_by_my_anime()?;
         let rows = query_all(self.connection, "SELECT * FROM my_anime", map_my_anime_row)?;
         let mut items = rows
             .into_iter()
             .filter_map(|row| {
-                let anime = anime_by_id.get(&row.anime_id)?.clone();
+                let mut anime = anime_by_id.get(&row.anime_id)?.clone();
+                if let Some(aliases) = binding_aliases.get(&row.anime_id) {
+                    anime.aliases = merge_anime_aliases(&anime.aliases, aliases, &anime.id);
+                    anime.aliases.sort_by_key(|alias| Reverse(alias.priority));
+                }
                 let rss_subscriptions = subscriptions.get(&row.id).cloned().unwrap_or_default();
                 Some(row.into_domain(anime, rss_subscriptions))
             })
@@ -1661,6 +1666,48 @@ impl<'connection> SqliteRepository<'connection> {
                 .entry(anime_id)
                 .or_default()
                 .push(row.into_domain()?);
+        }
+        Ok(aliases)
+    }
+
+    /// 读取已确认来源绑定中的中文标题，作为追番视图的临时别名。
+    fn list_confirmed_binding_title_aliases_by_anime(
+        &self,
+    ) -> Result<HashMap<String, Vec<AnimeAlias>>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT id, anime_id, source_id, source_anime_title
+             FROM anime_source_binding
+             WHERE confirmed = 1
+               AND TRIM(COALESCE(source_anime_title, '')) <> ''
+             ORDER BY anime_id, source_id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok((
+                row.get::<_, String>("id")?,
+                row.get::<_, String>("anime_id")?,
+                row.get::<_, String>("source_id")?,
+                row.get::<_, Option<String>>("source_anime_title")?,
+            ))
+        })?;
+        let mut aliases = HashMap::<String, Vec<AnimeAlias>>::new();
+        for row in rows {
+            let (binding_id, anime_id, source_id, title) = row?;
+            let Some(title) = title.map(|value| value.trim().to_owned()) else {
+                continue;
+            };
+            if !is_likely_chinese_title(&title) {
+                continue;
+            }
+            aliases
+                .entry(anime_id.clone())
+                .or_default()
+                .push(AnimeAlias {
+                    id: format!("source-binding-title:{anime_id}:{source_id}:{binding_id}"),
+                    anime_id,
+                    alias: title,
+                    language: AnimeAliasLanguage::Zh,
+                    priority: CONFIRMED_BINDING_TITLE_ALIAS_PRIORITY,
+                });
         }
         Ok(aliases)
     }
@@ -3715,6 +3762,26 @@ fn is_playback_seconds(value: f64) -> bool {
 /// 使用 -1 表示未指定文件索引，确保复合主键稳定去重。
 fn normalize_checkpoint_file_index(file_index: Option<i64>) -> i64 {
     file_index.unwrap_or(-1)
+}
+
+/// 已确认来源标题的临时别名优先级，低于官方目录别名。
+const CONFIRMED_BINDING_TITLE_ALIAS_PRIORITY: i64 = 80;
+
+/// 判断标题是否更接近中文，避免把带日文假名的来源标题注入为中文别名。
+fn is_likely_chinese_title(value: &str) -> bool {
+    let has_han = value.chars().any(|character| {
+        matches!(
+            character as u32,
+            0x3400..=0x4DBF
+                | 0x4E00..=0x9FFF
+                | 0xF900..=0xFAFF
+                | 0x20000..=0x2FA1F
+        )
+    });
+    let has_kana = value
+        .chars()
+        .any(|character| matches!(character as u32, 0x3040..=0x30FF | 0x31F0..=0x31FF));
+    has_han && !has_kana
 }
 
 /// 写库前按别名文本去重并重建番剧内稳定标识。
