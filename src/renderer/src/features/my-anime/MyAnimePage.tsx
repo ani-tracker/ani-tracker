@@ -606,6 +606,25 @@ export function MyAnimePage({
     setDownloadDetail(null);
   }
 
+  /** 移除单个已完成下载任务，并同步本地任务快照。 */
+  async function removeAnimeDownloadTask(taskId: string, deleteFiles: boolean): Promise<void> {
+    try {
+      const latestDownloads = await appApi.removeDownload(taskId, deleteFiles);
+      setDownloadTasks(latestDownloads);
+      console.info("[my-anime] 已移除下载任务", { taskId, deleteFiles });
+      setMessage({
+        tone: "success",
+        text: deleteFiles ? "已删除任务及其文件" : "已移除任务，文件已保留"
+      });
+    } catch (error) {
+      setMessage({
+        tone: "error",
+        text: error instanceof Error ? error.message : "删除下载资源失败"
+      });
+      throw error;
+    }
+  }
+
   /** 打开追番规则抽屉，并保留已采集的番剧元数据快照。 */
   function openRulesDrawer(item: MyAnime) {
     closeAnimeDownloads();
@@ -1212,6 +1231,7 @@ export function MyAnimePage({
             setDownloadDetail((current) => (current ? { ...current, filter } : current))
           }
           onPlayMedia={onPlayMedia}
+          onRemoveTask={removeAnimeDownloadTask}
         />
       )}
 

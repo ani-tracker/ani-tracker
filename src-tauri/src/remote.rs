@@ -710,6 +710,7 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
             }
             "removeDownload" => {
                 let id = string_arg(&args, 0)?;
+                let delete_files: bool = value_arg(&args, 1)?;
                 let settings = self.downloads.settings()?;
                 let engine = self
                     .downloads
@@ -717,7 +718,7 @@ impl RemoteRpcHandler for TauriRemoteRpcHandler {
                     .map_err(|error| error.to_string())?;
                 serde_json::to_value(
                     self.downloads
-                        .remove_task(&id, false, &engine)
+                        .remove_task(&id, delete_files, &engine)
                         .await
                         .map_err(|error| error.to_string())?,
                 )

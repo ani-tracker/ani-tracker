@@ -483,8 +483,8 @@ fn validate_args(method: &str, args: Vec<Value>) -> Result<Vec<Value>, RemoteRpc
         "removeDownload" => {
             let args = require_count(args, 2)?;
             parse_id(&args[0], "下载任务标识")?;
-            if args[1].as_bool() != Some(false) {
-                return Err(invalid_args("远程端只能保留文件并移除任务记录"));
+            if args[1].as_bool().is_none() {
+                return Err(invalid_args("删除文件参数必须是布尔值"));
             }
             Ok(args)
         }
@@ -1478,7 +1478,7 @@ mod tests {
                     "storage": { "userDataDir": "/Users/test" },
                     "players": [{ "id": "builtin" }]
                 })),
-                "pauseDownload" => Ok(json!([])),
+                "pauseDownload" | "removeDownload" => Ok(json!([])),
                 _ => Ok(json!({ "args": args })),
             }
         }
@@ -1552,12 +1552,19 @@ mod tests {
         assert!(result.is_ok());
     }
 
-    /// 验证远程下载和设置写入不能越过本地文件与桌面字段边界。
+    /// 验证远程下载删除允许显式删除文件，其他设置写入仍不能越过桌面字段边界。
     #[tokio::test]
-    async fn rejects_local_file_and_desktop_mutations() {
+    async fn allows_download_file_removal_but_rejects_desktop_mutations() {
         let service = RemoteRpcService::new(std::sync::Arc::new(EchoHandler));
+        let remove_result = service
+            .dispatch(
+                json!({ "method": "removeDownload", "args": ["task-1", true] }),
+                &["downloads.control".to_owned()],
+            )
+            .await;
+        assert!(remove_result.is_ok());
+
         for request in [
-            json!({ "method": "removeDownload", "args": ["task-1", true] }),
             json!({ "method": "addDownloadUrl", "args": [{ "url": "magnet:?xt=urn:btih:abc", "savePath": "/tmp" }] }),
             json!({ "method": "updateSettings", "args": [{ "storage": { "userDataDir": "/tmp" } }] }),
             json!({ "method": "updateSettings", "args": [{ "network": { "remoteAccess": { "port": 1 } } }] }),

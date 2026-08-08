@@ -387,7 +387,22 @@ impl AutomationRunService {
             ),
             candidate_fansub_names: policy.candidate_names.clone(),
         };
-        let rss_ranked = rank_releases(rss_releases, &context, &options.fansubs);
+        // RSS 订阅可能各自配置了不同字幕偏好，扫描单集时必须再次以番剧规则为准。
+        let (eligible_rss_releases, rss_rejected) = filter_automatic_releases_by_subtitle(
+            rss_releases.to_vec(),
+            &anime.preferred_subtitle_languages,
+            anime.preferred_subtitle.as_deref(),
+        );
+        if rss_rejected > 0 {
+            log::info!(
+                "Rust 自动扫描单集字幕门禁：anime_id={}, episode_id={}, rejected={}, required={:?}",
+                anime.anime.id,
+                episode.id,
+                rss_rejected,
+                anime.preferred_subtitle_languages
+            );
+        }
+        let rss_ranked = rank_releases(&eligible_rss_releases, &context, &options.fansubs);
         let rss_candidates = apply_fansub_policy(
             &rss_ranked,
             preferred_fansub.map(String::as_str),
@@ -468,6 +483,22 @@ impl AutomationRunService {
             return Ok(EpisodeScanOutcome::Skipped(decision.reason));
         }
         let release = candidates[0].release.clone();
+        if !release_satisfies_subtitle_requirement(
+            &release,
+            &anime.preferred_subtitle_languages,
+            anime.preferred_subtitle.as_deref(),
+        ) {
+            log::info!(
+                "Rust 自动扫描提交前字幕硬门禁拒绝：anime_id={}, episode_id={}, title={:?}, actual={:?}, required={:?}",
+                anime.anime.id,
+                episode.id,
+                release.title,
+                release.subtitle_languages,
+                anime.preferred_subtitle_languages
+            );
+            save_episode_status(store, episode, EpisodeStatus::Matched)?;
+            return Ok(EpisodeScanOutcome::Skipped("字幕规则不满足".to_owned()));
+        }
         if release.magnet_url.is_none() && release.torrent_url.is_none() {
             return Ok(EpisodeScanOutcome::Skipped(
                 "最佳资源没有下载地址".to_owned(),
@@ -1323,6 +1354,60 @@ mod tests {
         assert_eq!(eligible.len(), 1);
         assert_eq!(eligible[0].id, "complete");
         assert_eq!(rejected, 2);
+    }
+
+    /// 验证 RSS 无字幕资源在单集扫描阶段不会进入排序或下载执行器。
+    #[tokio::test]
+    async fn rejects_unmarked_rss_subtitle_before_download() {
+        let store = memory_store_with_episode();
+        let mut anime = store.anime[0].clone();
+        anime.anime.title = "Kokoore".to_owned();
+        anime.anime.original_title = None;
+        anime.preferred_subtitle_languages = vec!["chs".to_owned()];
+        let episode = store.episodes.lock().expect("lock episodes")[0].clone();
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../fixtures/contracts/p3-release-search-model.v1.json"
+        )))
+        .expect("decode release fixture");
+        let mut release: Release =
+            serde_json::from_value(fixture["payload"]["searchResult"]["releases"][0].clone())
+                .expect("decode release");
+        release.title = "[LoliHouse] Kokoore - 05 [WebRip 1080p HEVC-10bit AAC].mkv".to_owned();
+        release.anime_id = Some(anime.anime.id.clone());
+        release.episode_no = Some(episode.episode_no);
+        release.subtitle_languages.clear();
+        release.subtitle = None;
+
+        let executor = Arc::new(RecordingExecutor {
+            requests: Mutex::new(Vec::new()),
+        });
+        let service = AutomationRunService::new(test_network(), executor.clone());
+        let options = AutomationRunOptions {
+            now: None,
+            settings: automation_settings(),
+            sources: Vec::new(),
+            fansubs: Vec::new(),
+        };
+        let policy = ScanPolicy::from_settings(&options.settings);
+        let outcome = service
+            .scan_episode(
+                &store,
+                &anime,
+                &episode,
+                &[],
+                &[],
+                &[release],
+                &options,
+                &policy,
+            )
+            .await
+            .expect("scan rss candidate");
+
+        assert!(
+            matches!(outcome, EpisodeScanOutcome::Skipped(reason) if reason == "未找到匹配资源")
+        );
+        assert!(executor.requests.lock().expect("lock requests").is_empty());
     }
 
     fn memory_store_with_episode() -> MemoryStore {

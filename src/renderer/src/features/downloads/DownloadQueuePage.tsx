@@ -53,10 +53,9 @@ export type DownloadQueueClient = Pick<
 >>;
 
 interface DownloadQueuePageProps {
-  allowDeleteFiles?: boolean;
   client: DownloadQueueClient;
   logScope: "local" | "remote";
-  showLocalPaths?: boolean;
+  showLocalDetails?: boolean;
 }
 
 const downloadStatusText: Record<DownloadStatus, string> = {
@@ -76,10 +75,9 @@ const downloadStatusText: Record<DownloadStatus, string> = {
 
 /** 渲染本地与远端共用的下载队列页面。 */
 export function DownloadQueuePage({
-  allowDeleteFiles = true,
   client,
   logScope,
-  showLocalPaths = true
+  showLocalDetails = true
 }: DownloadQueuePageProps) {
   const capabilities = getAppCapabilities();
   const [tasks, setTasks] = useState<DownloadTask[]>([]);
@@ -418,7 +416,7 @@ export function DownloadQueuePage({
                           </div>
                         </div>
                       </div>
-                      {showLocalPaths && <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground sm:max-w-[45%]">
+                      {showLocalDetails && <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground sm:max-w-[45%]">
                         <Folder className="size-4 shrink-0" />
                         <span className="truncate" title={animeGroup.savePath}>{animeGroup.savePath}</span>
                       </div>}
@@ -437,6 +435,7 @@ export function DownloadQueuePage({
                                 <DownloadTaskRow
                                   key={task.id}
                                   task={task}
+                                  showLocalDetails={showLocalDetails}
                                   mutatingTaskId={mutatingTaskId}
                                   mutatingFileId={mutatingFileId}
                                   scanningTaskId={scanningTaskId}
@@ -472,7 +471,7 @@ export function DownloadQueuePage({
       {client.removeDownload && (
         <ConfirmActionDialog
           confirmLabel={deleteFilesOnRemove ? "删除任务和文件" : "移除任务"}
-          content={allowDeleteFiles && removeTarget?.files.some((file) => file.progress > 0) ? (
+          content={removeTarget ? (
             <div
               className={cn(
                 "flex items-start gap-3 rounded-md border p-3",
@@ -485,23 +484,23 @@ export function DownloadQueuePage({
                 onCheckedChange={(checked) => setDeleteFilesOnRemove(checked === true)}
               />
               <label className="min-w-0 cursor-pointer" htmlFor="downloads-delete-files">
-                <span className="block text-sm font-medium">同时删除已下载文件</span>
+                <span className="block text-sm font-medium">同时删除原文件</span>
                 <span className="mt-1 block text-xs text-muted-foreground">
-                  文件删除后无法从应用内恢复。
+                  会删除任务已写入的完整或部分文件，且无法从应用内恢复。
                 </span>
               </label>
             </div>
           ) : undefined}
           description={removeTarget
             ? deleteFilesOnRemove
-              ? `下载任务「${removeTarget.name}」及其已下载文件将被永久删除。`
+              ? `下载任务「${removeTarget.name}」及其原文件将被永久删除。`
               : `下载任务「${removeTarget.name}」将从队列中移除，已下载文件会保留。`
             : "该下载任务将从队列中移除。"}
           onConfirm={async () => {
             if (removeTarget && !(await mutateTask(removeTarget.id, "remove", deleteFilesOnRemove))) {
               throw new Error("下载任务移除失败");
             }
-            toast.success(deleteFilesOnRemove ? "任务和已下载文件已删除" : "任务已移除，文件已保留");
+            toast.success(deleteFilesOnRemove ? "任务和原文件已删除" : "任务已移除，文件已保留");
           }}
           onOpenChange={(open) => {
             if (!open) {
@@ -519,6 +518,7 @@ export function DownloadQueuePage({
 
 function DownloadTaskRow({
   task,
+  showLocalDetails,
   mutatingTaskId,
   mutatingFileId,
   scanningTaskId,
@@ -528,6 +528,7 @@ function DownloadTaskRow({
   onToggleFile
 }: {
   task: DownloadTask;
+  showLocalDetails: boolean;
   mutatingTaskId: string | null;
   mutatingFileId: string | null;
   scanningTaskId: string | null;
@@ -626,18 +627,22 @@ function DownloadTaskRow({
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5"><Gauge className="size-4" />{task.engine === "embedded" ? "内置引擎" : "qBittorrent"}</span>
           <ReleaseMetadataBadges metadata={task} />
-          <span className="flex min-w-24 items-center gap-1.5 tabular-nums" title="下载速度">
-            <DownloadIcon className="size-4" />
-            {formatSpeed(task.downloadSpeed)}
-          </span>
-          <span className="flex min-w-24 items-center gap-1.5 tabular-nums" title="上传速度">
-            <Upload className="size-4" />
-            {formatSpeed(task.uploadSpeed)}
-          </span>
-          <span className="flex min-w-28 items-center gap-1.5 tabular-nums sm:ml-auto" title="预计剩余时间">
-            <Clock3 className="size-4" />
-            {formatDownloadEta(task)}
-          </span>
+          {showLocalDetails && (
+            <>
+              <span className="flex min-w-24 items-center gap-1.5 tabular-nums" title="下载速度">
+                <DownloadIcon className="size-4" />
+                {formatSpeed(task.downloadSpeed)}
+              </span>
+              <span className="flex min-w-24 items-center gap-1.5 tabular-nums" title="上传速度">
+                <Upload className="size-4" />
+                {formatSpeed(task.uploadSpeed)}
+              </span>
+              <span className="flex min-w-28 items-center gap-1.5 tabular-nums sm:ml-auto" title="预计剩余时间">
+                <Clock3 className="size-4" />
+                {formatDownloadEta(task)}
+              </span>
+            </>
+          )}
         </div>
 
         <div className="grid min-w-0 grid-cols-[minmax(0,1fr)_3rem] items-center gap-3">

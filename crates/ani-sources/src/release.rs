@@ -1221,6 +1221,56 @@ mod tests {
         assert_eq!(parsed.subtitle, Some(SubtitlePreference::Multi));
     }
 
+    /// 验证 NIX-RAWS 的“简繁内封”会明确识别为简体与繁体字幕。
+    #[test]
+    fn recognizes_nix_raws_embedded_chinese_subtitles() {
+        let title = "[NIX-RAWS] LV999的村民 - 04 [Baha][WEB-DL][1080P][AVC AAC][简繁内封]";
+        let parsed = parse_release_title(title, &[]);
+
+        assert_eq!(parsed.fansub_name.as_deref(), Some("NIX-RAWS"));
+        assert_eq!(parsed.episode_no, Some(4.0));
+        assert_eq!(
+            parsed.subtitle_languages,
+            vec![SubtitleLanguage::Chs, SubtitleLanguage::Cht]
+        );
+        assert_eq!(parsed.subtitle, Some(SubtitlePreference::Multi));
+
+        let release = enrich_release_from_title(
+            Release {
+                title: title.to_owned(),
+                ..empty_release()
+            },
+            &[],
+        );
+        assert!(release_satisfies_subtitle_requirement(
+            &release,
+            &["chs".to_owned(), "cht".to_owned()],
+            None,
+        ));
+    }
+
+    /// 验证没有字幕标记的 Kokoore 资源保持字幕未知，不能满足中文字幕门禁。
+    #[test]
+    fn keeps_kokoore_unmarked_subtitle_unknown() {
+        let title = "[LoliHouse] Kokoore - 05 [WebRip 1080p HEVC-10bit AAC].mkv";
+        let parsed = parse_release_title(title, &[]);
+
+        assert!(parsed.subtitle_languages.is_empty());
+        assert_eq!(parsed.subtitle, None);
+        let release = enrich_release_from_title(
+            Release {
+                title: title.to_owned(),
+                ..empty_release()
+            },
+            &[],
+        );
+        assert!(!release_satisfies_subtitle_requirement(
+            &release,
+            &["chs".to_owned()],
+            None,
+        ));
+    }
+
     /// 验证连集和合集不会被技术数字误判为单集。
     #[test]
     fn distinguishes_episode_ranges_and_batches() {
@@ -1322,6 +1372,10 @@ mod tests {
 
         assert_eq!(release.episode_no, Some(8.0));
         assert_eq!(release.series_season_no, None);
+        assert_eq!(
+            release.subtitle_languages,
+            vec![SubtitleLanguage::Chs, SubtitleLanguage::Cht]
+        );
         assert_eq!(
             classify_anime_release(&release, &anime),
             AnimeReleaseCompatibility::Other
